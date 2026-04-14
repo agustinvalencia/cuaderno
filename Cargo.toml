@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/cdno-core", "crates/cdno-domain"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+repository = "https://github.com/agustinvalencia/cuaderno"
+
+[workspace.dependencies]
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Internal crates
+cdno-core = { path = "crates/cdno-core" }

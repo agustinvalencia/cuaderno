@@ -1,0 +1,4 @@
+//! cdno-core: Core library for Cuaderno.
+//!
+//! File I/O, markdown parsing, SQLite indexing, and file watching.
+//! No domain knowledge — reusable in any markdown vault tool.

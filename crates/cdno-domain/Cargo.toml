@@ -1,0 +1,12 @@
+[package]
+name = "cdno-domain"
+description = "Domain logic for Cuaderno: note types, business rules, queries, state transitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cdno-core.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
