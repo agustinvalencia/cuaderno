@@ -1,7 +1,7 @@
 # Cuaderno
 
 [![CI](https://github.com/agustinvalencia/cuaderno/actions/workflows/ci.yml/badge.svg)](https://github.com/agustinvalencia/cuaderno/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/agustinvalencia/cuaderno/graph/badge.svg)](https://codecov.io/gh/agustinvalencia/cuaderno)
+[![codecov](https://codecov.io/gh/agustinvalencia/cuaderno/graph/badge.svg?token=8J5LGNS1TN)](https://codecov.io/gh/agustinvalencia/cuaderno)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 A vault management tool implementing the **Research Logbook Method** (RLM) — a system for knowledge, tasks, and life organisation designed for experimental researchers, with specific accommodations for ADHD.
