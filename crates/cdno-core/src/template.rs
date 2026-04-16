@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::VaultConfig;
-use crate::error::CoreError;
+use crate::error::TemplateError;
 
 /// A parsed template — raw content with `{{variable}}` placeholders.
 #[derive(Debug, Clone)]
@@ -106,7 +106,7 @@ impl TemplateEngine {
         &self,
         note_type: &str,
         variant: Option<&str>,
-    ) -> Result<Template, CoreError> {
+    ) -> Result<Template, TemplateError> {
         // 1. Try activity-specific custom template
         if let Some(variant) = variant
             && let Some(template) = self.load_custom(note_type, Some(variant))?
@@ -140,7 +140,7 @@ impl TemplateEngine {
             });
         }
 
-        Err(CoreError::TemplateNotFound {
+        Err(TemplateError::NotFound {
             note_type: note_type.to_string(),
             variant: variant.map(String::from),
         })
@@ -197,7 +197,7 @@ impl TemplateEngine {
         &self,
         note_type: &str,
         variant: Option<&str>,
-    ) -> Result<Option<Template>, CoreError> {
+    ) -> Result<Option<Template>, TemplateError> {
         let vault_root = match &self.vault_root {
             Some(root) => root,
             None => return Ok(None),
@@ -217,7 +217,7 @@ impl TemplateEngine {
             return Ok(None);
         }
 
-        let content = std::fs::read_to_string(&path).map_err(|source| CoreError::TemplateRead {
+        let content = std::fs::read_to_string(&path).map_err(|source| TemplateError::Read {
             path: path.clone(),
             source,
         })?;

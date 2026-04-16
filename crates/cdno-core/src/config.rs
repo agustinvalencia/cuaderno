@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::CoreError;
+use crate::error::ConfigError;
 
 /// Top-level vault configuration, loaded from `.cuaderno/config.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -59,7 +59,7 @@ impl VaultConfig {
     ///
     /// Returns the default config if the file does not exist.
     /// Returns an error if the file exists but cannot be read or parsed.
-    pub fn load(vault_root: &Path) -> Result<Self, CoreError> {
+    pub fn load(vault_root: &Path) -> Result<Self, ConfigError> {
         let config_path = vault_root.join(".cuaderno").join("config.toml");
 
         if !config_path.exists() {
@@ -67,12 +67,12 @@ impl VaultConfig {
         }
 
         let contents =
-            std::fs::read_to_string(&config_path).map_err(|source| CoreError::ConfigRead {
+            std::fs::read_to_string(&config_path).map_err(|source| ConfigError::Read {
                 path: config_path.clone(),
                 source,
             })?;
 
-        toml::from_str(&contents).map_err(|source| CoreError::ConfigParse {
+        toml::from_str(&contents).map_err(|source| ConfigError::Parse {
             path: config_path,
             source,
         })
