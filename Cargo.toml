@@ -13,6 +13,7 @@ repository = "https://github.com/agustinvalencia/cuaderno"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
+toml = "0.8"
 
 # Error handling
 thiserror = "2"

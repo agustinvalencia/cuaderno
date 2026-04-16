@@ -2,3 +2,6 @@
 //!
 //! File I/O, markdown parsing, SQLite indexing, and file watching.
 //! No domain knowledge — reusable in any markdown vault tool.
+
+pub mod config;
+pub mod error;
