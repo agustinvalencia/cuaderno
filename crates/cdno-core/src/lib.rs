@@ -5,3 +5,5 @@
 
 pub mod config;
 pub mod error;
+pub mod note_type;
+pub mod template;
