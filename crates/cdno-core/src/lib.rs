@@ -6,4 +6,5 @@
 pub mod config;
 pub mod error;
 pub mod note_type;
+pub mod path;
 pub mod template;
