@@ -21,10 +21,6 @@ impl VaultPath {
             return Err(PathError::Empty);
         }
 
-        if input.is_absolute() {
-            return Err(PathError::Absolute(as_str.into_owned()));
-        }
-
         let mut normalised = PathBuf::new();
         for component in input.components() {
             match component {
