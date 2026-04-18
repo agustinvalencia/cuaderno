@@ -7,4 +7,5 @@ pub mod config;
 pub mod error;
 pub mod file_meta;
 pub mod path;
+pub mod store;
 pub mod template;
