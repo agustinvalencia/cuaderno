@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -238,5 +240,171 @@ impl VaultStore for MemoryVaultStore {
             .get(path)
             .map(|f| FileMeta::new(f.mtime, f.content.len() as u64))
             .ok_or_else(|| StoreError::NotFound(path.to_string()))
+    }
+}
+
+/// Filesystem-backed [`VaultStore`].
+///
+/// Takes a vault root directory on construction; all [`VaultPath`]
+/// arguments are resolved relative to that root. The root is stored
+/// as-is without validation — callers that need "root must exist" or
+/// "root must be a directory" semantics should check upstream.
+///
+/// Operations use the standard `std::fs` API. Writes create parent
+/// directories as needed. `move_file` checks destination presence
+/// manually before calling `fs::rename` so the trait's
+/// [`StoreError::AlreadyExists`] contract holds on Unix, where
+/// `rename` otherwise silently overwrites.
+#[derive(Debug, Clone)]
+pub struct FsVaultStore {
+    root: PathBuf,
+}
+
+impl FsVaultStore {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    /// Resolve a vault-relative path to an absolute filesystem path.
+    fn resolve(&self, path: &VaultPath) -> PathBuf {
+        self.root.join(path.as_path())
+    }
+}
+
+/// Translate an `io::Error` into a `StoreError`, using the vault path
+/// as the human-readable location (rather than the absolute disk path,
+/// which would leak `TempDir` or `$HOME` into error messages).
+fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
+    match err.kind() {
+        io::ErrorKind::NotFound => StoreError::NotFound(path.to_string()),
+        io::ErrorKind::PermissionDenied => StoreError::PermissionDenied(path.to_string()),
+        io::ErrorKind::AlreadyExists => StoreError::AlreadyExists(path.to_string()),
+        _ => StoreError::Io {
+            path: path.to_string(),
+            source: err,
+        },
+    }
+}
+
+impl VaultStore for FsVaultStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        fs::read_to_string(self.resolve(path)).map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        let full = self.resolve(path);
+        // Ensure the parent tree exists before the write. `parent()`
+        // is `None` only when `full` has no parent segment, which
+        // cannot happen because `self.root` is always a prefix.
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
+        }
+        fs::write(&full, content).map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        use std::io::Write;
+        let full = self.resolve(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&full)
+            .map_err(|e| io_to_store_error(e, path))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        let src_full = self.resolve(src);
+        let dest_full = self.resolve(dest);
+
+        // Preflight the destination manually: `fs::rename` on Unix
+        // silently overwrites the target, which violates the trait's
+        // AlreadyExists contract. A TOCTOU race with an external
+        // process is theoretically possible but irrelevant for a
+        // single-writer vault.
+        if dest_full.exists() {
+            return Err(StoreError::AlreadyExists(dest.to_string()));
+        }
+        if !src_full.exists() {
+            return Err(StoreError::NotFound(src.to_string()));
+        }
+        if let Some(parent) = dest_full.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
+        }
+        fs::rename(&src_full, &dest_full).map_err(|e| io_to_store_error(e, src))
+    }
+
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        Ok(self.resolve(path).exists())
+    }
+
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        let full = self.resolve(path);
+        // Non-existent paths return empty rather than erroring, so
+        // callers can treat "no such dir" and "empty dir" uniformly
+        // and match MemoryVaultStore's semantics.
+        if !full.exists() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&full).map_err(|e| io_to_store_error(e, path))?;
+        let mut children: Vec<VaultPath> = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| io_to_store_error(e, path))?;
+            let name = entry.file_name();
+            // Rebuild the child as a vault-relative path. Equivalent
+            // of `path.join(name)` but VaultPath has no join yet, so
+            // we rebuild via PathBuf and revalidate.
+            let child_path = path.as_path().join(&name);
+            let child =
+                VaultPath::new(child_path).expect("child derived from VaultPath + valid file name");
+            children.push(child);
+        }
+        children.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(children)
+    }
+
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        let full = self.resolve(path);
+        if !full.exists() {
+            return Ok(Vec::new());
+        }
+
+        // Iterative DFS over the subtree rooted at `full`. Yields
+        // only regular files; directories are traversed but not
+        // included. Output order is sorted at the end for
+        // deterministic test comparisons.
+        let mut stack: Vec<PathBuf> = vec![full.clone()];
+        let mut out: Vec<VaultPath> = Vec::new();
+        while let Some(dir) = stack.pop() {
+            let entries = fs::read_dir(&dir).map_err(|e| io_to_store_error(e, path))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| io_to_store_error(e, path))?;
+                let file_type = entry.file_type().map_err(|e| io_to_store_error(e, path))?;
+                let entry_path = entry.path();
+                if file_type.is_dir() {
+                    stack.push(entry_path);
+                } else {
+                    // Strip the vault root so we end up with a
+                    // vault-relative path that VaultPath accepts.
+                    let rel = entry_path
+                        .strip_prefix(&self.root)
+                        .expect("entry is under vault root by construction");
+                    let vp = VaultPath::new(rel)
+                        .expect("rel is relative and free of traversal by construction");
+                    out.push(vp);
+                }
+            }
+        }
+        out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        let std_meta = fs::metadata(self.resolve(path)).map_err(|e| io_to_store_error(e, path))?;
+        FileMeta::try_from(std_meta).map_err(|e| io_to_store_error(e, path))
     }
 }
