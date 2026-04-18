@@ -77,8 +77,8 @@ pub enum ParseError {
 /// Errors from frontmatter field validation.
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("missing required field '{field}' in {note_type}")]
-    MissingField { field: String, note_type: String },
+    #[error("missing required field '{field}'")]
+    MissingField { field: String },
 
     #[error("invalid value for field '{field}': {reason}")]
     InvalidField { field: String, reason: String },
