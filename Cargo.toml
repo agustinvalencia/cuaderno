@@ -21,5 +21,8 @@ thiserror = "2"
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Markdown parsing
+pulldown-cmark = { version = "0.12", default-features = false }
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
