@@ -35,6 +35,9 @@ pub enum StoreError {
     #[error("file not found: {0}")]
     NotFound(String),
 
+    #[error("file already exists: {0}")]
+    AlreadyExists(String),
+
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
