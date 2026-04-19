@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use cdno_core::index::{MemoryIndex, VaultIndex};
+use cdno_core::error::IndexError;
+use cdno_core::index::{DeadlineEntry, LinkEntry, MemoryIndex, NoteEntry, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -302,4 +303,92 @@ tags:
             .is_empty()
     );
     assert!(index.find_by_tag("deep-work").unwrap().is_empty());
+}
+
+#[test]
+fn orphan_removal_failure_is_reported_as_error() {
+    // Reconciliation records an error (and does not mark `removed`)
+    // when the index refuses to drop the orphan row. The next pass
+    // will retry; meanwhile the caller sees the failure.
+    let (store, backing_index) = fixtures();
+    seed_note(&store, "orphan.md", "daily", "");
+    reconcile(&as_store(&store), &as_index(&backing_index)).unwrap();
+
+    // Simulate the file being deleted on disk.
+    store.delete_file(&vp("orphan.md")).unwrap();
+
+    // Run reconciliation through a wrapper whose remove_note always
+    // fails. The underlying index is still the same backing store.
+    let failing: Arc<dyn VaultIndex> = Arc::new(FailOnRemoveIndex {
+        inner: backing_index.clone(),
+    });
+    let store_arc: Arc<dyn VaultStore> = store.clone();
+    let report = reconcile(&store_arc, &failing).unwrap();
+
+    assert_eq!(report.removed, 0);
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].path, vp("orphan.md"));
+    // Orphan still in the backing index — the next pass will try again.
+    assert!(
+        backing_index
+            .find_by_path(&vp("orphan.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+/// Test wrapper that delegates every `VaultIndex` method to an inner
+/// `MemoryIndex` except `remove_note`, which always errors. Kept
+/// inline in this file because it's specific to the orphan-failure
+/// test; the broader `FailingIndex` in `transaction_tests.rs` is not
+/// accessible from this integration test binary.
+struct FailOnRemoveIndex {
+    inner: Arc<MemoryIndex>,
+}
+
+impl VaultIndex for FailOnRemoveIndex {
+    fn upsert_note(&self, entry: &NoteEntry) -> Result<(), IndexError> {
+        self.inner.upsert_note(entry)
+    }
+    fn remove_note(&self, _path: &VaultPath) -> Result<(), IndexError> {
+        Err(IndexError::Update("forced test failure".to_owned()))
+    }
+    fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
+        self.inner.find_by_path(path)
+    }
+    fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
+        self.inner.list_by_type(note_type)
+    }
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.list_all_paths()
+    }
+    fn replace_deadlines(
+        &self,
+        path: &VaultPath,
+        deadlines: &[DeadlineEntry],
+    ) -> Result<(), IndexError> {
+        self.inner.replace_deadlines(path, deadlines)
+    }
+    fn deadlines_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, DeadlineEntry)>, IndexError> {
+        self.inner.deadlines_between(from, to)
+    }
+    fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError> {
+        self.inner.replace_links(path, links)
+    }
+    fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.find_backlinks(path)
+    }
+    fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
+        self.inner.find_outgoing_links(path)
+    }
+    fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
+        self.inner.replace_tags(path, tags)
+    }
+    fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.find_by_tag(tag)
+    }
 }

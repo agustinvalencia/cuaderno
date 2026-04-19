@@ -100,24 +100,22 @@ pub fn reconcile(
     let index_paths = index.list_all_paths()?;
     for path in index_paths {
         if !fs_set.contains(&path) {
-            // Use a transaction so the remove_note is uniform with
-            // the rest of the reconciliation pipeline. The index-only
-            // commit can't fail the file phase.
+            // Orphan removal is index-only, but we still go through a
+            // VaultTransaction for uniformity with the rest of the
+            // reconciliation pipeline.
+            //
+            // Any error — whether IndexStale or (in principle) a file
+            // op failure — means the note is *still* in the index, so
+            // we record it as an error rather than marking it removed.
+            // The next reconciliation pass will retry.
             let mut tx = VaultTransaction::new(store.clone(), index.clone());
             tx.remove_note(path.clone());
             match tx.commit() {
-                Ok(()) | Err(crate::error::TransactionError::IndexStale(_)) => {
-                    // Best-effort: if the index call failed here, the
-                    // next reconciliation will retry — the row is
-                    // still orphaned, still detected.
-                    report.removed += 1;
-                }
-                Err(other) => {
-                    report.errors.push(ReconciliationIssue {
-                        path,
-                        reason: format!("failed to remove orphan: {other}"),
-                    });
-                }
+                Ok(()) => report.removed += 1,
+                Err(e) => report.errors.push(ReconciliationIssue {
+                    path,
+                    reason: format!("failed to remove orphan: {e}"),
+                }),
             }
         }
     }
