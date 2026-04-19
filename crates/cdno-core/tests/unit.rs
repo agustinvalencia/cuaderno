@@ -10,6 +10,7 @@ mod unit {
     mod memory_index_tests;
     mod memory_store_tests;
     mod path_tests;
+    mod reconcile_tests;
     mod store_tests;
     mod template_tests;
     mod transaction_tests;

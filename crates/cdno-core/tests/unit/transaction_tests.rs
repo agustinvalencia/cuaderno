@@ -364,6 +364,9 @@ impl VaultIndex for FailingIndex {
     fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
         self.inner.list_by_type(note_type)
     }
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.list_all_paths()
+    }
     fn replace_deadlines(
         &self,
         path: &VaultPath,

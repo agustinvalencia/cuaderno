@@ -306,3 +306,39 @@ fn vault_index_is_dyn_compatible_and_send_sync() {
     let (_d, idx) = store();
     let _boxed: Box<dyn VaultIndex> = Box::new(idx);
 }
+
+#[test]
+fn list_all_paths_is_empty_on_fresh_index() {
+    let (_d, idx) = store();
+    assert!(idx.list_all_paths().unwrap().is_empty());
+}
+
+#[test]
+fn list_all_paths_returns_every_inserted_path_sorted() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("projects/b.md", "project"))
+        .unwrap();
+    idx.upsert_note(&sample_note("projects/a.md", "project"))
+        .unwrap();
+    idx.upsert_note(&sample_note("journal/daily/2026-04-19.md", "daily"))
+        .unwrap();
+
+    let paths = idx.list_all_paths().unwrap();
+    assert_eq!(
+        paths,
+        vec![
+            vp("journal/daily/2026-04-19.md"),
+            vp("projects/a.md"),
+            vp("projects/b.md"),
+        ]
+    );
+}
+
+#[test]
+fn list_all_paths_drops_rows_after_remove_note() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("a.md", "daily")).unwrap();
+    idx.upsert_note(&sample_note("b.md", "daily")).unwrap();
+    idx.remove_note(&vp("a.md")).unwrap();
+    assert_eq!(idx.list_all_paths().unwrap(), vec![vp("b.md")]);
+}
