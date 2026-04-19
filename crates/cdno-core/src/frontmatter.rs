@@ -104,6 +104,21 @@ impl Frontmatter {
             Some(value) => deserialise_field(name, value).map(Some),
         }
     }
+
+    /// Serialise the full frontmatter to a `serde_json::Value::Object`.
+    ///
+    /// Used by the index layer to populate the JSON-blob `frontmatter`
+    /// column. YAML scalars that don't have JSON equivalents (e.g.
+    /// native YAML dates) are stringified via serde's default
+    /// conversion.
+    pub fn as_json(&self) -> serde_json::Value {
+        let mut map = serde_json::Map::with_capacity(self.fields.len());
+        for (key, value) in &self.fields {
+            let json_value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
+            map.insert(key.clone(), json_value);
+        }
+        serde_json::Value::Object(map)
+    }
 }
 
 fn deserialise_field<T: DeserializeOwned>(name: &str, value: &Value) -> Result<T, ValidationError> {

@@ -255,6 +255,9 @@ pub trait VaultIndex: Send + Sync {
     fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError>;
     fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError>;
     fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError>;
+    /// Return every path currently in the index. Used by reconciliation
+    /// to find orphans (index rows with no corresponding file on disk).
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError>;
 
     // deadlines -------------------------------------------------------
     fn replace_deadlines(
@@ -347,6 +350,20 @@ impl VaultIndex for SqliteIndex {
         let mut out = Vec::new();
         for row in rows {
             out.push(row??);
+        }
+        Ok(out)
+    }
+
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        let mut stmt = conn.prepare("SELECT path FROM notes ORDER BY path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let path_str = row?;
+            out.push(VaultPath::new(path_str).map_err(|e| {
+                IndexError::Query(format!("invalid stored path in list_all_paths: {e}"))
+            })?);
         }
         Ok(out)
     }
@@ -623,6 +640,13 @@ impl VaultIndex for MemoryIndex {
             .cloned()
             .collect();
         out.sort_by(|a, b| a.path.as_path().cmp(b.path.as_path()));
+        Ok(out)
+    }
+
+    fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<VaultPath> = state.notes.keys().cloned().collect();
+        out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
         Ok(out)
     }
 
