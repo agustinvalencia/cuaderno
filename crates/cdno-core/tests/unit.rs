@@ -5,6 +5,7 @@ mod unit {
     mod fs_store_tests;
     mod index_tests;
     mod markdown_tests;
+    mod memory_index_tests;
     mod memory_store_tests;
     mod path_tests;
     mod store_tests;
