@@ -121,3 +121,29 @@ pub enum TemplateError {
         source: std::io::Error,
     },
 }
+
+/// Errors from [`VaultTransaction::commit`](crate::transaction::VaultTransaction::commit).
+///
+/// The two variants distinguish "vault may be in a transient
+/// inconsistent state" (`FileWrite`) from "vault is correct but the
+/// index is stale" (`IndexStale`). Callers can treat `IndexStale` as
+/// non-fatal: reconciliation on next startup will heal the index.
+#[derive(Debug, thiserror::Error)]
+pub enum TransactionError {
+    /// A file operation failed. Previously-applied file ops were
+    /// rolled back best-effort; `rollback_failures` lists any undo
+    /// steps that themselves failed. On any failure here, startup
+    /// reconciliation will bring the vault back to a consistent
+    /// state on next open.
+    #[error("file write failed: {source}")]
+    FileWrite {
+        source: StoreError,
+        rollback_failures: Vec<StoreError>,
+    },
+
+    /// All file operations succeeded, but one or more index updates
+    /// failed. The vault on disk is correct; the index is stale for
+    /// the affected notes. Reconciliation will heal it.
+    #[error("index stale after successful commit ({} error(s))", .0.len())]
+    IndexStale(Vec<IndexError>),
+}

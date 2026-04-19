@@ -13,3 +13,4 @@ pub mod markdown;
 pub mod path;
 pub mod store;
 pub mod template;
+pub mod transaction;

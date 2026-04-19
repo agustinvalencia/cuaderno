@@ -43,6 +43,11 @@ pub trait VaultStore: Send + Sync {
     /// callers that want to overwrite must delete first.
     fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError>;
 
+    /// Remove a file. Fails with [`StoreError::NotFound`] if the
+    /// file does not exist. Directory removal is out of scope — the
+    /// vault never asks for an empty directory to be cleaned up.
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError>;
+
     /// Report whether a file or directory exists at `path`.
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError>;
 
@@ -135,6 +140,14 @@ impl VaultStore for MemoryVaultStore {
         }
         let file = files.remove(src).expect("presence checked above");
         files.insert(dest.clone(), file);
+        Ok(())
+    }
+
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        let mut files = self.files.lock().expect("poisoned mutex");
+        if files.remove(path).is_none() {
+            return Err(StoreError::NotFound(path.to_string()));
+        }
         Ok(())
     }
 
@@ -336,6 +349,14 @@ impl VaultStore for FsVaultStore {
             fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
         }
         fs::rename(&src_full, &dest_full).map_err(|e| io_to_store_error(e, src))
+    }
+
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        let full = self.resolve(path);
+        // `fs::remove_file` errors with NotFound if the path doesn't
+        // exist; let io_to_store_error translate that into the trait's
+        // contract variant.
+        fs::remove_file(&full).map_err(|e| io_to_store_error(e, path))
     }
 
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {

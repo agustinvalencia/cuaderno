@@ -181,3 +181,18 @@ fn walk_dir_empty_for_unknown_path() {
     let descendants = store.walk_dir(&vp("no/such/tree")).unwrap();
     assert!(descendants.is_empty());
 }
+
+#[test]
+fn delete_file_removes_existing_file() {
+    let store = MemoryVaultStore::new();
+    store.write_file(&vp("note.md"), "content").unwrap();
+    store.delete_file(&vp("note.md")).unwrap();
+    assert!(!store.exists(&vp("note.md")).unwrap());
+}
+
+#[test]
+fn delete_file_fails_when_missing() {
+    let store = MemoryVaultStore::new();
+    let err = store.delete_file(&vp("missing.md")).unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(_)));
+}

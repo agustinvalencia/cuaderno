@@ -230,3 +230,18 @@ fn read_file_on_non_utf8_returns_io_error() {
     let err = store.read_file(&vp("bad.md")).unwrap_err();
     assert!(matches!(err, StoreError::Io { .. }));
 }
+
+#[test]
+fn delete_file_removes_existing_file() {
+    let (dir, store) = store();
+    store.write_file(&vp("note.md"), "content").unwrap();
+    store.delete_file(&vp("note.md")).unwrap();
+    assert!(!dir.path().join("note.md").exists());
+}
+
+#[test]
+fn delete_file_fails_when_missing() {
+    let (_dir, store) = store();
+    let err = store.delete_file(&vp("missing.md")).unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(_)));
+}

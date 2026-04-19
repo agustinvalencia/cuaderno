@@ -30,6 +30,10 @@ impl VaultStore for StubStore {
         unimplemented!()
     }
 
+    fn delete_file(&self, _path: &VaultPath) -> Result<(), StoreError> {
+        unimplemented!()
+    }
+
     fn exists(&self, _path: &VaultPath) -> Result<bool, StoreError> {
         unimplemented!()
     }
