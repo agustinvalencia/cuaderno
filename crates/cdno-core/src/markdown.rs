@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use chrono::NaiveDate;
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::error::{ManipulationError, ParseError};
@@ -222,4 +223,75 @@ fn level_to_u8(level: HeadingLevel) -> u8 {
         HeadingLevel::H5 => 5,
         HeadingLevel::H6 => 6,
     }
+}
+
+/// Extract hard-deadline milestones from a `## Milestones`-style
+/// section body.
+///
+/// Matches lines of the form `- [ ] <title> — hard: YYYY-MM-DD`
+/// (em-dash or plain hyphen before `hard:` are both accepted).
+/// Checked list items (`- [x]`) are skipped — they represent
+/// completed milestones, not pending commitments. Soft milestones
+/// (`target: …`) are skipped because only hard deadlines flow into
+/// the commitments aggregation per `docs/design.md §5.3`.
+///
+/// The date must be a valid calendar date in `YYYY-MM-DD` form; any
+/// other shape, or an impossible date like `2026-02-30`, is silently
+/// dropped so the commitments query never sees a ghost.
+///
+/// Returns pairs of `(title, date_string)` in the order encountered
+/// in the source.
+pub fn extract_hard_deadlines(section: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in section.lines() {
+        if let Some(deadline) = parse_hard_deadline_line(line) {
+            out.push(deadline);
+        }
+    }
+    out
+}
+
+/// Parse one line of a milestones section. Returns the title and
+/// validated date on success; returns `None` for any non-matching
+/// shape (including completed items, soft targets, malformed dates,
+/// and lines that aren't list items at all).
+fn parse_hard_deadline_line(line: &str) -> Option<(String, String)> {
+    // List-item prefix — we only consider unchecked bullets.
+    // Checking `- [x]` explicitly skips completed milestones.
+    let after_marker = line.trim_start().strip_prefix("- [ ] ")?;
+
+    // Must contain `hard:`; split there. Anything to the left is the
+    // candidate title (with a trailing separator to trim), anything
+    // to the right should start with a YYYY-MM-DD date.
+    let hard_idx = after_marker.find("hard:")?;
+    let (before, rest) = after_marker.split_at(hard_idx);
+    let after_hard = rest.strip_prefix("hard:")?.trim_start();
+
+    let date = parse_iso_date_prefix(after_hard)?;
+
+    // The title is whatever precedes `hard:` with trailing whitespace
+    // and em-dash / hyphen separators trimmed. Empty titles are
+    // rejected — a deadline without a label is useless.
+    let title = before
+        .trim_end_matches(|c: char| c.is_whitespace() || c == '-' || c == '—')
+        .trim()
+        .to_owned();
+    if title.is_empty() {
+        return None;
+    }
+
+    Some((title, date))
+}
+
+/// Read a `YYYY-MM-DD` date at the start of `s` and validate it as a
+/// real calendar date. Returns the 10-character slice on success.
+fn parse_iso_date_prefix(s: &str) -> Option<String> {
+    if s.len() < 10 {
+        return None;
+    }
+    let candidate = &s[..10];
+    // `NaiveDate` rejects impossible dates like 2026-02-30, giving us
+    // calendar validation for free alongside the format check.
+    NaiveDate::parse_from_str(candidate, "%Y-%m-%d").ok()?;
+    Some(candidate.to_owned())
 }

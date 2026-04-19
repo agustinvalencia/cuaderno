@@ -1,8 +1,10 @@
 mod unit {
     mod config_tests;
+    mod deadlines_tests;
     mod file_meta_tests;
     mod frontmatter_tests;
     mod fs_store_tests;
+    mod hash_tests;
     mod index_tests;
     mod markdown_tests;
     mod memory_index_tests;
