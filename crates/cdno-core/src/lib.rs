@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod file_meta;
 pub mod frontmatter;
+pub mod index;
 pub mod markdown;
 pub mod path;
 pub mod store;
