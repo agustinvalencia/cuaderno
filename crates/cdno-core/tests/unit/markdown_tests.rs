@@ -206,6 +206,55 @@ content
 }
 
 #[test]
+fn nested_fenced_code_blocks_do_not_leak_fake_headings() {
+    // An outer 4-backtick fence contains a 3-backtick inner fence.
+    // CommonMark closes the outer block only on a line of >= 4
+    // backticks, so headings inside both fences must be invisible
+    // to section lookup. The doc has exactly one real heading,
+    // `## Real`, sitting before the outer fence.
+    let raw = "\
+---
+title: x
+---
+## Real
+before fence
+
+````md
+# Outer fake heading
+
+```python
+def fn(): pass
+```
+
+# Another outer fake
+````
+after fence
+";
+    let doc = MarkdownDocument::parse(raw).unwrap();
+
+    // Neither fake heading is discoverable.
+    assert!(matches!(
+        doc.section("Outer fake heading").unwrap_err(),
+        ManipulationError::SectionNotFound(_)
+    ));
+    assert!(matches!(
+        doc.section("Another outer fake").unwrap_err(),
+        ManipulationError::SectionNotFound(_)
+    ));
+
+    // The real heading's content includes the entire nested-fence
+    // block verbatim plus the trailing text after it.
+    let real = doc.section("Real").unwrap();
+    assert!(real.contains("before fence"));
+    assert!(real.contains("````md"));
+    assert!(real.contains("# Outer fake heading"));
+    assert!(real.contains("```python"));
+    assert!(real.contains("def fn(): pass"));
+    assert!(real.contains("# Another outer fake"));
+    assert!(real.contains("after fence"));
+}
+
+#[test]
 fn multiple_operations_compose() {
     let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
     doc.append_to_section("Milestones", "- [ ] third\n")
