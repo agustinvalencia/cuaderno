@@ -59,6 +59,18 @@ pub enum IndexError {
 
     #[error("index update failed: {0}")]
     Update(String),
+
+    #[error("failed to open index at {path}: {source}")]
+    Open {
+        path: String,
+        source: std::io::Error,
+    },
+
+    #[error("migration {version} failed: {reason}")]
+    Migration { version: u32, reason: String },
+
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
 }
 
 /// Errors from markdown/frontmatter parsing.
