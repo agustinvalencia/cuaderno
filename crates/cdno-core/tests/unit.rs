@@ -12,5 +12,6 @@ mod unit {
     mod path_tests;
     mod store_tests;
     mod template_tests;
+    mod transaction_tests;
     mod vault_index_tests;
 }
