@@ -7,6 +7,7 @@
 //! This module owns connection setup, migrations, the [`VaultIndex`] trait,
 //! and a concrete [`SqliteIndex`] implementation.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -550,4 +551,173 @@ fn row_to_note_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NoteEnt
         frontmatter,
         indexed_at_ns: row.get::<_, i64>(7)? as u64,
     }))
+}
+
+// ---------------------------------------------------------------------
+// MemoryIndex — test-only in-memory implementation of VaultIndex
+// ---------------------------------------------------------------------
+
+/// In-memory [`VaultIndex`] used for fast, deterministic domain tests.
+///
+/// Backed by `Mutex<MemoryIndexState>` (four `HashMap`s) so it satisfies
+/// the trait's `Send + Sync` bound and lets tests share one index by
+/// reference without platform-dependent IO. Production code always
+/// uses [`SqliteIndex`]; having two impls proves the trait abstraction
+/// is real — if domain code silently hard-coded `SqliteIndex`, this
+/// suite would catch it at compile time.
+///
+/// Cross-reference queries (`find_backlinks`, `find_by_tag`,
+/// `deadlines_between`) are O(n) linear scans. That's fine at test-fake
+/// scale; never call it from production.
+#[derive(Debug, Default)]
+pub struct MemoryIndex {
+    state: Mutex<MemoryIndexState>,
+}
+
+/// Internal state: one map per table family, keyed by the source
+/// `VaultPath`. Cascading deletes are implemented by removing the path
+/// from every map in `remove_note`.
+#[derive(Debug, Default)]
+struct MemoryIndexState {
+    notes: HashMap<VaultPath, NoteEntry>,
+    deadlines: HashMap<VaultPath, Vec<DeadlineEntry>>,
+    links: HashMap<VaultPath, Vec<LinkEntry>>,
+    tags: HashMap<VaultPath, Vec<String>>,
+}
+
+impl MemoryIndex {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl VaultIndex for MemoryIndex {
+    fn upsert_note(&self, entry: &NoteEntry) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state.notes.insert(entry.path.clone(), entry.clone());
+        Ok(())
+    }
+
+    fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError> {
+        // No FK engine in memory; mirror `ON DELETE CASCADE` manually
+        // by dropping the path from every facet map.
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state.notes.remove(path);
+        state.deadlines.remove(path);
+        state.links.remove(path);
+        state.tags.remove(path);
+        Ok(())
+    }
+
+    fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        Ok(state.notes.get(path).cloned())
+    }
+
+    fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<NoteEntry> = state
+            .notes
+            .values()
+            .filter(|n| n.note_type == note_type)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.path.as_path().cmp(b.path.as_path()));
+        Ok(out)
+    }
+
+    fn replace_deadlines(
+        &self,
+        path: &VaultPath,
+        deadlines: &[DeadlineEntry],
+    ) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state.deadlines.insert(path.clone(), deadlines.to_vec());
+        Ok(())
+    }
+
+    fn deadlines_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, DeadlineEntry)>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<(VaultPath, DeadlineEntry)> = state
+            .deadlines
+            .iter()
+            .flat_map(|(path, entries)| {
+                entries
+                    .iter()
+                    .filter(|d| d.due_date.as_str() >= from && d.due_date.as_str() <= to)
+                    .map(move |d| (path.clone(), d.clone()))
+            })
+            .collect();
+        // Match SqliteIndex's `ORDER BY due_date`.
+        out.sort_by(|a, b| a.1.due_date.cmp(&b.1.due_date));
+        Ok(out)
+    }
+
+    fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state.links.insert(path.clone(), links.to_vec());
+        Ok(())
+    }
+
+    fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        // Distinct source paths where any link resolves to `path`.
+        // A note with multiple links to the same target still appears
+        // once, matching SqliteIndex's SELECT DISTINCT.
+        let mut seen: Vec<VaultPath> = Vec::new();
+        for (source_path, entries) in state.links.iter() {
+            if entries
+                .iter()
+                .any(|l| l.resolved_path.as_ref() == Some(path))
+                && !seen.contains(source_path)
+            {
+                seen.push(source_path.clone());
+            }
+        }
+        seen.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(seen)
+    }
+
+    fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        // Insertion order preserved, matching SqliteIndex's `ORDER BY id`
+        // (rowids are monotonic with insertion).
+        Ok(state.links.get(path).cloned().unwrap_or_default())
+    }
+
+    fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        // Dedupe in-place to match SqliteIndex's "INSERT OR IGNORE"
+        // against the (note_path, tag) primary key. A duplicate tag
+        // in the caller's input silently becomes a single entry.
+        let mut deduped: Vec<String> = Vec::with_capacity(tags.len());
+        for t in tags {
+            if !deduped.contains(t) {
+                deduped.push(t.clone());
+            }
+        }
+        state.tags.insert(path.clone(), deduped);
+        Ok(())
+    }
+
+    fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<VaultPath> = state
+            .tags
+            .iter()
+            .filter_map(|(path, tags)| {
+                if tags.iter().any(|t| t == tag) {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
 }
