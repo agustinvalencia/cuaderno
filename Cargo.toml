@@ -29,5 +29,9 @@ pulldown-cmark = { version = "0.12", default-features = false }
 # r2d2-sqlite pool lives alongside, commented for future use.
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Non-cryptographic hashing for content-change detection. xxh3 is the
+# only variant we use; feature-gating keeps compile time down.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }

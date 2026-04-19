@@ -15,6 +15,7 @@ thiserror.workspace = true
 chrono.workspace = true
 pulldown-cmark.workspace = true
 rusqlite.workspace = true
+xxhash-rust.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
