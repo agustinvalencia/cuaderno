@@ -1,4 +1,7 @@
-use cdno_core::error::{IndexError, StoreError, ValidationError};
+use cdno_core::error::{
+    IndexError, ManipulationError, ParseError, PathError, StoreError, TransactionError,
+    ValidationError,
+};
 
 /// Errors from domain-level business logic.
 ///
@@ -27,4 +30,16 @@ pub enum DomainError {
 
     #[error(transparent)]
     Index(#[from] IndexError),
+
+    #[error(transparent)]
+    Parse(#[from] ParseError),
+
+    #[error(transparent)]
+    Manipulation(#[from] ManipulationError),
+
+    #[error(transparent)]
+    Transaction(#[from] TransactionError),
+
+    #[error(transparent)]
+    Path(#[from] PathError),
 }
