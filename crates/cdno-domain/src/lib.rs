@@ -5,3 +5,6 @@
 
 pub mod error;
 pub mod note_type;
+pub mod vault;
+
+pub use vault::Vault;
