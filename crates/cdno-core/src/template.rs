@@ -208,10 +208,7 @@ impl TemplateEngine {
             None => format!("{note_type}.md"),
         };
 
-        let path = vault_root
-            .join(".cuaderno")
-            .join("templates")
-            .join(&filename);
+        let path = vault_root.join(crate::paths::TEMPLATES_DIR).join(&filename);
 
         if !path.exists() {
             return Ok(None);

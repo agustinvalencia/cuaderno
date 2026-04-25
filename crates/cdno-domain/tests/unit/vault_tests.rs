@@ -17,7 +17,7 @@ fn sample_moment() -> NaiveDateTime {
 }
 
 fn daily_path() -> VaultPath {
-    VaultPath::new("journal/daily/2026-04-20.md").unwrap()
+    VaultPath::new("journal/2026/daily/2026-04-20.md").unwrap()
 }
 
 fn make_vault() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {

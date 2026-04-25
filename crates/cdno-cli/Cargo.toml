@@ -15,6 +15,9 @@ cdno-core.workspace = true
 cdno-domain.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true

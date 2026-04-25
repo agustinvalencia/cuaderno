@@ -11,6 +11,7 @@ pub mod hash;
 pub mod index;
 pub mod markdown;
 pub mod path;
+pub mod paths;
 pub mod reconcile;
 pub mod store;
 pub mod template;

@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+mod bootstrap;
 mod commands;
 
 #[derive(Debug, Parser)]
