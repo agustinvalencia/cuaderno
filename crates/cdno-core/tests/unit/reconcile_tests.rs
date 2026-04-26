@@ -66,6 +66,86 @@ fn new_file_is_added() {
 }
 
 #[test]
+fn reconcile_indexes_inline_body_tags_alongside_frontmatter_tags() {
+    let (store, index) = fixtures();
+    let raw = "---\ntype: daily\ntitle: Mixed tags\ntags:\n  - frontmatter-tag\n---\n\n\
+        a body with #inline-tag and another #shared\n";
+    store
+        .write_file(&vp("note.md"), raw)
+        .expect("seed mixed-tags note");
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    assert_eq!(report.scanned, 1);
+
+    let frontmatter_hits = index.find_by_tag("frontmatter-tag").unwrap();
+    let inline_hits = index.find_by_tag("inline-tag").unwrap();
+    let shared_hits = index.find_by_tag("shared").unwrap();
+    assert_eq!(frontmatter_hits, vec![vp("note.md")]);
+    assert_eq!(inline_hits, vec![vp("note.md")]);
+    assert_eq!(shared_hits, vec![vp("note.md")]);
+}
+
+#[test]
+fn reconcile_resolves_wikilinks_to_their_target_paths() {
+    let (store, index) = fixtures();
+    seed_note(&store, "notes/foo.md", "daily", "");
+    seed_note(&store, "src.md", "daily", "");
+    // Manually overwrite `src.md` with body that contains wikilinks.
+    let raw = "---\ntype: daily\n---\n\n\
+        unique basename: [[foo]]\n\
+        unresolved: [[never-existed]]\n\
+        with label: [[foo|My Foo]]\n";
+    store.write_file(&vp("src.md"), raw).unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
+    assert_eq!(outgoing.len(), 3, "got: {outgoing:?}");
+
+    let foo_resolved = outgoing
+        .iter()
+        .find(|e| e.target_raw == "foo" && e.label.is_none())
+        .expect("plain `foo` link");
+    assert_eq!(
+        foo_resolved.resolved_path.as_ref(),
+        Some(&vp("notes/foo.md"))
+    );
+
+    let unresolved = outgoing
+        .iter()
+        .find(|e| e.target_raw == "never-existed")
+        .expect("unresolved link recorded");
+    assert!(unresolved.resolved_path.is_none());
+
+    let labelled = outgoing
+        .iter()
+        .find(|e| e.label.as_deref() == Some("My Foo"))
+        .expect("labelled link");
+    assert_eq!(labelled.target_raw, "foo");
+    assert_eq!(labelled.resolved_path.as_ref(), Some(&vp("notes/foo.md")));
+}
+
+#[test]
+fn reconcile_marks_wikilink_unresolved_when_basename_is_ambiguous() {
+    let (store, index) = fixtures();
+    seed_note(&store, "a/foo.md", "daily", "");
+    seed_note(&store, "b/foo.md", "daily", "");
+    let raw = "---\ntype: daily\n---\n\nbody references [[foo]]\n";
+    store.write_file(&vp("src.md"), raw).unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0].target_raw, "foo");
+    assert!(
+        outgoing[0].resolved_path.is_none(),
+        "ambiguous basename must not resolve: {:?}",
+        outgoing[0].resolved_path,
+    );
+}
+
+#[test]
 fn cuaderno_meta_files_are_excluded_from_scan() {
     let (store, index) = fixtures();
     // A real note at vault root.
