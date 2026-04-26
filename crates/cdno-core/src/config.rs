@@ -60,7 +60,7 @@ impl VaultConfig {
     /// Returns the default config if the file does not exist.
     /// Returns an error if the file exists but cannot be read or parsed.
     pub fn load(vault_root: &Path) -> Result<Self, ConfigError> {
-        let config_path = vault_root.join(".cuaderno").join("config.toml");
+        let config_path = vault_root.join(crate::paths::CONFIG_FILE);
 
         if !config_path.exists() {
             return Ok(Self::default());

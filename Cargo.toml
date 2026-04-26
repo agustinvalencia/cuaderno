@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/cdno-core", "crates/cdno-domain"]
+members = ["crates/cdno-core", "crates/cdno-domain", "crates/cdno-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -33,5 +33,20 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # only variant we use; feature-gating keeps compile time down.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# CLI parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Binary-only error glue. Library crates use thiserror; the CLI
+# translates structured errors into human-readable output here.
+anyhow = "1"
+
+# Test fixtures shared across crates.
+tempfile = "3"
+
+# CLI integration testing.
+assert_cmd = "2"
+predicates = "3"
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
+cdno-domain = { path = "crates/cdno-domain" }

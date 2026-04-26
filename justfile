@@ -21,6 +21,22 @@ fmt-check:
 build:
     cargo build --workspace
 
+# Type-check all crates without producing binaries
+check:
+    cargo check --workspace --all-targets
+
+# Install the `cdno` binary into ~/.cargo/bin
+install:
+    cargo install --path crates/cdno-cli --locked
+
+# Remove the installed `cdno` binary
+uninstall:
+    cargo uninstall cdno-cli
+
+# Remove build artefacts
+clean:
+    cargo clean
+
 # Coverage report
 coverage:
     cargo tarpaulin --workspace --out html

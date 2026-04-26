@@ -1,2 +1,7 @@
 ignore:
   - "**/tests/**"
+  # `main.rs` is exercised by `tests/cli.rs` via `assert_cmd`, but
+  # tarpaulin can't instrument subprocesses spawned from integration
+  # tests. The file is a thin clap-dispatch shim — the real logic
+  # lives in the library, which the rest of the suite does cover.
+  - "crates/cdno-cli/src/main.rs"

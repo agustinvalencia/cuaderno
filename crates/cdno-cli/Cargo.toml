@@ -1,0 +1,27 @@
+[package]
+name = "cdno-cli"
+description = "Command-line interface for Cuaderno"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "cdno_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cdno"
+path = "src/main.rs"
+
+[dependencies]
+cdno-core.workspace = true
+cdno-domain.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true

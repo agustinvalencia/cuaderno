@@ -1,0 +1,26 @@
+# Cuaderno vault configuration.
+#
+# This file is loaded on every `cdno` invocation and from MCP/Tauri
+# clients. Defaults below match the in-binary fallbacks — feel free
+# to delete entries you don't need.
+
+[vault]
+name = "My Vault"
+max_active_projects = 5
+
+# [schemas.<note-type>] — extend the built-in schema with vault-specific
+# required frontmatter fields. One section per note type.
+#
+# [schemas.project]
+# extra_required = ["owner"]
+
+# [variables] — static template variables, expanded literally on use.
+#
+# [variables]
+# author = "Your Name"
+
+# [variables.prompt] — variables resolved interactively at note creation.
+# The string is the prompt shown to the user.
+#
+# [variables.prompt]
+# subject = "What is this note about?"

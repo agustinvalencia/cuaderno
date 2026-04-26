@@ -116,10 +116,9 @@ impl Vault {
 }
 
 /// Vault-relative path for a daily note of the given date —
-/// `journal/daily/YYYY-MM-DD.md`.
+/// `journal/<year>/daily/YYYY-MM-DD.md`.
 fn daily_note_path(date: NaiveDate) -> Result<VaultPath, DomainError> {
-    let rel = format!("journal/daily/{}.md", date.format("%Y-%m-%d"));
-    Ok(VaultPath::new(rel)?)
+    Ok(VaultPath::new(cdno_core::paths::daily_note_relpath(date))?)
 }
 
 /// Render one log line in the canonical `- **HH:MM**: text` form.
