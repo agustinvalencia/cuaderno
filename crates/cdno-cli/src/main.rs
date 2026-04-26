@@ -44,6 +44,12 @@ enum Commands {
 
     /// Validate every indexed note and report frontmatter problems.
     Lint,
+
+    /// Capture a quick note into `inbox/` with a slug-based filename.
+    Capture {
+        /// The note text. Quote if it contains spaces.
+        text: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -68,6 +74,10 @@ fn main() -> Result<()> {
         Commands::Lint => {
             let root = discover_vault_root_or_error()?;
             commands::lint::run(&root)
+        }
+        Commands::Capture { text } => {
+            let root = discover_vault_root_or_error()?;
+            commands::capture::run(&root, Local::now().naive_local(), &text)
         }
     }
 }
