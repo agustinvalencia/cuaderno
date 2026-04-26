@@ -29,6 +29,8 @@ use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 
+mod capture;
+mod index_entry;
 mod lint;
 mod log;
 

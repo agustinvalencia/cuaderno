@@ -1,18 +1,14 @@
 //! `Vault::log_to_daily_note` and the helpers it needs.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
-use cdno_core::frontmatter::Frontmatter;
-use cdno_core::hash::content_hash;
-use cdno_core::index::NoteEntry;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 
 use super::Vault;
+use super::index_entry::build_index_entry_for;
 
 /// The heading used for the log subsection in a daily note.
 const DAILY_LOGS_SECTION: &str = "Logs";
@@ -51,7 +47,7 @@ impl Vault {
 
         // Rebuild the index row from the new content so the committed
         // transaction leaves file + index in sync.
-        let entry_meta = build_daily_note_entry(&path, &new_content)?;
+        let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
 
         let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
@@ -86,27 +82,4 @@ fn scaffold_daily_note(date: NaiveDate, first_log_line: &str) -> String {
         heading = date.format("%A, %-d %B %Y"),
         section = DAILY_LOGS_SECTION,
     )
-}
-
-/// Build the [`NoteEntry`] row that should go into the index for a
-/// freshly-written daily note. Timestamps use `SystemTime::now()` —
-/// close enough to the post-write filesystem mtime for reconciliation
-/// to treat the row as up-to-date on the next pass.
-fn build_daily_note_entry(path: &VaultPath, content: &str) -> Result<NoteEntry, DomainError> {
-    let (fm, _body) = Frontmatter::parse(content)?;
-    let now_ns = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-
-    Ok(NoteEntry {
-        path: path.clone(),
-        note_type: "daily".to_owned(),
-        title: None,
-        content_hash: content_hash(content),
-        mtime_ns: now_ns,
-        size: content.len() as u64,
-        frontmatter: fm.as_json(),
-        indexed_at_ns: now_ns,
-    })
 }
