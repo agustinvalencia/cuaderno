@@ -1,27 +1,19 @@
-//! Integration tests for `cdno init`.
+//! In-process tests for `commands::init::run`.
 //!
-//! Each test runs the freshly built `cdno` binary against a temp dir
-//! via `assert_cmd`, then inspects the resulting tree. Year-partitioned
-//! directories are computed from the wall clock so the assertions
-//! match the same logic the binary uses.
+//! Calls the library function directly against a tempdir so coverage
+//! is tracked. Binary-level concerns (exit codes, CWD defaulting,
+//! argument parsing) live in `tests/cli.rs` instead.
 
 use std::fs;
 
-use assert_cmd::Command;
+use cdno_cli::commands::init;
 use chrono::{Datelike, Local};
-use predicates::prelude::*;
 use tempfile::tempdir;
 
-/// Source-of-truth copy of the embedded `daily.md`. Used to verify
-/// the binary writes a byte-identical file at init time.
 const EMBEDDED_DAILY: &str = include_str!("../templates/daily.md");
 
-fn cdno() -> Command {
-    Command::cargo_bin("cdno").expect("cdno binary built")
-}
-
 #[test]
-fn init_creates_full_directory_tree_with_current_year_partitions() {
+fn run_creates_full_directory_tree_with_current_year_partitions() {
     let dir = tempdir().unwrap();
     let target = dir.path();
 
@@ -29,7 +21,7 @@ fn init_creates_full_directory_tree_with_current_year_partitions() {
     let year = now.year();
     let iso_year = now.iso_week().year();
 
-    cdno().arg("init").arg(target).assert().success();
+    init::run(target).expect("init succeeds on fresh dir");
 
     let exists = |rel: &str| target.join(rel).is_dir();
     assert!(exists(&format!("journal/{year}/daily")));
@@ -48,9 +40,9 @@ fn init_creates_full_directory_tree_with_current_year_partitions() {
 }
 
 #[test]
-fn init_writes_default_config_with_five_project_cap() {
+fn run_writes_default_config_with_five_project_cap() {
     let dir = tempdir().unwrap();
-    cdno().arg("init").arg(dir.path()).assert().success();
+    init::run(dir.path()).unwrap();
 
     let config =
         fs::read_to_string(dir.path().join(".cuaderno/config.toml")).expect("config.toml present");
@@ -59,9 +51,9 @@ fn init_writes_default_config_with_five_project_cap() {
 }
 
 #[test]
-fn init_dumps_daily_template_byte_identical_to_embedded() {
+fn run_dumps_daily_template_byte_identical_to_embedded() {
     let dir = tempdir().unwrap();
-    cdno().arg("init").arg(dir.path()).assert().success();
+    init::run(dir.path()).unwrap();
 
     let dumped = fs::read_to_string(dir.path().join(".cuaderno/templates/daily.md"))
         .expect("daily.md dumped");
@@ -69,27 +61,23 @@ fn init_dumps_daily_template_byte_identical_to_embedded() {
 }
 
 #[test]
-fn init_refuses_when_cuaderno_dir_already_exists() {
+fn run_refuses_when_cuaderno_dir_already_exists() {
     let dir = tempdir().unwrap();
-    cdno().arg("init").arg(dir.path()).assert().success();
+    init::run(dir.path()).unwrap();
 
-    cdno()
-        .arg("init")
-        .arg(dir.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("already exists"));
+    let err = init::run(dir.path()).expect_err("re-init must fail");
+    let msg = format!("{err}");
+    assert!(msg.contains("already exists"), "unexpected error: {msg}");
 }
 
 #[test]
-fn init_with_no_path_arg_uses_current_working_directory() {
+fn run_creates_target_directory_when_missing() {
     let dir = tempdir().unwrap();
+    let target = dir.path().join("nested-vault");
+    assert!(!target.exists(), "precondition: target absent");
 
-    cdno()
-        .current_dir(dir.path())
-        .arg("init")
-        .assert()
-        .success();
+    init::run(&target).expect("init creates missing parent");
 
-    assert!(dir.path().join(".cuaderno/config.toml").is_file());
+    assert!(target.join(".cuaderno").is_dir());
+    assert!(target.join("inbox").is_dir());
 }

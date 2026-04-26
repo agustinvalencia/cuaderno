@@ -1,18 +1,15 @@
 //! `cdno` — command-line interface for Cuaderno vaults.
 //!
-//! `main` parses arguments and dispatches to a subcommand handler.
-//! Commands that operate on an existing vault open it through the
-//! bootstrap helper (FsVaultStore + SqliteIndex + reconciliation);
-//! `init` is the exception, since it creates the vault rather than
-//! opening one.
+//! Thin shim: parses arguments, resolves the path arg (None → CWD),
+//! and delegates to a library handler. All real work lives in
+//! [`cdno_cli`].
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-mod bootstrap;
-mod commands;
+use cdno_cli::commands;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -37,6 +34,13 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Init { path } => commands::init::run(path.as_deref()),
+        Commands::Init { path } => {
+            let target = match path {
+                Some(p) => p,
+                None => std::env::current_dir()
+                    .context("could not determine the current working directory")?,
+            };
+            commands::init::run(&target)
+        }
     }
 }

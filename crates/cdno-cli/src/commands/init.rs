@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use cdno_core::paths;
@@ -20,14 +20,14 @@ const DEFAULT_CONFIG_TOML: &str = include_str!("../../templates/default_config.t
 const DEFAULT_TEMPLATES: &[(&str, &str)] =
     &[("daily.md", include_str!("../../templates/daily.md"))];
 
-pub fn run(path: Option<&Path>) -> Result<()> {
-    let target: PathBuf = match path {
-        Some(p) => p.to_path_buf(),
-        None => {
-            std::env::current_dir().context("could not determine the current working directory")?
-        }
-    };
-
+/// Initialise a Cuaderno vault rooted at `target`. The directory
+/// itself is created if needed; refuses if `.cuaderno/` already
+/// exists, since re-init is destructive.
+///
+/// CWD-as-default lives in `main.rs`: this function takes whatever
+/// path the caller resolved, so it never touches process-global
+/// state and unit tests can run in parallel.
+pub fn run(target: &Path) -> Result<()> {
     // Refuse loudly rather than silently overwriting. Re-init is an
     // explicit destructive action — the user must remove `.cuaderno/`
     // by hand to opt in.
@@ -64,7 +64,9 @@ pub fn run(path: Option<&Path>) -> Result<()> {
     // the original path if the canonical form is unavailable (e.g. the
     // user supplied a path that points at a freshly created dir on a
     // case-insensitive filesystem).
-    let display = target.canonicalize().unwrap_or(target);
+    let display = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
     println!("Initialised Cuaderno vault at {}", display.display());
 
     Ok(())

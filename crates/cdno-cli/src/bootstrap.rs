@@ -3,11 +3,7 @@
 //!
 //! Every subcommand that operates on an existing vault opens it
 //! through here. `init` is the exception — it creates the vault
-//! rather than opening one. Until #22 lands additional subcommands,
-//! the helpers below are unused at the binary entry point; the
-//! `dead_code` suppression goes away as soon as a caller exists.
-
-#![allow(dead_code)]
+//! rather than opening one.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
