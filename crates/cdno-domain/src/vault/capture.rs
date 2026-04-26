@@ -20,9 +20,11 @@ const SLUG_MAX_WORDS: usize = 6;
 /// limits.
 const SLUG_MAX_CHARS: usize = 50;
 
-/// Safety bound on the collision-counter loop, so a misbehaving store
-/// can't hang `capture_to_inbox` forever.
-const COLLISION_LIMIT: u32 = 1000;
+/// Safety bound on the collision-counter loop. 100 same-day captures
+/// with the same first six words is already a misuse — the user is
+/// better off seeing an explicit error than waiting on an unbounded
+/// retry loop.
+const COLLISION_LIMIT: u32 = 100;
 
 impl Vault {
     /// Capture a quick note into `inbox/`. Returns the vault-relative

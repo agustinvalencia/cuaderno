@@ -161,6 +161,35 @@ fn capture_trims_leading_and_trailing_whitespace_in_the_body() {
 }
 
 #[test]
+fn capture_errors_when_the_collision_safety_limit_is_exhausted() {
+    // Pre-populate every available slot for `(date, slug)` up to the
+    // counter cap so the next capture call hits the safety bound.
+    // The cap matches `COLLISION_LIMIT` in `vault/capture.rs`; if
+    // that constant changes, this loop must too.
+    let (vault, store) = make_vault();
+    const LIMIT: u32 = 100;
+    for n in 1..LIMIT {
+        let path = if n == 1 {
+            VaultPath::new("inbox/2026-04-26-x.md").unwrap()
+        } else {
+            VaultPath::new(format!("inbox/2026-04-26-x-{n}.md")).unwrap()
+        };
+        store
+            .write_file(&path, "---\ntype: inbox\n---\n")
+            .expect("seed inbox slot");
+    }
+
+    let err = vault
+        .capture_to_inbox(moment(), "x")
+        .expect_err("collision limit must be reachable");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("inbox/2026-04-26-x"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
 fn capture_upserts_the_index_so_lint_can_see_the_note() {
     let (vault, _) = make_vault();
     vault.capture_to_inbox(moment(), "indexed note").unwrap();
