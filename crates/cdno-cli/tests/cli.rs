@@ -42,3 +42,51 @@ fn init_with_no_path_arg_uses_current_working_directory() {
 
     assert!(dir.path().join(".cuaderno/config.toml").is_file());
 }
+
+#[test]
+fn log_discovers_the_vault_root_when_run_from_a_subdirectory() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path().join("inbox"))
+        .args(["log", "ran from a subdir", "--at", "2026-04-25T09:00:00"])
+        .assert()
+        .success();
+
+    assert!(
+        dir.path()
+            .join("journal/2026/daily/2026-04-25.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn lint_exits_nonzero_with_summary_on_stderr_when_issues_found() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("bogus.md"),
+        "---\ntype: nonsense\n---\n# Body\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1 lint issue"));
+}
+
+#[test]
+fn log_errors_clearly_when_run_outside_any_vault() {
+    let dir = tempdir().unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["log", "anything"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not inside a Cuaderno vault"));
+}
