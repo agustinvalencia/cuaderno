@@ -85,10 +85,12 @@ pub fn reconcile(
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 
     // Phase 1: walk the filesystem, ensure every `.md` is correctly
-    // reflected in the index.
+    // reflected in the index. The full path set is threaded into
+    // `reconcile_one` so wikilink resolution can do its
+    // exact-then-basename lookup without extra index calls.
     for path in &fs_md_paths {
         report.scanned += 1;
-        match reconcile_one(store, index, path) {
+        match reconcile_one(store, index, path, &fs_set) {
             Ok(Outcome::Added) => report.added += 1,
             Ok(Outcome::Updated) => report.updated += 1,
             Ok(Outcome::Skipped) => {}
@@ -142,6 +144,7 @@ fn reconcile_one(
     store: &Arc<dyn VaultStore>,
     index: &Arc<dyn VaultIndex>,
     path: &VaultPath,
+    vault_paths: &HashSet<VaultPath>,
 ) -> Result<Outcome, String> {
     // Read content up-front: we need it to hash, and we'll also need
     // it to parse for added/updated notes. A single read is cheaper
@@ -178,12 +181,26 @@ fn reconcile_one(
         .optional_field::<String>("title")
         .map_err(|e| format!("invalid `title` field: {e}"))?;
 
-    // Frontmatter `tags:` list. Inline body-scanned `#tag` and
-    // wikilink extraction are deferred to a follow-up task.
-    let tags: Vec<String> = frontmatter
+    // Frontmatter `tags:` list, then merge with body-scanned inline
+    // tags. The extractor returns an already-deduped sorted list; the
+    // merge path here keeps the order stable across reconcile passes
+    // so the `note_tags` table doesn't churn.
+    let frontmatter_tags: Vec<String> = frontmatter
         .optional_field::<Vec<String>>("tags")
         .map_err(|e| format!("invalid `tags` field: {e}"))?
         .unwrap_or_default();
+    let inline_tags = crate::extractors::extract_inline_tags(body);
+    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    tag_set.extend(frontmatter_tags);
+    tag_set.extend(inline_tags);
+    let tags: Vec<String> = tag_set.into_iter().collect();
+
+    // Body-scanned wikilinks resolved against the current vault path
+    // set. Resolution staleness is bounded by the next reconcile pass
+    // (every Vault::new) — see `extractors::resolve_wikilinks` for
+    // the exact-then-basename policy.
+    let raw_links = crate::extractors::extract_wikilinks(body);
+    let links = crate::extractors::resolve_wikilinks(raw_links, vault_paths);
 
     // Project-type notes contribute deadlines via `## Milestones`.
     // Other types skip this even if they happen to have a section of
@@ -215,6 +232,7 @@ fn reconcile_one(
     tx.upsert_note(entry);
     tx.replace_deadlines(path.clone(), deadlines);
     tx.replace_tags(path.clone(), tags);
+    tx.replace_links(path.clone(), links);
     tx.commit().map_err(|e| format!("commit failed: {e}"))?;
 
     Ok(outcome)

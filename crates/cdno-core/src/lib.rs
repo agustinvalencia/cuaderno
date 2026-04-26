@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod extractors;
 pub mod file_meta;
 pub mod frontmatter;
 pub mod hash;

@@ -1,6 +1,7 @@
 mod unit {
     mod config_tests;
     mod deadlines_tests;
+    mod extractors_tests;
     mod file_meta_tests;
     mod frontmatter_tests;
     mod fs_store_tests;
