@@ -90,3 +90,27 @@ fn log_errors_clearly_when_run_outside_any_vault() {
         .failure()
         .stderr(predicate::str::contains("not inside a Cuaderno vault"));
 }
+
+#[test]
+fn capture_creates_an_inbox_file_when_run_from_inside_a_vault() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["capture", "small thought from the cli"])
+        .assert()
+        .success();
+
+    let inbox = std::fs::read_dir(dir.path().join("inbox")).unwrap();
+    let captured: Vec<_> = inbox
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "md").unwrap_or(false))
+        .collect();
+    assert_eq!(captured.len(), 1, "expected exactly one inbox note");
+    let name = captured[0].file_name().into_string().unwrap();
+    assert!(
+        name.contains("small-thought-from-the-cli"),
+        "filename: {name}"
+    );
+}
