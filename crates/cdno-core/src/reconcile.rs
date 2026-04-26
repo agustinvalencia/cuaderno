@@ -76,6 +76,11 @@ pub fn reconcile(
     let fs_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
+        // `.cuaderno/` is the vault's meta directory — config,
+        // templates, index database. Its contents are infrastructure,
+        // not notes; indexing them would mean e.g. the dumped daily
+        // template surfacing in "all daily notes" queries.
+        .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
         .collect();
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 

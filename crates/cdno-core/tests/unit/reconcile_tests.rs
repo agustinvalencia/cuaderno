@@ -5,6 +5,7 @@ use cdno_core::index::{DeadlineEntry, LinkEntry, MemoryIndex, NoteEntry, VaultIn
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use serde_json::json;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -61,6 +62,62 @@ fn new_file_is_added() {
     assert_eq!(
         entry.title.as_deref(),
         Some("journal/daily/2026-04-19.md title")
+    );
+}
+
+#[test]
+fn cuaderno_meta_files_are_excluded_from_scan() {
+    let (store, index) = fixtures();
+    // A real note at vault root.
+    seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
+    // A markdown file under the meta directory — must be invisible
+    // to the indexer even though its extension and frontmatter type
+    // would otherwise match a real note.
+    seed_note(&store, ".cuaderno/templates/daily.md", "daily", "");
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    assert_eq!(report.scanned, 1, "only the real note should be scanned");
+    assert_eq!(report.added, 1);
+    assert!(
+        index
+            .find_by_path(&vp(".cuaderno/templates/daily.md"))
+            .unwrap()
+            .is_none(),
+        "meta files must not appear in the index"
+    );
+}
+
+#[test]
+fn stale_cuaderno_index_row_is_removed_as_orphan() {
+    // Simulates upgrading from a buggy version: an old index row
+    // points at a `.cuaderno/templates/*.md` file that's still on
+    // disk. Reconciliation now skips the file during the walk, so
+    // the row has no fs counterpart and must be cleaned up.
+    let (store, index) = fixtures();
+    seed_note(&store, ".cuaderno/templates/daily.md", "daily", "");
+    index
+        .upsert_note(&NoteEntry {
+            path: vp(".cuaderno/templates/daily.md"),
+            note_type: "daily".into(),
+            title: None,
+            content_hash: "stale".into(),
+            mtime_ns: 0,
+            size: 0,
+            frontmatter: json!({}),
+            indexed_at_ns: 0,
+        })
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    assert_eq!(report.scanned, 0);
+    assert_eq!(report.removed, 1);
+    assert!(
+        index
+            .find_by_path(&vp(".cuaderno/templates/daily.md"))
+            .unwrap()
+            .is_none(),
     );
 }
 
