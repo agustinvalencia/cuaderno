@@ -336,7 +336,7 @@ PDE families. Gap widens on turbulent flows specifically.
 ```markdown
 ---
 type: stewardship
-context: home-family
+context: household
 ---
 
 # Finances
@@ -494,6 +494,24 @@ Polisen website.
 ```
 
 **Lifecycle**: lives in `commitments/` while active. Moves to `commitments/_done/` on completion. The `project` and `stewardship` fields are null for standalone commitments, or link to the relevant source for commitments that originate elsewhere (though those are typically tracked inline as milestone dates or periodic commitments rather than as separate files).
+
+### 5.10 Contexts
+
+Contexts classify projects, stewardships, and commitments by life domain. The canonical set is defined in code as a Rust enum and serialised as kebab-case in YAML frontmatter and CLI flags:
+
+| Variant        | YAML / CLI form  |
+|----------------|------------------|
+| `Work`         | `work`           |
+| `SideProject`  | `side-project`   |
+| `University`   | `university`     |
+| `Family`       | `family`         |
+| `Household`    | `household`      |
+| `Legal`        | `legal`          |
+| `Personal`     | `personal`       |
+
+**Why a compile-time enum and not config-driven.** Contexts are part of the system's core ontology — orientation, weekly review, and dashboards branch on context, and an exhaustive enum gives those code paths compile-time guarantees. This matches the same "make illegal states unrepresentable" choice made for `ProjectStatus` and `NoteType`. Configurable per-type *fields* (via `extra_required`) extend the schema; configurable contexts would change the *valid values* of a closed enum, which has a much wider blast radius across queries and views.
+
+**Future-proofing.** If real users need contexts the canonical set does not cover, the migration path is local: promote `Context` to a newtype around a validated string whose `TryFrom` checks against a config-defined set. That change touches one struct and one impl. Tracked as a low-priority follow-up (see GitHub issue) so it isn't lost.
 
 -----
 
@@ -877,7 +895,7 @@ cdno portfolio show sparse-vs-dense-ood
 ```bash
 cdno stewardship create "Health" --context personal --tracking
                          # Create expanded stewardship with tracking/
-cdno stewardship create "Home Maintenance" --context home-family
+cdno stewardship create "Home Maintenance" --context household
                          # Create flat stewardship
 cdno track gym --routine upper-body-a
                          # Scaffold gym tracking note, open for editing
@@ -1042,7 +1060,7 @@ The default view on launch. Shows:
 - **Energy selector**: deep / medium / light toggle that filters next actions across project cards
 - **Start button**: logs the selected action to today’s daily entry and opens the relevant file/notebook
 
-Design: calm, spacious, no red. Commitments use subtle colour coding (work/personal/home-family), not urgency colours.
+Design: calm, spacious, no red. Commitments use subtle colour coding by context (see §5.10), not urgency colours.
 
 ### Weekly Review
 
@@ -1074,7 +1092,7 @@ For deep-work sessions:
 ### Commitments Timeline
 
 - **Date-sorted** vertical timeline of all deadlines from all sources
-- **Colour-coded** by source context (work/personal/home-family)
+- **Colour-coded** by source context (see §5.10)
 - **Filterable** by context
 - **Source links**: each item links to its origin (project map, stewardship, standalone note)
 
