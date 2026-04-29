@@ -34,6 +34,7 @@ mod index_entry;
 mod lint;
 mod log;
 mod projects;
+mod slug;
 
 /// Domain entry point. Owns the store, index, and config; hands out
 /// transactions; exposes high-level operations defined in feature
