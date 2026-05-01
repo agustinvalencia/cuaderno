@@ -7,7 +7,7 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
+use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -566,4 +566,408 @@ fn update_project_state_is_noop_when_state_unchanged() {
     );
     let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
     assert_eq!(raw, body, "noop must not rewrite the project file");
+}
+
+// ---------------------------------------------------------------------
+// add_action
+// ---------------------------------------------------------------------
+
+fn project_body_with_actions(
+    context: &str,
+    status: &str,
+    created: &str,
+    title: &str,
+    actions_section: &str,
+) -> String {
+    format!(
+        "---\ntype: project\ncontext: {context}\nstatus: {status}\ncreated: {created}\n---\n\n# {title}\n\n## Current State\nInitial.\n\n## Next Actions\n{actions_section}\n## Waiting On\n(nothing)\n",
+    )
+}
+
+#[test]
+fn add_action_appends_bullet_with_energy_tag() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Existing step (light)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "icml-paper",
+            "Run feature set B",
+            EnergyLevel::Deep,
+        )
+        .expect("add_action succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] Existing step (light)"),
+        "old action preserved:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Run feature set B (deep)"),
+        "new action present:\n{raw}"
+    );
+}
+
+#[test]
+fn add_action_logs_addition_to_daily_note() {
+    let body = project_body_with_actions("work", "active", "2026-04-01", "ICML paper", "");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "icml-paper",
+            "Email supervisor",
+            EnergyLevel::Light,
+        )
+        .expect("add_action succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("- **14:00**: action added to [[icml-paper]] — Email supervisor (light)"),
+        "missing log line:\n{daily}"
+    );
+}
+
+#[test]
+fn add_action_preserves_other_sections() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Existing (light)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "icml-paper",
+            "New",
+            EnergyLevel::Medium,
+        )
+        .expect("add_action succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains("## Current State"));
+    assert!(raw.contains("Initial."));
+    assert!(raw.contains("## Waiting On"));
+}
+
+#[test]
+fn add_action_errors_when_project_parked() {
+    let body = project_body_with_actions(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Old",
+        "- [ ] Step (light)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .add_action(dt(2026, 5, 1, 14, 0), "old", "anything", EnergyLevel::Deep)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn add_action_errors_when_project_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "ghost",
+            "anything",
+            EnergyLevel::Deep,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn add_action_errors_when_next_actions_section_missing() {
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n";
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
+
+    let err = vault
+        .add_action(dt(2026, 5, 1, 14, 0), "x", "anything", EnergyLevel::Deep)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::Manipulation(_)), "got {err:?}");
+}
+
+// ---------------------------------------------------------------------
+// complete_action
+// ---------------------------------------------------------------------
+
+#[test]
+fn complete_action_removes_matching_line_and_logs() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Run feature set B (deep)\n- [ ] Draft methods (medium)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_action(dt(2026, 5, 1, 16, 30), "icml-paper", "feature set B")
+        .expect("complete_action succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        !raw.contains("Run feature set B"),
+        "removed line still present:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Draft methods (medium)"),
+        "other action lost:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("- **16:30**: action done on [[icml-paper]] — Run feature set B (deep)"),
+        "missing log line:\n{daily}"
+    );
+}
+
+#[test]
+fn complete_action_matches_substring_case_insensitively() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Run feature set B (deep)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    // Lowercase substring of the action text — must match.
+    vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "feature")
+        .expect("case-insensitive substring matches");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(!raw.contains("Run feature set B"));
+}
+
+#[test]
+fn complete_action_ignores_already_checked_lines() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [x] Already done (light)\n- [ ] Still open (deep)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "Already done")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ActionNotFound { .. }),
+        "closed lines must not match: got {err:?}"
+    );
+
+    // Now match the open one — the closed line must not appear in
+    // candidate consideration (no ambiguity error from it).
+    vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "Still open")
+        .expect("open line still matchable");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        raw.contains("- [x] Already done (light)"),
+        "closed line preserved:\n{raw}"
+    );
+}
+
+#[test]
+fn complete_action_errors_when_action_not_found() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Existing (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "ghost")
+        .unwrap_err();
+    match err {
+        DomainError::ActionNotFound { slug, query } => {
+            assert_eq!(slug, "icml-paper");
+            assert_eq!(query, "ghost");
+        }
+        other => panic!("expected ActionNotFound, got {other:?}"),
+    }
+}
+
+#[test]
+fn complete_action_errors_when_match_is_ambiguous() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Run baseline ablation (deep)\n- [ ] Run sparse ablation (deep)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "ablation")
+        .unwrap_err();
+    match err {
+        DomainError::AmbiguousAction {
+            slug,
+            query,
+            candidates,
+        } => {
+            assert_eq!(slug, "icml-paper");
+            assert_eq!(query, "ablation");
+            assert_eq!(candidates.len(), 2);
+            assert!(candidates.iter().any(|c| c.contains("baseline")));
+            assert!(candidates.iter().any(|c| c.contains("sparse")));
+        }
+        other => panic!("expected AmbiguousAction, got {other:?}"),
+    }
+}
+
+#[test]
+fn complete_action_errors_when_project_parked() {
+    let body = project_body_with_actions(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Old",
+        "- [ ] Anything (light)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "old", "Anything")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn complete_action_handles_action_without_energy_suffix() {
+    // Manually-edited project with a bullet that has no `(<energy>)`
+    // tag — match should still work, and the log entry preserves the
+    // text verbatim (no synthetic suffix).
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] Bare action with no energy\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "Bare action")
+        .expect("untagged actions are still matchable");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **16:00**: action done on [[icml-paper]] — Bare action with no energy"),
+        "log entry must preserve verbatim text:\n{daily}"
+    );
+}
+
+#[test]
+fn add_action_errors_when_status_mismatches_folder() {
+    // Same defensive check as update_project_state — file lives at
+    // projects/<slug>.md but frontmatter says parked. Frontmatter
+    // wins; refuse the mutation.
+    let body = project_body_with_actions(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Mismatched",
+        "- [ ] Step (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/mismatched.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .add_action(dt(2026, 5, 1, 14, 0), "mismatched", "X", EnergyLevel::Deep)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn complete_action_preserves_other_sections() {
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "- [ ] One (deep)\n- [ ] Two (light)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "One")
+        .expect("complete_action succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains("## Current State"));
+    assert!(raw.contains("Initial."));
+    assert!(raw.contains("## Waiting On"));
+    assert!(
+        raw.contains("- [ ] Two (light)"),
+        "other action preserved:\n{raw}"
+    );
 }

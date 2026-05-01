@@ -22,7 +22,7 @@ use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
+use crate::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::Vault;
@@ -33,6 +33,10 @@ use super::slug::slugify;
 /// Rewritten by `update_project_state`; the previous body is
 /// auto-logged to the daily note before being replaced.
 const CURRENT_STATE_SECTION: &str = "Current State";
+
+/// The heading whose body holds the project's open action checklist.
+/// Mutated by `add_action` (append) and `complete_action` (remove).
+const NEXT_ACTIONS_SECTION: &str = "Next Actions";
 
 /// Built-in project map template. Custom templates from
 /// `.cuaderno/templates/project.md` will override this once the
@@ -211,6 +215,167 @@ impl Vault {
 
         Ok(path)
     }
+
+    /// Append a next action to an active project, also recording the
+    /// addition in today's daily log so a planning session leaves a
+    /// trace.
+    ///
+    /// The new line takes the form `- [ ] <action> (<energy>)`, placed
+    /// at the end of the `## Next Actions` section. Section formatting
+    /// is normalised — a single newline separates the new bullet from
+    /// the previous content, and the section ends with a blank line so
+    /// the next heading stays cleanly separated.
+    ///
+    /// Errors mirror `update_project_state`: parked → `ProjectNotActive`,
+    /// missing → `Store(NotFound)`, missing section → `Manipulation`.
+    pub fn add_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+        energy: EnergyLevel,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let action_text = action.trim();
+        let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
+
+        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end_matches('\n');
+        // Drop trailing blank lines so the new bullet sits flush with
+        // the existing list. `trim_end_matches('\n')` keeps internal
+        // indentation, blank lines between bullets stay where the
+        // user authored them.
+        let trimmed = existing.trim_end();
+        let new_section = if trimmed.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{trimmed}\n{bullet}\n\n")
+        };
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format_action_added_log_entry(slug, action_text, energy);
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Remove an open action from an active project, logging the
+    /// completion to today's daily note. Closed `- [x]` lines are
+    /// ignored — only `- [ ]` bullets are candidates, because a
+    /// closed line was already manually checked and shouldn't be
+    /// silently swept away by a substring query.
+    ///
+    /// `query` is matched case-insensitively as a substring against
+    /// each open action's text (the `(<energy>)` suffix is stripped
+    /// before matching). Zero matches → `ActionNotFound`. More than
+    /// one match → `AmbiguousAction` carrying the candidate texts so
+    /// the user can re-query with enough context to disambiguate.
+    pub fn complete_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let needle = query.trim().to_lowercase();
+
+        let mut matches: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(text) = parse_open_action_text(line)
+                && strip_energy_suffix(text).to_lowercase().contains(&needle)
+            {
+                matches.push(i);
+            }
+        }
+
+        if matches.is_empty() {
+            return Err(DomainError::ActionNotFound {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+            });
+        }
+        if matches.len() > 1 {
+            let candidates = matches
+                .iter()
+                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
+                .collect();
+            return Err(DomainError::AmbiguousAction {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+                candidates,
+            });
+        }
+
+        let removed_idx = matches[0];
+        let removed_full_text = parse_open_action_text(lines[removed_idx])
+            .expect("matched line was previously parseable")
+            .to_owned();
+
+        let kept: Vec<&str> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| if i == removed_idx { None } else { Some(*l) })
+            .collect();
+        let new_section = kept.join("\n");
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format_action_done_log_entry(slug, &removed_full_text);
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Resolve a project slug to its active file plus parsed
+    /// markdown, or surface the right error when it isn't active.
+    /// Used by every mutation that operates on the project body.
+    fn resolve_active_project(
+        &self,
+        slug: &str,
+    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+
+        let path = if self.store.exists(&active_path)? {
+            active_path
+        } else if self.store.exists(&parked_path)? {
+            return Err(DomainError::ProjectNotActive(slug.to_owned()));
+        } else {
+            return Err(DomainError::Store(StoreError::NotFound(
+                active_path.to_string(),
+            )));
+        };
+
+        let raw = self.store.read_file(&path)?;
+        let doc = MarkdownDocument::parse(raw)?;
+        // Defensive frontmatter check — manual edits could put a
+        // non-active project under projects/. Frontmatter wins.
+        let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
+        if project.status != ProjectStatus::Active {
+            return Err(DomainError::ProjectNotActive(slug.to_owned()));
+        }
+
+        Ok((path, doc))
+    }
 }
 
 /// Render the built-in project template by substituting `{{title}}`,
@@ -255,4 +420,42 @@ fn format_state_change_log_entry(slug: &str, old_state: &str, new_state: &str) -
 
 fn flatten_for_log(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Build the daily-log entry recording an action addition.
+fn format_action_added_log_entry(slug: &str, action: &str, energy: EnergyLevel) -> String {
+    format!(
+        "action added to [[{slug}]] — {action} ({})",
+        energy.as_str()
+    )
+}
+
+/// Build the daily-log entry recording an action completion.
+/// `action_text` is the raw text from the project line, including
+/// any `(<energy>)` suffix, so the historical record preserves what
+/// energy bucket the action sat in.
+fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
+    format!("action done on [[{slug}]] — {action_text}")
+}
+
+/// If `line` is an open action bullet (`- [ ] <text>`), return the
+/// `<text>` verbatim — including any trailing `(<energy>)` suffix.
+/// Closed bullets (`- [x]`), blanks, and non-bullet content return
+/// `None`. Substring matching strips the suffix separately via
+/// [`strip_energy_suffix`]; the verbatim form is what gets logged
+/// on completion so the daily log preserves the energy tag.
+fn parse_open_action_text(line: &str) -> Option<&str> {
+    line.trim_start().strip_prefix("- [ ] ").map(str::trim)
+}
+
+/// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
+/// matching is case-sensitive because `add_action` always emits
+/// lowercase.
+fn strip_energy_suffix(text: &str) -> &str {
+    for suffix in [" (deep)", " (medium)", " (light)"] {
+        if let Some(stripped) = text.strip_suffix(suffix) {
+            return stripped;
+        }
+    }
+    text
 }
