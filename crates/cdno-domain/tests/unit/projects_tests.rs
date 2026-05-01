@@ -906,10 +906,8 @@ fn complete_action_handles_action_without_energy_suffix() {
         "ICML paper",
         "- [ ] Bare action with no energy\n",
     );
-    let (vault, store) = vault_with_seeded_store(
-        &[("projects/icml-paper.md", &body)],
-        VaultConfig::default(),
-    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
 
     vault
         .complete_action(dt(2026, 5, 1, 16, 0), "icml-paper", "Bare action")
@@ -936,15 +934,16 @@ fn add_action_errors_when_status_mismatches_folder() {
         "Mismatched",
         "- [ ] Step (light)\n",
     );
-    let (vault, _store) = vault_with_seeded_store(
-        &[("projects/mismatched.md", &body)],
-        VaultConfig::default(),
-    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/mismatched.md", &body)], VaultConfig::default());
 
     let err = vault
         .add_action(dt(2026, 5, 1, 14, 0), "mismatched", "X", EnergyLevel::Deep)
         .unwrap_err();
-    assert!(matches!(err, DomainError::ProjectNotActive(_)), "got {err:?}");
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
 }
 
 #[test]
