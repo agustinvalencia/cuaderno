@@ -125,6 +125,33 @@ impl MarkdownDocument {
         Ok(())
     }
 
+    /// Ensure a level-2 section with the given heading exists. If
+    /// any heading already matches (even ambiguously), this is a
+    /// no-op. Otherwise the heading is appended at the end of the
+    /// body with one blank line above it, leaving an empty section
+    /// for callers to populate.
+    ///
+    /// Used by domain mutations (e.g. `add_milestone`,
+    /// `add_waiting_on`, `add_action`) so they remain robust against
+    /// projects that have drifted from the canonical template — a
+    /// migrated or hand-edited file missing `## Milestones` will
+    /// have it auto-created on first use rather than rejecting the
+    /// write.
+    pub fn ensure_section(&mut self, heading: &str) -> Result<(), ManipulationError> {
+        if self.headings.iter().any(|h| h.text == heading) {
+            return Ok(());
+        }
+        let trimmed_len = self.raw.trim_end().len();
+        self.raw.truncate(trimmed_len);
+        let separator = if self.raw.is_empty() { "" } else { "\n\n" };
+        self.raw.push_str(separator);
+        self.raw.push_str("## ");
+        self.raw.push_str(heading);
+        self.raw.push('\n');
+        self.rescan();
+        Ok(())
+    }
+
     fn find_unique_heading(&self, heading: &str) -> Result<usize, ManipulationError> {
         let matches: Vec<usize> = self
             .headings

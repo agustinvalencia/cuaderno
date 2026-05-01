@@ -712,15 +712,27 @@ fn add_action_errors_when_project_not_found() {
 }
 
 #[test]
-fn add_action_errors_when_next_actions_section_missing() {
+fn add_action_creates_next_actions_section_when_missing() {
+    // A drifted project (manual edit, mdvault import) without a
+    // Next Actions heading. add_action should auto-create it
+    // rather than erroring — the user's intent is unambiguous.
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n";
-    let (vault, _store) =
+    let (vault, store) =
         vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
 
-    let err = vault
-        .add_action(dt(2026, 5, 1, 14, 0), "x", "anything", EnergyLevel::Deep)
-        .unwrap_err();
-    assert!(matches!(err, DomainError::Manipulation(_)), "got {err:?}");
+    vault
+        .add_action(dt(2026, 5, 1, 14, 0), "x", "First step", EnergyLevel::Deep)
+        .expect("add_action auto-creates the missing section");
+
+    let raw = store.read_file(&vp("projects/x.md")).unwrap();
+    assert!(
+        raw.contains("## Next Actions"),
+        "section auto-created:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] First step (deep)"),
+        "bullet appended:\n{raw}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -969,5 +981,528 @@ fn complete_action_preserves_other_sections() {
     assert!(
         raw.contains("- [ ] Two (light)"),
         "other action preserved:\n{raw}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// add_milestone / complete_milestone
+// ---------------------------------------------------------------------
+
+fn project_body_full(
+    context: &str,
+    status: &str,
+    created: &str,
+    title: &str,
+    milestones: &str,
+    waiting_on: &str,
+) -> String {
+    format!(
+        "---\ntype: project\ncontext: {context}\nstatus: {status}\ncreated: {created}\n---\n\n# {title}\n\n## Current State\nInitial.\n\n## Next Actions\n- [ ] First (light)\n\n## Waiting On\n{waiting_on}\n## Milestones\n{milestones}",
+    )
+}
+
+#[test]
+fn add_milestone_appends_hard_bullet_and_logs() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Existing milestone \u{2014} target: 2026-06-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Submit camera-ready",
+            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            true,
+        )
+        .expect("add_milestone succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] Submit camera-ready \u{2014} hard: 2026-05-22"),
+        "milestone appended:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Existing milestone \u{2014} target: 2026-06-01"),
+        "existing milestone preserved:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **10:00**: milestone added to [[icml]] \u{2014} Submit camera-ready (hard: 2026-05-22)"
+        ),
+        "log entry:\n{daily}"
+    );
+}
+
+#[test]
+fn add_milestone_uses_target_keyword_when_not_hard() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Internal review",
+            chrono::NaiveDate::from_ymd_opt(2026, 5, 15).unwrap(),
+            false,
+        )
+        .expect("add_milestone succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] Internal review \u{2014} target: 2026-05-15"),
+        "soft milestone uses 'target:' keyword:\n{raw}"
+    );
+}
+
+#[test]
+fn add_milestone_creates_section_when_missing() {
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "x",
+            "First",
+            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            true,
+        )
+        .expect("add_milestone auto-creates the missing section");
+
+    let raw = store.read_file(&vp("projects/x.md")).unwrap();
+    assert!(
+        raw.contains("## Milestones"),
+        "section auto-created:\n{raw}"
+    );
+    assert!(raw.contains("- [ ] First \u{2014} hard: 2026-05-22"));
+}
+
+#[test]
+fn add_milestone_errors_when_project_parked() {
+    let body = project_body_full("work", "parked", "2026-04-01", "Old", "", "(nothing yet)\n");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "old",
+            "X",
+            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            true,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn complete_milestone_marks_with_completion_date_and_logs() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submit camera-ready \u{2014} hard: 2026-05-22\n- [ ] Internal review \u{2014} target: 2026-05-15\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_milestone(dt(2026, 5, 14, 16, 0), "icml", "Internal review")
+        .expect("complete_milestone succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [x] Internal review \u{2014} 2026-05-14"),
+        "matched milestone marked done with completion date:\n{raw}"
+    );
+    assert!(
+        !raw.contains("- [ ] Internal review"),
+        "open form removed:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Submit camera-ready \u{2014} hard: 2026-05-22"),
+        "other milestone preserved:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-14.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **16:00**: milestone done on [[icml]] \u{2014} Internal review"),
+        "log entry:\n{daily}"
+    );
+}
+
+#[test]
+fn complete_milestone_ignores_already_completed_lines() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [x] Already done \u{2014} 2026-04-15\n- [ ] Still open \u{2014} hard: 2026-05-22\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_milestone(dt(2026, 5, 1, 16, 0), "icml", "Already done")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::MilestoneNotFound { .. }),
+        "closed lines must not match: got {err:?}"
+    );
+}
+
+#[test]
+fn complete_milestone_errors_when_match_is_ambiguous() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Run baseline ablation \u{2014} hard: 2026-05-22\n- [ ] Run sparse ablation \u{2014} target: 2026-05-15\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_milestone(dt(2026, 5, 1, 16, 0), "icml", "ablation")
+        .unwrap_err();
+    match err {
+        DomainError::AmbiguousMilestone {
+            slug,
+            query,
+            candidates,
+        } => {
+            assert_eq!(slug, "icml");
+            assert_eq!(query, "ablation");
+            assert_eq!(candidates.len(), 2);
+            assert!(candidates.iter().any(|c| c.contains("baseline")));
+            assert!(candidates.iter().any(|c| c.contains("sparse")));
+        }
+        other => panic!("expected AmbiguousMilestone, got {other:?}"),
+    }
+}
+
+#[test]
+fn complete_milestone_errors_when_not_found() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] First \u{2014} target: 2026-05-15\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .complete_milestone(dt(2026, 5, 1, 16, 0), "icml", "ghost")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::MilestoneNotFound { .. }),
+        "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// add_waiting_on / resolve_waiting_on
+// ---------------------------------------------------------------------
+
+#[test]
+fn add_waiting_on_replaces_placeholder_when_section_empty() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_waiting_on(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Compute allocation \u{2014} requested 500 GPU-hours",
+        )
+        .expect("add_waiting_on succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- Compute allocation"),
+        "new bullet present:\n{raw}"
+    );
+    assert!(
+        !raw.contains("(nothing yet)"),
+        "placeholder must be replaced, not stacked under:\n{raw}"
+    );
+}
+
+#[test]
+fn add_waiting_on_appends_below_existing_items() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- Reviewer 2 feedback\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_waiting_on(dt(2026, 5, 1, 10, 0), "icml", "Compute quota")
+        .expect("add_waiting_on succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- Reviewer 2 feedback"),
+        "existing item preserved:\n{raw}"
+    );
+    assert!(raw.contains("- Compute quota"), "new item appended:\n{raw}");
+}
+
+#[test]
+fn add_waiting_on_logs_to_daily_note() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_waiting_on(dt(2026, 5, 1, 10, 0), "icml", "Compute quota")
+        .expect("add_waiting_on succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **10:00**: waiting added on [[icml]] \u{2014} Compute quota"),
+        "log entry:\n{daily}"
+    );
+}
+
+#[test]
+fn add_waiting_on_creates_section_when_missing() {
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
+
+    vault
+        .add_waiting_on(dt(2026, 5, 1, 10, 0), "x", "Reviewer feedback")
+        .expect("add_waiting_on auto-creates the missing section");
+
+    let raw = store.read_file(&vp("projects/x.md")).unwrap();
+    assert!(
+        raw.contains("## Waiting On"),
+        "section auto-created:\n{raw}"
+    );
+    assert!(raw.contains("- Reviewer feedback"));
+}
+
+#[test]
+fn resolve_waiting_on_removes_matching_line_and_logs() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- Compute allocation \u{2014} requested 500 GPU-hours\n- Reviewer 2 feedback\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 30), "icml", "compute allocation")
+        .expect("resolve_waiting_on succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        !raw.contains("Compute allocation"),
+        "matched line gone:\n{raw}"
+    );
+    assert!(
+        raw.contains("- Reviewer 2 feedback"),
+        "other item preserved:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **12:30**: waiting resolved on [[icml]] \u{2014} Compute allocation \u{2014} requested 500 GPU-hours"
+        ),
+        "log entry preserves verbatim text:\n{daily}"
+    );
+}
+
+#[test]
+fn complete_milestone_handles_milestone_without_target_suffix() {
+    // Edge case: a milestone bullet with no `\u{2014} hard:` /
+    // `\u{2014} target:` suffix (manually edited or migrated). Match
+    // still works; strip_milestone_target_suffix returns the text
+    // verbatim when no separator is found.
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Bare milestone with no suffix\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_milestone(dt(2026, 5, 1, 12, 0), "icml", "Bare milestone")
+        .expect("untagged milestones still matchable");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(raw.contains("- [x] Bare milestone with no suffix \u{2014} 2026-05-01"));
+}
+
+#[test]
+fn resolve_waiting_on_skips_checkbox_and_empty_bullets() {
+    // A hand-edited Waiting On section with a stray checkbox line
+    // and an empty bullet. Both get filtered out by
+    // parse_waiting_on_text; the real item still resolves cleanly.
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- [ ] Stray task in waiting on\n- \n- Real waiting item\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    // The stray checkbox bullet is invisible to the matcher.
+    let err = vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 0), "icml", "stray")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::WaitingOnNotFound { .. }),
+        "got {err:?}"
+    );
+
+    // Real item resolves without ambiguity from the empty bullet.
+    vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 0), "icml", "real")
+        .expect("empty bullet must not collide with substring matching");
+}
+
+#[test]
+fn resolve_waiting_on_restores_placeholder_when_last_item_removed() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- Compute allocation\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 30), "icml", "compute")
+        .expect("resolve_waiting_on succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("(nothing yet)"),
+        "placeholder restored when section emptied:\n{raw}"
+    );
+}
+
+#[test]
+fn resolve_waiting_on_errors_when_match_is_ambiguous() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- Reviewer 1 feedback\n- Reviewer 2 feedback\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 0), "icml", "reviewer")
+        .unwrap_err();
+    match err {
+        DomainError::AmbiguousWaitingOn { candidates, .. } => {
+            assert_eq!(candidates.len(), 2);
+        }
+        other => panic!("expected AmbiguousWaitingOn, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_waiting_on_errors_when_not_found() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] M \u{2014} target: 2026-06-01\n",
+        "- Compute allocation\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .resolve_waiting_on(dt(2026, 5, 1, 12, 0), "icml", "ghost")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::WaitingOnNotFound { .. }),
+        "got {err:?}"
     );
 }
