@@ -1,9 +1,18 @@
 //! `Vault::log_to_daily_note` and the helpers it needs.
+//!
+//! The daily-log write is exposed in two shapes. `log_to_daily_note`
+//! is the one-shot public surface — it owns its transaction. For
+//! higher-level ops that need the daily-log write to commit
+//! atomically with other vault changes (e.g. `update_project_state`,
+//! which must rewrite the project file *and* log the previous state
+//! in the same commit), [`Vault::stage_daily_log`] adds the writes
+//! to a caller-owned transaction and returns the daily-note path.
 
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 
@@ -27,6 +36,26 @@ impl Vault {
         at: NaiveDateTime,
         entry: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction();
+        let path = self.stage_daily_log(at, entry, &mut tx)?;
+        tx.commit()?;
+        Ok(path)
+    }
+
+    /// Stage the writes that append `entry` to the daily-log section
+    /// for `at` onto `tx`, without committing.
+    ///
+    /// Use this when the daily-log write must commit together with
+    /// other vault changes — e.g. `update_project_state` rewrites the
+    /// project file *and* logs the previous state in the same commit
+    /// so a partial failure can't leave the project changed without
+    /// the matching log entry (or vice versa).
+    pub(in crate::vault) fn stage_daily_log(
+        &self,
+        at: NaiveDateTime,
+        entry: &str,
+        tx: &mut VaultTransaction,
+    ) -> Result<VaultPath, DomainError> {
         let path = daily_note_path(at.date())?;
         let line = format_log_line(at.time(), entry);
 
@@ -49,10 +78,8 @@ impl Vault {
         // transaction leaves file + index in sync.
         let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
-        tx.commit()?;
 
         Ok(path)
     }
