@@ -1,7 +1,7 @@
 ---
 type: project
 context: {{context}}
-status: active
+status: {{status}}
 created: {{created}}
 core_question: {{core_question}}
 ---

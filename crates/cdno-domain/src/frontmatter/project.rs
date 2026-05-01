@@ -50,6 +50,19 @@ pub enum ProjectStatus {
     Completed,
 }
 
+impl ProjectStatus {
+    /// Kebab-case YAML / CLI form. Parallel to [`Context::as_str`] so
+    /// the template renderer doesn't have to round-trip through
+    /// `serde_yaml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectStatus::Active => "active",
+            ProjectStatus::Parked => "parked",
+            ProjectStatus::Completed => "completed",
+        }
+    }
+}
+
 /// Parsed and validated frontmatter for a project map. Once this
 /// struct exists, every field is guaranteed present and well-typed —
 /// downstream code does not re-validate.

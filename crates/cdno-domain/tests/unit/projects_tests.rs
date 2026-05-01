@@ -205,32 +205,51 @@ fn create_project_indexes_the_new_note_so_active_projects_picks_it_up() {
 }
 
 #[test]
-fn create_project_errors_when_active_count_at_cap() {
-    // Cap of 2 with 2 projects already active — the third refuses.
+fn create_project_seeds_parked_when_active_count_at_cap() {
+    // Cap of 2 with 2 projects already active — the third still
+    // succeeds, but is seeded as parked so the cap (on actives) is
+    // preserved without blocking capture.
     let cfg = config_with_cap(2);
     let a = project_body("work", "active", "2026-01-10", "Alpha");
     let b = project_body("personal", "active", "2026-02-01", "Beta");
-    let (vault, _store) =
+    let (vault, store) =
         vault_with_seeded_store(&[("projects/alpha.md", &a), ("projects/beta.md", &b)], cfg);
 
-    let err = vault
+    let path = vault
         .create_project(day(2026, 4, 28), "Gamma", Context::Work, None)
+        .expect("create succeeds, seeded as parked");
+
+    assert_eq!(path, vp("projects/_parked/gamma.md"));
+    let fm = read_project_frontmatter(&store, &path);
+    assert_eq!(fm.status, ProjectStatus::Parked);
+
+    let active = vault.active_projects().expect("query succeeds");
+    assert_eq!(
+        active.len(),
+        2,
+        "active count must be unchanged: parked seed must not consume a slot"
+    );
+}
+
+#[test]
+fn create_project_errors_when_slug_collides_with_parked_project() {
+    // Slug uniqueness spans both projects/ and projects/_parked/ —
+    // creating an active project whose slug already exists as parked
+    // would make the activate/park flow ambiguous.
+    let parked = project_body("work", "parked", "2026-01-10", "Same Title");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/same-title.md", &parked)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
         .unwrap_err();
 
-    match err {
-        DomainError::ProjectCapReached {
-            current,
-            max,
-            active_projects,
-        } => {
-            assert_eq!(current, 2);
-            assert_eq!(max, 2);
-            let mut sorted = active_projects.clone();
-            sorted.sort();
-            assert_eq!(sorted, vec!["alpha".to_owned(), "beta".to_owned()]);
-        }
-        other => panic!("expected ProjectCapReached, got {other:?}"),
-    }
+    assert!(
+        matches!(err, DomainError::Store(_)),
+        "expected Store(AlreadyExists), got {err:?}"
+    );
 }
 
 #[test]

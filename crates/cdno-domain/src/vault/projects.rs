@@ -1,15 +1,18 @@
 //! Project queries and operations on [`Vault`].
 //!
-//! `active_projects` is the foundation for the 5-cap enforcement and
+//! `active_projects` is the foundation for the cap rule and
 //! orientation summaries (#29). It reads each project's frontmatter to
 //! filter by [`ProjectStatus::Active`], rather than peeking at the
 //! cached JSON in the index — keeping the typed-frontmatter contract
 //! (`ProjectFrontmatter::try_from`) as the single source of truth for
 //! "is this project well-formed".
 //!
-//! `create_project` enforces the configurable max-active cap, scaffolds
-//! the project file from a built-in template, and writes the file plus
-//! its index row in a single committed transaction.
+//! `create_project` scaffolds the project file from a built-in
+//! template and writes it plus its index row in a single committed
+//! transaction. It seeds the new project as active when below the
+//! configurable cap, or as parked when at the cap — the cap is
+//! enforced on activation (#28), not creation, so the user can capture
+//! a future project without having to park one first.
 
 use chrono::NaiveDate;
 
@@ -52,13 +55,19 @@ impl Vault {
         Ok(out)
     }
 
-    /// Scaffold a new active project at `projects/<slug>.md`.
+    /// Scaffold a new project from the built-in template.
     ///
-    /// Refuses if the active-project count is already at the
-    /// configurable cap (`config.max_active_projects`, default 5),
-    /// returning [`DomainError::ProjectCapReached`] with the names of
-    /// the projects already active so the caller can suggest one to
-    /// park.
+    /// Below the configurable cap (`config.max_active_projects`,
+    /// default 5) the new project is seeded as `status: active` at
+    /// `projects/<slug>.md`. At or above the cap it's seeded as
+    /// `status: parked` at `projects/_parked/<slug>.md`, so the user
+    /// can still capture a future project without having to park an
+    /// existing one first. The cap is enforced on activation (#28),
+    /// not creation.
+    ///
+    /// Errors only on slug collisions: if the slug already exists in
+    /// either `projects/` or `projects/_parked/`, returns
+    /// [`StoreError::AlreadyExists`].
     ///
     /// `core_question` is the wikilink target (e.g.
     /// `"questions/research/foo"`); `create_project` wraps it in
@@ -76,25 +85,40 @@ impl Vault {
     ) -> Result<VaultPath, DomainError> {
         let active = self.active_projects()?;
         let cap = self.config.vault.max_active_projects as usize;
-        if active.len() >= cap {
-            return Err(DomainError::ProjectCapReached {
-                current: active.len(),
-                max: cap,
-                active_projects: active
-                    .iter()
-                    .map(|(path, _)| project_name_from_path(path))
-                    .collect(),
-            });
-        }
+        let status = if active.len() >= cap {
+            ProjectStatus::Parked
+        } else {
+            ProjectStatus::Active
+        };
 
-        let path = project_path(title)?;
-        if self.store.exists(&path)? {
+        let slug = slugify(title);
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+        // Check both folders so a parked project can't shadow an
+        // active one with the same slug, or vice versa. #28
+        // (park/activate) will need the same invariant when moving
+        // files between the two locations.
+        let active_exists = self.store.exists(&active_path)?;
+        let parked_exists = self.store.exists(&parked_path)?;
+        if active_exists || parked_exists {
+            let collision = if active_exists {
+                &active_path
+            } else {
+                &parked_path
+            };
             return Err(DomainError::Store(StoreError::AlreadyExists(
-                path.to_string(),
+                collision.to_string(),
             )));
         }
 
-        let content = render_project_template(today, title, context, core_question);
+        let path = if status == ProjectStatus::Active {
+            active_path
+        } else {
+            parked_path
+        };
+
+        let content = render_project_template(today, title, context, status, core_question);
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
         let mut tx = self.transaction();
@@ -106,41 +130,16 @@ impl Vault {
     }
 }
 
-/// Vault-relative path for a new project derived from `title`:
-/// `projects/<slug>.md`. The slug is the same one [`capture_to_inbox`]
-/// uses, so titles map predictably.
-///
-/// [`capture_to_inbox`]: super::Vault::capture_to_inbox
-fn project_path(title: &str) -> Result<VaultPath, DomainError> {
-    let slug = slugify(title);
-    Ok(VaultPath::new(format!(
-        "{}/{}.md",
-        cdno_core::paths::PROJECTS,
-        slug
-    ))?)
-}
-
-/// Pull a human-readable name out of a project path for the
-/// cap-error message. The filename stem is what `slugify(title)`
-/// produced when the project was created — readable enough to
-/// disambiguate which one to park.
-fn project_name_from_path(path: &VaultPath) -> String {
-    path.as_path()
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_owned())
-        .unwrap_or_else(|| path.to_string())
-}
-
 /// Render the built-in project template by substituting `{{title}}`,
-/// `{{context}}`, `{{created}}`, and `{{core_question}}`. `None` for
-/// `core_question` substitutes `null`; `Some(target)` substitutes
-/// `"[[target]]"` (quoted to keep YAML from parsing the brackets as a
-/// flow sequence).
+/// `{{context}}`, `{{status}}`, `{{created}}`, and `{{core_question}}`.
+/// `None` for `core_question` substitutes `null`; `Some(target)`
+/// substitutes `"[[target]]"` (quoted to keep YAML from parsing the
+/// brackets as a flow sequence).
 fn render_project_template(
     today: NaiveDate,
     title: &str,
     context: Context,
+    status: ProjectStatus,
     core_question: Option<&str>,
 ) -> String {
     let core_question_yaml = match core_question {
@@ -151,6 +150,7 @@ fn render_project_template(
     PROJECT_TEMPLATE
         .replace("{{title}}", title)
         .replace("{{context}}", context.as_str())
+        .replace("{{status}}", status.as_str())
         .replace("{{created}}", &today.format("%Y-%m-%d").to_string())
         .replace("{{core_question}}", &core_question_yaml)
 }

@@ -137,6 +137,18 @@ fn project_status_rejects_unknown_value() {
     assert!(serde_yaml::from_str::<ProjectStatus>("archived").is_err());
 }
 
+#[test]
+fn project_status_as_str_returns_kebab_case() {
+    let cases = [
+        (ProjectStatus::Active, "active"),
+        (ProjectStatus::Parked, "parked"),
+        (ProjectStatus::Completed, "completed"),
+    ];
+    for (variant, expected) in cases {
+        assert_eq!(variant.as_str(), expected, "variant={variant:?}");
+    }
+}
+
 // ---------------------------------------------------------------------
 // ProjectFrontmatter::try_from
 // ---------------------------------------------------------------------
