@@ -303,3 +303,267 @@ fn create_project_substitutes_kebab_case_for_multi_word_context() {
         "expected kebab-case 'side-project' in YAML, got:\n{raw}"
     );
 }
+
+// ---------------------------------------------------------------------
+// update_project_state
+// ---------------------------------------------------------------------
+
+fn project_body_with_state(
+    context: &str,
+    status: &str,
+    created: &str,
+    title: &str,
+    state: &str,
+) -> String {
+    format!(
+        "---\ntype: project\ncontext: {context}\nstatus: {status}\ncreated: {created}\n---\n\n# {title}\n\n## Current State\n{state}\n\n## Next Actions\n- [ ] First step\n",
+    )
+}
+
+fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> chrono::NaiveDateTime {
+    chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap()
+        .and_hms_opt(hour, minute, 0)
+        .unwrap()
+}
+
+#[test]
+fn update_project_state_replaces_current_state_section() {
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "Started feature set B exploration.",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(
+            dt(2026, 5, 1, 14, 32),
+            "icml-paper",
+            "Ablation confirmed; full geometry next.",
+        )
+        .expect("update succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        raw.contains("Ablation confirmed; full geometry next."),
+        "new state must be in project body:\n{raw}"
+    );
+    assert!(
+        !raw.contains("Started feature set B exploration."),
+        "old state must be gone:\n{raw}"
+    );
+}
+
+#[test]
+fn update_project_state_logs_was_now_to_daily_note() {
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        "Started feature set B exploration.",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(
+            dt(2026, 5, 1, 14, 32),
+            "icml-paper",
+            "Ablation confirmed; full geometry next.",
+        )
+        .expect("update succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("- **14:32**: state on [[icml-paper]]"),
+        "missing bullet head:\n{daily}"
+    );
+    assert!(
+        daily.contains("was: Started feature set B exploration."),
+        "missing was line:\n{daily}"
+    );
+    assert!(
+        daily.contains("now: Ablation confirmed; full geometry next."),
+        "missing now line:\n{daily}"
+    );
+}
+
+#[test]
+fn update_project_state_creates_daily_note_when_absent() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Initial.");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Updated.")
+        .expect("update succeeds");
+
+    assert!(
+        store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn update_project_state_appends_when_daily_note_exists() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Initial.");
+    let daily_existing = "---\ndate: 2026-05-01\ntype: daily\n---\n\n# Friday, 1 May 2026\n\n## Logs\n- **08:00**: standup\n";
+    let (vault, store) = vault_with_seeded_store(
+        &[
+            ("projects/icml-paper.md", &body),
+            ("journal/2026/daily/2026-05-01.md", daily_existing),
+        ],
+        VaultConfig::default(),
+    );
+
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Updated.")
+        .expect("update succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **08:00**: standup"),
+        "earlier log must be preserved:\n{daily}"
+    );
+    assert!(
+        daily.contains("- **09:00**: state on [[icml-paper]]"),
+        "new log must be appended:\n{daily}"
+    );
+}
+
+#[test]
+fn update_project_state_errors_when_project_parked() {
+    let body = project_body_with_state(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Old idea",
+        "Was active last quarter.",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old-idea.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "old-idea", "anything")
+        .unwrap_err();
+
+    assert!(
+        matches!(&err, DomainError::ProjectNotActive(s) if s == "old-idea"),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn update_project_state_errors_when_project_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "ghost", "anything")
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn update_project_state_errors_when_status_mismatches_folder() {
+    // File lives at projects/x.md (active folder) but frontmatter
+    // says parked. Frontmatter is the source of truth — refuse.
+    let body = project_body_with_state("work", "parked", "2026-04-01", "Mismatched", "Initial.");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/mismatched.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "mismatched", "anything")
+        .unwrap_err();
+
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn update_project_state_errors_when_current_state_section_missing() {
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# No Section\n\n## Next Actions\n- [ ] step\n";
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/no-section.md", body)], VaultConfig::default());
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "no-section", "new")
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Manipulation(_)), "got {err:?}");
+}
+
+#[test]
+fn update_project_state_preserves_other_sections() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Initial.");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Updated.")
+        .expect("update succeeds");
+
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains("## Next Actions"));
+    assert!(raw.contains("- [ ] First step"));
+}
+
+#[test]
+fn update_project_state_flattens_multiline_state_in_log_entry() {
+    let multiline = "Feature set B ablation confirmed.\nSparse variant matches dense within 3%.\nNext step: full geometry.";
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", multiline);
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Single line update.")
+        .expect("update succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("was: Feature set B ablation confirmed. Sparse variant matches dense within 3%. Next step: full geometry."),
+        "multiline state must collapse to a single was: line:\n{daily}"
+    );
+}
+
+#[test]
+fn update_project_state_is_noop_when_state_unchanged() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Same state.");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Same state.\n")
+        .expect("noop returns Ok");
+
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap(),
+        "noop must not create a daily note"
+    );
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert_eq!(raw, body, "noop must not rewrite the project file");
+}
