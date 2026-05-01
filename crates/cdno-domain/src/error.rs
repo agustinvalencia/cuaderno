@@ -19,6 +19,16 @@ pub enum DomainError {
     #[error("project is not active: {0}")]
     ProjectNotActive(String),
 
+    #[error("no action matching '{query}' on project '{slug}'")]
+    ActionNotFound { slug: String, query: String },
+
+    #[error("ambiguous action match for '{query}' on project '{slug}': {candidates:?}")]
+    AmbiguousAction {
+        slug: String,
+        query: String,
+        candidates: Vec<String>,
+    },
+
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 

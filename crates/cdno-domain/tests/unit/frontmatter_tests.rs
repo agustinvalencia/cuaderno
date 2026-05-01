@@ -1,6 +1,6 @@
 use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
-use cdno_domain::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
+use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 
 fn parse_fm(yaml_body: &str) -> Frontmatter {
     let raw = format!("---\n{yaml_body}---\n");
@@ -143,6 +143,59 @@ fn project_status_as_str_returns_kebab_case() {
         (ProjectStatus::Active, "active"),
         (ProjectStatus::Parked, "parked"),
         (ProjectStatus::Completed, "completed"),
+    ];
+    for (variant, expected) in cases {
+        assert_eq!(variant.as_str(), expected, "variant={variant:?}");
+    }
+}
+
+// ---------------------------------------------------------------------
+// EnergyLevel — kebab-case YAML round-trip + as_str
+// ---------------------------------------------------------------------
+
+#[test]
+fn energy_level_serialises_as_kebab_case() {
+    assert_eq!(
+        serde_yaml::to_string(&EnergyLevel::Deep).unwrap().trim(),
+        "deep"
+    );
+    assert_eq!(
+        serde_yaml::to_string(&EnergyLevel::Medium).unwrap().trim(),
+        "medium"
+    );
+    assert_eq!(
+        serde_yaml::to_string(&EnergyLevel::Light).unwrap().trim(),
+        "light"
+    );
+}
+
+#[test]
+fn energy_level_deserialises_from_kebab_case() {
+    assert_eq!(
+        serde_yaml::from_str::<EnergyLevel>("deep").unwrap(),
+        EnergyLevel::Deep
+    );
+    assert_eq!(
+        serde_yaml::from_str::<EnergyLevel>("medium").unwrap(),
+        EnergyLevel::Medium
+    );
+    assert_eq!(
+        serde_yaml::from_str::<EnergyLevel>("light").unwrap(),
+        EnergyLevel::Light
+    );
+}
+
+#[test]
+fn energy_level_rejects_unknown_value() {
+    assert!(serde_yaml::from_str::<EnergyLevel>("intense").is_err());
+}
+
+#[test]
+fn energy_level_as_str_returns_kebab_case() {
+    let cases = [
+        (EnergyLevel::Deep, "deep"),
+        (EnergyLevel::Medium, "medium"),
+        (EnergyLevel::Light, "light"),
     ];
     for (variant, expected) in cases {
         assert_eq!(variant.as_str(), expected, "variant={variant:?}");

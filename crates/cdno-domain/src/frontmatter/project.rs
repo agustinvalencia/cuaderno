@@ -63,6 +63,30 @@ impl ProjectStatus {
     }
 }
 
+/// Effort/focus tag attached to a next action, displayed as a
+/// parenthesised suffix (`- [ ] Run ablation (deep)`). Drives the
+/// energy selector in the daily orientation view (§5.2 of the design
+/// doc) — the user picks an energy level and the UI surfaces actions
+/// matching that level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EnergyLevel {
+    Deep,
+    Medium,
+    Light,
+}
+
+impl EnergyLevel {
+    /// Kebab-case form used in the action suffix and the CLI flag.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EnergyLevel::Deep => "deep",
+            EnergyLevel::Medium => "medium",
+            EnergyLevel::Light => "light",
+        }
+    }
+}
+
 /// Parsed and validated frontmatter for a project map. Once this
 /// struct exists, every field is guaranteed present and well-typed —
 /// downstream code does not re-validate.

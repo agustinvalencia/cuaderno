@@ -8,4 +8,4 @@
 
 pub mod project;
 
-pub use project::{Context, ProjectFrontmatter, ProjectStatus};
+pub use project::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
