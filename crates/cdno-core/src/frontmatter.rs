@@ -89,18 +89,26 @@ impl Frontmatter {
         deserialise_field(name, value)
     }
 
-    /// Read an optional field as type `T`. Returns `None` if absent,
+    /// Read an optional field as type `T`. Returns `None` if the
+    /// field is absent **or** explicitly set to YAML `null`,
     /// `Some(value)` if present and well-typed, or
-    /// [`ValidationError::InvalidField`] if present but the stored
-    /// value cannot be deserialised as `T`. Type mismatches intentionally
-    /// error rather than silently returning `None` — a missing field and
-    /// a malformed field are different bugs.
+    /// [`ValidationError::InvalidField`] if present with a non-null
+    /// value that cannot be deserialised as `T`.
+    ///
+    /// YAML `null` is the canonical way to write "this optional
+    /// field has no value" — treating it as absent matches the
+    /// `lint` checker (which also collapses `null` into "missing")
+    /// and lets writers emit `field: null` placeholders without
+    /// the parser flagging a non-existent type mismatch. Genuine
+    /// type mismatches (e.g. an integer where a string is expected)
+    /// still error, since absent vs malformed remain different bugs.
     pub fn optional_field<T: DeserializeOwned>(
         &self,
         name: &str,
     ) -> Result<Option<T>, ValidationError> {
         match self.fields.get(name) {
             None => Ok(None),
+            Some(Value::Null) => Ok(None),
             Some(value) => deserialise_field(name, value).map(Some),
         }
     }

@@ -130,6 +130,18 @@ fn optional_wrong_type_errors_rather_than_none() {
 }
 
 #[test]
+fn optional_explicit_null_returns_none() {
+    // YAML `field: null` is the canonical way to write "this
+    // optional field has no value". `optional_field` collapses it
+    // into `None`, matching `lint`'s "absent or null counts as
+    // missing" interpretation and letting writers emit `null`
+    // placeholders without tripping a non-existent type mismatch.
+    let raw = "---\ntitle: ~\n---\n";
+    let (fm, _) = Frontmatter::parse(raw).unwrap();
+    assert!(fm.optional_field::<String>("title").unwrap().is_none());
+}
+
+#[test]
 fn empty_frontmatter_block_parses_as_empty() {
     let raw = "---\n---\nbody\n";
     let (fm, body) = Frontmatter::parse(raw).unwrap();

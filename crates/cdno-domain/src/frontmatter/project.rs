@@ -22,6 +22,24 @@ pub enum Context {
     Personal,
 }
 
+impl Context {
+    /// Kebab-case YAML / CLI form. Mirrors the `#[serde(rename_all =
+    /// "kebab-case")]` projection used for serialisation, but exposed
+    /// directly so write paths don't have to round-trip through
+    /// `serde_yaml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Context::Work => "work",
+            Context::SideProject => "side-project",
+            Context::University => "university",
+            Context::Family => "family",
+            Context::Household => "household",
+            Context::Legal => "legal",
+            Context::Personal => "personal",
+        }
+    }
+}
+
 /// Lifecycle state of a project. Park/activate transitions cap-check
 /// against `max_active_projects`; completion is terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,6 +48,19 @@ pub enum ProjectStatus {
     Active,
     Parked,
     Completed,
+}
+
+impl ProjectStatus {
+    /// Kebab-case YAML / CLI form. Parallel to [`Context::as_str`] so
+    /// the template renderer doesn't have to round-trip through
+    /// `serde_yaml`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectStatus::Active => "active",
+            ProjectStatus::Parked => "parked",
+            ProjectStatus::Completed => "completed",
+        }
+    }
 }
 
 /// Parsed and validated frontmatter for a project map. Once this

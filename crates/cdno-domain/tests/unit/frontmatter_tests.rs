@@ -62,6 +62,22 @@ fn context_deserialises_from_kebab_case() {
 }
 
 #[test]
+fn context_as_str_returns_kebab_case() {
+    let cases = [
+        (Context::Work, "work"),
+        (Context::SideProject, "side-project"),
+        (Context::University, "university"),
+        (Context::Family, "family"),
+        (Context::Household, "household"),
+        (Context::Legal, "legal"),
+        (Context::Personal, "personal"),
+    ];
+    for (variant, expected) in cases {
+        assert_eq!(variant.as_str(), expected, "variant={variant:?}");
+    }
+}
+
+#[test]
 fn context_rejects_unknown_value() {
     let err = serde_yaml::from_str::<Context>("studies");
     assert!(err.is_err(), "expected error for unknown context");
@@ -119,6 +135,18 @@ fn project_status_deserialises_from_kebab_case() {
 #[test]
 fn project_status_rejects_unknown_value() {
     assert!(serde_yaml::from_str::<ProjectStatus>("archived").is_err());
+}
+
+#[test]
+fn project_status_as_str_returns_kebab_case() {
+    let cases = [
+        (ProjectStatus::Active, "active"),
+        (ProjectStatus::Parked, "parked"),
+        (ProjectStatus::Completed, "completed"),
+    ];
+    for (variant, expected) in cases {
+        assert_eq!(variant.as_str(), expected, "variant={variant:?}");
+    }
 }
 
 // ---------------------------------------------------------------------
