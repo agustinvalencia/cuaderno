@@ -215,6 +215,31 @@ fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
         .map_err(|e| format!("expected YYYY-MM-DD, got `{s}`: {e}"))
 }
 
+#[cfg(test)]
+mod tests {
+    //! Direct tests for the small private helpers. These are
+    //! reachable through clap (`parse_iso_date` is a value parser)
+    //! but Linux tarpaulin can't measure subprocess execution, so
+    //! testing them in-module is the only way to keep them counted.
+
+    use super::*;
+
+    #[test]
+    fn parse_iso_date_accepts_valid_yyyy_mm_dd() {
+        assert_eq!(
+            parse_iso_date("2026-05-22").unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_iso_date_rejects_other_formats_with_helpful_message() {
+        let err = parse_iso_date("May 22 2026").unwrap_err();
+        assert!(err.contains("YYYY-MM-DD"), "missing format hint: {err}");
+        assert!(err.contains("May 22 2026"), "missing input echo: {err}");
+    }
+}
+
 /// Render `cdno project list` output. Iterates the active projects
 /// and calls `project_summary` per slug to surface a one-line state
 /// hint alongside the path.
