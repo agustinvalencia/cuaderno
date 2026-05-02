@@ -19,6 +19,9 @@ pub enum DomainError {
     #[error("project is not active: {0}")]
     ProjectNotActive(String),
 
+    #[error("project is not parked: {0}")]
+    ProjectNotParked(String),
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 

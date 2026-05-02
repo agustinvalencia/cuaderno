@@ -1506,3 +1506,297 @@ fn resolve_waiting_on_errors_when_not_found() {
         "got {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// park_project / activate_project
+// ---------------------------------------------------------------------
+
+#[test]
+fn park_project_moves_file_and_flips_status_to_parked() {
+    let body = project_body("work", "active", "2026-04-01", "ICML");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let new_path = vault
+        .park_project(dt(2026, 5, 2, 10, 0), "icml")
+        .expect("park succeeds");
+
+    assert_eq!(new_path, vp("projects/_parked/icml.md"));
+    assert!(
+        !store.exists(&vp("projects/icml.md")).unwrap(),
+        "old active path must be empty"
+    );
+    let raw = store.read_file(&vp("projects/_parked/icml.md")).unwrap();
+    assert!(
+        raw.contains("status: parked"),
+        "frontmatter status flipped to parked:\n{raw}"
+    );
+    assert!(
+        !raw.contains("status: active"),
+        "old status must be gone:\n{raw}"
+    );
+}
+
+#[test]
+fn park_project_logs_to_daily_note() {
+    let body = project_body("work", "active", "2026-04-01", "ICML");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .park_project(dt(2026, 5, 2, 10, 0), "icml")
+        .expect("park succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-02.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **10:00**: project [[icml]] parked"),
+        "log entry:\n{daily}"
+    );
+}
+
+#[test]
+fn park_project_updates_index_so_active_projects_drops_it() {
+    let body = project_body("work", "active", "2026-04-01", "ICML");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let before = vault.active_projects().unwrap();
+    assert_eq!(before.len(), 1);
+
+    vault
+        .park_project(dt(2026, 5, 2, 10, 0), "icml")
+        .expect("park succeeds");
+
+    let after = vault.active_projects().unwrap();
+    assert!(
+        after.is_empty(),
+        "parked project must not appear in active list: {after:?}"
+    );
+}
+
+#[test]
+fn park_project_errors_when_already_parked() {
+    let body = project_body("work", "parked", "2026-04-01", "Old");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .park_project(dt(2026, 5, 2, 10, 0), "old")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn park_project_errors_when_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault
+        .park_project(dt(2026, 5, 2, 10, 0), "ghost")
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn park_project_errors_when_destination_already_exists() {
+    // Drift scenario: an active and a parked project share a slug
+    // (would have been prevented at create time, but a manual edit
+    // could create this state). park must refuse rather than
+    // overwriting.
+    let active_body = project_body("work", "active", "2026-04-01", "X");
+    let parked_body = project_body("work", "parked", "2026-04-01", "Y");
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/dup.md", &active_body),
+            ("projects/_parked/dup.md", &parked_body),
+        ],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .park_project(dt(2026, 5, 2, 10, 0), "dup")
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn activate_project_moves_file_and_flips_status_to_active() {
+    let body = project_body("work", "parked", "2026-04-01", "Old");
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let new_path = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "old")
+        .expect("activate succeeds");
+
+    assert_eq!(new_path, vp("projects/old.md"));
+    assert!(
+        !store.exists(&vp("projects/_parked/old.md")).unwrap(),
+        "old parked path must be empty"
+    );
+    let raw = store.read_file(&vp("projects/old.md")).unwrap();
+    assert!(
+        raw.contains("status: active"),
+        "frontmatter status flipped to active:\n{raw}"
+    );
+    assert!(
+        !raw.contains("status: parked"),
+        "old status must be gone:\n{raw}"
+    );
+}
+
+#[test]
+fn activate_project_logs_to_daily_note() {
+    let body = project_body("work", "parked", "2026-04-01", "Old");
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "old")
+        .expect("activate succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-02.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **10:00**: project [[old]] activated"),
+        "log entry:\n{daily}"
+    );
+}
+
+#[test]
+fn activate_project_errors_when_already_active() {
+    let body = project_body("work", "active", "2026-04-01", "ICML");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "icml")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotParked(_)),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn activate_project_errors_when_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "ghost")
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn activate_project_errors_when_at_cap() {
+    // Two active projects + cap of 2 → activating a third must fail
+    // with ProjectCapReached, surfacing the active slugs so the
+    // caller can suggest one to park.
+    let cfg = config_with_cap(2);
+    let active_a = project_body("work", "active", "2026-01-10", "Alpha");
+    let active_b = project_body("personal", "active", "2026-02-01", "Beta");
+    let parked = project_body("work", "parked", "2026-01-15", "Gamma");
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/alpha.md", &active_a),
+            ("projects/beta.md", &active_b),
+            ("projects/_parked/gamma.md", &parked),
+        ],
+        cfg,
+    );
+
+    let err = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "gamma")
+        .unwrap_err();
+    match err {
+        DomainError::ProjectCapReached {
+            current,
+            max,
+            active_projects,
+        } => {
+            assert_eq!(current, 2);
+            assert_eq!(max, 2);
+            let mut sorted = active_projects.clone();
+            sorted.sort();
+            assert_eq!(sorted, vec!["alpha".to_owned(), "beta".to_owned()]);
+        }
+        other => panic!("expected ProjectCapReached, got {other:?}"),
+    }
+}
+
+#[test]
+fn activate_project_errors_when_destination_already_exists() {
+    // Drift: a parked and an active project share a slug. Activate
+    // must refuse — overwriting would clobber whatever's at the
+    // active path.
+    let active_body = project_body("work", "active", "2026-04-01", "Active");
+    let parked_body = project_body("work", "parked", "2026-04-01", "Parked");
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/dup.md", &active_body),
+            ("projects/_parked/dup.md", &parked_body),
+        ],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "dup")
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn activate_project_errors_when_status_mismatches_folder() {
+    // File lives at projects/_parked/ but frontmatter says "active"
+    // — defensive frontmatter check must refuse rather than silently
+    // moving and re-flipping.
+    let body = project_body("work", "active", "2026-04-01", "Drifted");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/drifted.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .activate_project(dt(2026, 5, 2, 10, 0), "drifted")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotParked(_)),
+        "got {err:?}"
+    );
+}

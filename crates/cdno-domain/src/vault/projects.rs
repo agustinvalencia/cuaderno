@@ -642,6 +642,134 @@ impl Vault {
 
         Ok(path)
     }
+
+    /// Move an active project to `projects/_parked/`, flipping its
+    /// frontmatter `status` from `active` to `parked` in the same
+    /// committed transaction. The previous active count is freed up
+    /// so a new active project can take its slot.
+    ///
+    /// Errors:
+    /// - `ProjectNotActive` — file lives at `projects/_parked/<slug>.md`
+    ///   or its frontmatter `status` is anything other than `active`.
+    /// - `Store(NotFound)` — slug doesn't resolve to either folder.
+    /// - `Store(AlreadyExists)` — `projects/_parked/<slug>.md` is
+    ///   already occupied (defensive guard against drift; under the
+    ///   slug-uniqueness invariant from #24 this can't normally happen
+    ///   but a manual edit or a rogue write could).
+    pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
+        let (active_path, _doc) = self.resolve_active_project(slug)?;
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+        if self.store.exists(&parked_path)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                parked_path.to_string(),
+            )));
+        }
+
+        let raw = self.store.read_file(&active_path)?;
+        let new_content = rewrite_status_in_frontmatter(&raw, ProjectStatus::Parked)?;
+        let entry_meta =
+            build_index_entry_for(&parked_path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!("project [[{slug}]] parked");
+
+        let mut tx = self.transaction();
+        tx.write_file(parked_path.clone(), new_content);
+        tx.delete_file(active_path.clone());
+        tx.upsert_note(entry_meta);
+        tx.remove_note(active_path);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(parked_path)
+    }
+
+    /// Move a parked project back to `projects/`, flipping its
+    /// frontmatter `status` from `parked` to `active`. Enforces the
+    /// active-project cap: if activating would exceed
+    /// `config.max_active_projects` (default 5), returns
+    /// [`DomainError::ProjectCapReached`] with the slugs of the
+    /// projects already active so the caller can suggest one to park
+    /// first.
+    ///
+    /// Errors:
+    /// - `ProjectCapReached` — at or above the cap.
+    /// - `ProjectNotParked` — file lives at `projects/<slug>.md` (the
+    ///   active folder) or its frontmatter `status` is anything other
+    ///   than `parked`.
+    /// - `Store(NotFound)` — slug doesn't resolve to either folder.
+    /// - `Store(AlreadyExists)` — `projects/<slug>.md` is already
+    ///   occupied (defensive guard against drift).
+    pub fn activate_project(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+    ) -> Result<VaultPath, DomainError> {
+        // Cap check first so a "you can't activate, you're at cap"
+        // error fires before any file resolution work — clearer for
+        // the user when they're at cap and trying to bring something
+        // back from the parked drawer.
+        let active = self.active_projects()?;
+        let cap = self.config.vault.max_active_projects as usize;
+        if active.len() >= cap {
+            return Err(DomainError::ProjectCapReached {
+                current: active.len(),
+                max: cap,
+                active_projects: active
+                    .iter()
+                    .map(|(p, _)| project_slug_from_path(p))
+                    .collect(),
+            });
+        }
+
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+
+        let parked_exists = self.store.exists(&parked_path)?;
+        if !parked_exists {
+            // Distinguish "file lives at active path" (wrong state)
+            // from "no such project" — Store(NotFound) versus
+            // ProjectNotParked.
+            if self.store.exists(&active_path)? {
+                return Err(DomainError::ProjectNotParked(slug.to_owned()));
+            }
+            return Err(DomainError::Store(StoreError::NotFound(
+                parked_path.to_string(),
+            )));
+        }
+        if self.store.exists(&active_path)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                active_path.to_string(),
+            )));
+        }
+
+        let raw = self.store.read_file(&parked_path)?;
+        // Defensive: the file is at projects/_parked/ but a manual
+        // edit could have set status to active or completed. Trust
+        // the frontmatter, refuse if it's not parked.
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let project = ProjectFrontmatter::try_from(fm)?;
+        if project.status != ProjectStatus::Parked {
+            return Err(DomainError::ProjectNotParked(slug.to_owned()));
+        }
+
+        let new_content = rewrite_status_in_frontmatter(&raw, ProjectStatus::Active)?;
+        let entry_meta =
+            build_index_entry_for(&active_path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!("project [[{slug}]] activated");
+
+        let mut tx = self.transaction();
+        tx.write_file(active_path.clone(), new_content);
+        tx.delete_file(parked_path.clone());
+        tx.upsert_note(entry_meta);
+        tx.remove_note(parked_path);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(active_path)
+    }
 }
 
 /// Render the built-in project template by substituting `{{title}}`,
@@ -769,4 +897,69 @@ fn parse_waiting_on_text(line: &str) -> Option<&str> {
         return None;
     }
     Some(body)
+}
+
+/// Pull the slug (filename stem) out of a project path for surfacing
+/// in `ProjectCapReached.active_projects` — readable without leaking
+/// the folder structure into error messages.
+fn project_slug_from_path(path: &VaultPath) -> String {
+    path.as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Rewrite the `status:` line within the YAML frontmatter region of a
+/// project's raw markdown. Operates only between the opening and
+/// closing `---` markers so a body line containing `status:` (e.g.
+/// inside Current State prose) is unaffected. Preserves the original
+/// formatting of every other line — comments, key order, spacing.
+///
+/// Errors with a missing-section error if the frontmatter doesn't
+/// have a `status:` line at all (we'd be rewriting nothing) — that
+/// situation should never happen for a project that parsed via
+/// `ProjectFrontmatter::try_from`, but we surface it loudly rather
+/// than silently emitting a file with no status.
+fn rewrite_status_in_frontmatter(
+    raw: &str,
+    new_status: ProjectStatus,
+) -> Result<String, DomainError> {
+    // Locate the frontmatter region. The opening `---\n` must be at
+    // the very start; the closing `\n---\n` (or `\n---` at EOF)
+    // marks the end.
+    let opening = "---\n";
+    if !raw.starts_with(opening) {
+        return Err(DomainError::MissingSection("frontmatter"));
+    }
+    let body_after_open = opening.len();
+    let closing_offset = raw[body_after_open..]
+        .find("\n---")
+        .ok_or(DomainError::MissingSection("frontmatter"))?;
+    let yaml_end = body_after_open + closing_offset + 1; // include the trailing \n
+
+    let yaml = &raw[body_after_open..yaml_end];
+
+    let mut new_yaml = String::with_capacity(yaml.len());
+    let mut found = false;
+    for line in yaml.split_inclusive('\n') {
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("status:") || trimmed_start.starts_with("status :") {
+            new_yaml.push_str("status: ");
+            new_yaml.push_str(new_status.as_str());
+            new_yaml.push('\n');
+            found = true;
+        } else {
+            new_yaml.push_str(line);
+        }
+    }
+    if !found {
+        return Err(DomainError::MissingSection("status"));
+    }
+
+    let mut result = String::with_capacity(raw.len());
+    result.push_str(&raw[..body_after_open]);
+    result.push_str(&new_yaml);
+    result.push_str(&raw[yaml_end..]);
+    Ok(result)
 }
