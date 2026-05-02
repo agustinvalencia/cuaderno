@@ -155,3 +155,38 @@ pub(super) fn rewrite_status_in_frontmatter(
     result.push_str(&raw[yaml_end..]);
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    //! Direct tests for the defensive error branches of
+    //! `rewrite_status_in_frontmatter` — branches the public Vault
+    //! API can never reach (the surrounding `MarkdownDocument::parse`
+    //! and `ProjectFrontmatter::try_from` validate first), but real
+    //! code paths nonetheless. Calling the helper directly here keeps
+    //! coverage honest.
+
+    use super::*;
+
+    #[test]
+    fn rewrite_status_errors_when_frontmatter_missing() {
+        let raw = "# Just a heading\nno frontmatter here\n";
+        let err = rewrite_status_in_frontmatter(raw, ProjectStatus::Parked).unwrap_err();
+        match err {
+            DomainError::MissingSection(name) => assert_eq!(name, "frontmatter"),
+            other => panic!("expected MissingSection(frontmatter), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rewrite_status_errors_when_status_line_missing() {
+        // Valid `---`...`---` frontmatter, but no `status:` key inside.
+        // Real projects always have one (validated by ProjectFrontmatter::try_from)
+        // but the helper itself doesn't trust that and refuses loudly.
+        let raw = "---\ntype: project\ncontext: work\n---\n\n# Body\n";
+        let err = rewrite_status_in_frontmatter(raw, ProjectStatus::Active).unwrap_err();
+        match err {
+            DomainError::MissingSection(name) => assert_eq!(name, "status"),
+            other => panic!("expected MissingSection(status), got {other:?}"),
+        }
+    }
+}
