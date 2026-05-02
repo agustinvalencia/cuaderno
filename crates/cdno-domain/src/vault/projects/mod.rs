@@ -35,7 +35,10 @@ mod actions;
 mod lifecycle;
 mod milestones;
 mod state;
+mod summary;
 mod waiting;
+
+pub use summary::{ProjectSummary, TopAction};
 
 /// The heading whose body holds the project's narrative state.
 /// Rewritten by `update_project_state`; the previous body is
@@ -88,6 +91,40 @@ impl Vault {
         }
 
         Ok((path, doc))
+    }
+
+    /// Resolve a project slug to its file plus parsed markdown plus
+    /// frontmatter, regardless of status. Use this for read-only
+    /// queries (summary, orientation peek-ins) that want to operate
+    /// on parked or completed projects too — gatekeeping by status
+    /// belongs in the caller.
+    ///
+    /// Errors only when the slug doesn't resolve to either folder
+    /// (`Store(NotFound)`) or when the file's frontmatter is
+    /// malformed.
+    pub(super) fn resolve_any_project(
+        &self,
+        slug: &str,
+    ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+
+        let path = if self.store.exists(&active_path)? {
+            active_path
+        } else if self.store.exists(&parked_path)? {
+            parked_path
+        } else {
+            return Err(DomainError::Store(StoreError::NotFound(
+                active_path.to_string(),
+            )));
+        };
+
+        let raw = self.store.read_file(&path)?;
+        let doc = MarkdownDocument::parse(raw)?;
+        let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
+
+        Ok((path, doc, project))
     }
 }
 
