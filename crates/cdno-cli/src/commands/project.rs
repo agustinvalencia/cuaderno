@@ -210,7 +210,14 @@ pub fn run(root: &Path, at: NaiveDateTime, command: ProjectCommands) -> Result<(
     Ok(())
 }
 
-fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
+/// Parse a `YYYY-MM-DD` date for clap's `value_parser` on
+/// `--date`. Public so the integration test in `tests/project.rs`
+/// can hit it directly: clap's path runs in a subprocess that
+/// Linux tarpaulin can't instrument, so a public surface is the
+/// cheapest route to honest coverage. Callers other than tests
+/// shouldn't depend on this — it's a CLI argument-parsing helper,
+/// not a domain primitive.
+pub fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|e| format!("expected YYYY-MM-DD, got `{s}`: {e}"))
 }
@@ -266,31 +273,5 @@ fn print_summary(summary: &cdno_domain::ProjectSummary) {
             None => println!("  Top: {}", action.text),
         },
         None => println!("  Top: (no open actions)"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    //! Direct tests for the small private helpers. `parse_iso_date`
-    //! is reachable through clap's value_parser when parsing
-    //! `--date`, but Linux tarpaulin can't instrument subprocess
-    //! code so the integration tests don't measure it. Calling the
-    //! helper directly here keeps coverage honest.
-
-    use super::*;
-
-    #[test]
-    fn parse_iso_date_accepts_valid_yyyy_mm_dd() {
-        assert_eq!(
-            parse_iso_date("2026-05-22").unwrap(),
-            NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()
-        );
-    }
-
-    #[test]
-    fn parse_iso_date_rejects_other_formats_with_helpful_message() {
-        let err = parse_iso_date("May 22 2026").unwrap_err();
-        assert!(err.contains("YYYY-MM-DD"), "missing format hint: {err}");
-        assert!(err.contains("May 22 2026"), "missing input echo: {err}");
     }
 }

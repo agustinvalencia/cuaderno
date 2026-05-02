@@ -12,7 +12,9 @@ use std::fs;
 use std::path::Path;
 
 use cdno_cli::commands::init;
-use cdno_cli::commands::project::{self, MilestoneCommands, ProjectCommands, WaitingCommands};
+use cdno_cli::commands::project::{
+    self, MilestoneCommands, ProjectCommands, WaitingCommands, parse_iso_date,
+};
 use cdno_domain::frontmatter::{Context, EnergyLevel};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use tempfile::TempDir;
@@ -420,4 +422,25 @@ fn waiting_add_and_resolve_round_trip() {
 
     let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
     assert!(!body.contains("Compute allocation"));
+}
+
+// ---------------------------------------------------------------------
+// parse_iso_date — exposed publicly because clap's value_parser path
+// runs in a subprocess on the binary tests, which Linux tarpaulin
+// can't instrument. Direct calls here keep the helper measured.
+// ---------------------------------------------------------------------
+
+#[test]
+fn parse_iso_date_accepts_valid_yyyy_mm_dd() {
+    assert_eq!(
+        parse_iso_date("2026-05-22").unwrap(),
+        NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()
+    );
+}
+
+#[test]
+fn parse_iso_date_rejects_other_formats_with_helpful_message() {
+    let err = parse_iso_date("May 22 2026").unwrap_err();
+    assert!(err.contains("YYYY-MM-DD"), "missing format hint: {err}");
+    assert!(err.contains("May 22 2026"), "missing input echo: {err}");
 }
