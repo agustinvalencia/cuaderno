@@ -38,6 +38,13 @@ mod slug;
 
 pub use projects::{ProjectSummary, TopAction};
 
+// Re-exported for the targeted test in `tests/unit/projects_tests.rs`
+// to reach the helper's defensive error branches without any
+// `#[cfg(test)] mod tests` block in the source. External callers
+// other than tests should not depend on this — it's a domain-internal
+// frontmatter mutator.
+pub use projects::rewrite_status_in_frontmatter;
+
 /// Domain entry point. Owns the store, index, and config; hands out
 /// transactions; exposes high-level operations defined in feature
 /// submodules.

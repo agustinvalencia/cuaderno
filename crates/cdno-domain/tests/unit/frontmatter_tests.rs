@@ -203,6 +203,52 @@ fn energy_level_as_str_returns_kebab_case() {
 }
 
 // ---------------------------------------------------------------------
+// FromStr impls — used by clap to parse CLI args. Subprocess tests
+// don't reach these on Linux tarpaulin (subprocess code isn't
+// instrumented), so we cover them directly here.
+// ---------------------------------------------------------------------
+
+#[test]
+fn context_from_str_parses_every_kebab_case_variant() {
+    for variant in cdno_domain::frontmatter::Context::ALL {
+        let parsed: Context = variant
+            .as_str()
+            .parse()
+            .expect("kebab-case round-trips through FromStr");
+        assert_eq!(parsed, variant);
+    }
+}
+
+#[test]
+fn context_from_str_rejects_unknown_value_with_helpful_error() {
+    let err = "studies"
+        .parse::<Context>()
+        .expect_err("unknown context must reject");
+    let msg = format!("{err}");
+    assert!(msg.contains("studies"), "error names input: {msg}");
+}
+
+#[test]
+fn energy_level_from_str_parses_every_kebab_case_variant() {
+    for variant in cdno_domain::frontmatter::EnergyLevel::ALL {
+        let parsed: EnergyLevel = variant
+            .as_str()
+            .parse()
+            .expect("kebab-case round-trips through FromStr");
+        assert_eq!(parsed, variant);
+    }
+}
+
+#[test]
+fn energy_level_from_str_rejects_unknown_value_with_helpful_error() {
+    let err = "intense"
+        .parse::<EnergyLevel>()
+        .expect_err("unknown energy must reject");
+    let msg = format!("{err}");
+    assert!(msg.contains("intense"), "error names input: {msg}");
+}
+
+// ---------------------------------------------------------------------
 // ProjectFrontmatter::try_from
 // ---------------------------------------------------------------------
 

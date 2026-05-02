@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{Local, NaiveDateTime};
 use clap::{Parser, Subcommand};
 
+use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::{bootstrap, commands};
 
 #[derive(Debug, Parser)]
@@ -50,6 +51,13 @@ enum Commands {
         /// The note text. Quote if it contains spaces.
         text: String,
     },
+
+    /// Manage project maps: create, update state, add/complete actions
+    /// and milestones, park/activate, and list/show.
+    Project {
+        #[command(subcommand)]
+        subcommand: ProjectCommands,
+    },
 }
 
 fn main() -> Result<()> {
@@ -78,6 +86,10 @@ fn main() -> Result<()> {
         Commands::Capture { text } => {
             let root = discover_vault_root_or_error()?;
             commands::capture::run(&root, Local::now().naive_local(), &text)
+        }
+        Commands::Project { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::project::run(&root, Local::now().naive_local(), subcommand)
         }
     }
 }

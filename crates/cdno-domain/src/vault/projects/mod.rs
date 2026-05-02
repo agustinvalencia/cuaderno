@@ -150,7 +150,14 @@ pub(super) fn project_slug_from_path(path: &VaultPath) -> String {
 /// situation should never happen for a project that parsed via
 /// `ProjectFrontmatter::try_from`, but we surface it loudly rather
 /// than silently emitting a file with no status.
-pub(super) fn rewrite_status_in_frontmatter(
+///
+/// Public so the integration test in `tests/unit/projects_tests.rs`
+/// can hit the defensive error branches directly — the public
+/// `Vault::*` callers always feed it pre-validated input, so those
+/// branches are unreachable through the higher-level API. External
+/// callers other than tests should not depend on this; treat it as
+/// a domain-internal helper.
+pub fn rewrite_status_in_frontmatter(
     raw: &str,
     new_status: ProjectStatus,
 ) -> Result<String, DomainError> {
@@ -191,39 +198,4 @@ pub(super) fn rewrite_status_in_frontmatter(
     result.push_str(&new_yaml);
     result.push_str(&raw[yaml_end..]);
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    //! Direct tests for the defensive error branches of
-    //! `rewrite_status_in_frontmatter` — branches the public Vault
-    //! API can never reach (the surrounding `MarkdownDocument::parse`
-    //! and `ProjectFrontmatter::try_from` validate first), but real
-    //! code paths nonetheless. Calling the helper directly here keeps
-    //! coverage honest.
-
-    use super::*;
-
-    #[test]
-    fn rewrite_status_errors_when_frontmatter_missing() {
-        let raw = "# Just a heading\nno frontmatter here\n";
-        let err = rewrite_status_in_frontmatter(raw, ProjectStatus::Parked).unwrap_err();
-        match err {
-            DomainError::MissingSection(name) => assert_eq!(name, "frontmatter"),
-            other => panic!("expected MissingSection(frontmatter), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn rewrite_status_errors_when_status_line_missing() {
-        // Valid `---`...`---` frontmatter, but no `status:` key inside.
-        // Real projects always have one (validated by ProjectFrontmatter::try_from)
-        // but the helper itself doesn't trust that and refuses loudly.
-        let raw = "---\ntype: project\ncontext: work\n---\n\n# Body\n";
-        let err = rewrite_status_in_frontmatter(raw, ProjectStatus::Active).unwrap_err();
-        match err {
-            DomainError::MissingSection(name) => assert_eq!(name, "status"),
-            other => panic!("expected MissingSection(status), got {other:?}"),
-        }
-    }
 }
