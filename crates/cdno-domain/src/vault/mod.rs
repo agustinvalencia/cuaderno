@@ -36,6 +36,8 @@ mod log;
 mod projects;
 mod slug;
 
+pub use projects::{ProjectSummary, TopAction};
+
 /// Domain entry point. Owns the store, index, and config; hands out
 /// transactions; exposes high-level operations defined in feature
 /// submodules.

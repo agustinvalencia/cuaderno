@@ -5,6 +5,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TopAction;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
@@ -1799,4 +1800,221 @@ fn activate_project_errors_when_status_mismatches_folder() {
         matches!(err, DomainError::ProjectNotParked(_)),
         "got {err:?}"
     );
+}
+
+// ---------------------------------------------------------------------
+// project_summary
+// ---------------------------------------------------------------------
+
+fn project_body_with_state_and_actions(status: &str, state: &str, next_actions: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\n{state}\n\n## Next Actions\n{next_actions}\n## Waiting On\n(nothing yet)\n",
+    )
+}
+
+#[test]
+fn project_summary_returns_state_snippet_and_top_action() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "Started feature B exploration.\nResults look promising.",
+        "- [ ] Run ablation (deep)\n- [ ] Email supervisor (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("icml").expect("summary succeeds");
+
+    assert_eq!(summary.slug, "icml");
+    assert_eq!(summary.status, ProjectStatus::Active);
+    assert_eq!(
+        summary.state_snippet,
+        "Started feature B exploration.\nResults look promising."
+    );
+    assert_eq!(
+        summary.top_action,
+        Some(TopAction {
+            text: "Run ablation".to_owned(),
+            energy: Some(EnergyLevel::Deep),
+        })
+    );
+}
+
+#[test]
+fn project_summary_truncates_state_to_first_two_non_blank_lines() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "Line one.\nLine two.\nLine three.\nLine four.",
+        "- [ ] Step (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(summary.state_snippet, "Line one.\nLine two.");
+}
+
+#[test]
+fn project_summary_skips_blank_leading_lines_in_state() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "\n\nReal content starts here.\nSecond line.",
+        "- [ ] Step (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(
+        summary.state_snippet,
+        "Real content starts here.\nSecond line."
+    );
+}
+
+#[test]
+fn project_summary_picks_first_open_action_skipping_closed() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "Initial.",
+        "- [x] Done long ago (deep)\n- [ ] First open (medium)\n- [ ] Second open (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(
+        summary.top_action,
+        Some(TopAction {
+            text: "First open".to_owned(),
+            energy: Some(EnergyLevel::Medium),
+        })
+    );
+}
+
+#[test]
+fn project_summary_top_action_has_none_energy_when_suffix_missing() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "Initial.",
+        "- [ ] Bare action with no energy tag\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(
+        summary.top_action,
+        Some(TopAction {
+            text: "Bare action with no energy tag".to_owned(),
+            energy: None,
+        })
+    );
+}
+
+#[test]
+fn project_summary_top_action_is_none_when_only_closed_actions() {
+    let body = project_body_with_state_and_actions(
+        "active",
+        "Initial.",
+        "- [x] Done one (deep)\n- [x] Done two (light)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert!(summary.top_action.is_none());
+}
+
+#[test]
+fn project_summary_tolerates_missing_current_state_section() {
+    // Drifted project: no `## Current State` heading at all. Summary
+    // returns an empty snippet rather than erroring.
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Next Actions\n- [ ] Step (light)\n";
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(summary.state_snippet, "");
+    assert!(summary.top_action.is_some());
+}
+
+#[test]
+fn project_summary_tolerates_missing_next_actions_section() {
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n";
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
+
+    let summary = vault.project_summary("x").expect("summary succeeds");
+
+    assert_eq!(summary.state_snippet, "Foo.");
+    assert!(summary.top_action.is_none());
+}
+
+#[test]
+fn project_summary_returns_summary_for_parked_project() {
+    let body = project_body_with_state_and_actions(
+        "parked",
+        "Was working on this before refocus.",
+        "- [ ] Resume here (medium)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let summary = vault
+        .project_summary("old")
+        .expect("summary works on parked projects");
+
+    assert_eq!(summary.status, ProjectStatus::Parked);
+    assert_eq!(summary.state_snippet, "Was working on this before refocus.");
+    assert!(summary.top_action.is_some());
+}
+
+#[test]
+fn project_summary_returns_summary_for_completed_project() {
+    let body = project_body_with_state_and_actions(
+        "completed",
+        "Shipped 2026-03-15. All milestones met.",
+        "",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/done.md", &body)], VaultConfig::default());
+
+    let summary = vault
+        .project_summary("done")
+        .expect("summary works on completed projects");
+
+    assert_eq!(summary.status, ProjectStatus::Completed);
+}
+
+#[test]
+fn project_summary_errors_when_project_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault.project_summary("ghost").unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn project_summary_propagates_malformed_frontmatter() {
+    // Bad frontmatter (missing required field) — surface the
+    // validation error rather than swallow it.
+    let body = "---\ntype: project\ncontext: work\ncreated: 2026-04-01\n---\n\n# X\n";
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/bad.md", body)], VaultConfig::default());
+
+    let err = vault.project_summary("bad").unwrap_err();
+    assert!(matches!(err, DomainError::Validation(_)), "got {err:?}");
 }
