@@ -38,6 +38,21 @@ const CURRENT_STATE_SECTION: &str = "Current State";
 /// Mutated by `add_action` (append) and `complete_action` (remove).
 const NEXT_ACTIONS_SECTION: &str = "Next Actions";
 
+/// The heading whose body holds project blockers awaiting external
+/// resolution. Mutated by `add_waiting_on` and `resolve_waiting_on`.
+const WAITING_ON_SECTION: &str = "Waiting On";
+
+/// The heading whose body holds project milestones with their target
+/// or hard-deadline dates. Mutated by `add_milestone` and
+/// `complete_milestone`. Hard milestones in this section feed the
+/// commitments aggregation query (#32).
+const MILESTONES_SECTION: &str = "Milestones";
+
+/// Placeholder body for an empty `## Waiting On` section. Treated as
+/// equivalent to "no items" so `add_waiting_on` replaces rather than
+/// appending below it.
+const WAITING_ON_PLACEHOLDER: &str = "(nothing yet)";
+
 /// Built-in project map template. Custom templates from
 /// `.cuaderno/templates/project.md` will override this once the
 /// TemplateEngine integration lands; for now `create_project` does
@@ -240,16 +255,16 @@ impl Vault {
         let action_text = action.trim();
         let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
 
-        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end_matches('\n');
-        // Drop trailing blank lines so the new bullet sits flush with
-        // the existing list. `trim_end_matches('\n')` keeps internal
-        // indentation, blank lines between bullets stay where the
-        // user authored them.
-        let trimmed = existing.trim_end();
-        let new_section = if trimmed.is_empty() {
+        // Auto-create the section if a drifted project is missing it
+        // (migration imports, hand-edited files). The user's intent on
+        // "add an action" is unambiguous; refusing would force them to
+        // edit the file by hand first.
+        doc.ensure_section(NEXT_ACTIONS_SECTION)?;
+        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
             format!("{bullet}\n\n")
         } else {
-            format!("{trimmed}\n{bullet}\n\n")
+            format!("{existing}\n{bullet}\n\n")
         };
         doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
 
@@ -376,6 +391,257 @@ impl Vault {
 
         Ok((path, doc))
     }
+
+    /// Append a milestone bullet to `## Milestones`, logging the
+    /// addition to today's daily note in a single committed
+    /// transaction. The section is auto-created if missing.
+    ///
+    /// Format: `- [ ] <title> — hard: YYYY-MM-DD` when `is_hard` is
+    /// true, otherwise `- [ ] <title> — target: YYYY-MM-DD`. Hard
+    /// milestones with ISO dates are picked up by the commitments
+    /// aggregation query (see `cdno_core::markdown::extract_hard_deadlines`).
+    pub fn add_milestone(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        title: &str,
+        target_date: NaiveDate,
+        is_hard: bool,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let title = title.trim();
+        let date_str = target_date.format("%Y-%m-%d").to_string();
+        let keyword = if is_hard { "hard" } else { "target" };
+        let bullet = format!("- [ ] {title} \u{2014} {keyword}: {date_str}");
+
+        doc.ensure_section(MILESTONES_SECTION)?;
+        let existing = doc.section(MILESTONES_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(MILESTONES_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry =
+            format!("milestone added to [[{slug}]] \u{2014} {title} ({keyword}: {date_str})");
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Mark an open milestone as completed in-place: the matched
+    /// `- [ ] <title> — <keyword>: <value>` line becomes
+    /// `- [x] <title> — YYYY-MM-DD` (today's date), preserving the
+    /// surrounding section. The completion is logged to today's
+    /// daily note in the same transaction.
+    ///
+    /// Match strategy mirrors `complete_action`: case-insensitive
+    /// substring on the title portion only (the `— <keyword>: <date>`
+    /// suffix is stripped before comparison). Closed `- [x]` bullets
+    /// are skipped — they were already manually completed.
+    pub fn complete_milestone(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let section = doc.section(MILESTONES_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let needle = query.trim().to_lowercase();
+
+        let mut matches: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(text) = parse_open_milestone_title(line)
+                && text.to_lowercase().contains(&needle)
+            {
+                matches.push(i);
+            }
+        }
+
+        if matches.is_empty() {
+            return Err(DomainError::MilestoneNotFound {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+            });
+        }
+        if matches.len() > 1 {
+            let candidates = matches
+                .iter()
+                .map(|&i| {
+                    parse_open_milestone_title(lines[i])
+                        .unwrap_or("")
+                        .to_owned()
+                })
+                .collect();
+            return Err(DomainError::AmbiguousMilestone {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+                candidates,
+            });
+        }
+
+        let matched_idx = matches[0];
+        let title = parse_open_milestone_title(lines[matched_idx])
+            .expect("matched line was previously parseable")
+            .to_owned();
+        let completion_date = at.date().format("%Y-%m-%d").to_string();
+        let new_line = format!("- [x] {title} \u{2014} {completion_date}");
+
+        let mut new_lines: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();
+        new_lines[matched_idx] = new_line;
+        let new_section = new_lines.join("\n");
+        doc.replace_section(MILESTONES_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!("milestone done on [[{slug}]] \u{2014} {title}");
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Append a waiting-on item to `## Waiting On`, logging the
+    /// addition to today's daily note. The section is auto-created
+    /// if missing. The `(nothing yet)` placeholder is treated as an
+    /// empty section — the new bullet replaces it instead of stacking
+    /// below it.
+    ///
+    /// Waiting-on lines have no checkbox: they're informational
+    /// blockers (`- Compute allocation — requested 500 GPU-hours`),
+    /// not actionable items.
+    pub fn add_waiting_on(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        description: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let description = description.trim();
+        let bullet = format!("- {description}");
+
+        doc.ensure_section(WAITING_ON_SECTION)?;
+        let existing = doc.section(WAITING_ON_SECTION)?.trim();
+        let is_placeholder = existing == WAITING_ON_PLACEHOLDER;
+        let new_section = if existing.is_empty() || is_placeholder {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(WAITING_ON_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!("waiting added on [[{slug}]] \u{2014} {description}");
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Remove a waiting-on item from `## Waiting On`, logging the
+    /// resolution to today's daily note.
+    ///
+    /// Match strategy mirrors `complete_action`: case-insensitive
+    /// substring on the bullet text. If removing the last item leaves
+    /// the section empty, the `(nothing yet)` placeholder is restored
+    /// so the section reads consistently.
+    pub fn resolve_waiting_on(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let section = doc.section(WAITING_ON_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let needle = query.trim().to_lowercase();
+
+        let mut matches: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(text) = parse_waiting_on_text(line)
+                && text.to_lowercase().contains(&needle)
+            {
+                matches.push(i);
+            }
+        }
+
+        if matches.is_empty() {
+            return Err(DomainError::WaitingOnNotFound {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+            });
+        }
+        if matches.len() > 1 {
+            let candidates = matches
+                .iter()
+                .map(|&i| parse_waiting_on_text(lines[i]).unwrap_or("").to_owned())
+                .collect();
+            return Err(DomainError::AmbiguousWaitingOn {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+                candidates,
+            });
+        }
+
+        let removed_idx = matches[0];
+        let removed_text = parse_waiting_on_text(lines[removed_idx])
+            .expect("matched line was previously parseable")
+            .to_owned();
+        let kept: Vec<&str> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| if i == removed_idx { None } else { Some(*l) })
+            .collect();
+        // If the removal leaves no bullets behind, restore the
+        // `(nothing yet)` placeholder so the section reads cleanly.
+        let new_section = if kept
+            .iter()
+            .all(|l| parse_waiting_on_text(l).is_none() && l.trim().is_empty())
+        {
+            format!("{WAITING_ON_PLACEHOLDER}\n\n")
+        } else {
+            kept.join("\n")
+        };
+        doc.replace_section(WAITING_ON_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!("waiting resolved on [[{slug}]] \u{2014} {removed_text}");
+
+        let mut tx = self.transaction();
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
 }
 
 /// Render the built-in project template by substituting `{{title}}`,
@@ -458,4 +724,49 @@ fn strip_energy_suffix(text: &str) -> &str {
         }
     }
     text
+}
+
+/// If `line` is an open milestone bullet (`- [ ] <title> — <keyword>:
+/// <value>`), return the `<title>` portion with the trailing
+/// keyword/value section stripped. Closed bullets, blanks, and
+/// non-bullet content return `None`.
+///
+/// Both em-dash (`\u{2014}`) and ASCII hyphen-minus separators are
+/// recognised — same forgiveness as
+/// [`cdno_core::markdown::extract_hard_deadlines`].
+fn parse_open_milestone_title(line: &str) -> Option<&str> {
+    let after_box = line.trim_start().strip_prefix("- [ ] ")?;
+    Some(strip_milestone_target_suffix(after_box.trim()))
+}
+
+fn strip_milestone_target_suffix(text: &str) -> &str {
+    for separator in [
+        " \u{2014} hard:",
+        " \u{2014} target:",
+        " - hard:",
+        " - target:",
+    ] {
+        if let Some(idx) = text.rfind(separator) {
+            return text[..idx].trim_end();
+        }
+    }
+    text
+}
+
+/// If `line` is a waiting-on bullet (`- <description>`), return the
+/// description trimmed. Blank lines, the `(nothing yet)` placeholder,
+/// and non-bullet content return `None`.
+fn parse_waiting_on_text(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("- [") {
+        // Checkbox bullets aren't waiting-on items; ignore so the
+        // placeholder logic and substring match don't accidentally
+        // touch a stray task.
+        return None;
+    }
+    let body = trimmed.strip_prefix("- ")?.trim();
+    if body.is_empty() {
+        return None;
+    }
+    Some(body)
 }

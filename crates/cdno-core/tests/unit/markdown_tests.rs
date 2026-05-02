@@ -161,6 +161,69 @@ fn append_to_section_missing_returns_not_found() {
 }
 
 #[test]
+fn ensure_section_is_noop_when_present() {
+    let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
+    let before = doc.render().to_owned();
+    doc.ensure_section("Milestones").unwrap();
+    assert_eq!(
+        doc.render(),
+        before,
+        "existing section must not be re-added"
+    );
+}
+
+#[test]
+fn ensure_section_appends_when_absent() {
+    let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
+    doc.ensure_section("Waiting On").unwrap();
+    let rendered = doc.render();
+    assert!(
+        rendered.contains("## Waiting On"),
+        "new heading present:\n{rendered}"
+    );
+    // Subsequent operations on the section work normally.
+    doc.append_to_section("Waiting On", "- new item\n").unwrap();
+    assert!(doc.render().contains("- new item"));
+}
+
+#[test]
+fn ensure_section_separates_with_blank_line() {
+    // The existing body ends with a heading + content; the new
+    // section should not run into the previous one.
+    let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
+    doc.ensure_section("Brand New").unwrap();
+    let rendered = doc.render();
+    // Find the trailing chunk and assert it's separated cleanly.
+    assert!(
+        rendered.contains("\n\n## Brand New\n"),
+        "missing blank-line separator:\n{rendered}"
+    );
+}
+
+#[test]
+fn ensure_section_preserves_existing_when_ambiguous() {
+    // If two headings already share the text, ensure_section
+    // should NOT add a third — existing structure is left as-is
+    // and the caller's later `section()` call will surface the
+    // ambiguity.
+    let raw = "\
+---
+title: x
+---
+## Same
+a
+
+## Same
+b
+";
+    let mut doc = MarkdownDocument::parse(raw).unwrap();
+    doc.ensure_section("Same").unwrap();
+    let rendered = doc.render();
+    let count = rendered.matches("## Same").count();
+    assert_eq!(count, 2, "no extra heading added; got:\n{rendered}");
+}
+
+#[test]
 fn render_after_parse_returns_original_raw() {
     let doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
     assert_eq!(doc.render(), SIMPLE_DOC);

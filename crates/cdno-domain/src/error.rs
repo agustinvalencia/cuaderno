@@ -29,6 +29,26 @@ pub enum DomainError {
         candidates: Vec<String>,
     },
 
+    #[error("no milestone matching '{query}' on project '{slug}'")]
+    MilestoneNotFound { slug: String, query: String },
+
+    #[error("ambiguous milestone match for '{query}' on project '{slug}': {candidates:?}")]
+    AmbiguousMilestone {
+        slug: String,
+        query: String,
+        candidates: Vec<String>,
+    },
+
+    #[error("no waiting-on item matching '{query}' on project '{slug}'")]
+    WaitingOnNotFound { slug: String, query: String },
+
+    #[error("ambiguous waiting-on match for '{query}' on project '{slug}': {candidates:?}")]
+    AmbiguousWaitingOn {
+        slug: String,
+        query: String,
+        candidates: Vec<String>,
+    },
+
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 
