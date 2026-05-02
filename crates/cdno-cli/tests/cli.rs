@@ -114,3 +114,453 @@ fn capture_creates_an_inbox_file_when_run_from_inside_a_vault() {
         "filename: {name}"
     );
 }
+
+// ---------------------------------------------------------------------
+// project subcommands
+// ---------------------------------------------------------------------
+
+#[test]
+fn project_full_lifecycle() {
+    // The acceptance criterion from #30: full lifecycle from create
+    // through state, action add/done, milestone add, park, activate.
+    // Each step asserts an artefact (file existence, content) so a
+    // regression in any subcommand surfaces here.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    // create
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "ICML paper", "--context", "work"])
+        .assert()
+        .success();
+    let project_path = dir.path().join("projects/icml-paper.md");
+    assert!(project_path.is_file(), "project file created");
+
+    // state
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "state", "icml-paper", "Started feature B."])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(&project_path).unwrap();
+    assert!(
+        body.contains("Started feature B."),
+        "state present:\n{body}"
+    );
+
+    // action add
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "action",
+            "icml-paper",
+            "Run ablation",
+            "--energy",
+            "deep",
+        ])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(&project_path).unwrap();
+    assert!(
+        body.contains("- [ ] Run ablation (deep)"),
+        "action present:\n{body}"
+    );
+
+    // action done
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "done", "icml-paper", "ablation"])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(&project_path).unwrap();
+    assert!(
+        !body.contains("- [ ] Run ablation"),
+        "open action gone:\n{body}"
+    );
+
+    // milestone add (hard)
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "milestone",
+            "add",
+            "icml-paper",
+            "Submit camera-ready",
+            "--date",
+            "2026-05-22",
+            "--hard",
+        ])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(&project_path).unwrap();
+    assert!(
+        body.contains("hard: 2026-05-22"),
+        "hard milestone wire format:\n{body}"
+    );
+
+    // park
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "park", "icml-paper"])
+        .assert()
+        .success();
+    assert!(!project_path.is_file(), "active path empty after park");
+    let parked_path = dir.path().join("projects/_parked/icml-paper.md");
+    assert!(parked_path.is_file(), "parked file present");
+
+    // activate
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "activate", "icml-paper"])
+        .assert()
+        .success();
+    assert!(project_path.is_file(), "active path back");
+    assert!(!parked_path.is_file(), "parked path empty after activate");
+}
+
+#[test]
+fn project_list_prints_each_active_project_with_state() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "Beta", "--context", "personal"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "state", "alpha", "Just started."])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha [work]"))
+        .stdout(predicate::str::contains("beta [personal]"))
+        .stdout(predicate::str::contains("Just started."));
+}
+
+#[test]
+fn project_show_renders_summary_block() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "Surrogate Model", "--context", "work"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "state",
+            "surrogate-model",
+            "Initial exploration.",
+        ])
+        .assert()
+        .success();
+    // Drop the template-default placeholder action so we control
+    // what's at the top.
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "done", "surrogate-model", "first concrete"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "action",
+            "surrogate-model",
+            "Email supervisor",
+            "--energy",
+            "light",
+        ])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "surrogate-model"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[surrogate-model] (active)"))
+        .stdout(predicate::str::contains("Initial exploration."))
+        .stdout(predicate::str::contains("Top: Email supervisor (light)"));
+}
+
+#[test]
+fn project_create_rejects_unknown_context() {
+    // Clap's typed parsing should reject the value before any vault
+    // work happens. The error message should name the bad input.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "studies"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("studies"));
+}
+
+#[test]
+fn project_done_errors_when_action_not_found() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "done", "x", "ghost-action"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ghost-action"));
+}
+
+#[test]
+fn project_waiting_add_and_resolve() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "waiting",
+            "add",
+            "x",
+            "Compute allocation - 500 GPU-hours",
+        ])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        body.contains("- Compute allocation - 500 GPU-hours"),
+        "waiting added:\n{body}"
+    );
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "waiting", "resolve", "x", "Compute"])
+        .assert()
+        .success();
+    let body = std::fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        !body.contains("Compute allocation"),
+        "waiting resolved:\n{body}"
+    );
+}
+
+#[test]
+fn project_milestone_add_and_done_round_trip() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "milestone",
+            "add",
+            "x",
+            "Submit camera-ready",
+            "--date",
+            "2026-05-22",
+            "--hard",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "milestone", "done", "x", "camera-ready"])
+        .assert()
+        .success();
+
+    let body = std::fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        body.contains("- [x] Submit camera-ready"),
+        "milestone marked done:\n{body}"
+    );
+    assert!(
+        !body.contains("- [ ] Submit camera-ready"),
+        "open form gone:\n{body}"
+    );
+}
+
+#[test]
+fn project_list_says_no_active_projects_when_vault_is_empty() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No active projects"));
+}
+
+#[test]
+fn project_show_renders_parked_status() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "park", "x"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[x] (parked)"));
+}
+
+#[test]
+fn project_show_says_no_open_actions_after_completing_default() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+    // The template seeds one default action; complete it so the
+    // `Top: (no open actions)` branch fires.
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "done", "x", "first concrete"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Top: (no open actions)"));
+}
+
+#[test]
+fn project_show_renders_completed_status() {
+    // No CLI op flips a project to completed yet (#28 only handles
+    // park/activate). Writing the file directly is the only way to
+    // exercise the Completed arm of print_summary.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let body = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2026-04-01\n---\n\n# Done\n\n## Current State\nShipped 2026-04-15.\n\n## Next Actions\n\n## Waiting On\n(nothing yet)\n\n## Milestones\n";
+    std::fs::write(dir.path().join("projects/done.md"), body).unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "done"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[done] (completed)"));
+}
+
+#[test]
+fn project_show_renders_state_none_when_section_empty() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+    // Drive the state to whitespace-only; project_summary collapses
+    // it to an empty snippet, and show prints `State: (none)`.
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "state", "x", "  "])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "x"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("State: (none)"));
+}
+
+#[test]
+fn project_show_renders_top_action_without_energy_suffix() {
+    // Manually-edited project with a bare `- [ ]` bullet (no
+    // `(deep|medium|light)` suffix). show prints the action without
+    // the trailing energy parenthetical.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Current State\nFoo.\n\n## Next Actions\n- [ ] Bare action\n\n## Waiting On\n(nothing yet)\n\n## Milestones\n";
+    std::fs::write(dir.path().join("projects/x.md"), body).unwrap();
+
+    let assert = cdno()
+        .current_dir(dir.path())
+        .args(["project", "show", "x"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let top_line = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with("Top:"))
+        .expect("output has a Top line");
+    assert_eq!(top_line.trim(), "Top: Bare action");
+}
+
+#[test]
+fn project_milestone_date_must_be_iso_format() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "X", "--context", "work"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "milestone",
+            "add",
+            "x",
+            "First",
+            "--date",
+            "May 22 2026",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("YYYY-MM-DD"));
+}

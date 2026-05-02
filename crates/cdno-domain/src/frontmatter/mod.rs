@@ -8,4 +8,7 @@
 
 pub mod project;
 
-pub use project::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
+pub use project::{
+    Context, EnergyLevel, ParseContextError, ParseEnergyLevelError, ProjectFrontmatter,
+    ProjectStatus,
+};

@@ -3,6 +3,8 @@
 //! See `docs/design.md` §5.3 (project map shape) and §5.10 (canonical
 //! context list and rationale for compile-time enums).
 
+use std::str::FromStr;
+
 use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
 use chrono::NaiveDate;
@@ -23,6 +25,18 @@ pub enum Context {
 }
 
 impl Context {
+    /// Every variant in declaration order — used by [`FromStr`] and
+    /// any future "iterate every context" need.
+    pub const ALL: [Context; 7] = [
+        Context::Work,
+        Context::SideProject,
+        Context::University,
+        Context::Family,
+        Context::Household,
+        Context::Legal,
+        Context::Personal,
+    ];
+
     /// Kebab-case YAML / CLI form. Mirrors the `#[serde(rename_all =
     /// "kebab-case")]` projection used for serialisation, but exposed
     /// directly so write paths don't have to round-trip through
@@ -37,6 +51,22 @@ impl Context {
             Context::Legal => "legal",
             Context::Personal => "personal",
         }
+    }
+}
+
+/// Error returned when a string does not match any [`Context`] variant.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("unknown context: {0}")]
+pub struct ParseContextError(pub String);
+
+impl FromStr for Context {
+    type Err = ParseContextError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Context::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| ParseContextError(s.to_owned()))
     }
 }
 
@@ -77,6 +107,10 @@ pub enum EnergyLevel {
 }
 
 impl EnergyLevel {
+    /// Every variant in declaration order — used by [`FromStr`] and
+    /// any future "iterate every level" need (e.g. CLI help text).
+    pub const ALL: [EnergyLevel; 3] = [EnergyLevel::Deep, EnergyLevel::Medium, EnergyLevel::Light];
+
     /// Kebab-case form used in the action suffix and the CLI flag.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -84,6 +118,22 @@ impl EnergyLevel {
             EnergyLevel::Medium => "medium",
             EnergyLevel::Light => "light",
         }
+    }
+}
+
+/// Error returned when a string does not match any [`EnergyLevel`] variant.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+#[error("unknown energy level: {0} (expected: deep, medium, or light)")]
+pub struct ParseEnergyLevelError(pub String);
+
+impl FromStr for EnergyLevel {
+    type Err = ParseEnergyLevelError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        EnergyLevel::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .ok_or_else(|| ParseEnergyLevelError(s.to_owned()))
     }
 }
 
