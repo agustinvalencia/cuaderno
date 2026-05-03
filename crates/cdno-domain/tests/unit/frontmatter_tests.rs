@@ -1,6 +1,9 @@
 use cdno_core::error::ValidationError;
 use cdno_core::frontmatter::Frontmatter;
-use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
+use cdno_domain::frontmatter::{
+    CommitmentFrontmatter, CommitmentStatus, Context, EnergyLevel, ProjectFrontmatter,
+    ProjectStatus,
+};
 
 fn parse_fm(yaml_body: &str) -> Frontmatter {
     let raw = format!("---\n{yaml_body}---\n");
@@ -381,6 +384,138 @@ fn try_from_rejects_malformed_created_date() {
     let err = ProjectFrontmatter::try_from(fm).unwrap_err();
     assert!(
         matches!(err, ValidationError::InvalidField { ref field, .. } if field == "created"),
+        "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// CommitmentStatus — kebab-case YAML round-trip + as_str + FromStr
+// ---------------------------------------------------------------------
+
+#[test]
+fn commitment_status_serialises_as_kebab_case() {
+    assert_eq!(
+        serde_yaml::to_string(&CommitmentStatus::Active)
+            .unwrap()
+            .trim(),
+        "active"
+    );
+    assert_eq!(
+        serde_yaml::to_string(&CommitmentStatus::Completed)
+            .unwrap()
+            .trim(),
+        "completed"
+    );
+}
+
+#[test]
+fn commitment_status_deserialises_from_kebab_case() {
+    assert_eq!(
+        serde_yaml::from_str::<CommitmentStatus>("active").unwrap(),
+        CommitmentStatus::Active
+    );
+    assert_eq!(
+        serde_yaml::from_str::<CommitmentStatus>("completed").unwrap(),
+        CommitmentStatus::Completed
+    );
+}
+
+#[test]
+fn commitment_status_as_str_returns_kebab_case() {
+    let cases = [
+        (CommitmentStatus::Active, "active"),
+        (CommitmentStatus::Completed, "completed"),
+    ];
+    for (variant, expected) in cases {
+        assert_eq!(variant.as_str(), expected, "variant={variant:?}");
+    }
+}
+
+#[test]
+fn commitment_status_from_str_parses_every_variant() {
+    for variant in CommitmentStatus::ALL {
+        let parsed: CommitmentStatus = variant.as_str().parse().expect("round-trip");
+        assert_eq!(parsed, variant);
+    }
+}
+
+#[test]
+fn commitment_status_from_str_rejects_unknown_value() {
+    let err = "archived"
+        .parse::<CommitmentStatus>()
+        .expect_err("unknown status must reject");
+    assert!(format!("{err}").contains("archived"));
+}
+
+// ---------------------------------------------------------------------
+// CommitmentFrontmatter::try_from
+// ---------------------------------------------------------------------
+
+#[test]
+fn commitment_try_from_parses_active_state() {
+    let fm = parse_fm(concat!(
+        "type: commitment\n",
+        "status: active\n",
+        "due: 2026-06-30\n",
+        "created: 2026-05-01\n",
+        "completed: null\n",
+        "context: personal\n",
+        "project: null\n",
+        "stewardship: null\n",
+    ));
+
+    let parsed = CommitmentFrontmatter::try_from(fm).expect("valid active commitment");
+
+    assert_eq!(parsed.status, CommitmentStatus::Active);
+    assert_eq!(
+        parsed.due,
+        chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap()
+    );
+    assert_eq!(
+        parsed.created,
+        chrono::NaiveDate::from_ymd_opt(2026, 5, 1).unwrap()
+    );
+    assert!(parsed.completed.is_none());
+    assert_eq!(parsed.context, Context::Personal);
+    assert!(parsed.project.is_none());
+    assert!(parsed.stewardship.is_none());
+}
+
+#[test]
+fn commitment_try_from_parses_completed_state() {
+    let fm = parse_fm(concat!(
+        "type: commitment\n",
+        "status: completed\n",
+        "due: 2026-06-30\n",
+        "created: 2026-05-01\n",
+        "completed: 2026-05-15\n",
+        "context: personal\n",
+        "project: null\n",
+        "stewardship: null\n",
+    ));
+
+    let parsed = CommitmentFrontmatter::try_from(fm).expect("valid completed commitment");
+
+    assert_eq!(parsed.status, CommitmentStatus::Completed);
+    assert_eq!(
+        parsed.completed,
+        Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 15).unwrap())
+    );
+}
+
+#[test]
+fn commitment_try_from_rejects_missing_required_field() {
+    // No `due:` — should error.
+    let fm = parse_fm(concat!(
+        "type: commitment\n",
+        "status: active\n",
+        "created: 2026-05-01\n",
+        "context: personal\n",
+    ));
+
+    let err = CommitmentFrontmatter::try_from(fm).unwrap_err();
+    assert!(
+        matches!(err, ValidationError::MissingField { ref field } if field == "due"),
         "got {err:?}"
     );
 }

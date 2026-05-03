@@ -19,7 +19,7 @@
 //!
 //! This file holds the things every submodule needs: the section-name
 //! constants, the shared `resolve_active_project` lookup, the
-//! `rewrite_status_in_frontmatter` helper used by park/activate, and
+//! `rewrite_field_in_frontmatter` helper used by park/activate, and
 //! the slug helpers shared across error paths.
 
 use cdno_core::error::StoreError;
@@ -139,27 +139,34 @@ pub(super) fn project_slug_from_path(path: &VaultPath) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// Rewrite the `status:` line within the YAML frontmatter region of a
-/// project's raw markdown. Operates only between the opening and
-/// closing `---` markers so a body line containing `status:` (e.g.
-/// inside Current State prose) is unaffected. Preserves the original
-/// formatting of every other line — comments, key order, spacing.
+/// Rewrite a single field within the YAML frontmatter region of a
+/// note's raw markdown. Operates only between the opening and closing
+/// `---` markers so a body line containing the same prefix is
+/// unaffected. Preserves the original formatting of every other
+/// line — comments, key order, spacing.
 ///
-/// Errors with a missing-section error if the frontmatter doesn't
-/// have a `status:` line at all (we'd be rewriting nothing) — that
-/// situation should never happen for a project that parsed via
-/// `ProjectFrontmatter::try_from`, but we surface it loudly rather
-/// than silently emitting a file with no status.
+/// `field` is the field name as it appears in YAML (e.g. `"status"`,
+/// `"completed"`). `new_value` is rendered verbatim after `field: `;
+/// callers needing typed values must convert to a YAML-safe string
+/// first (`as_str()` for kebab-case enums, ISO-formatted dates, etc.).
 ///
-/// Public so the integration test in `tests/unit/projects_tests.rs`
-/// can hit the defensive error branches directly — the public
-/// `Vault::*` callers always feed it pre-validated input, so those
-/// branches are unreachable through the higher-level API. External
-/// callers other than tests should not depend on this; treat it as
-/// a domain-internal helper.
-pub fn rewrite_status_in_frontmatter(
+/// Errors with [`DomainError::MissingSection`] if the frontmatter is
+/// missing or doesn't contain the requested field — those situations
+/// should never happen for a note that parsed via the appropriate
+/// `*Frontmatter::try_from`, but the helper surfaces them loudly
+/// rather than silently emitting a file with no value.
+///
+/// Public so the integration tests in
+/// `tests/unit/projects_tests.rs` and
+/// `tests/unit/commitments_tests.rs` can hit the defensive error
+/// branches directly — the public `Vault::*` callers always feed it
+/// pre-validated input, so those branches are unreachable through
+/// the higher-level API. External callers other than tests should
+/// not depend on this; treat it as a domain-internal helper.
+pub fn rewrite_field_in_frontmatter(
     raw: &str,
-    new_status: ProjectStatus,
+    field: &'static str,
+    new_value: &str,
 ) -> Result<String, DomainError> {
     // Locate the frontmatter region. The opening `---\n` must be at
     // the very start; the closing `\n---\n` (or `\n---` at EOF)
@@ -176,13 +183,17 @@ pub fn rewrite_status_in_frontmatter(
 
     let yaml = &raw[body_after_open..yaml_end];
 
+    let prefix_compact = format!("{field}:");
+    let prefix_spaced = format!("{field} :");
+
     let mut new_yaml = String::with_capacity(yaml.len());
     let mut found = false;
     for line in yaml.split_inclusive('\n') {
         let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with("status:") || trimmed_start.starts_with("status :") {
-            new_yaml.push_str("status: ");
-            new_yaml.push_str(new_status.as_str());
+        if trimmed_start.starts_with(&prefix_compact) || trimmed_start.starts_with(&prefix_spaced) {
+            new_yaml.push_str(field);
+            new_yaml.push_str(": ");
+            new_yaml.push_str(new_value);
             new_yaml.push('\n');
             found = true;
         } else {
@@ -190,7 +201,7 @@ pub fn rewrite_status_in_frontmatter(
         }
     }
     if !found {
-        return Err(DomainError::MissingSection("status"));
+        return Err(DomainError::MissingSection(field));
     }
 
     let mut result = String::with_capacity(raw.len());
