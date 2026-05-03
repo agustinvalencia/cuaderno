@@ -18,7 +18,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
-use super::{project_slug_from_path, rewrite_status_in_frontmatter};
+use super::{project_slug_from_path, rewrite_field_in_frontmatter};
 
 /// Built-in project map template. Custom templates from
 /// `.cuaderno/templates/project.md` will override this once the
@@ -145,7 +145,8 @@ impl Vault {
         }
 
         let raw = self.store.read_file(&active_path)?;
-        let new_content = rewrite_status_in_frontmatter(&raw, ProjectStatus::Parked)?;
+        let new_content =
+            rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Parked.as_str())?;
         let entry_meta =
             build_index_entry_for(&parked_path, &new_content, NoteType::Project.as_str())?;
 
@@ -232,7 +233,8 @@ impl Vault {
             return Err(DomainError::ProjectNotParked(slug.to_owned()));
         }
 
-        let new_content = rewrite_status_in_frontmatter(&raw, ProjectStatus::Active)?;
+        let new_content =
+            rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Active.as_str())?;
         let entry_meta =
             build_index_entry_for(&active_path, &new_content, NoteType::Project.as_str())?;
 

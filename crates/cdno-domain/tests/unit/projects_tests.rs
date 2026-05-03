@@ -2020,16 +2020,16 @@ fn project_summary_propagates_malformed_frontmatter() {
 }
 
 // ---------------------------------------------------------------------
-// rewrite_status_in_frontmatter — direct tests for the defensive
+// rewrite_field_in_frontmatter — direct tests for the defensive
 // error branches that the public Vault::* surface can never reach
 // (callers always pass pre-validated input).
 // ---------------------------------------------------------------------
 
 #[test]
-fn rewrite_status_in_frontmatter_errors_when_frontmatter_missing() {
+fn rewrite_field_in_frontmatter_errors_when_frontmatter_missing() {
     let raw = "# Just a heading\nno frontmatter here\n";
     let err =
-        cdno_domain::vault::rewrite_status_in_frontmatter(raw, ProjectStatus::Parked).unwrap_err();
+        cdno_domain::vault::rewrite_field_in_frontmatter(raw, "status", "parked").unwrap_err();
     match err {
         DomainError::MissingSection(name) => assert_eq!(name, "frontmatter"),
         other => panic!("expected MissingSection(frontmatter), got {other:?}"),
@@ -2037,15 +2037,15 @@ fn rewrite_status_in_frontmatter_errors_when_frontmatter_missing() {
 }
 
 #[test]
-fn rewrite_status_in_frontmatter_errors_when_status_line_missing() {
+fn rewrite_field_in_frontmatter_errors_when_field_missing() {
     // Valid `---`...`---` frontmatter, but no `status:` key inside.
     // Real projects always have one (validated by
     // ProjectFrontmatter::try_from before this helper runs), but the
     // helper refuses loudly rather than silently emit a file with no
-    // status.
+    // value.
     let raw = "---\ntype: project\ncontext: work\n---\n\n# Body\n";
     let err =
-        cdno_domain::vault::rewrite_status_in_frontmatter(raw, ProjectStatus::Active).unwrap_err();
+        cdno_domain::vault::rewrite_field_in_frontmatter(raw, "status", "active").unwrap_err();
     match err {
         DomainError::MissingSection(name) => assert_eq!(name, "status"),
         other => panic!("expected MissingSection(status), got {other:?}"),
