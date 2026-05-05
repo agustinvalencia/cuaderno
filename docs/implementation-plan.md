@@ -288,6 +288,7 @@ pub enum NoteType {
     Daily,
     Weekly,
     Project,
+    Action,        // action-as-investigation manifest (see design §5.11)
     Portfolio,
     Evidence,
     Stewardship,
@@ -315,6 +316,21 @@ pub struct EvidenceFrontmatter {
     pub created: NaiveDate,
     pub source: String,
     pub portfolio: String,               // parent portfolio slug
+    pub origin: VaultPath,               // mandatory from Phase 3 — see design §5.5
+}
+
+/// Parsed and validated frontmatter for an action note (§5.11).
+pub struct ActionFrontmatter {
+    pub status: ActionStatus,            // Active, Completed, Blocked
+    pub project: String,                 // parent project slug
+    pub energy: Energy,                  // Deep, Medium, Light
+    pub milestone: Option<VaultPath>,    // wikilink to a project milestone
+    pub due: Option<NaiveDate>,          // self-imposed deadline (only when standalone)
+    pub created: NaiveDate,
+    pub completed: Option<NaiveDate>,
+    pub blocker: Option<String>,
+    pub criteria: Option<String>,        // free text, manifest of "done"
+    pub tags: Vec<String>,
 }
 
 // ... one struct per note type
@@ -507,7 +523,7 @@ impl<S: VaultStore, I: VaultIndex> Vault<S, I> {
 
 The error carries enough information for the CLI or skill to suggest which project to park.
 
-**Commitments aggregation.** This is a query, not a write operation. It scans three sources and merges them.
+**Commitments aggregation.** This is a query, not a write operation. It scans four sources (project milestones via the `milestones` index table, stewardship periodic commitments, standalone commitment notes, action notes with a `due:` field that aren't pinned to a milestone) and merges them. Action notes that reference a milestone via the `milestone:` field are *not* duplicated here — the milestone is the source of truth for the date. Pseudocode below shows the original three-source shape; the action `due:` source is added in the same pattern (read `notes_by_type(Action)`, filter to those with `due` set and no `milestone`).
 
 ```rust
 impl<S: VaultStore, I: VaultIndex> Vault<S, I> {
@@ -643,6 +659,8 @@ The CLI, MCP, and Tauri crates are intentionally thin. They translate between th
 The CLI uses `clap` for argument parsing, constructing the `Vault` with production implementations and delegating to domain methods.
 
 *A brief refresher on the Facade pattern.* A facade provides a simplified interface to a complex subsystem. The CLI is a facade over the domain layer: each CLI command maps to one domain method call. The CLI’s job is to parse arguments, call the method, handle the result (print output or error), and exit.
+
+**Interactive prompts (`cdno-cli::prompt` module).** Mutating commands declare their required inputs as clap-optional. The handler checks which required fields are missing and, if stdout is a TTY, prompts for them via `inquire` (fuzzy-search selectors for project / milestone / energy / status, calendar widget for dates, plain text for free-form fields). When at least one field was prompted, a preview is rendered and the user confirms before the `VaultTransaction` is committed. When the user supplied every required field via flags, the command runs straight through with no confirmation step — the same shape agentic clients use. Non-TTY sessions (piped, CI, redirected) error rather than hang. The prompt module reads from the existing index for selectors (`Vault::list_active_projects`, the `milestones` table) — no new domain surface is required. Domain stays sync, pure, I/O-free; prompting is purely a CLI concern.
 
 ```rust
 fn main() -> Result<()> {
@@ -927,25 +945,39 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 **Phase 1 deliverable**: `cdno init` creates a vault. `cdno log "text"` appends to today’s daily log. `cdno lint` validates all notes. The transactional core and reconciliation are proven.
 
-### Phase 2: Daily Loop (estimated: 3-4 weeks)
+### Phase 2: Daily Loop (estimated: 5-6 weeks)
 
 > **Rationale for reordering.** The original plan put the knowledge layer (portfolios, questions) before the operations layer (projects, orient). This delays the point at which the tool becomes daily-usable to ~week 10. By pulling project maps, commitments, and the orient command into Phase 2, you can eat your own dogfood by ~week 7. Portfolios and questions are valuable but less critical for the daily loop — they move to Phase 3.
+>
+> **2026-05-03 update.** The action layer (design §5.11), the `milestones` and `tags` index tables, and the `cdno-cli::prompt` ergonomics module are pulled into this phase. The action layer was originally scoped for Phase 6 pending dogfooding (see vault note `decision-task-notes-thin-layer.md`). The call was reversed on adoption grounds: the mdvault → RLM transition needs the scaffold, and shipping unused costs less than discovering its absence mid-transition. The thin-ness rules in design §5.11 keep "later we could not use it" a real option. Sequence within the phase: action layer first (its schema is the most uncertain piece), then commitments aggregation builds on top, then orient surfaces both. Estimate grows from 3-4 to 5-6 weeks accordingly.
 
-**Project maps.** The most complex domain object. Implement creation (with template, 5-cap enforcement, question linking), state update (with history logging), next action management (add, complete with logging, energy tagging), waiting-on tracking, milestone management, parking and activation. Each operation produces a `VaultTransaction`. Write extensive tests for the cap enforcement, the history logging, and the state update atomicity.
+**Project maps.** The most complex domain object. Implement creation (with template, 5-cap enforcement, question linking), state update (with history logging), waiting-on tracking, milestone management (now reframed as Gantt-style event markers — see design §5.3), parking and activation. Each operation produces a `VaultTransaction`. Write extensive tests for the cap enforcement, the history logging, and the state update atomicity.
 
-**Commitment notes.** Implement creation and completion (move to `_done/`). Straightforward.
+**Bullet actions** (the default form). Implement `add_action`, `complete_action` operating on the project's `## Next Actions` body section. Energy tags. Substring-based completion query with disambiguation errors when ambiguous. Daily-log entry on every mutation.
 
-**Commitments aggregation.** Implement the three-source query (project milestones, stewardship periodics, standalone commitments). This requires the deadline extraction logic in the index — parsing “hard: 2026-05-22” from milestone lines and recurrence patterns from stewardship periodic commitments. Note: stewardship periodics won't exist yet (stewardships are Phase 3), but the aggregation query should handle their absence gracefully. Standalone commitments and project milestones are enough for a useful daily orientation.
+**Action notes** (the heavier form, design §5.11). Implement the `action` note type — frontmatter struct + template + lifecycle. `cdno action add ... --note` creates a bullet **and** an action note linked from it. `cdno action promote` finds an existing bullet and attaches a note (rewriting the bullet to wikilink the new note). `cdno action complete` is two writes in one transaction: bullet removed (logged to daily) **and**, if a note is attached, frontmatter status updated and the file moved to `actions/_done/<year>/`. Append-only-after-completion is enforced via lint, not file-system locks. Schema enforcement primitives (soft line-cap warning, "this looks like evidence" hint) live in `cdno-domain::lint` as a generic mechanism reusable across note types.
 
-**The `cdno orient` command.** This is the daily orientation CLI flow: query commitments (48h), query active project summaries, display and prompt for energy level, suggest a starting point. This is the first command that composes multiple domain queries into a user-facing workflow.
+**Milestones index table.** Extend reconciliation to populate a `milestones(project_id, name, date, hard_soft, status)` table from project bodies. Queries become O(1) without promoting milestones to a note type. The deadlines source for commitments aggregation reads from this table.
 
-**CLI commands**: `cdno project`, `cdno commit`, `cdno commitments`, `cdno orient`.
+**Tags index table.** Extend reconciliation to populate a `tags(note_id, tag)` table from `#tag` mentions across notes (especially `#action/<slug>` in daily logs). The Faraday-style query "all entries tagged X" becomes a join, not a file scan. Generic infrastructure — useful for evidence cross-tag queries in Phase 3 too.
 
-**Phase 2 deliverable**: the tool is daily-usable. You can manage projects (with 5-cap), log work, track commitments, and run a daily orientation from the terminal. This is the minimum viable practice of the RLM.
+**Commitment notes.** Implement creation and completion (move to `_done/<year>/`). Straightforward.
+
+**Commitments aggregation.** Implement the four-source query (project milestones via the `milestones` index table, action `due:` for standalone-deadline action notes, standalone commitments, stewardship periodics — the last absent until Phase 3, handled gracefully).
+
+**CLI ergonomics module.** `cdno-cli::prompt` using `inquire`. Optional flags + TTY-detected prompts for missing required fields + confirm-on-prompt before commit. Apply to every new mutating command in this phase as it lands; retrofit existing project/commitment commands when they're touched.
+
+**The `cdno orient` command.** Daily orientation CLI flow: query commitments (48h), active project summaries (now including any attached action notes with status), prompt for energy level, suggest a starting point. First command that composes multiple domain queries into a user-facing workflow.
+
+**CLI commands**: `cdno project`, `cdno action`, `cdno commit`, `cdno commitments`, `cdno orient`.
+
+**Phase 2 deliverable**: the tool is daily-usable. Projects with 5-cap, actions (default bullet, optional note form via `--note`), commitments, milestones as event markers in their own index table, tag-indexed daily logs, and daily orientation from the terminal — with interactive prompting and confirm-on-prompt for the exploratory path. The minimum viable practice of the RLM, with the adoption scaffold for users migrating from mdvault.
 
 ### Phase 3: Knowledge & Stewardship Layer (estimated: 3-4 weeks)
 
 **Portfolio operations.** Implement portfolio creation (folder + `_index.md`), evidence filing (create note inside portfolio folder), portfolio listing (note counts, last updated from index), and portfolio content browsing. The key indexing work is treating folders as first-class entities — the `portfolio_health()` query aggregates per-folder.
+
+**`origin:` mandatory on evidence.** From day one of this phase, evidence frontmatter requires an `origin:` wikilink (see design §5.5). It points to whatever produced the evidence — a project, an action note, or a stewardship. The forward-link gives provenance and the backlink falls out of the index for free, so actions and projects can list their evidence without duplicating any structural data. Cheap to bake in now, expensive to migrate later.
 
 **Question notes.** Implement creation, status transitions (active/parked/answered/retired), and the `active_questions()` query. These are simple notes with status fields — less complex than projects.
 
@@ -998,6 +1030,7 @@ External crates the project will depend on:
 |`serde` + `serde_yaml` + `serde_json`|Serialisation                    |core, domain, mcp   |
 |`rusqlite`                           |SQLite index                     |core                |
 |`clap`                               |CLI argument parsing             |cli                 |
+|`inquire`                            |Interactive prompts (fuzzy selectors, date widget) for missing required fields. Confirm-on-prompt before commit. CLI only — agentic clients always supply full args.|cli                 |
 |`notify`                             |Filesystem watching              |core                |
 |`thiserror`                          |Error type derivation            |all                 |
 |`chrono`                             |Date/time handling               |core, domain        |
