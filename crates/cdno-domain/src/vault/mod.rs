@@ -35,10 +35,12 @@ mod commitments;
 mod index_entry;
 mod lint;
 mod log;
+mod orient;
 mod projects;
 mod slug;
 
 pub use commitments::{CommitmentEntry, CommitmentSource};
+pub use orient::{LapsedHabit, OrientationContext};
 pub use projects::{ProjectSummary, TopAction};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
