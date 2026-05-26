@@ -86,6 +86,37 @@ fn extract_tags_handles_tag_at_start_of_body() {
     assert_eq!(extract_inline_tags("#first thing"), vec!["first"]);
 }
 
+#[test]
+fn extract_tags_supports_namespaced_slash() {
+    // The headline action-layer case (design §5.11): the slug is part
+    // of the tag, so the whole `action/<slug>` is one queryable token.
+    assert_eq!(
+        extract_inline_tags("logged #action/characterise-sample-efficiency today"),
+        vec!["action/characterise-sample-efficiency"],
+    );
+}
+
+#[test]
+fn extract_tags_supports_nested_namespaces() {
+    assert_eq!(extract_inline_tags("#a/b/c"), vec!["a/b/c"]);
+}
+
+#[test]
+fn extract_tags_trims_trailing_slash() {
+    // A trailing slash isn't part of the tag: `#foo/` tags `foo`.
+    assert_eq!(
+        extract_inline_tags("ends with #foo/ then more"),
+        vec!["foo"]
+    );
+}
+
+#[test]
+fn extract_tags_ignores_hash_in_url() {
+    // The `#` in a URL fragment is preceded by a non-whitespace char,
+    // so the boundary rule rejects it — no tag, no leaked `anchor`.
+    assert!(extract_inline_tags("see https://example.com/page#anchor").is_empty());
+}
+
 // ── extract_wikilinks ────────────────────────────────────────────────
 
 #[test]
