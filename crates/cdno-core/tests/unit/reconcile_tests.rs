@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use cdno_core::error::IndexError;
-use cdno_core::index::{DeadlineEntry, LinkEntry, MemoryIndex, NoteEntry, VaultIndex};
+use cdno_core::index::{
+    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+};
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -389,6 +391,79 @@ title: 2026-04-19
 }
 
 #[test]
+fn project_note_populates_full_milestone_timeline() {
+    // The milestones table is a superset of the deadlines feed: it
+    // carries soft targets and completed markers, not just hard
+    // deadlines (#109).
+    let (store, index) = fixtures();
+    let raw = "\
+---
+type: project
+title: Surrogate model
+---
+# Milestones
+- [x] Baseline done — 2026-02-10
+- [ ] Full geometry evaluation — target: April
+- [ ] ICML paper submitted — hard: 2026-05-22
+";
+    store.write_file(&vp("projects/surrogate.md"), raw).unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    // All three milestones land, in source order, queryable by slug.
+    let all = index.milestones_for_project("surrogate").unwrap();
+    let names: Vec<&str> = all.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "Baseline done",
+            "Full geometry evaluation",
+            "ICML paper submitted",
+        ],
+    );
+    assert!(all[0].completed);
+    assert_eq!(
+        all[1].date, None,
+        "fuzzy `target: April` has no sortable date"
+    );
+    assert!(all[2].is_hard && !all[2].completed);
+
+    // Only the two dated milestones appear in the date window; the
+    // undated soft target is excluded.
+    let dated = index
+        .milestones_between("2026-01-01", "2026-12-31")
+        .unwrap();
+    let dated_names: Vec<&str> = dated.iter().map(|(_, m)| m.name.as_str()).collect();
+    assert_eq!(dated_names, vec!["Baseline done", "ICML paper submitted"]);
+}
+
+#[test]
+fn non_project_notes_do_not_get_milestones() {
+    let (store, index) = fixtures();
+    let raw = "\
+---
+type: daily
+title: 2026-04-19
+---
+# Milestones
+- [ ] not a project milestone — hard: 2026-05-01
+";
+    store
+        .write_file(&vp("journal/daily/2026-04-19.md"), raw)
+        .unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    assert!(
+        index
+            .milestones_between("2026-01-01", "2027-01-01")
+            .unwrap()
+            .is_empty(),
+        "daily notes must not spawn milestones",
+    );
+}
+
+#[test]
 fn frontmatter_tags_are_indexed() {
     let (store, index) = fixtures();
     let raw = "\
@@ -550,5 +625,22 @@ impl VaultIndex for FailOnRemoveIndex {
     }
     fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.find_by_tag(tag)
+    }
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError> {
+        self.inner.replace_milestones(path, milestones)
+    }
+    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
+        self.inner.milestones_for_project(slug)
+    }
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
+        self.inner.milestones_between(from, to)
     }
 }

@@ -1,4 +1,6 @@
-use cdno_core::index::{DeadlineEntry, LinkEntry, NoteEntry, SqliteIndex, VaultIndex};
+use cdno_core::index::{
+    DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, SqliteIndex, VaultIndex,
+};
 use cdno_core::path::VaultPath;
 use serde_json::json;
 use tempfile::TempDir;
@@ -120,6 +122,16 @@ fn remove_note_cascades_all_facets() {
     .unwrap();
     idx.replace_tags(&n.path, &["deep-work".to_owned()])
         .unwrap();
+    idx.replace_milestones(
+        &n.path,
+        &[MilestoneEntry {
+            name: "ship v1".to_owned(),
+            date: Some("2026-05-01".to_owned()),
+            is_hard: true,
+            completed: false,
+        }],
+    )
+    .unwrap();
 
     idx.remove_note(&n.path).unwrap();
 
@@ -130,6 +142,12 @@ fn remove_note_cascades_all_facets() {
     );
     assert!(idx.find_outgoing_links(&n.path).unwrap().is_empty());
     assert!(idx.find_by_tag("deep-work").unwrap().is_empty());
+    assert!(
+        idx.milestones_between("2026-01-01", "2027-01-01")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(idx.milestones_for_project("foo").unwrap().is_empty());
 }
 
 #[test]
@@ -341,4 +359,110 @@ fn list_all_paths_drops_rows_after_remove_note() {
     idx.upsert_note(&sample_note("b.md", "daily")).unwrap();
     idx.remove_note(&vp("a.md")).unwrap();
     assert_eq!(idx.list_all_paths().unwrap(), vec![vp("b.md")]);
+}
+
+fn milestone(name: &str, date: Option<&str>, is_hard: bool, completed: bool) -> MilestoneEntry {
+    MilestoneEntry {
+        name: name.to_owned(),
+        date: date.map(str::to_owned),
+        is_hard,
+        completed,
+    }
+}
+
+#[test]
+fn milestones_for_project_returns_in_source_order() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[
+            milestone("kickoff", Some("2026-01-10"), false, true),
+            milestone("submission", Some("2026-05-22"), true, false),
+            milestone("someday", None, false, false),
+        ],
+    )
+    .unwrap();
+
+    let got = idx.milestones_for_project("foo").unwrap();
+    let names: Vec<&str> = got.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, vec!["kickoff", "submission", "someday"]);
+    assert!(got[1].is_hard && !got[1].completed);
+    assert_eq!(got[2].date, None);
+}
+
+#[test]
+fn milestones_for_project_resolves_parked_location() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("projects/_parked/dormant.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/_parked/dormant.md"),
+        &[milestone("revisit", Some("2026-09-01"), false, false)],
+    )
+    .unwrap();
+
+    let got = idx.milestones_for_project("dormant").unwrap();
+    assert_eq!(
+        got,
+        vec![milestone("revisit", Some("2026-09-01"), false, false)]
+    );
+}
+
+#[test]
+fn replace_milestones_overwrites_prior_set() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[milestone("first", Some("2026-05-01"), true, false)],
+    )
+    .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[milestone("second", Some("2026-06-01"), true, false)],
+    )
+    .unwrap();
+
+    let got = idx.milestones_for_project("foo").unwrap();
+    assert_eq!(
+        got,
+        vec![milestone("second", Some("2026-06-01"), true, false)]
+    );
+}
+
+#[test]
+fn milestones_between_filters_by_date_and_sorts_across_projects() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("projects/a.md", "project"))
+        .unwrap();
+    idx.upsert_note(&sample_note("projects/b.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/a.md"),
+        &[
+            milestone("a-late", Some("2026-08-01"), true, false),
+            // Undated and out-of-window entries must be excluded.
+            milestone("a-undated", None, false, false),
+            milestone("a-early", Some("2025-01-01"), false, false),
+        ],
+    )
+    .unwrap();
+    idx.replace_milestones(
+        &vp("projects/b.md"),
+        &[milestone("b-mid", Some("2026-06-15"), false, false)],
+    )
+    .unwrap();
+
+    let got = idx.milestones_between("2026-01-01", "2026-12-31").unwrap();
+    let pairs: Vec<(&str, &str)> = got
+        .iter()
+        .map(|(p, m)| (p.as_path().to_str().unwrap(), m.name.as_str()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![("projects/b.md", "b-mid"), ("projects/a.md", "a-late")],
+    );
 }

@@ -9,7 +9,7 @@ fn new_db_path() -> (TempDir, std::path::PathBuf) {
 }
 
 #[test]
-fn open_creates_fresh_db_with_schema_v1() {
+fn open_creates_fresh_db_with_current_schema() {
     let (_dir, path) = new_db_path();
     let _index = SqliteIndex::open(&path).unwrap();
 
@@ -21,14 +21,16 @@ fn open_creates_fresh_db_with_schema_v1() {
             r.get(0)
         })
         .unwrap();
-    assert_eq!(version, 1);
+    // Bumped to 2 by the milestones migration (#109).
+    assert_eq!(version, 2);
 
-    // All five tables exist.
+    // All tables exist.
     for table in [
         "notes",
         "deadlines",
         "links",
         "note_tags",
+        "milestones",
         "schema_migrations",
     ] {
         let count: u32 = conn
@@ -49,13 +51,13 @@ fn reopen_existing_db_is_idempotent() {
     drop(_first);
     let _second = SqliteIndex::open(&path).unwrap();
 
-    // schema_migrations still has exactly one row — migration 001 was
-    // applied once, not re-applied.
+    // schema_migrations has exactly one row per shipped migration —
+    // each is applied once, not re-applied on reopen.
     let conn = Connection::open(&path).unwrap();
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 1);
+    assert_eq!(row_count, 2);
 }
 
 #[test]

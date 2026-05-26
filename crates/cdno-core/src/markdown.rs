@@ -5,6 +5,7 @@ use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::error::{ManipulationError, ParseError};
 use crate::frontmatter::Frontmatter;
+use crate::index::MilestoneEntry;
 
 /// A parsed markdown document with section-level manipulation.
 ///
@@ -321,4 +322,104 @@ fn parse_iso_date_prefix(s: &str) -> Option<String> {
     // calendar validation for free alongside the format check.
     NaiveDate::parse_from_str(candidate, "%Y-%m-%d").ok()?;
     Some(candidate.to_owned())
+}
+
+/// Extract every milestone from a `## Milestones`-style section body.
+///
+/// Broader than [`extract_hard_deadlines`] — it captures the full
+/// project timeline (design §5.3), not just the hard deadlines that
+/// flow into commitments:
+///
+/// - `- [ ] <name> — hard: YYYY-MM-DD` → pending, hard, dated
+/// - `- [ ] <name> — target: <date|marker>` → pending, soft; dated only
+///   when the marker is a valid ISO date (`target: TBD` parses to no date)
+/// - `- [x] <name> — YYYY-MM-DD` → completed, soft, dated
+///
+/// The checkbox sets `completed`; `hard:` sets `is_hard`. Any line in
+/// the section that is a checklist item with a non-empty name becomes a
+/// milestone — an undated milestone (no parseable date) is valid, it
+/// just can't appear in [`MilestoneEntry`]-by-date queries. Lines that
+/// aren't `- [ ]` / `- [x]` checklist items are ignored.
+///
+/// Returns entries in source order.
+pub fn extract_milestones_from_body(section: &str) -> Vec<MilestoneEntry> {
+    section.lines().filter_map(parse_milestone_line).collect()
+}
+
+/// Parse one milestone line. `None` for lines that aren't checklist
+/// items or that have an empty name.
+fn parse_milestone_line(line: &str) -> Option<MilestoneEntry> {
+    let trimmed = line.trim_start();
+    let (completed, rest) = if let Some(r) = trimmed.strip_prefix("- [ ] ") {
+        (false, r)
+    } else if let Some(r) = trimmed
+        .strip_prefix("- [x] ")
+        .or_else(|| trimmed.strip_prefix("- [X] "))
+    {
+        (true, r)
+    } else {
+        return None;
+    };
+
+    // A `hard:` or `target:` keyword splits name from date marker. The
+    // date is `None` when the marker isn't a valid ISO date (e.g.
+    // `target: April`). With no keyword, the line is a plain completed
+    // marker whose date, if any, sits at the end (`<name> — YYYY-MM-DD`).
+    let (name, date, is_hard) = if let Some(idx) = rest.find("hard:") {
+        let after = rest[idx + "hard:".len()..].trim_start();
+        (
+            trim_milestone_name(&rest[..idx]),
+            parse_iso_date_prefix(after),
+            true,
+        )
+    } else if let Some(idx) = rest.find("target:") {
+        let after = rest[idx + "target:".len()..].trim_start();
+        (
+            trim_milestone_name(&rest[..idx]),
+            parse_iso_date_prefix(after),
+            false,
+        )
+    } else {
+        let (name, date) = split_trailing_iso_date(rest);
+        (name, date, false)
+    };
+
+    if name.is_empty() {
+        return None;
+    }
+    Some(MilestoneEntry {
+        name,
+        date,
+        is_hard,
+        completed,
+    })
+}
+
+/// Trim trailing separators (whitespace, hyphen, em-dash) and
+/// surrounding whitespace from a candidate milestone name.
+fn trim_milestone_name(s: &str) -> String {
+    s.trim_end_matches(|c: char| c.is_whitespace() || c == '-' || c == '\u{2014}')
+        .trim()
+        .to_owned()
+}
+
+/// Split a keyword-less milestone line into its name and an optional
+/// trailing ISO date: `Baseline trained — 2026-02-10` → ("Baseline
+/// trained", Some("2026-02-10")). The 10-char tail is only treated as
+/// a date when it is itself a valid date *and* preceded by a separator
+/// (or the whole remainder), so a date embedded mid-name isn't sliced.
+fn split_trailing_iso_date(s: &str) -> (String, Option<String>) {
+    let trimmed = s.trim_end();
+    if trimmed.len() >= 10 {
+        let (before, candidate) = trimmed.split_at(trimmed.len() - 10);
+        let separated = before.is_empty()
+            || before.ends_with(|c: char| c.is_whitespace() || c == '-' || c == '\u{2014}');
+        if separated && parse_iso_date_prefix(candidate).is_some() {
+            let name = trim_milestone_name(before);
+            if !name.is_empty() {
+                return (name, Some(candidate.to_owned()));
+            }
+        }
+    }
+    (trimmed.trim().to_owned(), None)
 }

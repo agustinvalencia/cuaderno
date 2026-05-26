@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use crate::error::{IndexError, StoreError, TransactionError};
-use crate::index::{DeadlineEntry, LinkEntry, NoteEntry, VaultIndex};
+use crate::index::{DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, VaultIndex};
 use crate::path::VaultPath;
 use crate::store::VaultStore;
 
@@ -53,6 +53,7 @@ enum IndexOp {
     ReplaceDeadlines(VaultPath, Vec<DeadlineEntry>),
     ReplaceLinks(VaultPath, Vec<LinkEntry>),
     ReplaceTags(VaultPath, Vec<String>),
+    ReplaceMilestones(VaultPath, Vec<MilestoneEntry>),
 }
 
 /// Recorded information needed to undo one successfully-applied file
@@ -124,6 +125,11 @@ impl VaultTransaction {
 
     pub fn replace_tags(&mut self, path: VaultPath, tags: Vec<String>) {
         self.index_ops.push(IndexOp::ReplaceTags(path, tags));
+    }
+
+    pub fn replace_milestones(&mut self, path: VaultPath, milestones: Vec<MilestoneEntry>) {
+        self.index_ops
+            .push(IndexOp::ReplaceMilestones(path, milestones));
     }
 
     // ---- commit -----------------------------------------------------
@@ -268,5 +274,6 @@ fn apply_index_op(index: &dyn VaultIndex, op: &IndexOp) -> Result<(), IndexError
         IndexOp::ReplaceDeadlines(path, deadlines) => index.replace_deadlines(path, deadlines),
         IndexOp::ReplaceLinks(path, links) => index.replace_links(path, links),
         IndexOp::ReplaceTags(path, tags) => index.replace_tags(path, tags),
+        IndexOp::ReplaceMilestones(path, milestones) => index.replace_milestones(path, milestones),
     }
 }

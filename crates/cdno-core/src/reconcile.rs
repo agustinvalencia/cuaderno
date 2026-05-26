@@ -23,8 +23,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::IndexError;
 use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
-use crate::index::{DeadlineEntry, NoteEntry, VaultIndex};
-use crate::markdown::{MarkdownDocument, extract_hard_deadlines};
+use crate::index::{DeadlineEntry, MilestoneEntry, NoteEntry, VaultIndex};
+use crate::markdown::{MarkdownDocument, extract_hard_deadlines, extract_milestones_from_body};
 use crate::path::VaultPath;
 use crate::store::VaultStore;
 use crate::transaction::VaultTransaction;
@@ -202,11 +202,19 @@ fn reconcile_one(
     let raw_links = crate::extractors::extract_wikilinks(body);
     let links = crate::extractors::resolve_wikilinks(raw_links, vault_paths);
 
-    // Project-type notes contribute deadlines via `## Milestones`.
-    // Other types skip this even if they happen to have a section of
-    // the same name, to match the domain-level semantics.
-    let deadlines = if note_type == "project" {
+    // Project-type notes contribute deadlines and milestones via
+    // `## Milestones`. Other types skip both even if they happen to
+    // have a section of the same name, to match the domain-level
+    // semantics. Deadlines are the hard-only commitments funnel;
+    // milestones are the full event timeline (#109).
+    let is_project = note_type == "project";
+    let deadlines = if is_project {
         collect_deadlines_from_body(&content, body).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let milestones = if is_project {
+        collect_milestones_from_body(&content).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -231,6 +239,7 @@ fn reconcile_one(
     let mut tx = VaultTransaction::new(store.clone(), index.clone());
     tx.upsert_note(entry);
     tx.replace_deadlines(path.clone(), deadlines);
+    tx.replace_milestones(path.clone(), milestones);
     tx.replace_tags(path.clone(), tags);
     tx.replace_links(path.clone(), links);
     tx.commit().map_err(|e| format!("commit failed: {e}"))?;
@@ -260,6 +269,19 @@ fn collect_deadlines_from_body(raw: &str, _body_slice: &str) -> Option<Vec<Deadl
         })
         .collect();
     Some(deadlines)
+}
+
+/// Parse the `## Milestones` section into the full milestone timeline
+/// (hard/soft, pending/completed, dated or not). Returns `None` only
+/// when the document can't be parsed; an absent section yields an
+/// empty list. Distinct from `collect_deadlines_from_body`, which
+/// keeps only the hard-deadline subset for the commitments funnel.
+fn collect_milestones_from_body(raw: &str) -> Option<Vec<MilestoneEntry>> {
+    let doc = MarkdownDocument::parse(raw).ok()?;
+    match doc.section("Milestones") {
+        Ok(section) => Some(extract_milestones_from_body(section)),
+        Err(_) => Some(Vec::new()),
+    }
 }
 
 /// Convert a `SystemTime` to nanoseconds since the UNIX epoch.

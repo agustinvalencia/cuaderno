@@ -23,11 +23,18 @@ use crate::path::VaultPath;
 ///
 /// Every schema change is a new entry appended here. Migrations are
 /// applied strictly in order; never edit a migration that has shipped.
-const MIGRATIONS: &[(u32, &str, &str)] = &[(
-    1,
-    "Initial schema: notes, deadlines, links, note_tags, schema_migrations",
-    include_str!("../migrations/001_initial.sql"),
-)];
+const MIGRATIONS: &[(u32, &str, &str)] = &[
+    (
+        1,
+        "Initial schema: notes, deadlines, links, note_tags, schema_migrations",
+        include_str!("../migrations/001_initial.sql"),
+    ),
+    (
+        2,
+        "Milestones index table",
+        include_str!("../migrations/002_milestones.sql"),
+    ),
+];
 
 /// SQLite-backed implementation of the vault index.
 ///
@@ -239,6 +246,37 @@ pub struct LinkEntry {
     pub label: Option<String>,
 }
 
+/// One row of the `milestones` table, scoped to a single project note.
+///
+/// A superset of [`DeadlineEntry`]'s project-milestone source: it
+/// captures soft targets and completed markers as well as hard
+/// deadlines. `date` is `None` for non-date markers (`target: April`),
+/// which can't participate in date-window queries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MilestoneEntry {
+    pub name: String,
+    /// ISO `YYYY-MM-DD`, or `None` for a non-date marker.
+    pub date: Option<String>,
+    /// `true` for `hard:` deadlines; `false` for soft targets and
+    /// keyword-less completed markers.
+    pub is_hard: bool,
+    /// `true` when the source checkbox is `- [x]`.
+    pub completed: bool,
+}
+
+/// The two vault locations a project with `slug` can occupy: active
+/// `projects/<slug>.md` and parked `projects/_parked/<slug>.md`. Used
+/// by `milestones_for_project` to resolve a slug to its note path
+/// without a separate index lookup. Projects are the only note type
+/// that contributes milestones, and they live only in these two
+/// directories (design §4 vault structure).
+fn project_path_candidates(slug: &str) -> [String; 2] {
+    [
+        format!("{}/{slug}.md", crate::paths::PROJECTS),
+        format!("{}/{slug}.md", crate::paths::PROJECTS_PARKED),
+    ]
+}
+
 /// Cache-oriented query API for the vault index.
 ///
 /// All methods take `&self`; implementations are responsible for
@@ -279,6 +317,27 @@ pub trait VaultIndex: Send + Sync {
     // tags ------------------------------------------------------------
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError>;
     fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError>;
+
+    // milestones ------------------------------------------------------
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError>;
+    /// Every milestone of the project named `slug`, in source order
+    /// (by row id). Resolves the slug against both the active and
+    /// parked project locations.
+    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError>;
+    /// Dated milestones across all projects whose `date` falls in the
+    /// inclusive `[from, to]` window, sorted by date. Non-date markers
+    /// (`date IS NULL`) are excluded — they can't be placed on a
+    /// timeline. This is the source the commitments aggregation (#32)
+    /// reads project deadlines from.
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError>;
 }
 
 impl VaultIndex for SqliteIndex {
@@ -537,6 +596,108 @@ impl VaultIndex for SqliteIndex {
         }
         Ok(out)
     }
+
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError> {
+        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM milestones WHERE note_path = ?1",
+            params![path.to_string()],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO milestones (note_path, name, date, hard_soft, status) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for m in milestones {
+                stmt.execute(params![
+                    path.to_string(),
+                    m.name,
+                    m.date,
+                    hard_soft_str(m.is_hard),
+                    status_str(m.completed),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
+        let [active, parked] = project_path_candidates(slug);
+        let conn = self.conn.lock().expect("poisoned mutex");
+        let mut stmt = conn.prepare(
+            "SELECT name, date, hard_soft, status FROM milestones \
+             WHERE note_path = ?1 OR note_path = ?2 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![active, parked], row_to_milestone_entry)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        let mut stmt = conn.prepare(
+            "SELECT note_path, name, date, hard_soft, status FROM milestones \
+             WHERE date IS NOT NULL AND date BETWEEN ?1 AND ?2 ORDER BY date",
+        )?;
+        let rows = stmt.query_map(params![from, to], |r| {
+            let path_str: String = r.get(0)?;
+            Ok((path_str, row_to_milestone_entry_from(r, 1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path_str, entry) = row?;
+            let path = VaultPath::new(path_str).map_err(|e| {
+                IndexError::Query(format!("invalid stored VaultPath in milestones: {e}"))
+            })?;
+            out.push((path, entry));
+        }
+        Ok(out)
+    }
+}
+
+/// Encode the `is_hard` flag as the `hard_soft` column's text value.
+fn hard_soft_str(is_hard: bool) -> &'static str {
+    if is_hard { "hard" } else { "soft" }
+}
+
+/// Encode the `completed` flag as the `status` column's text value.
+fn status_str(completed: bool) -> &'static str {
+    if completed { "completed" } else { "pending" }
+}
+
+/// Build a [`MilestoneEntry`] from a row whose columns start at offset
+/// `base`: `name, date, hard_soft, status`.
+fn row_to_milestone_entry_from(
+    row: &rusqlite::Row<'_>,
+    base: usize,
+) -> rusqlite::Result<MilestoneEntry> {
+    let hard_soft: String = row.get(base + 2)?;
+    let status: String = row.get(base + 3)?;
+    Ok(MilestoneEntry {
+        name: row.get(base)?,
+        date: row.get(base + 1)?,
+        is_hard: hard_soft == "hard",
+        completed: status == "completed",
+    })
+}
+
+/// Row extractor for a `name, date, hard_soft, status` column tuple
+/// starting at column 0.
+fn row_to_milestone_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<MilestoneEntry> {
+    row_to_milestone_entry_from(row, 0)
 }
 
 /// Shared row extractor for the full `notes` column set. Used by
@@ -600,6 +761,7 @@ struct MemoryIndexState {
     deadlines: HashMap<VaultPath, Vec<DeadlineEntry>>,
     links: HashMap<VaultPath, Vec<LinkEntry>>,
     tags: HashMap<VaultPath, Vec<String>>,
+    milestones: HashMap<VaultPath, Vec<MilestoneEntry>>,
 }
 
 impl MemoryIndex {
@@ -623,6 +785,7 @@ impl VaultIndex for MemoryIndex {
         state.deadlines.remove(path);
         state.links.remove(path);
         state.tags.remove(path);
+        state.milestones.remove(path);
         Ok(())
     }
 
@@ -742,6 +905,53 @@ impl VaultIndex for MemoryIndex {
             })
             .collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state.milestones.insert(path.clone(), milestones.to_vec());
+        Ok(())
+    }
+
+    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
+        let candidates = project_path_candidates(slug);
+        let state = self.state.lock().expect("poisoned mutex");
+        // Source order within a project is the stored Vec order, which
+        // mirrors SqliteIndex's `ORDER BY id`. Active wins over parked
+        // if (pathologically) both exist; only one ever should.
+        for candidate in &candidates {
+            if let Ok(vp) = VaultPath::new(candidate)
+                && let Some(entries) = state.milestones.get(&vp)
+            {
+                return Ok(entries.clone());
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<(VaultPath, MilestoneEntry)> = state
+            .milestones
+            .iter()
+            .flat_map(|(path, entries)| {
+                entries
+                    .iter()
+                    .filter(|m| m.date.as_deref().is_some_and(|d| d >= from && d <= to))
+                    .map(move |m| (path.clone(), m.clone()))
+            })
+            .collect();
+        // Match SqliteIndex's `ORDER BY date`.
+        out.sort_by(|a, b| a.1.date.cmp(&b.1.date));
         Ok(out)
     }
 }

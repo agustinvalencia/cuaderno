@@ -1,7 +1,7 @@
 ---
-schema_version: 1
+schema_version: 2
 applies_to_crate: cdno-core
-last_updated: 2026-04-19
+last_updated: 2026-05-26
 ---
 
 # Cuaderno Index Schema
@@ -13,8 +13,10 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 1**. The corresponding
-executable migration is `migrations/001_initial.sql`.
+This document describes **schema version 2**. The corresponding
+executable migrations are `migrations/001_initial.sql` (notes,
+deadlines, links, note_tags) and `migrations/002_milestones.sql`
+(the milestones table).
 
 ## Conventions
 
@@ -148,6 +150,47 @@ CREATE INDEX idx_tags_tag ON note_tags(tag);
   `#agustin-valencia`, `#deep-work`, `#quarterly_review`; rejects bare
   `#-` and `#_`.
 
+### `milestones`
+
+The full project milestone timeline (design §5.3) — Gantt-style event
+markers extracted from each project's `## Milestones` section at index
+time. A **superset** of the `deadlines` `project_milestone` source: it
+also carries soft targets and completed markers, so it backs both the
+commitments funnel (hard + dated) and project-detail timeline views.
+Milestones are deliberately *not* a note type — they fire once and don't
+accumulate content.
+
+```sql
+CREATE TABLE milestones (
+    id        INTEGER PRIMARY KEY,
+    note_path TEXT NOT NULL REFERENCES notes(path) ON DELETE CASCADE,
+    name      TEXT NOT NULL,
+    date      TEXT,                       -- ISO YYYY-MM-DD, or NULL for a fuzzy marker
+    hard_soft TEXT NOT NULL,              -- 'hard' | 'soft'
+    status    TEXT NOT NULL               -- 'pending' | 'completed'
+);
+
+CREATE INDEX idx_milestones_note ON milestones(note_path);
+CREATE INDEX idx_milestones_date ON milestones(date);
+```
+
+- **Extraction** parses each `## Milestones` checklist line:
+  `- [ ] <name> — hard: YYYY-MM-DD` (pending hard), `- [ ] <name> —
+  target: <date|marker>` (pending soft; `date` NULL when the marker
+  isn't ISO, e.g. `target: April`), and `- [x] <name> — YYYY-MM-DD`
+  (completed). The checkbox sets `status`; `hard:` sets `hard_soft`.
+- **`date` is nullable** because an undated milestone is legitimate —
+  it just can't appear in `milestones_between` (which filters
+  `date IS NOT NULL`).
+- `idx_milestones_date` backs the `milestones_between` range scan used
+  by commitments aggregation; `idx_milestones_note` supports cascade
+  and the clear-and-reinsert pattern on reconcile.
+- **Relationship to `deadlines`**: the project-milestone source is
+  currently materialised in *both* tables — `deadlines` keeps the hard
+  subset for the existing commitments path. The commitments aggregation
+  (#32) is expected to read project deadlines from `milestones_between`
+  and the redundant `deadlines` project feed retired at that point.
+
 ### `schema_migrations`
 
 Tracks which migration versions have been applied to the current DB.
@@ -173,6 +216,8 @@ CREATE TABLE schema_migrations (
 | `find_backlinks(p)` | `SELECT source_path FROM links WHERE resolved_path = ?` — `idx_links_resolved`. |
 | `find_outgoing_links(p)` | `SELECT resolved_path, target_raw, label FROM links WHERE source_path = ?` — `idx_links_source`. |
 | Notes tagged `#X` by recency | `SELECT n.path FROM note_tags t JOIN notes n ON n.path = t.note_path WHERE t.tag = ? ORDER BY n.mtime_ns DESC` — `idx_tags_tag` + PK. |
+| `milestones_for_project(slug)` | `SELECT … FROM milestones WHERE note_path = ? OR note_path = ? ORDER BY id` — resolves slug to active + parked paths. |
+| `milestones_between(from, to)` | `SELECT … FROM milestones WHERE date IS NOT NULL AND date BETWEEN ? AND ? ORDER BY date` — `idx_milestones_date` range scan. |
 
 ## Reconciliation semantics
 
@@ -180,10 +225,10 @@ Startup reconciliation (#16) treats the filesystem as truth:
 
 1. `walk_dir` the vault for every `.md` file.
 2. For each file: compare `mtime_ns + content_hash` with the `notes` row.
-   - Missing row → insert, also insert deadlines, links, tags.
+   - Missing row → insert, also insert deadlines, links, tags, milestones.
    - Matching row → skip.
    - Changed row → update `notes`, delete and re-insert dependent rows
-     (deadlines, links, tags) via cascading writes.
+     (deadlines, links, tags, milestones) via cascading writes.
 3. For every `notes.path` not visited in the walk → delete. Cascades
    clean up dependents.
 
