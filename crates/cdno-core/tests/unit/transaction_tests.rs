@@ -6,7 +6,9 @@
 use std::sync::{Arc, Mutex};
 
 use cdno_core::error::{IndexError, StoreError, TransactionError};
-use cdno_core::index::{DeadlineEntry, LinkEntry, MemoryIndex, NoteEntry, VaultIndex};
+use cdno_core::index::{
+    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_core::transaction::VaultTransaction;
@@ -404,5 +406,25 @@ impl VaultIndex for FailingIndex {
     }
     fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.find_by_tag(tag)
+    }
+    fn replace_milestones(
+        &self,
+        path: &VaultPath,
+        milestones: &[MilestoneEntry],
+    ) -> Result<(), IndexError> {
+        if self.should_fail(false) {
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.replace_milestones(path, milestones)
+    }
+    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
+        self.inner.milestones_for_project(slug)
+    }
+    fn milestones_between(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
+        self.inner.milestones_between(from, to)
     }
 }

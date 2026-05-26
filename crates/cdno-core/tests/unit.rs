@@ -10,6 +10,7 @@ mod unit {
     mod markdown_tests;
     mod memory_index_tests;
     mod memory_store_tests;
+    mod milestones_tests;
     mod path_tests;
     mod paths_tests;
     mod reconcile_tests;

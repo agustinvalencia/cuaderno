@@ -2,7 +2,9 @@
 //! `vault_index_tests.rs` to lock in identical behaviour across
 //! production and test-fake implementations.
 
-use cdno_core::index::{DeadlineEntry, LinkEntry, MemoryIndex, NoteEntry, VaultIndex};
+use cdno_core::index::{
+    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+};
 use cdno_core::path::VaultPath;
 use serde_json::json;
 
@@ -361,4 +363,120 @@ fn memory_index_is_send_sync_and_dyn_compatible() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<MemoryIndex>();
     let _boxed: Box<dyn VaultIndex> = Box::new(MemoryIndex::new());
+}
+
+fn milestone(name: &str, date: Option<&str>, is_hard: bool, completed: bool) -> MilestoneEntry {
+    MilestoneEntry {
+        name: name.to_owned(),
+        date: date.map(str::to_owned),
+        is_hard,
+        completed,
+    }
+}
+
+#[test]
+fn milestones_for_project_returns_in_source_order() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[
+            milestone("kickoff", Some("2026-01-10"), false, true),
+            milestone("submission", Some("2026-05-22"), true, false),
+            milestone("someday", None, false, false),
+        ],
+    )
+    .unwrap();
+
+    let got = idx.milestones_for_project("foo").unwrap();
+    let names: Vec<&str> = got.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, vec!["kickoff", "submission", "someday"]);
+    assert_eq!(got[2].date, None);
+}
+
+#[test]
+fn milestones_for_project_resolves_parked_location() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/_parked/dormant.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/_parked/dormant.md"),
+        &[milestone("revisit", Some("2026-09-01"), false, false)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        idx.milestones_for_project("dormant").unwrap(),
+        vec![milestone("revisit", Some("2026-09-01"), false, false)],
+    );
+}
+
+#[test]
+fn replace_milestones_overwrites_prior_set() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[milestone("first", Some("2026-05-01"), true, false)],
+    )
+    .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[milestone("second", Some("2026-06-01"), true, false)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        idx.milestones_for_project("foo").unwrap(),
+        vec![milestone("second", Some("2026-06-01"), true, false)],
+    );
+}
+
+#[test]
+fn milestones_between_filters_by_date_and_sorts_across_projects() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/a.md", "project"))
+        .unwrap();
+    idx.upsert_note(&sample_note("projects/b.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/a.md"),
+        &[
+            milestone("a-late", Some("2026-08-01"), true, false),
+            milestone("a-undated", None, false, false),
+            milestone("a-early", Some("2025-01-01"), false, false),
+        ],
+    )
+    .unwrap();
+    idx.replace_milestones(
+        &vp("projects/b.md"),
+        &[milestone("b-mid", Some("2026-06-15"), false, false)],
+    )
+    .unwrap();
+
+    let got = idx.milestones_between("2026-01-01", "2026-12-31").unwrap();
+    let names: Vec<&str> = got.iter().map(|(_, m)| m.name.as_str()).collect();
+    assert_eq!(names, vec!["b-mid", "a-late"]);
+}
+
+#[test]
+fn remove_note_cascades_milestones() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_milestones(
+        &vp("projects/foo.md"),
+        &[milestone("ship", Some("2026-05-01"), true, false)],
+    )
+    .unwrap();
+
+    idx.remove_note(&vp("projects/foo.md")).unwrap();
+    assert!(idx.milestones_for_project("foo").unwrap().is_empty());
+    assert!(
+        idx.milestones_between("2026-01-01", "2027-01-01")
+            .unwrap()
+            .is_empty()
+    );
 }
