@@ -9,14 +9,16 @@
 //! commitments aggregation query (#32) and weekly/monthly reviews
 //! can run as index lookups rather than filesystem walks.
 
-use chrono::{Datelike, NaiveDate, NaiveDateTime};
+use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::{CommitmentFrontmatter, CommitmentStatus, Context};
+use crate::frontmatter::{
+    ActionFrontmatter, ActionStatus, CommitmentFrontmatter, CommitmentStatus, Context,
+};
 use crate::note_type::NoteType;
 
 use super::Vault;
@@ -25,6 +27,40 @@ use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
 
 const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
+
+/// Fixed look-back window for surfacing overdue commitments. Anything
+/// missed more than this many days ago drops out of the view rather
+/// than accumulating unbounded history.
+const OVERDUE_LOOKBACK_DAYS: i64 = 30;
+
+/// One dated commitment in the aggregated view produced by
+/// [`Vault::commitments`]. The `source` records where it came from so
+/// callers (orient, the commitments CLI) can group or label entries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitmentEntry {
+    pub date: NaiveDate,
+    pub title: String,
+    pub source: CommitmentSource,
+    /// `true` when `date` is strictly before the query's `today`.
+    pub is_overdue: bool,
+}
+
+/// Origin of an aggregated commitment. The string payloads carry the
+/// owning project / stewardship slug for context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitmentSource {
+    /// A hard `## Milestones` deadline of the named project.
+    ProjectMilestone(String),
+    /// A periodic commitment of the named stewardship (Phase 3 — no
+    /// stewardship notes exist yet, so this variant is currently
+    /// unproduced).
+    Stewardship(String),
+    /// A standalone `commitments/<slug>.md` note.
+    StandaloneCommitment,
+    /// An action note carrying a self-imposed `due:` that isn't pinned
+    /// to a milestone; the payload is the parent project slug.
+    ActionNote(String),
+}
 
 impl Vault {
     /// Create a new active commitment at `commitments/<slug>.md` and
@@ -156,6 +192,121 @@ impl Vault {
 
         Ok(done_path)
     }
+
+    /// Aggregate every dated commitment across the vault into one
+    /// date-sorted view, from a fixed 30-day overdue look-back through
+    /// `today + lookahead_days`.
+    ///
+    /// Four sources (design §5.9 / §5.11):
+    /// 1. Hard project milestones, read from the `milestones` index
+    ///    table (#109) — completed and soft milestones are skipped.
+    /// 2. Stewardship periodic commitments — absent until Phase 3, so
+    ///    currently contributes nothing.
+    /// 3. Standalone active commitment notes.
+    /// 4. Active action notes with a self-imposed `due:` and **no**
+    ///    `milestone:`. A milestone-pinned action is *not* duplicated
+    ///    here — its milestone (source 1) owns the date.
+    ///
+    /// Each entry is flagged `is_overdue` when its date is before
+    /// `today`. Sources 3 and 4 read each note's file to parse the
+    /// typed frontmatter (the established query pattern); a malformed
+    /// note fails the whole query rather than being silently dropped.
+    pub fn commitments(
+        &self,
+        today: NaiveDate,
+        lookahead_days: i64,
+    ) -> Result<Vec<CommitmentEntry>, DomainError> {
+        let from = today - Duration::days(OVERDUE_LOOKBACK_DAYS);
+        let to = today + Duration::days(lookahead_days);
+
+        let mut entries = Vec::new();
+
+        // Source 1: hard project milestones via the index table. The
+        // query already bounds by date and excludes undated markers.
+        let from_s = from.format("%Y-%m-%d").to_string();
+        let to_s = to.format("%Y-%m-%d").to_string();
+        for (path, milestone) in self.index.milestones_between(&from_s, &to_s)? {
+            if !milestone.is_hard || milestone.completed {
+                continue;
+            }
+            let Some(date) = milestone.date.as_deref().and_then(parse_ymd) else {
+                continue;
+            };
+            entries.push(CommitmentEntry {
+                date,
+                title: milestone.name,
+                source: CommitmentSource::ProjectMilestone(slug_of(&path)),
+                is_overdue: date < today,
+            });
+        }
+
+        // Source 2: stewardship periodic commitments — Phase 3. No
+        // stewardship notes are indexed yet, so nothing to read.
+
+        // Source 3: standalone active commitment notes.
+        for entry in self.index.list_by_type(NoteType::Commitment.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let commitment = CommitmentFrontmatter::try_from(fm)?;
+            if commitment.status != CommitmentStatus::Active
+                || commitment.due < from
+                || commitment.due > to
+            {
+                continue;
+            }
+            let slug = slug_of(&entry.path);
+            entries.push(CommitmentEntry {
+                date: commitment.due,
+                title: body_title_or_slug(&raw, &slug).to_owned(),
+                source: CommitmentSource::StandaloneCommitment,
+                is_overdue: commitment.due < today,
+            });
+        }
+
+        // Source 4: active action notes with a self-imposed due and no
+        // milestone pin (milestone-pinned actions are covered by their
+        // milestone in source 1).
+        for entry in self.index.list_by_type(NoteType::Action.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let action = ActionFrontmatter::try_from(fm)?;
+            let Some(due) = action.due else { continue };
+            if action.status != ActionStatus::Active
+                || action.milestone.is_some()
+                || due < from
+                || due > to
+            {
+                continue;
+            }
+            let slug = slug_of(&entry.path);
+            entries.push(CommitmentEntry {
+                date: due,
+                title: body_title_or_slug(&raw, &slug).to_owned(),
+                source: CommitmentSource::ActionNote(action.project),
+                is_overdue: due < today,
+            });
+        }
+
+        entries.sort_by_key(|entry| entry.date);
+        Ok(entries)
+    }
+}
+
+/// Parse an ISO `YYYY-MM-DD` date, returning `None` for any other
+/// shape. Index dates are validated on the way in, so this is
+/// belt-and-braces for the source-1 path.
+fn parse_ymd(s: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
+/// The slug of a note: its file stem. Paths in the index always have a
+/// `.md` stem, so the fallback is unreachable in practice.
+fn slug_of(path: &VaultPath) -> String {
+    path.as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned()
 }
 
 /// Render the built-in commitment template with all fields stamped.
