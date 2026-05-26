@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// The ten canonical note types that make up a Cuaderno vault.
+/// The eleven canonical note types that make up a Cuaderno vault.
 ///
 /// Serialises and parses as kebab-case (`Daily` ↔ `"daily"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12,6 +12,7 @@ pub enum NoteType {
     Daily,
     Weekly,
     Project,
+    Action,
     Portfolio,
     Evidence,
     Stewardship,
@@ -22,10 +23,11 @@ pub enum NoteType {
 }
 
 impl NoteType {
-    pub const ALL: [NoteType; 10] = [
+    pub const ALL: [NoteType; 11] = [
         NoteType::Daily,
         NoteType::Weekly,
         NoteType::Project,
+        NoteType::Action,
         NoteType::Portfolio,
         NoteType::Evidence,
         NoteType::Stewardship,
@@ -40,6 +42,7 @@ impl NoteType {
             NoteType::Daily => "daily",
             NoteType::Weekly => "weekly",
             NoteType::Project => "project",
+            NoteType::Action => "action",
             NoteType::Portfolio => "portfolio",
             NoteType::Evidence => "evidence",
             NoteType::Stewardship => "stewardship",

@@ -37,18 +37,19 @@ The tool has four consumers:
 
 ## 3. Note Types
 
-|Type         |Description                              |Mutable?              |Lives in                                  |
-|-------------|-----------------------------------------|----------------------|------------------------------------------|
-|`daily`      |Chronological log entry for a single day |Append-only           |`journal/daily/`                          |
-|`weekly`     |Weekly review artefact                   |Append-only           |`journal/weekly/`                         |
-|`project`    |Mutable project dashboard (one screen)   |Yes (state, actions)  |`projects/`                               |
-|`portfolio`  |Index note for an evidence folder        |Rarely (summary)      |`portfolios/*/`                           |
-|`evidence`   |Individual capture inside a portfolio    |No                    |`portfolios/*/`                           |
-|`stewardship`|Dashboard for a perpetual responsibility |Occasionally          |`stewardships/` or `stewardships/*/`      |
-|`tracking`   |Structured log entry for a stewardship   |No                    |`stewardships/*/tracking/`                |
-|`question`   |An important research or life question   |Occasionally          |`questions/research/` or `questions/life/`|
-|`commitment` |A standalone promise with a hard deadline|No (moves to `_done/`)|`commitments/`                            |
-|`inbox`      |Uncategorised capture awaiting triage    |Temporary             |`inbox/`                                  |
+|Type         |Description                                                  |Mutable?                          |Lives in                                  |
+|-------------|-------------------------------------------------------------|----------------------------------|------------------------------------------|
+|`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/daily/`                          |
+|`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/weekly/`                         |
+|`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/`                               |
+|`action`     |Manifest note for an action-as-investigation (heavier form)  |Yes while attached, append-only after completion |`actions/` (archived to `actions/_done/<year>/`) |
+|`portfolio`  |Index note for an evidence folder                            |Rarely (summary)                  |`portfolios/*/`                           |
+|`evidence`   |Individual capture inside a portfolio                        |No                                |`portfolios/*/`                           |
+|`stewardship`|Dashboard for a perpetual responsibility                     |Occasionally                      |`stewardships/` or `stewardships/*/`      |
+|`tracking`   |Structured log entry for a stewardship                       |No                                |`stewardships/*/tracking/`                |
+|`question`   |An important research or life question                       |Occasionally                      |`questions/research/` or `questions/life/`|
+|`commitment` |A standalone promise with a hard deadline                    |No (moves to `_done/`)            |`commitments/`                            |
+|`inbox`      |Uncategorised capture awaiting triage                        |Temporary                         |`inbox/`                                  |
 
 ### Note lifecycle patterns
 
@@ -59,6 +60,8 @@ The tool has four consumers:
 **Stable reference**: portfolio (index), stewardship, question. Updated occasionally during reviews, not during daily work.
 
 **Transient**: commitment (moves to `_done/` on completion), inbox (triaged to its proper home).
+
+**Two-state lifecycle**: action notes (see §5.11). While *attached* to a project bullet they are mutable manifests; on completion the bullet is removed and the note is archived to `actions/_done/<year>/` and becomes append-only. Append-only after completion (rather than locked) preserves the option to add late retrospectives without forcing a workaround.
 
 -----
 
@@ -82,6 +85,13 @@ vault/
 │   ├── apartment-renovation.md
 │   └── _parked/
 │       └── bayesian-opt-survey.md
+│
+├── actions/
+│   ├── characterise-kan-ppo-sample-efficiency.md  ← type: action
+│   ├── port-section-3-results.md
+│   └── _done/
+│       └── 2026/
+│           └── run-20-seed-ablation.md
 │
 ├── portfolios/
 │   ├── sparse-vs-dense-ood/
@@ -147,6 +157,7 @@ vault/
 
 - **`_parked/`** inside `projects/`: inactive projects, not deleted. Revisited at monthly review.
 - **`_done/`** inside `commitments/`: fulfilled commitments, kept for record.
+- **`_done/<year>/`** inside `actions/`: completed action notes, partitioned by year so the active set stays scannable. Year subfolders are created on demand at completion time.
 - **`_index.md`** inside portfolio and expanded stewardship folders: the folder’s identity note.
 - **`routines/`** inside stewardship folders: prescriptive reference documents (workout plans, routines), not logs.
 - **`tracking/`** inside stewardship folders: structured time-series entries.
@@ -248,6 +259,7 @@ approaching — need to start writing.
 
 ## Next Actions
 - [ ] Run feature set B on full geometry mesh (deep)
+- [ ] [[actions/characterise-kan-ppo-sample-efficiency]] (deep)
 - [ ] Draft methods section with ablation figures (medium)
 - [ ] Email supervisor with CI results (light)
 
@@ -266,6 +278,10 @@ approaching — need to start writing.
 - Portfolio: [[portfolios/inductive-bias-graph-systems/_index]]
 - Notebook: experiments/2026-04-06-ablation-20seed.ipynb
 ```
+
+**Milestones are event markers, not work containers.** A milestone is a Gantt-style point in time — a deliverable, deadline, or external event ("ICML submission", "course end", "RA defence"). Multi-evidence work that *leads to* a milestone is an action note (§5.11) that may link to the milestone via its `milestone:` frontmatter field. Milestones never become note types because they don't accumulate content; they fire once. Retrospectives on a milestone live in evidence, not in a milestone note.
+
+Milestones are extracted into a first-class `milestones(project_id, name, date, hard_soft, status)` index table during reconciliation, so queries are O(1) without inflating the note surface.
 
 **Mutability**: the Current State section is rewritten on each meaningful update. The tool auto-logs previous state to the daily entry before overwriting:
 
@@ -313,6 +329,7 @@ type: evidence
 created: 2026-03-15
 source: "Chen et al. 2025, arXiv:2503.12345"
 portfolio: "sparse-vs-dense-ood"
+origin: "[[projects/surrogate-model]]"
 ---
 
 They show sparse attention in transformer surrogates preserves
@@ -325,7 +342,9 @@ Key figure: Table 3, fixed vs learned sparsity across three
 PDE families. Gap widens on turbulent flows specifically.
 ```
 
-**Design**: minimal frontmatter, free-form prose content. The `portfolio` field is redundant with the file path (it lives inside the portfolio folder) but useful for orphan detection if a note gets moved accidentally. The `source` field can be a citation, an experiment reference, a conversation, or “personal observation.”
+**Design**: minimal frontmatter, free-form prose content. The `portfolio` field is redundant with the file path (it lives inside the portfolio folder) but useful for orphan detection if a note gets moved accidentally. The `source` field can be a citation, an experiment reference, a conversation, or "personal observation."
+
+**The `origin:` field is required from Phase 3 onward.** It points to whatever produced the evidence — a project, an action note, a stewardship, etc. The forward-link gives provenance ("which work produced this?") and the backlink falls out of the index for free, which means actions and projects can list their evidence without duplicating any structural data. Baking it in from day one of Phase 3 avoids a migration if the action layer (§5.11) wants to lean on it.
 
 **Created by**: CLI (`cdno file "sparse-vs-dense-ood" --source "Chen et al. 2025"`), Claude (via read-paper or file-to-portfolio skill), or directly in Obsidian.
 
@@ -513,15 +532,88 @@ Contexts classify projects, stewardships, and commitments by life domain. The ca
 
 **Future-proofing.** If real users need contexts the canonical set does not cover, the migration path is local: promote `Context` to a newtype around a validated string whose `TryFrom` checks against a config-defined set. That change touches one struct and one impl. Tracked as a low-priority follow-up (see GitHub issue) so it isn't lost.
 
+### 5.11 Action Note
+
+An *action* is the RLM word for "thing to do." The default form is an inline `- [ ]` bullet under a project's `## Next Actions` section (§5.3). For the unusual case of an *action-as-investigation* — multi-day work, multiple evidence artefacts, complex completion criteria — the bullet can be promoted to (or created with) a thin manifest note. This note is what the rest of this section specifies.
+
+**Why action, not task.** "Task" carries mdvault muscle memory — heavyweight per-item notes, GTD-style backlogs. Renaming to "action" is deliberate paradigm signalling: the default form is a bullet, the note form is exceptional, the discipline is staying close to the daily log. Users coming from mdvault see the unfamiliar word and don't reflexively reach for the heavy form.
+
+**Why ship it from Phase 2.** The original analysis (see vault note `decision-task-notes-thin-layer.md`) recommended deferring this layer to Phase 6 pending dogfooding. The decision was reversed on adoption grounds: the migration path from mdvault → RLM needs a thin scaffold for users who occasionally need it, and shipping it unused costs less than discovering its absence mid-transition. The thin-ness rules below stop being aesthetic ("clean design") and become load-bearing ("removable later if not used") — they keep the option to drop the type real if dogfooding shows it's unneeded.
+
+```markdown
+---
+type: action
+status: active
+project: surrogate-model
+energy: deep
+milestone: "[[projects/surrogate-model#full-geometry-evaluation]]"
+due: null
+created: 2026-04-15
+completed: null
+blocker: null
+criteria: |
+  Sample efficiency curve generated for KAN-PPO across 5 seeds
+  on RET control task. Confidence interval reported. Comparison
+  table against vanilla PPO included.
+tags: [kan, ppo, sample-efficiency]
+---
+
+# Characterise KAN-PPO sample efficiency on RET control
+
+## Manifest
+- Run KAN-PPO with default config, log every 10k steps:
+  [[evidence/2026-04-15-kan-ppo-baseline-run]]
+- Sweep over network width and KAN basis count:
+  [[evidence/2026-04-18-kan-ppo-width-sweep]]
+- Compare against PPO baseline from earlier ablation:
+  [[portfolios/sparse-vs-dense-ood/_index]]
+
+## Notes
+(Day-by-day reasoning belongs in the daily log under
+ `#action/characterise-kan-ppo-sample-efficiency`, not here.)
+```
+
+**Frontmatter fields:**
+
+| Field       | Required | Notes                                                                                          |
+|-------------|----------|------------------------------------------------------------------------------------------------|
+| `status`    | yes      | `active`, `completed`, or `blocked`                                                            |
+| `project`   | yes      | Slug of the parent project. Every action belongs to a project.                                 |
+| `energy`    | yes      | `deep`, `medium`, or `light`. Same vocabulary as bullet actions.                               |
+| `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits.             |
+| `due`       | optional | ISO date. Used only when the action has a self-imposed deadline not tied to a milestone.       |
+| `created`   | yes      | Date the note was created.                                                                     |
+| `completed` | optional | Date set on completion.                                                                        |
+| `blocker`   | optional | Free text describing what's blocking, if `status: blocked`.                                    |
+| `criteria`  | optional | What "done" looks like. Free text; one of the four jobs the note exists to do.                 |
+| `tags`      | optional | List of strings; surfaced via the `tags` index table for cross-action queries.                 |
+
+**Body shape — manifest, not journal.** The body is a list of links to relevant evidence, plus a short statement of what done looks like (when not in `criteria:`). Day-by-day reasoning during the work belongs in the daily log, tagged `#action/<slug>` so the index can reconstruct the train-of-thought view on demand. Schema enforcement (a soft line-cap warning, plus a "this looks more like evidence" hint) lives in `cdno-domain::lint` and is a generic primitive shared with commitments and other note types.
+
+**Two-state lifecycle.** An action note exists in one of two states:
+
+1. **Attached** — a matching `- [ ]` bullet exists in the parent project's `## Next Actions` section, with the bullet text rewritten as `- [ ] [[actions/<slug>]] (energy)`. The note is mutable; evidence links and notes can be added.
+2. **Orphaned (after completion)** — the bullet has been removed (logged to the daily as usual), the note's `status` is `completed`, `completed:` is set, and the file is moved to `actions/_done/<year>/<slug>.md`. The note becomes append-only: existing content cannot be edited, but new lines can be added (e.g. a six-months-later follow-up: "turns out we missed a confound — see [[evidence/foo]]"). Append-only-after-completion is preferred over locking the file because the late-retrospective case is real and locking forces a workaround.
+
+**Promotion semantics.** `cdno action promote <project> "<query>"` finds a matching bullet, creates the action note from the template, and rewrites the bullet to wikilink the new note. The bullet stays — it's still "what's pending" in the project's Next Actions, surfaced by orient. The note is the manifest that hangs off it. On completion, both writes (bullet removal + note status update + file move to `_done/<year>/`) run atomically through a single `VaultTransaction`, with the daily log entry logged once.
+
+**Tasks-as-atomic-actions stay as bullets.** "Email Florian" doesn't earn a note. The friction of typing `--note` (or running `promote` after the fact) keeps the discipline informally — there's no programmatic enforcement of "this is too small for a note", because that's not reliably detectable. Cultural norm + the friction surface is the defence.
+
+**Index implications.**
+- A `tags(note_id, tag)` index table is populated during reconciliation from `#action/<slug>` mentions in daily logs (and other tagged content). This is the Faraday-style query: "show me every dated paragraph where I mentioned this action." Generic infrastructure — useful for evidence cross-tag queries too.
+- The `milestones` index table (see §5.3) gives action notes their date when they reference a milestone, without duplicating the date in the action's frontmatter.
+- Commitments aggregation (§6) gains action `due:` (when standalone) as a fourth source.
+
 -----
 
 ## 6. Commitments Register (Computed View)
 
-The commitments register is **not a static file**. It is a query assembled by the indexer from three sources:
+The commitments register is **not a static file**. It is a query assembled by the indexer from four sources:
 
-1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`)
+1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`, surfaced via the `milestones` index table)
 2. **Stewardship periodic commitments** (parsed from `## Periodic Commitments` sections, with recurrence logic)
 3. **Standalone commitment notes** in `commitments/` (read from the `due` frontmatter field)
+4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth.
 
 The CLI, MCP, and UI all consume this query. Example output:
 
@@ -862,18 +954,44 @@ cdno project create "Surrogate Model" --context work \
 cdno project state surrogate-model \
   "20-seed ablation confirmed. Ready for full geometry."
                          # Update current state (auto-logs previous)
-cdno project action surrogate-model \
-  "Run feature set B on full geometry mesh" --energy deep
-                         # Add a next action
-cdno project done surrogate-model \
-  "Run 20-seed ablation of feature set B"
-                         # Complete a next action (auto-logs)
 cdno project park bayesian-opt-survey
                          # Move to _parked/
 cdno project activate bayesian-opt-survey
                          # Move back (enforces 5-cap)
 cdno project list        # Show active projects with states
+cdno project milestone add surrogate-model \
+  "Full geometry evaluation" --target 2026-04-30
+                         # Add a milestone (event marker)
+cdno project milestone done surrogate-model \
+  "Ablation confirmed with CI"
+                         # Mark a milestone as fired
 ```
+
+### Actions
+
+```bash
+cdno action add surrogate-model \
+  "Run feature set B on full geometry mesh" --energy deep
+                         # Add a Next-Actions bullet (default form)
+cdno action add surrogate-model \
+  "Characterise KAN-PPO sample efficiency" --energy deep --note
+                         # Add a bullet AND spin an action note
+                         # (heavier form, --note opts in)
+cdno action promote surrogate-model \
+  "Characterise KAN-PPO sample efficiency"
+                         # Attach a note to an existing bullet
+                         # (rewrites bullet to wikilink the note)
+cdno action complete surrogate-model \
+  "Run 20-seed ablation of feature set B"
+                         # Complete an action — removes the bullet,
+                         # logs to daily, archives any attached note
+                         # to actions/_done/<year>/
+cdno action list surrogate-model
+                         # Show the project's bullets and any
+                         # attached notes, with status
+```
+
+The default form is the inline bullet — typing `--note` is the friction surface that keeps the heavy form exceptional. Tasks-as-atomic-actions ("email Florian") never get notes; the friction enforces this informally rather than via lint rejection (which would be too brittle). See §5.11.
 
 ### Portfolios
 
@@ -935,6 +1053,19 @@ cdno lint                # Validate all notes against schemas
 cdno lint --fix          # Auto-fix what can be fixed
 ```
 
+### CLI ergonomics: interactive prompts and confirmation
+
+Every mutating CLI command supports two paths to the same domain operation:
+
+1. **Non-interactive (full args).** All required inputs supplied via flags, e.g. `cdno action add surrogate-model "Run sweep" --energy deep`. The command runs without prompting and without a confirmation step. This is the path used for scripting, for muscle-memory invocation, and (by mirror) for agentic clients (MCP, Tauri) which always supply full args at the transport boundary.
+2. **Interactive (prompt missing fields).** Required flags can be omitted; if stdout is a TTY the CLI prompts for them — fuzzy-search selectors for finite sets (project slug, milestone, energy, status), text input for titles, calendar widget for dates. After all values are gathered, a preview is shown and the user confirms before the `VaultTransaction` is committed.
+
+**Confirmation policy: confirm-on-prompt, not always.** If the user supplied every required field via flags, the command proceeds without an extra confirmation — they already showed they know what they want. If at least one field was prompted (i.e. the user wasn't fully sure), a preview-and-confirm runs before commit. This preserves typing speed on the deliberate path and adds a safety net on the exploratory path. Agentic clients never see prompts at all; their input is validated by the transport's schema before reaching the handler.
+
+**TTY detection and override.** Non-TTY sessions (piped, CI, redirected) skip prompting entirely and error with a clear "missing --flag" message. A `--no-interactive` flag forces the same behaviour explicitly. There is no `--yes` / autoconfirm flag because the only confirmation is on the prompt path, and on that path you've already typed values into prompts — saying yes once at the end is honest.
+
+**Implementation.** Prompting lives entirely in `cdno-cli` (a `prompt` module with helpers like `prompt_project`, `prompt_milestone`, `prompt_energy`, `confirm_preview`). The `cdno-domain` crate stays sync, pure, and I/O-free; it never knows about prompts. The selectors read from the existing index — `Vault::list_active_projects()`, the `milestones` index table — so no new domain surface is required. The library is `inquire` (chosen over `dialoguer` for fuzzy-by-default selectors and a built-in date widget — exactly the "I don't remember the slug" and "what's the deadline" cases). The size cost (~200-400 KB binary, 25-40 transitive deps) is noise next to rusqlite/axum/tauri.
+
 -----
 
 ## 11. MCP Tool Surface
@@ -995,11 +1126,20 @@ file_to_portfolio(portfolio, source, content)
 update_project_state(project, new_state)
   → reads old state, logs to daily, writes new state
 
-add_next_action(project, action, energy_level)
-  → appends to project's Next Actions section
+add_action(project, title, energy, with_note?)
+  → appends a bullet to project's Next Actions section
+  → if with_note=true, also creates an action note (§5.11)
+    and rewrites the bullet to wikilink it
 
-complete_next_action(project, action)
-  → removes from Next Actions, logs to daily
+promote_action(project, query)
+  → finds a matching bullet, creates an action note
+    from the template, and rewrites the bullet to
+    wikilink the new note
+
+complete_action(project, query)
+  → removes the bullet, logs completion to daily,
+    and (if a note was attached) updates its status
+    to completed and archives it to actions/_done/<year>/
 
 create_commitment(title, due, context, project?, stewardship?)
   → creates commitment note
@@ -1026,11 +1166,11 @@ triage_inbox()
 |**weekly-review**                  |Add stewardship scan step. Use `get_weekly_context` for wins pre-population. Add commitments 2-week lookahead. Keep celebration-first structure.                                                                        |
 |**monthly-report → monthly-review**|Restructure as interactive strategic scan using `get_monthly_context`. Walk through: wins patterns, questions review, portfolio staleness, project stuck-check, stewardship habits, 6-week commitments, slot allocation.|
 |**create-project**                 |Generate project map template. Add `core_question` linking. Enforce 5-project cap. Prompt to park if at cap.                                                                                                            |
-|**create-task → add-action**       |Default: append inline next action to project map via `add_next_action`. Only create a separate note for substantial multi-week work items.                                                                             |
+|**create-task → add-action**       |Default: append inline next action to project map via `add_action`. Set `with_note=true` only for action-as-investigation cases (§5.11) — the heavier form is exceptional, not default.                                  |
 |**read-paper**                     |Add final step: “Which portfolio should this go into?” File annotation via `file_to_portfolio`.                                                                                                                         |
 |**brain-dump**                     |Add post-capture step: suggest which portfolios/projects items belong to. Route via triage.                                                                                                                             |
 |**context-switch**                 |Update outgoing project map state via `update_project_state`. Read incoming project map state via `get_project_context`.                                                                                                |
-|**complete-task → complete-action**|Call `complete_next_action`. Celebrate the win. Prompt for next action to replace it.                                                                                                                                   |
+|**complete-task → complete-action**|Call `complete_action`. Celebrate the win. If the action had an attached note, archive it to `actions/_done/<year>/`. Prompt for next action to replace it.                                                             |
 |**project-review**                 |Use `get_project_context`. Show portfolio health, recent activity, linked question progress.                                                                                                                            |
 |**gym-session**                    |Create tracking note via `create_tracking_entry`. Log brief summary to daily entry. Keep the interactive coaching flow.                                                                                                 |
 |**quick-capture**                  |Unchanged — capture to inbox or daily log.                                                                                                                                                                              |
@@ -1172,22 +1312,29 @@ The Cuaderno UI does **not** use either MCP transport. It imports `cdno-domain` 
 
 ### Phase 2: Daily Loop
 
-- Implement project maps (create, update state with history logging, add/complete actions, park/activate, 5-cap enforcement)
-- Implement commitment notes (create, complete)
-- Implement commitments aggregation query (project milestones + standalone commitments; stewardship periodics added in Phase 3)
-- Implement `cdno orient` — daily orientation composing multiple domain queries
-- CLI: `cdno project`, `cdno commit`, `cdno commitments`, `cdno orient`
+> **Sequencing note.** The action layer (§5.11) was originally scoped for Phase 6 pending dogfooding (see `decision-task-notes-thin-layer.md` in the vault). On 2026-05-03 the call was reversed on adoption grounds — the mdvault → RLM transition needs the scaffold. The action layer ships in Phase 2 ahead of the orient flow so that `orient` can surface action notes from day one. The `tags` and `milestones` index tables, plus the `cdno-cli::prompt` ergonomics module, are pulled forward to the same phase to avoid retrofit churn.
 
-**Deliverable**: the tool is daily-usable. Projects with 5-cap, commitments, and daily orientation from the terminal. The minimum viable practice of the RLM.
+- Implement project maps (create, update state with history logging, park/activate, 5-cap enforcement, milestone management)
+- Implement commitment notes (create, complete)
+- Implement the **action layer** (§5.11): `action` note type with frontmatter + template, attached/orphaned lifecycle, `cdno action add` (default bullet, `--note` opts in), `cdno action promote`, `cdno action complete` with two-write transaction (bullet removal + note status update + archive to `actions/_done/<year>/`)
+- Implement the **`milestones` index table** populated during reconciliation from project bodies — first-class queryable surface for milestone events without promoting milestones to a note type
+- Implement the **`tags` index table** populated during reconciliation from `#action/<slug>` (and other) tag mentions — Faraday-style train-of-thought queries across daily entries
+- Implement the **`cdno-cli::prompt` module** (using `inquire`) — optional flags + TTY-detected prompts for missing required fields + confirm-on-prompt before commit. Domain layer stays I/O-free; agentic clients always supply full args at the transport boundary
+- Implement commitments aggregation query: project milestones + action `due:` (when standalone) + standalone commitments. Stewardship periodics added in Phase 3
+- Implement `cdno orient` — daily orientation composing multiple domain queries (now including action notes attached to active projects)
+- CLI: `cdno project`, `cdno action`, `cdno commit`, `cdno commitments`, `cdno orient`
+
+**Deliverable**: the tool is daily-usable. Projects with 5-cap, actions with optional note form, commitments, and daily orientation from the terminal — with interactive prompting and confirm-on-prompt for the exploratory path. The minimum viable practice of the RLM, with the adoption scaffold for users migrating from mdvault.
 
 ### Phase 3: Knowledge & Stewardship Layer
 
 - Implement portfolio operations (create, file evidence, list, show)
 - Implement question notes (create, park, list active)
 - Implement stewardships (create flat/expanded, add periodic commitments, tracking scaffolding)
+- Make `origin:` mandatory on evidence frontmatter from day one (see §5.5) — projects, action notes, and stewardships all carry provenance
 - CLI: `cdno portfolio`, `cdno file`, `cdno questions`, `cdno stewardship`, `cdno track`
 
-**Deliverable**: the full knowledge and stewardship layer is operational. Commitments aggregation now includes stewardship periodics automatically.
+**Deliverable**: the full knowledge and stewardship layer is operational. Commitments aggregation now includes stewardship periodics automatically. Action notes can link to evidence and evidence carries `origin:` back to the action — the provenance loop closes.
 
 ### Phase 4: MCP Server
 
