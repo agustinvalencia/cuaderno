@@ -1,4 +1,5 @@
 mod unit {
+    mod actions_tests;
     mod capture_tests;
     mod commitments_tests;
     mod frontmatter_tests;
