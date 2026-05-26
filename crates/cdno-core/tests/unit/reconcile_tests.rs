@@ -86,6 +86,29 @@ fn reconcile_indexes_inline_body_tags_alongside_frontmatter_tags() {
 }
 
 #[test]
+fn reconcile_indexes_namespaced_action_tags() {
+    // The Faraday-style query (design §5.11): a daily entry mentioning
+    // `#action/<slug>` must be findable by the full namespaced tag, not
+    // truncated to its `action` prefix.
+    let (store, index) = fixtures();
+    let raw = "---\ntype: daily\ntitle: Train of thought\n---\n\n\
+        tried a new loss today, see #action/characterise-sample-efficiency\n";
+    store
+        .write_file(&vp("journal/daily/2026-05-26.md"), raw)
+        .expect("seed action-tagged daily note");
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    assert_eq!(report.scanned, 1);
+
+    let full = index
+        .find_by_tag("action/characterise-sample-efficiency")
+        .unwrap();
+    assert_eq!(full, vec![vp("journal/daily/2026-05-26.md")]);
+    // The slug isn't dropped: a bare `action` prefix doesn't match.
+    assert!(index.find_by_tag("action").unwrap().is_empty());
+}
+
+#[test]
 fn reconcile_resolves_wikilinks_to_their_target_paths() {
     let (store, index) = fixtures();
     seed_note(&store, "notes/foo.md", "daily", "");

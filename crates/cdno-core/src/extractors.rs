@@ -27,12 +27,14 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use crate::index::LinkEntry;
 use crate::path::VaultPath;
 
-/// Tag pattern is ASCII-only by design: `#[a-zA-Z0-9][a-zA-Z0-9_-]*`.
-/// Non-ASCII letters in `#café` produce `caf` (or get rejected),
-/// matching the spec in `docs/` and avoiding surprising Unicode
-/// behaviour in indexed tags.
+/// Tag pattern is ASCII-only by design: `#[a-zA-Z0-9][a-zA-Z0-9_/-]*`,
+/// with trailing slashes trimmed by the caller. The inner `/` carries
+/// namespaced tags like `#action/<slug>` (design §5.11) — the slug is
+/// part of the tag, not a separate token. Non-ASCII letters in `#café`
+/// produce `caf` (or get rejected), matching the spec in `docs/` and
+/// avoiding surprising Unicode behaviour in indexed tags.
 fn is_tag_continuation(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || b == b'-'
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'/'
 }
 
 /// Compute the byte ranges in `body` where extractors must not look.
@@ -81,8 +83,10 @@ fn is_protected(ranges: &[Range<usize>], offset: usize) -> bool {
 /// Extract every distinct `#tag` from a markdown body, sorted.
 ///
 /// Skips code blocks, inline code spans, HTML, and headings. The tag
-/// pattern is `#[a-zA-Z0-9][a-zA-Z0-9_-]*` — punctuation right after
-/// a tag (e.g. `#foo,`) doesn't bleed into the tag.
+/// pattern is `#[a-zA-Z0-9][a-zA-Z0-9_/-]*` — punctuation right after
+/// a tag (e.g. `#foo,`) doesn't bleed into the tag. The inner `/`
+/// supports namespaced tags (`#action/<slug>`); a trailing slash is
+/// not part of the tag, so `#foo/` tags `foo`.
 pub fn extract_inline_tags(body: &str) -> Vec<String> {
     let protected = protected_ranges(body, /* include_headings */ true);
     let mut tags: HashSet<String> = HashSet::new();
@@ -118,7 +122,14 @@ pub fn extract_inline_tags(body: &str) -> Vec<String> {
             // The scan only advanced through ASCII bytes, so the
             // start..end indices land on UTF-8 boundaries even when
             // the surrounding text is multibyte.
-            tags.insert(body[start..end].to_string());
+            //
+            // Trailing slashes are trimmed: `#foo/` tags `foo`, while a
+            // namespaced `#action/slug` keeps its inner slash. `i` still
+            // advances past the slash so it isn't re-scanned. The
+            // first-char-alphanumeric check above guarantees the trimmed
+            // tag is non-empty.
+            let tag = body[start..end].trim_end_matches('/');
+            tags.insert(tag.to_string());
             i = end;
             continue;
         }
