@@ -287,7 +287,7 @@ impl Vault {
             });
         }
 
-        entries.sort_by(|a, b| a.date.cmp(&b.date));
+        entries.sort_by_key(|entry| entry.date);
         Ok(entries)
     }
 }
