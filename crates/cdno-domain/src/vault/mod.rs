@@ -38,6 +38,7 @@ mod log;
 mod projects;
 mod slug;
 
+pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use projects::{ProjectSummary, TopAction};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`

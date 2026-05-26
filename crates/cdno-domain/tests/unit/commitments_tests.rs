@@ -10,9 +10,9 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{CommitmentFrontmatter, CommitmentStatus, Context};
+use cdno_domain::{CommitmentSource, Vault};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -293,4 +293,145 @@ fn complete_commitment_errors_when_destination_already_exists() {
         ),
         "got {err:?}"
     );
+}
+
+// ---------------------------------------------------------------------
+// commitments aggregation (#32)
+// ---------------------------------------------------------------------
+
+fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+}
+
+/// Active project whose `## Milestones` mixes a hard deadline (a
+/// commitment), a soft target, and a completed marker (the latter two
+/// excluded from the aggregation).
+const PROJECT_WITH_MILESTONES: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Milestones\n- [ ] Submit paper — hard: 2026-06-01\n- [ ] Polish — target: 2026-06-02\n- [x] Kickoff — 2026-05-01\n\n## Next Actions\n";
+
+fn agg_commitment_note(due: &str, status: &str) -> String {
+    format!(
+        "---\ntype: commitment\nstatus: {status}\ndue: {due}\ncreated: 2026-05-01\ncompleted: null\ncontext: personal\n---\n\n# Renew passport\n"
+    )
+}
+
+fn agg_action_note(title: &str, due: &str, milestone: &str) -> String {
+    format!(
+        "---\ntype: action\nstatus: active\nproject: alpha\nenergy: deep\nmilestone: {milestone}\ndue: {due}\ncreated: 2026-05-20\ncompleted: null\nblocker: null\ncriteria: null\ntags: []\n---\n\n# {title}\n"
+    )
+}
+
+#[test]
+fn commitments_aggregates_all_sources_sorted_by_date() {
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("projects/alpha.md", PROJECT_WITH_MILESTONES),
+        (
+            "commitments/renew-passport.md",
+            &agg_commitment_note("2026-05-30", "active"),
+        ),
+        (
+            "actions/write-draft.md",
+            &agg_action_note("Write the draft", "2026-05-28", "null"),
+        ),
+        // Milestone-pinned action: covered by its milestone (source 1),
+        // must not be duplicated here.
+        (
+            "actions/pinned-work.md",
+            &agg_action_note(
+                "Pinned work",
+                "2026-05-29",
+                "\"[[projects/alpha#submit-paper]]\"",
+            ),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+
+    let summary: Vec<(NaiveDate, &str, &CommitmentSource)> = got
+        .iter()
+        .map(|c| (c.date, c.title.as_str(), &c.source))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                ymd(2026, 5, 28),
+                "Write the draft",
+                &CommitmentSource::ActionNote("alpha".to_owned()),
+            ),
+            (
+                ymd(2026, 5, 30),
+                "Renew passport",
+                &CommitmentSource::StandaloneCommitment,
+            ),
+            (
+                ymd(2026, 6, 1),
+                "Submit paper",
+                &CommitmentSource::ProjectMilestone("alpha".to_owned()),
+            ),
+        ],
+    );
+    assert!(
+        got.iter().all(|c| !c.is_overdue),
+        "all dates are in the future"
+    );
+}
+
+#[test]
+fn commitments_flags_overdue_within_lookback_and_excludes_beyond_window() {
+    let (vault, _store) = vault_with_seeded_store(&[
+        // 6 days before today — overdue but inside the 30-day look-back.
+        (
+            "commitments/recent.md",
+            &agg_commitment_note("2026-05-20", "active"),
+        ),
+        // 36 days before today — past the look-back, excluded.
+        (
+            "commitments/ancient.md",
+            &agg_commitment_note("2026-04-20", "active"),
+        ),
+        // Past the lookahead window, excluded.
+        (
+            "commitments/distant.md",
+            &agg_commitment_note("2026-07-01", "active"),
+        ),
+        // Completed, excluded regardless of date.
+        (
+            "commitments/done.md",
+            &agg_commitment_note("2026-05-28", "completed"),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "only the recent overdue commitment: {got:?}");
+    assert_eq!(got[0].date, ymd(2026, 5, 20));
+    assert!(got[0].is_overdue);
+}
+
+#[test]
+fn commitments_does_not_duplicate_a_milestone_pinned_action() {
+    // A project hard milestone plus an action pinned to it: the
+    // milestone is the single source of truth, so exactly one entry.
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("projects/alpha.md", PROJECT_WITH_MILESTONES),
+        (
+            "actions/pinned-work.md",
+            &agg_action_note(
+                "Pinned work",
+                "2026-05-28",
+                "\"[[projects/alpha#submit-paper]]\"",
+            ),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(
+        got.len(),
+        1,
+        "milestone only, action not duplicated: {got:?}"
+    );
+    assert_eq!(
+        got[0].source,
+        CommitmentSource::ProjectMilestone("alpha".to_owned()),
+    );
+    assert_eq!(got[0].title, "Submit paper");
 }
