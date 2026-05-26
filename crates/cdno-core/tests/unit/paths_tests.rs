@@ -44,6 +44,11 @@ fn commitments_done_dir_partitions_by_year() {
 }
 
 #[test]
+fn actions_done_dir_partitions_by_year() {
+    assert_eq!(paths::actions_done_dir(2026), "actions/_done/2026");
+}
+
+#[test]
 fn init_dirs_includes_year_partitions_and_static_folders() {
     let today = NaiveDate::from_ymd_opt(2026, 4, 25).unwrap();
     let dirs = paths::init_dirs(today);
@@ -51,6 +56,8 @@ fn init_dirs_includes_year_partitions_and_static_folders() {
     assert!(dirs.contains(&"journal/2026/daily".to_string()));
     assert!(dirs.contains(&"journal/2026/weekly".to_string()));
     assert!(dirs.contains(&"commitments/_done/2026".to_string()));
+    assert!(dirs.contains(&paths::ACTIONS.to_string()));
+    assert!(dirs.contains(&"actions/_done/2026".to_string()));
     assert!(dirs.contains(&paths::PROJECTS.to_string()));
     assert!(dirs.contains(&paths::INBOX.to_string()));
     assert!(dirs.contains(&paths::CUADERNO_DIR.to_string()));

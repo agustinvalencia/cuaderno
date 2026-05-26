@@ -29,6 +29,7 @@ use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 
+mod actions;
 mod capture;
 mod commitments;
 mod index_entry;

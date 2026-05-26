@@ -137,10 +137,36 @@ impl Vault {
         let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
+        // If the completed bullet wikilinks an action note, archive the
+        // note in the same transaction — its move to `_done/<year>/`
+        // and the bullet removal are then atomic. A plain bullet skips
+        // this and behaves exactly as before. Still one daily-log line,
+        // not two.
+        if let Some(action_slug) = parse_attached_action_slug(&removed_full_text) {
+            self.stage_action_archival(at, action_slug, &mut tx)?;
+        }
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(path)
+    }
+}
+
+/// If `text` is a wikilink to an action note — `[[actions/<slug>]]`,
+/// optionally followed by a `(<energy>)` suffix — return the slug.
+/// Plain action bullets, links carrying a `|label`, and anything that
+/// isn't exactly an `actions/` wikilink return `None`, so completion
+/// falls through to the unchanged plain-bullet path.
+fn parse_attached_action_slug(text: &str) -> Option<&str> {
+    let inner = strip_energy_suffix(text.trim())
+        .trim()
+        .strip_prefix("[[")?
+        .strip_suffix("]]")?;
+    let slug = inner.strip_prefix("actions/")?;
+    if slug.is_empty() || slug.contains(['[', ']', '|']) {
+        None
+    } else {
+        Some(slug)
     }
 }
 

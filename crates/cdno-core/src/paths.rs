@@ -39,6 +39,12 @@ pub const STEWARDSHIPS: &str = "stewardships";
 pub const COMMITMENTS: &str = "commitments";
 pub const COMMITMENTS_DONE: &str = "commitments/_done";
 
+// Actions — heavy-form action notes live under `actions/` while active.
+// Completed notes move to the year-partitioned `_done/` via
+// [`actions_done_dir`] (see design §5.11).
+pub const ACTIONS: &str = "actions";
+pub const ACTIONS_DONE: &str = "actions/_done";
+
 // Questions split by domain.
 pub const QUESTIONS_RESEARCH: &str = "questions/research";
 pub const QUESTIONS_LIFE: &str = "questions/life";
@@ -73,6 +79,12 @@ pub fn journal_weekly_dir(iso_year: i32) -> String {
 /// `commitments/_done/<year>`.
 pub fn commitments_done_dir(year: i32) -> String {
     format!("{COMMITMENTS_DONE}/{year}")
+}
+
+/// Directory holding completed action notes for the given year:
+/// `actions/_done/<year>`.
+pub fn actions_done_dir(year: i32) -> String {
+    format!("{ACTIONS_DONE}/{year}")
 }
 
 /// Vault-relative path of the daily note for `date`:
@@ -113,6 +125,8 @@ pub fn init_dirs(today: NaiveDate) -> Vec<String> {
         STEWARDSHIPS.into(),
         COMMITMENTS.into(),
         commitments_done_dir(year),
+        ACTIONS.into(),
+        actions_done_dir(year),
         QUESTIONS_RESEARCH.into(),
         QUESTIONS_LIFE.into(),
         INBOX.into(),
