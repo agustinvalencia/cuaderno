@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::{bootstrap, commands};
+use cdno_domain::frontmatter::EnergyLevel;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -58,6 +59,18 @@ enum Commands {
         #[command(subcommand)]
         subcommand: ProjectCommands,
     },
+
+    /// Daily orientation: commitments due soon, active projects, and a
+    /// suggested starting point.
+    Orient {
+        /// Bias the suggested starting point toward this energy level
+        /// (deep, medium, or light).
+        #[arg(long)]
+        energy: Option<EnergyLevel>,
+    },
+
+    /// Quick snapshot: active projects and their top next actions.
+    Status,
 }
 
 fn main() -> Result<()> {
@@ -90,6 +103,14 @@ fn main() -> Result<()> {
         Commands::Project { subcommand } => {
             let root = discover_vault_root_or_error()?;
             commands::project::run(&root, Local::now().naive_local(), subcommand)
+        }
+        Commands::Orient { energy } => {
+            let root = discover_vault_root_or_error()?;
+            commands::orient::run(&root, Local::now().date_naive(), energy)
+        }
+        Commands::Status => {
+            let root = discover_vault_root_or_error()?;
+            commands::status::run(&root, Local::now().date_naive())
         }
     }
 }
