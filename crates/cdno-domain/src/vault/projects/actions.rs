@@ -150,6 +150,117 @@ impl Vault {
 
         Ok(path)
     }
+
+    /// Promote an open bullet to a manifest action note (design §5.11).
+    /// Finds the bullet via case-insensitive substring (same matching
+    /// as `complete_action`), spins a new action note inheriting the
+    /// bullet's title and energy, and rewrites the bullet to wikilink
+    /// the note — all atomic, in a single transaction.
+    ///
+    /// Errors:
+    /// - `ActionAlreadyPromoted` — the matched bullet already
+    ///   wikilinks an action note.
+    /// - `BulletMissingEnergy` — the bullet has no
+    ///   `(deep|medium|light)` suffix to inherit; surfaced rather than
+    ///   guessed so an authoring bug is visible.
+    /// - `ActionNotFound` / `AmbiguousAction` — same disambiguation as
+    ///   `complete_action`.
+    /// - parked project → `ProjectNotActive`; missing project →
+    ///   `Store(NotFound)`; slug collision on the new note →
+    ///   `Store(AlreadyExists)`.
+    pub fn promote_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let (project_path, mut doc) = self.resolve_active_project(slug)?;
+
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let needle = query.trim().to_lowercase();
+
+        // Find / disambiguate using the same rules as complete_action.
+        let mut matches: Vec<usize> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(text) = parse_open_action_text(line)
+                && strip_energy_suffix(text).to_lowercase().contains(&needle)
+            {
+                matches.push(i);
+            }
+        }
+        if matches.is_empty() {
+            return Err(DomainError::ActionNotFound {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+            });
+        }
+        if matches.len() > 1 {
+            let candidates = matches
+                .iter()
+                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
+                .collect();
+            return Err(DomainError::AmbiguousAction {
+                slug: slug.to_owned(),
+                query: query.to_owned(),
+                candidates,
+            });
+        }
+
+        let bullet_idx = matches[0];
+        let bullet_text = parse_open_action_text(lines[bullet_idx])
+            .expect("matched line was previously parseable")
+            .to_owned();
+
+        if parse_attached_action_slug(&bullet_text).is_some() {
+            return Err(DomainError::ActionAlreadyPromoted {
+                slug: slug.to_owned(),
+                line: bullet_text,
+            });
+        }
+
+        let energy =
+            parse_bullet_energy(&bullet_text).ok_or_else(|| DomainError::BulletMissingEnergy {
+                slug: slug.to_owned(),
+                line: bullet_text.clone(),
+            })?;
+        let title = strip_energy_suffix(&bullet_text).trim().to_owned();
+
+        // Spin the note (uncommitted tx) and continue staging on it so
+        // note write + bullet rewrite + daily log commit together.
+        let (note_path, mut tx) = self.create_action_note(at, slug, &title, energy, None, None)?;
+        let action_slug = note_path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        let new_bullet = format!(
+            "- [ ] [[{}/{action_slug}]] ({})",
+            cdno_core::paths::ACTIONS,
+            energy.as_str()
+        );
+        let mut new_lines: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
+        new_lines[bullet_idx] = new_bullet;
+        let new_section = new_lines.join("\n");
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let project_entry =
+            build_index_entry_for(&project_path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format!(
+            "action promoted on [[{slug}]] — \"{title}\" -> [[{}/{action_slug}]]",
+            cdno_core::paths::ACTIONS,
+        );
+
+        tx.write_file(project_path, new_content);
+        tx.upsert_note(project_entry);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(note_path)
+    }
 }
 
 /// If `text` is a wikilink to an action note — `[[actions/<slug>]]`,
@@ -206,4 +317,20 @@ fn strip_energy_suffix(text: &str) -> &str {
         }
     }
     text
+}
+
+/// Recover the [`EnergyLevel`] from a bullet's trailing
+/// `(deep|medium|light)` suffix; `None` for any other shape. Callers
+/// decide whether the absence is an error (promote needs it) or
+/// silently OK (completion just logs the raw text).
+fn parse_bullet_energy(text: &str) -> Option<EnergyLevel> {
+    if text.ends_with(" (deep)") {
+        Some(EnergyLevel::Deep)
+    } else if text.ends_with(" (medium)") {
+        Some(EnergyLevel::Medium)
+    } else if text.ends_with(" (light)") {
+        Some(EnergyLevel::Light)
+    } else {
+        None
+    }
 }

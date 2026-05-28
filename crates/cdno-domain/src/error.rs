@@ -35,6 +35,14 @@ pub enum DomainError {
         candidates: Vec<String>,
     },
 
+    #[error("action on project '{slug}' is already promoted to an action note: {line}")]
+    ActionAlreadyPromoted { slug: String, line: String },
+
+    #[error(
+        "bullet on project '{slug}' has no energy tag (expected `(deep|medium|light)`): {line}"
+    )]
+    BulletMissingEnergy { slug: String, line: String },
+
     #[error("no milestone matching '{query}' on project '{slug}'")]
     MilestoneNotFound { slug: String, query: String },
 
