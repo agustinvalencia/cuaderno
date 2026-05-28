@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{Local, NaiveDateTime};
 use clap::{Parser, Subcommand};
 
+use cdno_cli::commands::commit::CommitCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
@@ -71,6 +72,22 @@ enum Commands {
 
     /// Quick snapshot: active projects and their top next actions.
     Status,
+
+    /// Manage standalone commitments: create and complete.
+    Commit {
+        #[command(subcommand)]
+        subcommand: CommitCommands,
+    },
+
+    /// List aggregated commitments across the vault — project hard
+    /// milestones, standalone commitment notes, and self-imposed
+    /// action-note deadlines — sorted by date with overdue flagged.
+    Commitments {
+        /// Lookahead in weeks. The standing 30-day overdue look-back
+        /// from the aggregation query always applies on top.
+        #[arg(long, default_value_t = 2)]
+        weeks: u32,
+    },
 }
 
 fn main() -> Result<()> {
@@ -111,6 +128,14 @@ fn main() -> Result<()> {
         Commands::Status => {
             let root = discover_vault_root_or_error()?;
             commands::status::run(&root, Local::now().date_naive())
+        }
+        Commands::Commit { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::commit::run(&root, Local::now().naive_local(), subcommand)
+        }
+        Commands::Commitments { weeks } => {
+            let root = discover_vault_root_or_error()?;
+            commands::commitments::run(&root, Local::now().date_naive(), weeks)
         }
     }
 }
