@@ -87,8 +87,9 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
 }
 
 /// Format one commitment line: `<date>  <title>  (<source>)` with a
-/// trailing `— overdue` marker when past due.
-fn commitment_line(c: &CommitmentEntry) -> String {
+/// trailing `— overdue` marker when past due. Shared with the
+/// `cdno commitments` list view so both surfaces print identically.
+pub(crate) fn commitment_line(c: &CommitmentEntry) -> String {
     let overdue = if c.is_overdue { "  — overdue" } else { "" };
     format!(
         "{}  {}  ({}){overdue}",
@@ -98,7 +99,7 @@ fn commitment_line(c: &CommitmentEntry) -> String {
     )
 }
 
-fn source_label(source: &CommitmentSource) -> String {
+pub(crate) fn source_label(source: &CommitmentSource) -> String {
     match source {
         CommitmentSource::ProjectMilestone(slug) => format!("project: {slug}"),
         CommitmentSource::Stewardship(slug) => format!("stewardship: {slug}"),
