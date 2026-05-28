@@ -302,3 +302,145 @@ impl VaultStore for FailingStore {
         self.inner.metadata(path)
     }
 }
+
+// ---------------------------------------------------------------------
+// promote_action (#111)
+// ---------------------------------------------------------------------
+
+#[test]
+fn promote_action_attaches_note_and_rewrites_bullet() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let note_path = vault
+        .promote_action(dt(2026, 5, 28, 10, 0), "foo", "draft the methods")
+        .expect("promote succeeds");
+
+    assert_eq!(note_path, vp("actions/draft-the-methods-section.md"));
+    // Note frontmatter inherits the project + energy from the bullet.
+    let fm = read_action_frontmatter(&store, &note_path);
+    assert_eq!(fm.status, ActionStatus::Active);
+    assert_eq!(fm.project, "foo");
+    assert_eq!(fm.energy, EnergyLevel::Deep);
+
+    // Bullet was rewritten to wikilink the new note; the plain bullet
+    // text is gone.
+    let project = store.read_file(&vp("projects/foo.md")).unwrap();
+    assert!(
+        project.contains("- [ ] [[actions/draft-the-methods-section]] (deep)"),
+        "project body:\n{project}"
+    );
+    assert!(
+        !project.contains("- [ ] Draft the methods section (deep)"),
+        "old plain bullet should be gone:\n{project}"
+    );
+}
+
+#[test]
+fn promote_then_complete_round_trip_archives_the_note() {
+    // Promote a plain bullet, then complete it: the same archival path
+    // exercised by add_action_with_note + complete_action should kick
+    // in for the just-promoted bullet.
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .promote_action(dt(2026, 5, 28, 10, 0), "foo", "draft the methods")
+        .unwrap();
+
+    vault
+        .complete_action(dt(2026, 5, 29, 17, 0), "foo", "draft-the-methods")
+        .expect("complete succeeds");
+
+    assert!(
+        !store
+            .exists(&vp("actions/draft-the-methods-section.md"))
+            .unwrap(),
+        "active note moved",
+    );
+    let done = vp("actions/_done/2026/draft-the-methods-section.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(fm.status, ActionStatus::Completed);
+}
+
+#[test]
+fn promote_action_errors_when_bullet_is_already_wikilinked() {
+    // The bullet was already attached via add_action_with_note —
+    // promoting it again should refuse rather than creating a second
+    // note.
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Characterise sample efficiency",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let err = vault
+        .promote_action(dt(2026, 5, 28, 10, 0), "foo", "characterise")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ActionAlreadyPromoted { .. }),
+        "got {err:?}",
+    );
+}
+
+#[test]
+fn promote_action_errors_when_bullet_has_no_energy_suffix() {
+    // Hand-edited or migrated project with an unaffixed bullet — the
+    // energy isn't a thing we want to guess on promote.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n\n## Next Actions\n- [ ] Plain bullet without a suffix\n";
+    let (vault, _store) = vault_with(&[("projects/foo.md", project)]);
+
+    let err = vault
+        .promote_action(dt(2026, 5, 28, 10, 0), "foo", "plain bullet")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::BulletMissingEnergy { .. }),
+        "got {err:?}",
+    );
+}
+
+#[test]
+fn promote_action_errors_on_ambiguous_match() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 0),
+            "foo",
+            "Draft methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .add_action(
+            dt(2026, 5, 28, 9, 5),
+            "foo",
+            "Draft results section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let err = vault
+        .promote_action(dt(2026, 5, 28, 10, 0), "foo", "draft")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::AmbiguousAction { .. }),
+        "got {err:?}",
+    );
+}
