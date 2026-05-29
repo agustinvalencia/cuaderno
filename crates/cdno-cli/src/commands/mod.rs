@@ -1,3 +1,4 @@
+pub mod action;
 pub mod capture;
 pub mod commit;
 pub mod commitments;

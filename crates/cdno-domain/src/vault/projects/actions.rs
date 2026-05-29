@@ -4,15 +4,46 @@
 
 use chrono::NaiveDateTime;
 
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::EnergyLevel;
+use crate::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
+
+/// One open action bullet from a project's `## Next Actions` section,
+/// produced by [`Vault::list_actions`]. Closed (`- [x]`) bullets are
+/// not part of the action surface — action completion removes the
+/// bullet rather than checking it — so the list only carries open
+/// items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionListEntry {
+    /// The bullet text after `- [ ] `, including any `(<energy>)`
+    /// suffix and wikilink target. Preserved verbatim so the caller
+    /// can render or re-match against it without re-parsing structure.
+    pub text: String,
+    /// Energy bucket parsed from the trailing `(deep|medium|light)`
+    /// suffix; `None` when the bullet has no recognised suffix.
+    pub energy: Option<EnergyLevel>,
+    /// `Some` when the bullet wikilinks an action note (`[[actions/
+    /// <slug>]]`) **and** that note still exists. A wikilink whose
+    /// note is missing surfaces as `None` (the bullet text still
+    /// carries the wikilink, signalling drift).
+    pub attached: Option<AttachedAction>,
+}
+
+/// The action note hanging off a wikilink bullet. Carries the slug
+/// and the current frontmatter `status` so a list view can flag
+/// active / blocked / completed inline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedAction {
+    pub slug: String,
+    pub status: ActionStatus,
+}
 
 impl Vault {
     /// Append a next action to an active project, also recording the
@@ -260,6 +291,61 @@ impl Vault {
         tx.commit()?;
 
         Ok(note_path)
+    }
+
+    /// List the open action bullets of an active project, resolving
+    /// any wikilink bullets to their attached note's current status.
+    ///
+    /// Read-only: no writes, no daily log. A wikilink to a note that's
+    /// since been archived (moved to `_done/<year>/`) or genuinely
+    /// missing surfaces as `attached: None`; the bullet text itself
+    /// still carries the wikilink so the caller can flag drift.
+    /// Errors with `ProjectNotActive` on parked projects (listing
+    /// queued work on a parked project is rarely useful — activate it
+    /// first) and propagates any malformed-frontmatter parse errors
+    /// from the attached notes.
+    pub fn list_actions(&self, slug: &str) -> Result<Vec<ActionListEntry>, DomainError> {
+        let (_path, doc) = self.resolve_active_project(slug)?;
+        let Ok(section) = doc.section(NEXT_ACTIONS_SECTION) else {
+            return Ok(Vec::new());
+        };
+
+        let mut out = Vec::new();
+        for line in section.split('\n') {
+            let Some(bullet_text) = parse_open_action_text(line) else {
+                continue;
+            };
+            let text = bullet_text.to_owned();
+            let energy = parse_bullet_energy(&text);
+            let attached = parse_attached_action_slug(&text)
+                .map(|s| s.to_owned())
+                .map(
+                    |action_slug| -> Result<Option<AttachedAction>, DomainError> {
+                        let note_path = VaultPath::new(format!(
+                            "{}/{action_slug}.md",
+                            cdno_core::paths::ACTIONS
+                        ))?;
+                        if !self.store.exists(&note_path)? {
+                            return Ok(None);
+                        }
+                        let raw = self.store.read_file(&note_path)?;
+                        let (fm, _body) = Frontmatter::parse(&raw)?;
+                        let af = ActionFrontmatter::try_from(fm)?;
+                        Ok(Some(AttachedAction {
+                            slug: action_slug,
+                            status: af.status,
+                        }))
+                    },
+                )
+                .transpose()?
+                .flatten();
+            out.push(ActionListEntry {
+                text,
+                energy,
+                attached,
+            });
+        }
+        Ok(out)
     }
 }
 

@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{Local, NaiveDateTime};
 use clap::{Parser, Subcommand};
 
+use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::{bootstrap, commands};
@@ -73,6 +74,13 @@ enum Commands {
     /// Quick snapshot: active projects and their top next actions.
     Status,
 
+    /// Manage actions: add (with optional --note), promote a bullet to
+    /// a manifest note, complete, and list.
+    Action {
+        #[command(subcommand)]
+        subcommand: ActionCommands,
+    },
+
     /// Manage standalone commitments: create and complete.
     Commit {
         #[command(subcommand)]
@@ -128,6 +136,10 @@ fn main() -> Result<()> {
         Commands::Status => {
             let root = discover_vault_root_or_error()?;
             commands::status::run(&root, Local::now().date_naive())
+        }
+        Commands::Action { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::action::run(&root, Local::now().naive_local(), subcommand)
         }
         Commands::Commit { subcommand } => {
             let root = discover_vault_root_or_error()?;

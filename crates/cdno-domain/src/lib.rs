@@ -12,6 +12,6 @@ pub mod vault;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport};
 pub use vault::{
-    CommitmentEntry, CommitmentSource, LapsedHabit, OrientationContext, ProjectSummary, TopAction,
-    Vault,
+    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, LapsedHabit,
+    OrientationContext, ProjectSummary, TopAction, Vault,
 };

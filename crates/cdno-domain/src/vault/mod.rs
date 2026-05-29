@@ -41,7 +41,7 @@ mod slug;
 
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use orient::{LapsedHabit, OrientationContext};
-pub use projects::{ProjectSummary, TopAction};
+pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any
