@@ -153,8 +153,8 @@ fn project_full_lifecycle() {
     cdno()
         .current_dir(dir.path())
         .args([
-            "project",
             "action",
+            "add",
             "icml-paper",
             "Run ablation",
             "--energy",
@@ -168,10 +168,10 @@ fn project_full_lifecycle() {
         "action present:\n{body}"
     );
 
-    // action done
+    // action complete
     cdno()
         .current_dir(dir.path())
-        .args(["project", "done", "icml-paper", "ablation"])
+        .args(["action", "complete", "icml-paper", "ablation"])
         .assert()
         .success();
     let body = std::fs::read_to_string(&project_path).unwrap();
@@ -274,14 +274,14 @@ fn project_show_renders_summary_block() {
     // what's at the top.
     cdno()
         .current_dir(dir.path())
-        .args(["project", "done", "surrogate-model", "first concrete"])
+        .args(["action", "complete", "surrogate-model", "first concrete"])
         .assert()
         .success();
     cdno()
         .current_dir(dir.path())
         .args([
-            "project",
             "action",
+            "add",
             "surrogate-model",
             "Email supervisor",
             "--energy",
@@ -327,7 +327,7 @@ fn project_done_errors_when_action_not_found() {
 
     cdno()
         .current_dir(dir.path())
-        .args(["project", "done", "x", "ghost-action"])
+        .args(["action", "complete", "x", "ghost-action"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("ghost-action"));
@@ -461,7 +461,7 @@ fn project_show_says_no_open_actions_after_completing_default() {
     // `Top: (no open actions)` branch fires.
     cdno()
         .current_dir(dir.path())
-        .args(["project", "done", "x", "first concrete"])
+        .args(["action", "complete", "x", "first concrete"])
         .assert()
         .success();
 

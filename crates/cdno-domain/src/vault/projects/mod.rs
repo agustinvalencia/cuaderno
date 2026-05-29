@@ -38,6 +38,7 @@ mod state;
 mod summary;
 mod waiting;
 
+pub use actions::{ActionListEntry, AttachedAction};
 pub use summary::{ProjectSummary, TopAction};
 
 /// The heading whose body holds the project's narrative state.

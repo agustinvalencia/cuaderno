@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use clap::Subcommand;
 
-use cdno_domain::frontmatter::{Context as ProjectContext, EnergyLevel, ProjectStatus};
+use cdno_domain::frontmatter::{Context as ProjectContext, ProjectStatus};
 
 use crate::bootstrap;
 
@@ -37,23 +37,6 @@ pub enum ProjectCommands {
         slug: String,
         /// New state text.
         text: String,
-    },
-
-    /// Append a next action with an energy tag.
-    Action {
-        slug: String,
-        /// Action description.
-        text: String,
-        /// Energy bucket: deep, medium, or light.
-        #[arg(long)]
-        energy: EnergyLevel,
-    },
-
-    /// Mark a next action as done by case-insensitive substring match.
-    Done {
-        slug: String,
-        /// Substring matching the action to complete.
-        query: String,
     },
 
     /// Move an active project to projects/_parked/.
@@ -140,18 +123,6 @@ pub fn run(root: &Path, at: NaiveDateTime, command: ProjectCommands) -> Result<(
                 .update_project_state(at, &slug, &text)
                 .context("updating project state")?;
             println!("Updated {path}");
-        }
-        ProjectCommands::Action { slug, text, energy } => {
-            let path = vault
-                .add_action(at, &slug, &text, energy)
-                .context("adding next action")?;
-            println!("Action added to {path}");
-        }
-        ProjectCommands::Done { slug, query } => {
-            let path = vault
-                .complete_action(at, &slug, &query)
-                .context("completing action")?;
-            println!("Action done on {path}");
         }
         ProjectCommands::Park { slug } => {
             let path = vault.park_project(at, &slug).context("parking project")?;

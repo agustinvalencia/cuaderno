@@ -11,11 +11,12 @@
 use std::fs;
 use std::path::Path;
 
-use cdno_cli::commands::init;
+use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::project::{
     self, MilestoneCommands, ProjectCommands, WaitingCommands, parse_iso_date,
 };
-use cdno_domain::frontmatter::{Context, EnergyLevel};
+use cdno_cli::commands::{action, init};
+use cdno_domain::frontmatter::Context;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use tempfile::TempDir;
 
@@ -94,75 +95,6 @@ fn state_replaces_current_state_section() {
 
     let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
     assert!(body.contains("Updated state."), "state present:\n{body}");
-}
-
-#[test]
-fn action_appends_open_bullet_with_energy() {
-    let dir = vault();
-    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-
-    project::run(
-        dir.path(),
-        moment(2026, 5, 2, 10, 0),
-        ProjectCommands::Action {
-            slug: "x".to_owned(),
-            text: "Run ablation".to_owned(),
-            energy: EnergyLevel::Deep,
-        },
-    )
-    .expect("action");
-
-    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
-    assert!(
-        body.contains("- [ ] Run ablation (deep)"),
-        "bullet:\n{body}"
-    );
-}
-
-#[test]
-fn done_removes_matching_action() {
-    let dir = vault();
-    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-    project::run(
-        dir.path(),
-        moment(2026, 5, 2, 10, 0),
-        ProjectCommands::Action {
-            slug: "x".to_owned(),
-            text: "Run ablation".to_owned(),
-            energy: EnergyLevel::Deep,
-        },
-    )
-    .expect("action");
-
-    project::run(
-        dir.path(),
-        moment(2026, 5, 2, 11, 0),
-        ProjectCommands::Done {
-            slug: "x".to_owned(),
-            query: "ablation".to_owned(),
-        },
-    )
-    .expect("done");
-
-    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
-    assert!(!body.contains("- [ ] Run ablation"), "matched action gone");
-}
-
-#[test]
-fn done_errors_when_action_not_found() {
-    let dir = vault();
-    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-
-    let err = project::run(
-        dir.path(),
-        moment(2026, 5, 2, 11, 0),
-        ProjectCommands::Done {
-            slug: "x".to_owned(),
-            query: "nothing-like-this".to_owned(),
-        },
-    )
-    .expect_err("query should not match");
-    assert!(format!("{err:#}").contains("nothing-like-this"));
 }
 
 #[test]
@@ -271,15 +203,15 @@ fn show_renders_no_open_actions_branch() {
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
     // Complete the template's default action to leave Next Actions
     // empty, exercising the `top_action: None` branch in print_summary.
-    project::run(
+    action::run(
         dir.path(),
         moment(2026, 5, 2, 10, 0),
-        ProjectCommands::Done {
-            slug: "x".to_owned(),
+        ActionCommands::Complete {
+            project: "x".to_owned(),
             query: "first concrete".to_owned(),
         },
     )
-    .expect("done");
+    .expect("action complete");
 
     project::run(
         dir.path(),
