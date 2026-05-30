@@ -24,6 +24,7 @@ use inquire::{Confirm, DateSelect, Select, Text};
 
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
+use cdno_domain::recurrence::Recurrence;
 
 /// `true` when interactive prompts are available — `stdout` is a TTY
 /// **and** the user hasn't opted out via `--no-interactive`. Handlers
@@ -286,6 +287,91 @@ pub fn prompt_question(
         .position(|l| l == &pick)
         .expect("picked label was in the offered list");
     Ok(eligible[idx].slug.clone())
+}
+
+/// Fuzzy-pick an existing stewardship by slug. Used by `cdno
+/// stewardship show`, `cdno stewardship add-periodic`, and `cdno
+/// track`. The label shows the variant and tracking count so the
+/// user can disambiguate flat from expanded at the picker.
+pub fn prompt_stewardship(vault: &Vault, today: chrono::NaiveDate) -> Result<String> {
+    let summaries = vault.list_stewardships(today)?;
+    if summaries.is_empty() {
+        return Err(anyhow!(
+            "no stewardships \u{2014} create one with `cdno stewardship create`",
+        ));
+    }
+    let labels: Vec<String> = summaries
+        .iter()
+        .map(|s| {
+            let badge = match s.staleness_days {
+                Some(days) if s.tracking_count > 0 => {
+                    format!("{} tracking, last {} days ago", s.tracking_count, days)
+                }
+                _ => "no tracking yet".to_owned(),
+            };
+            format!("{} ({badge})", s.slug)
+        })
+        .collect();
+    let pick = Select::new("Stewardship", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(summaries[idx].slug.clone())
+}
+
+/// Fuzzy-pick an expanded stewardship — the only kind that accepts
+/// tracking notes. Used by `cdno track` for the `--stewardship`
+/// field. Errors when no expanded stewardship exists.
+pub fn prompt_expanded_stewardship(vault: &Vault, today: chrono::NaiveDate) -> Result<String> {
+    use cdno_domain::StewardshipVariant;
+    let summaries = vault.list_stewardships(today)?;
+    let eligible: Vec<_> = summaries
+        .into_iter()
+        .filter(|s| s.variant == StewardshipVariant::Expanded)
+        .collect();
+    if eligible.is_empty() {
+        return Err(anyhow!(
+            "no expanded stewardships \u{2014} create one with `cdno stewardship create --tracking`",
+        ));
+    }
+    let labels: Vec<String> = eligible
+        .iter()
+        .map(|s| {
+            let badge = match s.staleness_days {
+                Some(days) => format!("last tracking {days} days ago"),
+                None => "no tracking yet".to_owned(),
+            };
+            format!("{} ({badge})", s.slug)
+        })
+        .collect();
+    let pick = Select::new("Stewardship", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(eligible[idx].slug.clone())
+}
+
+/// Pick a [`Recurrence`] for a periodic commitment. Limited to the
+/// closed enum's canonical phrases; for `EveryNMonths` we offer 2 / 3
+/// / 6 which cover the common cases (bi-monthly, quarterly,
+/// semi-annual). The user can type a custom recurrence with the
+/// `--every` flag if they need something else.
+pub fn prompt_recurrence() -> Result<Recurrence> {
+    let labels: Vec<String> = vec![
+        Recurrence::Daily.to_string(),
+        Recurrence::Weekly.to_string(),
+        Recurrence::Monthly.to_string(),
+        Recurrence::EveryNMonths(2).to_string(),
+        Recurrence::EveryNMonths(3).to_string(),
+        Recurrence::EveryNMonths(6).to_string(),
+        Recurrence::Yearly.to_string(),
+    ];
+    let pick = Select::new("Frequency", labels.clone()).prompt()?;
+    Ok(pick
+        .parse()
+        .expect("picked label parses back as Recurrence"))
 }
 
 /// Pick a life-domain [`Context`] from the enum's variants.
