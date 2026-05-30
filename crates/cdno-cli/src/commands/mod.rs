@@ -9,4 +9,6 @@ pub mod log;
 pub mod orient;
 pub mod portfolio;
 pub mod project;
+pub mod question;
+pub mod questions;
 pub mod status;
