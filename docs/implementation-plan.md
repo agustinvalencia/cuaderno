@@ -703,78 +703,50 @@ fn main() -> Result<()> {
 
 ### 5.2 MCP Server (`cdno-mcp`)
 
-The MCP crate has three internal layers: tool definitions, handlers, and transports.
+The MCP crate is built on the official [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk) SDK rather than a hand-rolled stack. `rmcp` provides JSON-RPC framing, the MCP initialisation handshake, the `tools/list` machinery, the dispatch table (via the `#[tool_router]` proc macro), the stdio and HTTP transports, and the JSON-RPC error code mapping. The crate's own code is limited to:
 
-**Tool definitions** are derived from the domain types. Each MCP tool has a name, description, and input/output JSON schema. In Rust, these schemas can be generated from the domain types using `schemars`:
+- **Tool I/O types** — `derive(Deserialize, JsonSchema)` structs for each tool's input. Output goes through the DTO mirrors below. Lives in `src/server.rs`.
+- **The `CuadernoServer` type** — an `Arc<Vault>` wrapper annotated with `#[tool_router]`. One `#[tool]`-annotated async method per tool name; the macro builds the dispatch table at compile time. The `ServerHandler` trait is wired in via `#[tool_handler]`.
+- **DTOs** — JSON-Schema-friendly mirror types for every domain summary (`PortfolioSummaryDto`, `CommitmentEntryDto`, `OrientationContextDto`, …) with `From<DomainType>` converters. Lives in `src/dto.rs` so `cdno-domain` stays free of `schemars`.
+- **Binary entry points** — `src/bin/stdio.rs` for the stdio binary (the `cdno-mcp` user-facing name comes from the `[[bin]]` table); a future `src/bin/server.rs` will host HTTP under `cdno-mcp-server`.
+
+**Tool definition example.** Each tool is one async method on `CuadernoServer`. `Parameters<T>` is rmcp's extractor — it deserialises the incoming JSON against `T`'s `JsonSchema` and hands the typed value to the body.
 
 ```rust
-/// Input for the get_orientation tool.
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct OrientationInput {
-    /// Lookahead window for commitments (default: "48h").
-    #[serde(default = "default_lookahead")]
-    pub lookahead: String,
+pub struct GetOrientationInput {
+    /// Optional bias toward `"deep"`, `"medium"`, or `"light"`.
+    pub energy: Option<String>,
 }
 
-/// Output for the get_orientation tool.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct OrientationOutput {
-    pub commitments: Vec<CommitmentEntry>,
-    pub active_projects: Vec<ProjectSummary>,
-    pub active_question_count: usize,
-    pub lapsed_habits: Vec<LapsedHabit>,
-}
-```
-
-**Handlers** are functions that take a typed input, call domain methods, and return a typed output. They are transport-agnostic.
-
-```rust
-pub fn handle_get_orientation<S: VaultStore, I: VaultIndex>(
-    vault: &Vault<S, I>,
-    input: OrientationInput,
-) -> Result<OrientationOutput, HandlerError> {
-    let lookahead = parse_duration(&input.lookahead)?;
-    let commitments = vault.commitments(lookahead)?;
-    let projects = vault.active_project_summaries()?;
-    let questions = vault.active_questions()?.len();
-    let habits = vault.lapsed_habits()?;
-
-    Ok(OrientationOutput {
-        commitments,
-        active_projects: projects,
-        active_question_count: questions,
-        lapsed_habits: habits,
-    })
-}
-```
-
-**Transports** implement the MCP protocol over a specific medium.
-
-*A brief refresher on the Adapter pattern.* An adapter converts the interface of one system into the interface expected by another. The stdio transport adapts between line-based JSON-RPC on stdin/stdout and the typed handler functions. The HTTP transport adapts between HTTP requests/responses (with SSE for streaming) and the same handler functions.
-
-```rust
-/// The transport trait. Each transport reads MCP requests,
-/// dispatches to handlers, and sends responses.
-pub trait McpTransport {
-    /// Run the transport's event loop.
-    fn serve<S: VaultStore, I: VaultIndex>(
+#[tool_router]
+impl CuadernoServer {
+    #[tool(description = "Today's orientation: commitments due soon, active projects ...")]
+    async fn get_orientation(
         &self,
-        vault: Arc<Mutex<Vault<S, I>>>,
-        handlers: &HandlerRegistry,
-    ) -> Result<(), TransportError>;
+        Parameters(input): Parameters<GetOrientationInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
+        let energy = input.energy.as_deref().map(EnergyLevel::from_str).transpose()?;
+        let ctx = self.vault.orient(today, energy)?;
+        Ok(CallToolResult::success(vec![Content::json(
+            OrientationContextDto::from(ctx),
+        )?]))
+    }
 }
-
-pub struct StdioTransport;
-pub struct HttpTransport {
-    port: u16,
-    auth_token: Option<String>,
-}
-
-impl McpTransport for StdioTransport { ... }
-impl McpTransport for HttpTransport { ... }
 ```
 
-The `HandlerRegistry` is a map from tool names to handler functions, built at startup from the handler definitions. This is the Strategy pattern: the registry selects the right handler based on the incoming tool name.
+The `#[tool]` macro generates the JSON Schema from `GetOrientationInput`, registers the tool under the method name, and wires it into the `ToolRouter`. `#[tool_handler]` on a separate `impl ServerHandler for CuadernoServer` block makes the router visible to the MCP protocol surface (`tools/list`, `tools/call`).
+
+**Why DTOs.** The domain types live in `cdno-domain`, which deliberately has no dependency on `schemars`. Mirror types in `cdno-mcp` derive `JsonSchema` and let the wire format diverge from the Rust API when useful (e.g. `CommitmentSourceDto` is a flat externally-tagged enum suitable for `serde_json`, while `CommitmentSource` is a strongly-typed Rust enum). Each DTO implements `From<DomainType>` so handlers convert in one line at the layer boundary.
+
+**Enum inputs use `String`.** `EnergyLevel`, `Context`, `QuestionDomain`, etc. don't derive `JsonSchema` (they live in the domain crate). The MCP boundary takes them as `String` and the handler parses via `FromStr`. Matches the wire format anyway.
+
+**Transports.** `rmcp::transport::stdio()` is the canonical stdio transport; `cdno-mcp` serves it via `server.serve(stdio()).await`. The HTTP/SSE transport (Phase 6) uses `rmcp`'s `transport-streamable-http-server` feature and lands as the separate `cdno-mcp-server` binary under `src/bin/server.rs`. Both go through the same `CuadernoServer` — choosing the transport is the binary's responsibility, not the server's.
+
+**Concurrency.** `Vault` is synchronous (§4). Tool methods are async because `ServerHandler` is async. For stdio (one request at a time) each tool calls `self.vault.method()` directly. For HTTP, calls should be wrapped in `tokio::task::spawn_blocking` so the event loop never stalls on disk I/O.
+
+**`schemars` version pinning.** `schemars` is pinned directly to the same major as rmcp's transitive version (1.x). The derive macro generates code referencing `::schemars::...` paths, so a top-level `schemars` crate must be in the dependency tree — the `rmcp::schemars` re-export alone is not enough.
 
 ### 5.3 Tauri Backend (`cdno-tauri`)
 
@@ -987,9 +959,11 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 ### Phase 4: MCP Server (estimated: 3-4 weeks)
 
-**Handler layer.** Implement all MCP tool handlers as functions calling domain methods. Derive JSON schemas from input/output types using `schemars`. Build the `HandlerRegistry`.
+**Crate scaffold + tool catalogue.** Set up `cdno-mcp` on `rmcp`. Define one typed input struct per design §11 tool and a `CuadernoServer` type with one `#[tool]`-annotated async method per name (bodies stubbed). Mirror domain summary types as DTOs deriving `JsonSchema`. (#45)
 
-**Stdio transport.** Implement the JSON-RPC-over-stdio event loop. Handle the MCP initialisation handshake, tool listing, and tool invocation. Test with Claude Desktop.
+**Handler layer.** Fill in the stubbed tool bodies: each method deserialises its typed input, calls the appropriate `Vault` method, and returns a `CallToolResult` carrying the DTO. Split into context-gathering reads (#46) and write operations (#47). No hand-rolled registry — `#[tool_router]` builds it from the `#[tool]` methods at compile time.
+
+**Stdio transport.** Wire `rmcp::transport::stdio()` into the binary at `src/bin/stdio.rs` (the user-facing `cdno-mcp` name is set via the `[[bin]]` table); the runtime is `tokio::main` and the service loop is `server.serve(stdio()).await`. Test with Claude Desktop. (#48)
 
 **Skill adaptation.** Update all Claude skill markdown files to use the new MCP tool names and response shapes. Test each skill end-to-end: daily-orientation, weekly-review, monthly-review, file-to-portfolio, create-project (with cap enforcement), triage.
 
@@ -1035,8 +1009,10 @@ External crates the project will depend on:
 |`thiserror`                          |Error type derivation            |all                 |
 |`chrono`                             |Date/time handling               |core, domain        |
 |`xxhash-rust`                        |Fast content hashing             |core                |
-|`schemars`                           |JSON Schema generation from types|mcp                 |
-|`axum` + `tokio`                     |HTTP server and async runtime    |mcp (HTTP transport)|
+|`rmcp`                               |Official MCP SDK: `#[tool_router]` dispatch, `ServerHandler` trait, stdio + HTTP transports, JSON-RPC framing|mcp                 |
+|`schemars`                           |JSON Schema generation from typed structs (pinned to rmcp's transitive major)|mcp                 |
+|`tokio`                              |Async runtime for the MCP service loop (and HTTP server, Tauri)|mcp, tauri          |
+|`axum`                               |HTTP routing (used together with rmcp's HTTP transport feature)|mcp (HTTP transport)|
 |`tauri`                              |Desktop app framework            |tauri               |
 |`tempfile`                           |Temporary directories for tests  |core (dev)          |
 
