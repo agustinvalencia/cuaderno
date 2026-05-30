@@ -7,17 +7,40 @@
 //! action notes can list their evidence via the wikilink backlink
 //! graph without any structural duplication.
 
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
+use crate::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
 use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
+
+/// One row in the `Vault::list_portfolios` output. Aggregates per-
+/// portfolio metadata that's expensive to recompute by hand: the
+/// number of evidence notes filed into the folder, the most recent
+/// `created` date among them, and a derived staleness in days.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortfolioSummary {
+    pub slug: String,
+    pub question: String,
+    pub evidence_count: usize,
+    /// `created` date of the most recent evidence note in the folder,
+    /// or `None` for a portfolio that has no evidence yet.
+    pub last_updated: Option<NaiveDate>,
+    /// Days from `today` (passed into `list_portfolios`) back to
+    /// `last_updated`. `None` when there's no evidence to measure
+    /// against. Negative for evidence dated in the future (rare;
+    /// mostly catches typos).
+    pub staleness_days: Option<i64>,
+}
 
 const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
 const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
@@ -138,6 +161,104 @@ impl Vault {
 
         Ok(path)
     }
+
+    /// One [`PortfolioSummary`] per indexed portfolio, sorted by
+    /// slug. Counts evidence notes and finds the most recent
+    /// `created` date in a single pass over the evidence index — each
+    /// evidence file is read once even when several portfolios share
+    /// the scan.
+    ///
+    /// `today` lets the function stay pure (no `Local::now`); pass
+    /// `Local::now().date_naive()` at the CLI boundary.
+    ///
+    /// A malformed portfolio or evidence note propagates its parse
+    /// error rather than being silently skipped — lint is the place to
+    /// surface partial-coverage warnings.
+    pub fn list_portfolios(&self, today: NaiveDate) -> Result<Vec<PortfolioSummary>, DomainError> {
+        let portfolio_entries = self.index.list_by_type(NoteType::Portfolio.as_str())?;
+        let evidence_entries = self.index.list_by_type(NoteType::Evidence.as_str())?;
+
+        // Single pass over evidence: bucket by the `portfolio` field
+        // of each note's frontmatter. The field is required on
+        // evidence (design §5.5), so this is the canonical grouping
+        // key — robust against hand-edited filenames that don't follow
+        // the `<date>-<slug>` convention.
+        let mut by_portfolio: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
+        for entry in &evidence_entries {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let ef = EvidenceFrontmatter::try_from(fm)?;
+            let bucket = by_portfolio
+                .entry(ef.portfolio.clone())
+                .or_insert((0, None));
+            bucket.0 += 1;
+            bucket.1 = Some(match bucket.1 {
+                Some(prev) => prev.max(ef.created),
+                None => ef.created,
+            });
+        }
+
+        let mut out = Vec::with_capacity(portfolio_entries.len());
+        for p_entry in portfolio_entries {
+            let slug = portfolio_slug_from_path(&p_entry.path);
+            let raw = self.store.read_file(&p_entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let pf = PortfolioFrontmatter::try_from(fm)?;
+            let (evidence_count, last_updated) =
+                by_portfolio.get(&slug).copied().unwrap_or((0, None));
+            let staleness_days = last_updated.map(|d| (today - d).num_days());
+            out.push(PortfolioSummary {
+                slug,
+                question: pf.question,
+                evidence_count,
+                last_updated,
+                staleness_days,
+            });
+        }
+        out.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(out)
+    }
+
+    /// Every evidence note filed into `portfolio`, paired with its
+    /// parsed frontmatter, sorted most-recent first (ties broken by
+    /// path for determinism). Returns an empty vec when the portfolio
+    /// has no evidence — and also when the portfolio slug doesn't
+    /// match any `_index.md` (the caller can ask `list_portfolios`
+    /// first if they want to distinguish "empty" from "missing").
+    pub fn get_portfolio_contents(
+        &self,
+        portfolio: &str,
+    ) -> Result<Vec<(VaultPath, EvidenceFrontmatter)>, DomainError> {
+        let evidence_entries = self.index.list_by_type(NoteType::Evidence.as_str())?;
+        let mut out = Vec::new();
+        for entry in evidence_entries {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let ef = EvidenceFrontmatter::try_from(fm)?;
+            if ef.portfolio == portfolio {
+                out.push((entry.path, ef));
+            }
+        }
+        // Most recent first, then path for a stable tie-break.
+        out.sort_by(|a, b| {
+            b.1.created
+                .cmp(&a.1.created)
+                .then_with(|| a.0.as_path().cmp(b.0.as_path()))
+        });
+        Ok(out)
+    }
+}
+
+/// Extract the slug from `portfolios/<slug>/_index.md`. Returns an
+/// empty string for malformed paths; callers expecting a slug have
+/// already filtered to the portfolio note type.
+fn portfolio_slug_from_path(path: &VaultPath) -> String {
+    path.as_path()
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned()
 }
 
 /// Render the built-in portfolio `_index.md` template with every

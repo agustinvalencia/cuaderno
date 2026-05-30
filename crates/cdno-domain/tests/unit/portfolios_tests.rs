@@ -8,6 +8,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::PortfolioSummary;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
@@ -305,4 +306,181 @@ fn portfolio_frontmatter_treats_project_as_optional() {
     let (fm, _) = Frontmatter::parse(raw).unwrap();
     let pf = PortfolioFrontmatter::try_from(fm).unwrap();
     assert!(pf.project.is_none());
+}
+
+// ---------------------------------------------------------------------
+// list_portfolios + get_portfolio_contents (#37)
+// ---------------------------------------------------------------------
+
+fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+}
+
+#[test]
+fn list_portfolios_returns_empty_on_fresh_vault() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    let out = vault.list_portfolios(ymd(2026, 4, 1)).unwrap();
+    assert!(out.is_empty(), "got {out:?}");
+}
+
+#[test]
+fn list_portfolios_with_no_evidence_reports_zero_and_none() {
+    let (vault, _store) = seeded_vault_with_one_portfolio();
+
+    let out = vault.list_portfolios(ymd(2026, 4, 1)).unwrap();
+    assert_eq!(out.len(), 1);
+    let p = &out[0];
+    assert_eq!(p.slug, "sparse-vs-dense");
+    assert_eq!(p.evidence_count, 0);
+    assert_eq!(p.last_updated, None);
+    assert_eq!(p.staleness_days, None);
+}
+
+#[test]
+fn list_portfolios_counts_evidence_and_finds_most_recent() {
+    let (vault, _store) = seeded_vault_with_one_portfolio();
+    vault
+        .file_evidence(
+            dt(2026, 3, 15, 9, 0),
+            "sparse-vs-dense",
+            "Chen 2025",
+            "projects/foo",
+            "early",
+        )
+        .unwrap();
+    vault
+        .file_evidence(
+            dt(2026, 3, 22, 9, 0),
+            "sparse-vs-dense",
+            "Ablation B",
+            "projects/foo",
+            "later",
+        )
+        .unwrap();
+
+    let out = vault.list_portfolios(ymd(2026, 4, 1)).unwrap();
+    assert_eq!(out.len(), 1);
+    let p = &out[0];
+    assert_eq!(p.evidence_count, 2);
+    assert_eq!(p.last_updated, Some(ymd(2026, 3, 22)));
+    // 1 Apr - 22 Mar = 10 days.
+    assert_eq!(p.staleness_days, Some(10));
+}
+
+#[test]
+fn list_portfolios_groups_by_portfolio_and_sorts_by_slug() {
+    // Seed two portfolios at known slugs; file one piece of evidence
+    // each, with different dates. The output must group correctly and
+    // sort alphabetically.
+    let portfolio_a =
+        "---\ntype: portfolio\nquestion: \"A\"\ncreated: 2026-02-01\nproject: null\n---\n# A\n";
+    let portfolio_b =
+        "---\ntype: portfolio\nquestion: \"B\"\ncreated: 2026-02-01\nproject: null\n---\n# B\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("portfolios/zebra/_index.md", portfolio_b),
+        ("portfolios/alpha/_index.md", portfolio_a),
+    ]);
+    vault
+        .file_evidence(dt(2026, 3, 1, 9, 0), "alpha", "src", "projects/foo", "x")
+        .unwrap();
+    vault
+        .file_evidence(dt(2026, 3, 20, 9, 0), "zebra", "src", "projects/foo", "y")
+        .unwrap();
+
+    let out = vault.list_portfolios(ymd(2026, 4, 1)).unwrap();
+    let slugs: Vec<&str> = out.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["alpha", "zebra"], "sorted by slug");
+    assert_eq!(out[0].evidence_count, 1);
+    assert_eq!(out[0].last_updated, Some(ymd(2026, 3, 1)));
+    assert_eq!(out[1].evidence_count, 1);
+    assert_eq!(out[1].last_updated, Some(ymd(2026, 3, 20)));
+}
+
+#[test]
+fn list_portfolios_is_exercised_with_a_real_summary_value() {
+    // Smoke-tests the re-exported `PortfolioSummary` type by binding
+    // to it and reading every field.
+    let (vault, _store) = seeded_vault_with_one_portfolio();
+    let out: Vec<PortfolioSummary> = vault.list_portfolios(ymd(2026, 4, 1)).unwrap();
+    assert_eq!(out.len(), 1);
+    let p = &out[0];
+    let _ = (
+        &p.slug,
+        &p.question,
+        p.evidence_count,
+        p.last_updated,
+        p.staleness_days,
+    );
+}
+
+#[test]
+fn get_portfolio_contents_returns_evidence_sorted_most_recent_first() {
+    let (vault, _store) = seeded_vault_with_one_portfolio();
+    vault
+        .file_evidence(
+            dt(2026, 3, 1, 9, 0),
+            "sparse-vs-dense",
+            "Earlier",
+            "projects/foo",
+            "x",
+        )
+        .unwrap();
+    vault
+        .file_evidence(
+            dt(2026, 3, 22, 9, 0),
+            "sparse-vs-dense",
+            "Latest",
+            "projects/foo",
+            "y",
+        )
+        .unwrap();
+    vault
+        .file_evidence(
+            dt(2026, 3, 10, 9, 0),
+            "sparse-vs-dense",
+            "Middle",
+            "projects/foo",
+            "z",
+        )
+        .unwrap();
+
+    let out = vault.get_portfolio_contents("sparse-vs-dense").unwrap();
+    let sources: Vec<&str> = out.iter().map(|(_, e)| e.source.as_str()).collect();
+    assert_eq!(sources, vec!["Latest", "Middle", "Earlier"]);
+}
+
+#[test]
+fn get_portfolio_contents_filters_out_other_portfolios() {
+    let portfolio_other =
+        "---\ntype: portfolio\nquestion: \"O\"\ncreated: 2026-02-01\nproject: null\n---\n# O\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        (
+            "portfolios/sparse-vs-dense/_index.md",
+            "---\ntype: portfolio\nquestion: \"A\"\ncreated: 2026-02-01\nproject: null\n---\n# A\n",
+        ),
+        ("portfolios/other/_index.md", portfolio_other),
+    ]);
+    vault
+        .file_evidence(
+            dt(2026, 3, 1, 9, 0),
+            "sparse-vs-dense",
+            "Mine",
+            "projects/foo",
+            "x",
+        )
+        .unwrap();
+    vault
+        .file_evidence(dt(2026, 3, 2, 9, 0), "other", "Theirs", "projects/foo", "y")
+        .unwrap();
+
+    let out = vault.get_portfolio_contents("sparse-vs-dense").unwrap();
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].1.source, "Mine");
+}
+
+#[test]
+fn get_portfolio_contents_is_empty_for_missing_portfolio() {
+    let (vault, _store) = seeded_vault_with_one_portfolio();
+    let out = vault.get_portfolio_contents("ghost").unwrap();
+    assert!(out.is_empty());
 }
