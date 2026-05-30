@@ -19,10 +19,11 @@
 use std::io::IsTerminal;
 
 use anyhow::{Result, anyhow};
-use inquire::{Confirm, Select, Text};
+use chrono::NaiveDate;
+use inquire::{Confirm, DateSelect, Select, Text};
 
 use cdno_domain::Vault;
-use cdno_domain::frontmatter::EnergyLevel;
+use cdno_domain::frontmatter::{Context, EnergyLevel};
 
 /// `true` when interactive prompts are available — `stdout` is a TTY
 /// **and** the user hasn't opted out via `--no-interactive`. Handlers
@@ -114,4 +115,45 @@ pub fn prompt_bullet(project: &str, labels: &[String]) -> Result<String> {
 pub fn confirm_preview(preview: &str) -> Result<bool> {
     println!("{preview}");
     Ok(Confirm::new("Proceed?").with_default(true).prompt()?)
+}
+
+/// Fold a clap-optional value with the interactive / non-interactive
+/// rule used by the ergonomics convention:
+/// - `Some(v)` → return as-is.
+/// - `None` + `interactive` → call `ask` and set `*prompted = true`.
+/// - `None` + not interactive → return a clear missing-flag error.
+///
+/// Shared by every verb that follows the gather→confirm→execute
+/// pattern (see `docs/cli-ergonomics.md`).
+pub fn gather_or_error<T>(
+    value: Option<T>,
+    flag: &str,
+    interactive: bool,
+    prompted: &mut bool,
+    ask: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match value {
+        Some(v) => Ok(v),
+        None if interactive => {
+            *prompted = true;
+            ask()
+        }
+        None => Err(missing_flag(flag)),
+    }
+}
+
+/// Calendar widget for picking an ISO date.
+pub fn prompt_date(prompt: &str) -> Result<NaiveDate> {
+    Ok(DateSelect::new(prompt).prompt()?)
+}
+
+/// Pick a life-domain [`Context`] from the enum's variants.
+pub fn prompt_context() -> Result<Context> {
+    let labels: Vec<&'static str> = Context::ALL.iter().map(|c| c.as_str()).collect();
+    let pick = Select::new("Context", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(Context::ALL[idx])
 }

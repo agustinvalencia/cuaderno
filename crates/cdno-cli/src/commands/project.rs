@@ -19,24 +19,31 @@ use crate::bootstrap;
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommands {
     /// Create a new project map. Seeds parked when at the active cap.
+    /// Title and context are clap-optional so they can be prompted for
+    /// interactively; in non-interactive sessions, missing flags
+    /// error with the standard "missing required flag" message.
     Create {
         /// Project title.
-        title: String,
+        #[arg(long)]
+        title: Option<String>,
         /// Life-domain context: work, side-project, university,
         /// family, household, legal, or personal.
         #[arg(long)]
-        context: ProjectContext,
+        context: Option<ProjectContext>,
         /// Vault-relative target for the core question wikilink
-        /// (e.g. `questions/research/foo`). Optional.
+        /// (e.g. `questions/research/foo`). Always optional.
         #[arg(long)]
         question: Option<String>,
     },
 
     /// Update the Current State section, auto-logging the previous body.
     State {
-        slug: String,
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
         /// New state text.
-        text: String,
+        #[arg(long)]
+        text: Option<String>,
     },
 
     /// Move an active project to projects/_parked/.
@@ -104,25 +111,26 @@ pub enum WaitingCommands {
 
 /// Dispatch a parsed `cdno project ...` invocation. `at` is the
 /// timestamp used for any daily-log writes the underlying domain
-/// operation performs.
-pub fn run(root: &Path, at: NaiveDateTime, command: ProjectCommands) -> Result<()> {
+/// operation performs. `no_interactive` is forwarded from the global
+/// CLI flag and used by the retrofitted verbs (Create, State); the
+/// pre-retrofit verbs (Park / Activate / Milestone / Waiting) still
+/// take required positionals and ignore the flag.
+pub fn run(
+    root: &Path,
+    at: NaiveDateTime,
+    command: ProjectCommands,
+    no_interactive: bool,
+) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
+    let interactive = crate::prompt::is_interactive(no_interactive);
     match command {
         ProjectCommands::Create {
             title,
             context,
             question,
-        } => {
-            let path = vault
-                .create_project(at.date(), &title, context, question.as_deref())
-                .context("creating project")?;
-            println!("Created {path}");
-        }
+        } => create(&vault, at, title, context, question, interactive)?,
         ProjectCommands::State { slug, text } => {
-            let path = vault
-                .update_project_state(at, &slug, &text)
-                .context("updating project state")?;
-            println!("Updated {path}");
+            state(&vault, at, slug, text, interactive)?;
         }
         ProjectCommands::Park { slug } => {
             let path = vault.park_project(at, &slug).context("parking project")?;
@@ -178,6 +186,79 @@ pub fn run(root: &Path, at: NaiveDateTime, command: ProjectCommands) -> Result<(
             }
         },
     }
+    Ok(())
+}
+
+/// `cdno project create` — gather title / context / question with the
+/// ergonomics convention, then call `Vault::create_project`. Confirm
+/// when anything was prompted.
+fn create(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    title: Option<String>,
+    context: Option<ProjectContext>,
+    question: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
+        prompt::prompt_text("Title")
+    })?;
+    let context = prompt::gather_or_error(context, "context", interactive, &mut prompted, || {
+        prompt::prompt_context()
+    })?;
+    // `question` is genuinely optional — no prompt, no error if absent.
+
+    if prompted {
+        let q = question.as_deref().unwrap_or("(none)");
+        if !prompt::confirm_preview(&format!(
+            "About to create project:\n  title:    {title}\n  context:  {}\n  question: {q}",
+            context.as_str(),
+        ))? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+    let path = vault
+        .create_project(at.date(), &title, context, question.as_deref())
+        .context("creating project")?;
+    println!("Created {path}");
+    Ok(())
+}
+
+/// `cdno project state` — gather slug / text and call
+/// `Vault::update_project_state`. The slug picker is over active
+/// projects only (state updates error on parked); a free-text input
+/// for the new state body keeps things simple.
+fn state(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    text: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let text = prompt::gather_or_error(text, "text", interactive, &mut prompted, || {
+        prompt::prompt_text("New state")
+    })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to update state of project '{slug}':\n  {text}"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .update_project_state(at, &slug, &text)
+        .context("updating project state")?;
+    println!("Updated {path}");
     Ok(())
 }
 

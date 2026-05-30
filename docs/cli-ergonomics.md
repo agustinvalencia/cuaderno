@@ -163,7 +163,8 @@ subcommands can import without per-crate Cargo edits.
 
 | Verb | Convention applied |
 |---|---|
-| `cdno action add / promote / complete / list` | #113 (this PR) |
-| `cdno project create / state / waiting / milestone / park / activate / list / show` | #114 |
-| `cdno commit create / done` | #114 |
-| `cdno orient` (`--energy` already optional) | covered ad-hoc; full retrofit with #114 |
+| `cdno action add / promote / complete / list` | #113 |
+| `cdno project create / state` | #114 (this PR) |
+| `cdno commit create / done` | #114 (this PR) |
+| `cdno project park / activate / milestone add+done / waiting add+resolve` | #114 follow-up — convention applies, picker prompts (active commitments, open milestones, open waitings) wait for the matching domain queries |
+| `cdno orient` (`--energy` already optional) | covered ad-hoc |

@@ -133,7 +133,12 @@ fn main() -> Result<()> {
         }
         Commands::Project { subcommand } => {
             let root = discover_vault_root_or_error()?;
-            commands::project::run(&root, Local::now().naive_local(), subcommand)
+            commands::project::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
         }
         Commands::Orient { energy } => {
             let root = discover_vault_root_or_error()?;
@@ -154,7 +159,12 @@ fn main() -> Result<()> {
         }
         Commands::Commit { subcommand } => {
             let root = discover_vault_root_or_error()?;
-            commands::commit::run(&root, Local::now().naive_local(), subcommand)
+            commands::commit::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
         }
         Commands::Commitments { weeks } => {
             let root = discover_vault_root_or_error()?;
