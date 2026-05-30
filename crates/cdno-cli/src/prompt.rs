@@ -147,6 +147,58 @@ pub fn prompt_date(prompt: &str) -> Result<NaiveDate> {
     Ok(DateSelect::new(prompt).prompt()?)
 }
 
+/// Fuzzy-pick a *parked* project. Returns the project slug.
+/// Mirrors [`prompt_project`] but limited to parked candidates — the
+/// only valid input set for `cdno project activate`.
+pub fn prompt_parked_project(vault: &Vault) -> Result<String> {
+    let parked = vault.parked_projects()?;
+    if parked.is_empty() {
+        return Err(anyhow!(
+            "no parked projects — `cdno project park <slug>` first",
+        ));
+    }
+    let labels: Vec<String> = parked
+        .iter()
+        .map(|(path, fm)| {
+            let slug = path
+                .as_path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            format!("{slug} ({})", fm.context.as_str())
+        })
+        .collect();
+    let pick = Select::new("Parked project", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    let (path, _) = &parked[idx];
+    Ok(path
+        .as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned())
+}
+
+/// Confirm whether a new milestone is a *hard* deadline. Default
+/// `false` (soft target); the user opts into hard with `y`.
+pub fn prompt_hard_soft() -> Result<bool> {
+    prompt_confirm("Hard deadline? (counted in commitments aggregation)", false)
+}
+
+/// Fuzzy-pick an open milestone of a project. Returns the milestone
+/// name so the domain's substring matcher resolves it uniquely.
+pub fn prompt_open_milestone(project: &str, vault: &Vault) -> Result<String> {
+    let open = vault.open_milestones(project)?;
+    if open.is_empty() {
+        return Err(anyhow!("no open milestones on project '{project}'"));
+    }
+    let labels: Vec<String> = open.iter().map(|m| m.name.clone()).collect();
+    Ok(Select::new("Milestone", labels).prompt()?)
+}
+
 /// Pick a life-domain [`Context`] from the enum's variants.
 pub fn prompt_context() -> Result<Context> {
     let labels: Vec<&'static str> = Context::ALL.iter().map(|c| c.as_str()).collect();

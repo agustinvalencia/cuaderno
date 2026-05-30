@@ -109,7 +109,7 @@ fn park_moves_file_to_parked_folder() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Park {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
     )
@@ -127,7 +127,7 @@ fn activate_moves_file_back_and_flips_status() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Park {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
     )
@@ -137,7 +137,7 @@ fn activate_moves_file_back_and_flips_status() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Activate {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
     )
@@ -187,7 +187,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Park {
-            slug: "alpha".to_owned(),
+            slug: Some("alpha".to_owned()),
         },
         true,
     )
@@ -299,9 +299,9 @@ fn milestone_add_writes_hard_bullet() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Milestone {
             action: MilestoneCommands::Add {
-                slug: "x".to_owned(),
-                title: "Submit".to_owned(),
-                date: NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+                slug: Some("x".to_owned()),
+                title: Some("Submit".to_owned()),
+                date: Some(NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
                 hard: true,
             },
         },
@@ -322,9 +322,9 @@ fn milestone_done_marks_with_completion_date() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Milestone {
             action: MilestoneCommands::Add {
-                slug: "x".to_owned(),
-                title: "Submit".to_owned(),
-                date: NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+                slug: Some("x".to_owned()),
+                title: Some("Submit".to_owned()),
+                date: Some(NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
                 hard: true,
             },
         },
@@ -337,8 +337,8 @@ fn milestone_done_marks_with_completion_date() {
         moment(2026, 5, 22, 16, 0),
         ProjectCommands::Milestone {
             action: MilestoneCommands::Done {
-                slug: "x".to_owned(),
-                query: "Submit".to_owned(),
+                slug: Some("x".to_owned()),
+                query: Some("Submit".to_owned()),
             },
         },
         true,
@@ -359,8 +359,8 @@ fn waiting_add_and_resolve_round_trip() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Waiting {
             action: WaitingCommands::Add {
-                slug: "x".to_owned(),
-                description: "Compute allocation".to_owned(),
+                slug: Some("x".to_owned()),
+                description: Some("Compute allocation".to_owned()),
             },
         },
         true,
@@ -375,8 +375,8 @@ fn waiting_add_and_resolve_round_trip() {
         moment(2026, 5, 2, 12, 0),
         ProjectCommands::Waiting {
             action: WaitingCommands::Resolve {
-                slug: "x".to_owned(),
-                query: "Compute".to_owned(),
+                slug: Some("x".to_owned()),
+                query: Some("Compute".to_owned()),
             },
         },
         true,
@@ -447,4 +447,74 @@ fn state_in_non_interactive_errors_when_missing_slug() {
     .expect_err("missing --slug should error in non-interactive mode");
     let msg = format!("{err:#}");
     assert!(msg.contains("--slug"), "error message: {msg}");
+}
+
+#[test]
+fn park_in_non_interactive_errors_when_missing_slug() {
+    let dir = vault();
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Park { slug: None },
+        true,
+    )
+    .expect_err("missing --slug should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--slug"), "error message: {msg}");
+}
+
+#[test]
+fn activate_in_non_interactive_errors_when_missing_slug() {
+    let dir = vault();
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Activate { slug: None },
+        true,
+    )
+    .expect_err("missing --slug should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--slug"), "error message: {msg}");
+}
+
+#[test]
+fn milestone_add_in_non_interactive_errors_when_missing_date() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: Some("Submit".to_owned()),
+                date: None,
+                hard: false,
+            },
+        },
+        true,
+    )
+    .expect_err("missing --date should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--date"), "error message: {msg}");
+}
+
+#[test]
+fn waiting_add_in_non_interactive_errors_when_missing_description() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Waiting {
+            action: WaitingCommands::Add {
+                slug: Some("x".to_owned()),
+                description: None,
+            },
+        },
+        true,
+    )
+    .expect_err("missing --description should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--description"), "error message: {msg}");
 }
