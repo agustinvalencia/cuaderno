@@ -1,5 +1,5 @@
 ---
-schema_version: 3
+schema_version: 1
 applies_to_crate: cdno-core
 last_updated: 2026-05-30
 ---
@@ -13,11 +13,12 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 3**. The corresponding
-executable migrations are `migrations/001_initial.sql` (notes,
-deadlines, links, note_tags), `migrations/002_milestones.sql` (the
-milestones table), and `migrations/003_archived_action_snapshots.sql`
-(the append-only-after-completion lint baseline).
+This document describes **schema version 1**. The single executable
+migration is `migrations/001_initial.sql`. Pre-release the schema is
+delivered as one combined script — the historical milestones / archive-
+snapshots additions that landed during Phase 2 were collapsed into the
+initial migration before any release pinned them in place. The first
+post-release additive change becomes migration 002.
 
 ## Conventions
 
