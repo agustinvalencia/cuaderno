@@ -40,6 +40,7 @@ mod portfolios;
 mod projects;
 mod questions;
 mod slug;
+mod stewardships;
 
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use orient::{LapsedHabit, OrientationContext};
