@@ -19,6 +19,7 @@ pub mod portfolio;
 pub mod project;
 pub mod question;
 pub mod stewardship;
+pub mod tracking;
 
 pub use action::{ActionFrontmatter, ActionStatus, ParseActionStatusError};
 pub use commitment::{CommitmentFrontmatter, CommitmentStatus, ParseCommitmentStatusError};
@@ -31,3 +32,4 @@ pub use question::{
     QuestionStatus,
 };
 pub use stewardship::StewardshipFrontmatter;
+pub use tracking::TrackingFrontmatter;
