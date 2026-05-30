@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/cdno-core", "crates/cdno-domain", "crates/cdno-cli"]
+members = [
+    "crates/cdno-core",
+    "crates/cdno-domain",
+    "crates/cdno-cli",
+    "crates/cdno-mcp",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -52,6 +57,27 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 
+# Official Rust SDK for the Model Context Protocol. Provides the
+# `#[tool]` / `#[tool_router]` macros, the `ServerHandler` trait, the
+# `ServiceExt::serve(transport)` runtime, and the stdio transport.
+# Default features include `server` (server-side trait machinery +
+# schemars), `macros`, and base64.
+rmcp = { version = "1.7", features = ["server", "macros", "transport-io"] }
+
+# JSON Schema derives for the typed MCP I/O. Pinned to the same major
+# version rmcp 1.7 uses so the dependency graph stays single-version
+# (the `JsonSchema` derive macro's hygiene expects a top-level
+# `schemars` crate; the `rmcp::schemars` re-export alone isn't
+# enough). Cargo's normal version resolution picks the matching 1.x
+# minor.
+schemars = { version = "1", features = ["chrono04"] }
+
+# Async runtime for rmcp. The domain layer stays synchronous; tokio
+# only lives in the MCP transport layer (and, later, the HTTP server
+# and Tauri).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
 cdno-domain = { path = "crates/cdno-domain" }
+cdno-mcp = { path = "crates/cdno-mcp" }
