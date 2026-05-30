@@ -234,6 +234,24 @@ impl Vault {
         }
     }
 
+    /// Read a single stewardship's dashboard. Returns the typed
+    /// frontmatter, the body markdown (everything after the closing
+    /// `---`), and the variant. Used by detail views (`cdno
+    /// stewardship show`) that need the body sections in addition to
+    /// the summary [`list_stewardships`](Self::list_stewardships)
+    /// already returns. Errors with `Store(NotFound)` when no
+    /// stewardship exists at the slug in either variant.
+    pub fn get_stewardship(
+        &self,
+        slug: &str,
+    ) -> Result<(StewardshipFrontmatter, String, StewardshipVariant), DomainError> {
+        let (path, variant) = self.resolve_stewardship_with_variant(slug)?;
+        let raw = self.store.read_file(&path)?;
+        let (fm, body) = Frontmatter::parse(&raw)?;
+        let typed = StewardshipFrontmatter::try_from(fm)?;
+        Ok((typed, body.to_owned(), variant))
+    }
+
     /// One [`StewardshipSummary`] per indexed stewardship, sorted by
     /// slug. Counts tracking notes and finds the most recent `date`
     /// in a single pass over the tracking index — each tracking file

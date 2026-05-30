@@ -357,13 +357,13 @@ fn list_stewardships_counts_tracking_and_reports_latest_date() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 10, 9, 0), "health", "gym", "")
+        .add_tracking_entry(dt(2026, 4, 10, 9, 0), "health", "gym", None, "")
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 20, 9, 0), "health", "body", "")
+        .add_tracking_entry(dt(2026, 4, 20, 9, 0), "health", "body", None, "")
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 15, 9, 0), "health", "swim", "")
+        .add_tracking_entry(dt(2026, 4, 15, 9, 0), "health", "swim", None, "")
         .unwrap();
 
     let summaries = vault.list_stewardships(today()).unwrap();

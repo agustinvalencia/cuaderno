@@ -56,7 +56,13 @@ fn add_tracking_gym_uses_gym_template_with_exercise_table() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let path = vault
-        .add_tracking_entry(dt(2026, 4, 6, 19, 0), "health", "gym", "Energy was good.")
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            "health",
+            "gym",
+            None,
+            "Energy was good.",
+        )
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-04-06-gym.md"));
@@ -84,7 +90,7 @@ fn add_tracking_body_uses_body_template_with_metric_table() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let path = vault
-        .add_tracking_entry(dt(2026, 3, 30, 9, 0), "health", "body", "")
+        .add_tracking_entry(dt(2026, 3, 30, 9, 0), "health", "body", None, "")
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-03-30-body.md"));
@@ -107,7 +113,7 @@ fn add_tracking_swim_uses_swim_template_with_set_table() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let path = vault
-        .add_tracking_entry(dt(2026, 4, 12, 7, 30), "health", "swim", "")
+        .add_tracking_entry(dt(2026, 4, 12, 7, 30), "health", "swim", None, "")
         .unwrap();
 
     let body = read_body(&store, &path);
@@ -123,7 +129,7 @@ fn add_tracking_unknown_activity_falls_back_to_generic_template() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let path = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "yoga", "Felt loose.")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "yoga", None, "Felt loose.")
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-04-01-yoga.md"));
@@ -155,7 +161,7 @@ fn add_tracking_errors_on_empty_activity() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "  ", "")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "  ", None, "")
         .expect_err("empty activity should error");
     assert!(matches!(err, DomainError::EmptyField { field: "activity" }));
 }
@@ -164,7 +170,7 @@ fn add_tracking_errors_on_empty_activity() {
 fn add_tracking_errors_when_stewardship_missing() {
     let (vault, _store) = empty_vault();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "nonexistent", "gym", "")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "nonexistent", "gym", None, "")
         .expect_err("missing stewardship should error");
     assert!(matches!(err, DomainError::Store(StoreError::NotFound(_))));
 }
@@ -176,7 +182,7 @@ fn add_tracking_errors_on_flat_stewardship() {
         .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "finances", "gym", "")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "finances", "gym", None, "")
         .expect_err("flat stewardship has no tracking subdir");
     assert!(matches!(err, DomainError::TrackingOnFlatStewardship(s) if s == "finances"));
 }
@@ -188,15 +194,62 @@ fn add_tracking_errors_on_same_day_same_activity_duplicate() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", "")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", None, "")
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 18, 0), "health", "gym", "evening session")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 18, 0),
+            "health",
+            "gym",
+            None,
+            "evening session",
+        )
         .expect_err("duplicate slug should error");
     assert!(matches!(
         err,
         DomainError::Store(StoreError::AlreadyExists(_))
     ));
+}
+
+#[test]
+fn add_tracking_gym_substitutes_routine_wikilink() {
+    let (vault, store) = empty_vault();
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    let path = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            "health",
+            "gym",
+            Some("upper-body-a"),
+            "",
+        )
+        .unwrap();
+
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("routine: \"[[stewardships/health/routines/upper-body-a]]\""),
+        "raw:\n{raw}"
+    );
+}
+
+#[test]
+fn add_tracking_errors_on_prewrapped_routine() {
+    let (vault, _store) = empty_vault();
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    let err = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            "health",
+            "gym",
+            Some("[[stewardships/health/routines/foo]]"),
+            "",
+        )
+        .expect_err("pre-wrapped routine should error");
+    assert!(matches!(err, DomainError::MalformedWikilink { .. }));
 }
 
 #[test]
@@ -209,10 +262,10 @@ fn add_tracking_indexes_as_tracking_type() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", "")
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", None, "")
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 2, 8, 0), "health", "body", "")
+        .add_tracking_entry(dt(2026, 4, 2, 8, 0), "health", "body", None, "")
         .unwrap();
     let summaries = vault
         .list_stewardships(NaiveDate::from_ymd_opt(2026, 5, 1).unwrap())

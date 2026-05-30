@@ -15,6 +15,7 @@ use cdno_cli::commands::commit::CommitCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::commands::question::QuestionCommands;
+use cdno_cli::commands::stewardship::StewardshipCommands;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
 
@@ -129,6 +130,35 @@ enum Commands {
     /// lifecycle changes.
     Questions,
 
+    /// Manage stewardship dashboards: create (flat or expanded with
+    /// `--tracking`), list, show, and append a periodic commitment
+    /// line to the dashboard's `## Periodic Commitments` section.
+    Stewardship {
+        #[command(subcommand)]
+        subcommand: StewardshipCommands,
+    },
+
+    /// File a tracking note under an expanded stewardship. Activity
+    /// is positional (e.g. `cdno track gym`); built-in templates for
+    /// gym/body/swim plus a generic fallback.
+    Track {
+        /// Activity (gym, body, swim, or a user-defined slug).
+        activity: String,
+        /// Stewardship slug. Defaults to the only expanded
+        /// stewardship if there's exactly one; otherwise required.
+        #[arg(long)]
+        stewardship: Option<String>,
+        /// Bare slug of a routine doc — wrapped into
+        /// `[[stewardships/<stewardship>/routines/<routine>]]` and
+        /// substituted into the template's `routine:` field.
+        #[arg(long)]
+        routine: Option<String>,
+        /// Inline body. Optional; defaults to empty so the user can
+        /// fill in tables or notes after creation.
+        #[arg(long, default_value = "")]
+        content: String,
+    },
+
     /// Manage standalone commitments: create and complete.
     Commit {
         #[command(subcommand)]
@@ -237,6 +267,32 @@ fn main() -> Result<()> {
         Commands::Questions => {
             let root = discover_vault_root_or_error()?;
             commands::questions::run(&root)
+        }
+        Commands::Stewardship { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::stewardship::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
+        }
+        Commands::Track {
+            activity,
+            stewardship,
+            routine,
+            content,
+        } => {
+            let root = discover_vault_root_or_error()?;
+            commands::track::run(
+                &root,
+                Local::now().naive_local(),
+                activity,
+                stewardship,
+                routine,
+                content,
+                cli.no_interactive,
+            )
         }
         Commands::Commit { subcommand } => {
             let root = discover_vault_root_or_error()?;

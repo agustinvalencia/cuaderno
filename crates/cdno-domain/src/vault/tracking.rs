@@ -46,8 +46,18 @@ impl Vault {
     /// `""` to leave it blank — the file is intended to be edited
     /// after creation.
     ///
+    /// `routine` is an optional bare wikilink target (e.g.
+    /// `"upper-body-a"`) that the domain wraps into
+    /// `[[stewardships/<stewardship>/routines/<routine>]]` and
+    /// substitutes for the template's `routine: null`. Only the
+    /// gym and swim templates carry a `routine:` field; passing
+    /// `Some(...)` on `body` or `generic` is allowed but silently
+    /// no-ops (the field doesn't exist in those templates).
+    ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — `activity` is whitespace-only.
+    /// - [`DomainError::MalformedWikilink`] — `routine` is non-empty
+    ///   and already contains `[[` or `]]`; pass the bare slug.
     /// - [`StoreError::NotFound`] — no stewardship matches the slug.
     /// - [`DomainError::TrackingOnFlatStewardship`] — slug resolves
     ///   to a flat dashboard (no `tracking/` subdir).
@@ -60,6 +70,7 @@ impl Vault {
         at: NaiveDateTime,
         stewardship: &str,
         activity: &str,
+        routine: Option<&str>,
         content: &str,
     ) -> Result<VaultPath, DomainError> {
         let activity = activity.trim();
@@ -67,6 +78,15 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "activity" });
         }
         let activity_slug = slugify(activity);
+
+        let routine = routine.map(str::trim).filter(|s| !s.is_empty());
+        if let Some(r) = routine
+            && (r.contains("[[") || r.contains("]]"))
+        {
+            return Err(DomainError::MalformedWikilink {
+                value: r.to_owned(),
+            });
+        }
 
         let (_dashboard_path, variant) = self.resolve_stewardship_with_variant(stewardship)?;
         if variant != StewardshipVariant::Expanded {
@@ -84,7 +104,7 @@ impl Vault {
             )));
         }
 
-        let body = render_tracking_template(stewardship, &activity_slug, date, content);
+        let body = render_tracking_template(stewardship, &activity_slug, date, routine, content);
         let entry = build_index_entry_for(&path, &body, NoteType::Tracking.as_str())?;
 
         let mut tx = self.transaction();
@@ -99,10 +119,17 @@ impl Vault {
 /// Pick the right template for `activity_slug` and substitute every
 /// field. The slug routes to a built-in (gym/body/swim) when it
 /// matches one exactly; everything else hits the generic template.
+///
+/// `routine` (already validated and trimmed by the caller) wraps as
+/// `[[stewardships/<stewardship>/routines/<routine>]]` when present
+/// and replaces the template's `routine: null` field. Templates
+/// without that field (body, generic) silently ignore the routine —
+/// it doesn't appear anywhere to substitute.
 fn render_tracking_template(
     stewardship: &str,
     activity_slug: &str,
     date: NaiveDate,
+    routine: Option<&str>,
     content: &str,
 ) -> String {
     let date_short = date.format("%Y-%m-%d").to_string();
@@ -118,13 +145,20 @@ fn render_tracking_template(
         "swim" => TRACKING_SWIM_TEMPLATE,
         _ => TRACKING_GENERIC_TEMPLATE,
     };
-    template
+    let rendered = template
         .replace("{{stewardship}}", stewardship)
         .replace("{{activity}}", activity_slug)
         .replace("{{activity_title}}", &title_case(activity_slug))
         .replace("{{date}}", &date_short)
         .replace("{{date_long}}", &date_long)
-        .replace("{{content}}", content.trim_end())
+        .replace("{{content}}", content.trim_end());
+    match routine {
+        Some(slug) => rendered.replace(
+            "routine: null",
+            &format!("routine: \"[[stewardships/{stewardship}/routines/{slug}]]\""),
+        ),
+        None => rendered,
+    }
 }
 
 /// Crude title-case for the generic template's H1 — capitalises the
