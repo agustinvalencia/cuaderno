@@ -28,15 +28,17 @@ use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
 
-/// One row in the `Vault::active_questions` output. Carries enough
-/// for a renderer to display the question without re-reading the
-/// file: the slug (filename stem, used for lookups), the domain
-/// (for grouping), the question text (extracted from the body H1),
-/// and the most recent update date.
+/// One row in the `Vault::active_questions` / `Vault::list_questions`
+/// output. Carries enough for a renderer to display the question
+/// without re-reading the file: the slug (filename stem, used for
+/// lookups), the domain (for grouping), the status (for badging and
+/// filtering by the CLI pickers), the question text (extracted from
+/// the body H1), and the most recent update date.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuestionSummary {
     pub slug: String,
     pub domain: QuestionDomain,
+    pub status: QuestionStatus,
     /// The question text from the body H1. Empty string if the file
     /// has no H1 — lint will flag that separately.
     pub question_text: String,
@@ -143,19 +145,32 @@ impl Vault {
     /// `(domain, slug)`. The renderer is responsible for grouping —
     /// keeping the API a flat vec matches `PortfolioSummary` and
     /// avoids leaking a `BTreeMap` shape into the public surface.
+    ///
+    /// Convenience wrapper over [`list_questions`](Self::list_questions)
+    /// pre-filtered to the orientation-surface case (`Active`), which
+    /// is by far the dominant call site (orientation views, the
+    /// `cdno questions` verb).
     pub fn active_questions(&self) -> Result<Vec<QuestionSummary>, DomainError> {
+        let mut all = self.list_questions()?;
+        all.retain(|q| q.status == QuestionStatus::Active);
+        Ok(all)
+    }
+
+    /// Every question regardless of status, sorted by
+    /// `(domain, slug)`. Used by the CLI pickers that need to offer
+    /// "any non-active question" (for `activate`) or "any non-retired
+    /// question" (for `retire`); the caller filters as needed.
+    pub fn list_questions(&self) -> Result<Vec<QuestionSummary>, DomainError> {
         let entries = self.index.list_by_type(NoteType::Question.as_str())?;
         let mut out = Vec::with_capacity(entries.len());
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
             let (fm, body) = Frontmatter::parse(&raw)?;
             let qf = QuestionFrontmatter::try_from(fm)?;
-            if qf.status != QuestionStatus::Active {
-                continue;
-            }
             out.push(QuestionSummary {
                 slug: question_slug_from_path(&entry.path),
                 domain: qf.domain,
+                status: qf.status,
                 question_text: extract_h1(body),
                 updated: qf.updated,
             });

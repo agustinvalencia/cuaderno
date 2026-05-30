@@ -14,6 +14,7 @@ use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
+use cdno_cli::commands::question::QuestionCommands;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
 
@@ -114,6 +115,20 @@ enum Commands {
         content: String,
     },
 
+    /// Manage question notes: create, then status transitions
+    /// (park / answer / retire / activate). Each transition logs to
+    /// today's daily note.
+    Question {
+        #[command(subcommand)]
+        subcommand: QuestionCommands,
+    },
+
+    /// List active questions grouped by domain (research, life). The
+    /// frequently-called orientation surface against the question
+    /// system; pair with `cdno question {park,answer,…}` for
+    /// lifecycle changes.
+    Questions,
+
     /// Manage standalone commitments: create and complete.
     Commit {
         #[command(subcommand)]
@@ -209,6 +224,19 @@ fn main() -> Result<()> {
                 content,
                 cli.no_interactive,
             )
+        }
+        Commands::Question { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::question::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
+        }
+        Commands::Questions => {
+            let root = discover_vault_root_or_error()?;
+            commands::questions::run(&root)
         }
         Commands::Commit { subcommand } => {
             let root = discover_vault_root_or_error()?;

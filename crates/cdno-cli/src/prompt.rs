@@ -23,7 +23,7 @@ use chrono::NaiveDate;
 use inquire::{Confirm, DateSelect, Select, Text};
 
 use cdno_domain::Vault;
-use cdno_domain::frontmatter::{Context, EnergyLevel};
+use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
 
 /// `true` when interactive prompts are available — `stdout` is a TTY
 /// **and** the user hasn't opted out via `--no-interactive`. Handlers
@@ -228,6 +228,64 @@ pub fn prompt_open_milestone(project: &str, vault: &Vault) -> Result<String> {
     }
     let labels: Vec<String> = open.iter().map(|m| m.name.clone()).collect();
     Ok(Select::new("Milestone", labels).prompt()?)
+}
+
+/// Pick a question's [`QuestionDomain`] from the enum's variants.
+/// Used by `cdno question create` when `--domain` is omitted.
+pub fn prompt_question_domain() -> Result<QuestionDomain> {
+    let labels: Vec<&'static str> = QuestionDomain::ALL.iter().map(|d| d.as_str()).collect();
+    let pick = Select::new("Domain", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(QuestionDomain::ALL[idx])
+}
+
+/// Fuzzy-pick a question whose status is in `allow_statuses`.
+/// Returns the question slug. `label` is the prompt shown ("Question
+/// to park", "Question to activate", …) so the verb the user is
+/// running is named explicitly.
+///
+/// Errors when no question matches the filter — the user can't pick
+/// nothing.
+pub fn prompt_question(
+    vault: &Vault,
+    allow_statuses: &[QuestionStatus],
+    label: &str,
+) -> Result<String> {
+    let all = vault.list_questions()?;
+    let eligible: Vec<_> = all
+        .into_iter()
+        .filter(|q| allow_statuses.contains(&q.status))
+        .collect();
+    if eligible.is_empty() {
+        return Err(anyhow!(
+            "no questions match the allowed statuses for this verb",
+        ));
+    }
+    let labels: Vec<String> = eligible
+        .iter()
+        .map(|q| {
+            let text = if q.question_text.is_empty() {
+                "(no H1)".to_owned()
+            } else {
+                q.question_text.clone()
+            };
+            format!(
+                "{} \u{2014} {text} ({}/{})",
+                q.slug,
+                q.domain.as_str(),
+                q.status.as_str(),
+            )
+        })
+        .collect();
+    let pick = Select::new(label, labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(eligible[idx].slug.clone())
 }
 
 /// Pick a life-domain [`Context`] from the enum's variants.
