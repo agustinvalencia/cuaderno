@@ -182,6 +182,37 @@ pub fn prompt_parked_project(vault: &Vault) -> Result<String> {
         .to_owned())
 }
 
+/// Fuzzy-pick an existing portfolio. Returns the portfolio slug.
+/// Used by `cdno portfolio show` and `cdno file` for the
+/// `--portfolio` field. `today` lets the picker's label include the
+/// staleness in days.
+pub fn prompt_portfolio(vault: &Vault, today: chrono::NaiveDate) -> Result<String> {
+    let summaries = vault.list_portfolios(today)?;
+    if summaries.is_empty() {
+        return Err(anyhow!(
+            "no portfolios \u{2014} create one with `cdno portfolio create`",
+        ));
+    }
+    let labels: Vec<String> = summaries
+        .iter()
+        .map(|p| {
+            let badge = match p.staleness_days {
+                Some(days) if p.evidence_count > 0 => {
+                    format!("{} evidence, {} days ago", p.evidence_count, days)
+                }
+                _ => "no evidence yet".to_owned(),
+            };
+            format!("{} ({badge})", p.slug)
+        })
+        .collect();
+    let pick = Select::new("Portfolio", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(summaries[idx].slug.clone())
+}
+
 /// Confirm whether a new milestone is a *hard* deadline. Default
 /// `false` (soft target); the user opts into hard with `y`.
 pub fn prompt_hard_soft() -> Result<bool> {
