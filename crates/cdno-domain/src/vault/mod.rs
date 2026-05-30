@@ -36,6 +36,7 @@ mod index_entry;
 mod lint;
 mod log;
 mod orient;
+mod portfolios;
 mod projects;
 mod slug;
 

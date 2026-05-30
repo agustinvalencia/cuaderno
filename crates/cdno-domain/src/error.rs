@@ -63,6 +63,14 @@ pub enum DomainError {
         candidates: Vec<String>,
     },
 
+    #[error("required field '{field}' cannot be empty")]
+    EmptyField { field: &'static str },
+
+    #[error(
+        "malformed wikilink target '{value}' \u{2014} pass the bare path (e.g. 'projects/foo'), not [[\u{2026}]]"
+    )]
+    MalformedWikilink { value: String },
+
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 

@@ -14,9 +14,13 @@
 pub mod action;
 pub mod commitment;
 pub mod context;
+pub mod evidence;
+pub mod portfolio;
 pub mod project;
 
 pub use action::{ActionFrontmatter, ActionStatus, ParseActionStatusError};
 pub use commitment::{CommitmentFrontmatter, CommitmentStatus, ParseCommitmentStatusError};
 pub use context::{Context, ParseContextError};
+pub use evidence::EvidenceFrontmatter;
+pub use portfolio::PortfolioFrontmatter;
 pub use project::{EnergyLevel, ParseEnergyLevelError, ProjectFrontmatter, ProjectStatus};
