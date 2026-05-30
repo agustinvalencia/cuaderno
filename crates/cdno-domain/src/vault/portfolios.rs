@@ -219,6 +219,22 @@ impl Vault {
         Ok(out)
     }
 
+    /// Read a single portfolio's `_index.md` frontmatter. Useful for
+    /// detail views (`cdno portfolio show`) where the caller needs
+    /// the question, created date, and project fields that
+    /// [`list_portfolios`](Self::list_portfolios) doesn't aggregate.
+    /// Errors with `Store(NotFound)` when no portfolio exists at
+    /// `portfolios/<slug>/_index.md`.
+    pub fn get_portfolio(&self, slug: &str) -> Result<PortfolioFrontmatter, DomainError> {
+        let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
+        if !self.store.exists(&path)? {
+            return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
+        }
+        let raw = self.store.read_file(&path)?;
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        Ok(PortfolioFrontmatter::try_from(fm)?)
+    }
+
     /// Every evidence note filed into `portfolio`, paired with its
     /// parsed frontmatter, sorted most-recent first (ties broken by
     /// path for determinism). Returns an empty vec when the portfolio

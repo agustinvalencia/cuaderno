@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 
 use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
+use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
@@ -87,6 +88,32 @@ enum Commands {
         subcommand: ActionCommands,
     },
 
+    /// Manage portfolios: create, list, show. Filing evidence into a
+    /// portfolio is the separate `cdno file` verb (it's a routine
+    /// action; portfolios manage the folder + index).
+    Portfolio {
+        #[command(subcommand)]
+        subcommand: PortfolioCommands,
+    },
+
+    /// File a piece of evidence into a portfolio.
+    File {
+        /// Portfolio slug.
+        #[arg(long)]
+        portfolio: Option<String>,
+        /// Citation, experiment id, conversation reference, …
+        #[arg(long)]
+        source: Option<String>,
+        /// Bare wikilink target to whatever produced this evidence
+        /// (e.g. `"projects/foo"`); the CLI wraps it.
+        #[arg(long)]
+        origin: Option<String>,
+        /// Inline body. Optional; defaults to empty so the user can
+        /// flesh out the note in their editor after creation.
+        #[arg(long, default_value = "")]
+        content: String,
+    },
+
     /// Manage standalone commitments: create and complete.
     Commit {
         #[command(subcommand)]
@@ -154,6 +181,32 @@ fn main() -> Result<()> {
                 &root,
                 Local::now().naive_local(),
                 subcommand,
+                cli.no_interactive,
+            )
+        }
+        Commands::Portfolio { subcommand } => {
+            let root = discover_vault_root_or_error()?;
+            commands::portfolio::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
+        }
+        Commands::File {
+            portfolio,
+            source,
+            origin,
+            content,
+        } => {
+            let root = discover_vault_root_or_error()?;
+            commands::file::run(
+                &root,
+                Local::now().naive_local(),
+                portfolio,
+                source,
+                origin,
+                content,
                 cli.no_interactive,
             )
         }
