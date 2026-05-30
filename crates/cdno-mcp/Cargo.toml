@@ -1,0 +1,46 @@
+[package]
+name = "cdno-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+# The binary's user-facing name (`cdno-mcp`) is decoupled from its
+# source file (`bin/stdio.rs`) so the file name can describe which
+# transport it serves. A future `bin/server.rs` will host the HTTP
+# transport under a `cdno-mcp-server` binary name (design §5.2 / the
+# implementation plan's Phase 6 HTTP section).
+[[bin]]
+name = "cdno-mcp"
+path = "src/bin/stdio.rs"
+
+[dependencies]
+cdno-core = { workspace = true }
+cdno-domain = { workspace = true }
+
+# MCP protocol machinery. Provides #[tool] / #[tool_router] macros,
+# the ServerHandler trait, stdio transport, and JSON-RPC framing /
+# error mapping.
+rmcp = { workspace = true }
+
+# Async runtime for the rmcp service loop. The domain layer stays
+# synchronous; we call into it from a thread pool when the handler
+# is async (rmcp's ServiceExt is async).
+tokio = { workspace = true }
+
+# Serialisation. schemars is pinned to the same major as rmcp 1.7's
+# transitive version so the derive macro's `::schemars::...` paths
+# resolve at the crate root.
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
