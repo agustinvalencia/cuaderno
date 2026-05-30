@@ -34,6 +34,11 @@ const MIGRATIONS: &[(u32, &str, &str)] = &[
         "Milestones index table",
         include_str!("../migrations/002_milestones.sql"),
     ),
+    (
+        3,
+        "Archived action snapshots for append-only lint",
+        include_str!("../migrations/003_archived_action_snapshots.sql"),
+    ),
 ];
 
 /// SQLite-backed implementation of the vault index.
@@ -264,6 +269,22 @@ pub struct MilestoneEntry {
     pub completed: bool,
 }
 
+/// Snapshot of an action note at the moment it was archived to
+/// `actions/_done/<year>/`. The append-only lint (#111, design §5.11)
+/// re-hashes the file's first `frozen_size` bytes on each lint run
+/// and flags any divergence; bytes appended past `frozen_size` are
+/// allowed (late retrospectives). Set once by `stage_action_archival`
+/// and never overwritten.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivalSnapshot {
+    /// File length captured at archival, in bytes.
+    pub frozen_size: u64,
+    /// xxh3_64 hex digest of the file content at archival.
+    pub frozen_hash: String,
+    /// Wall-clock instant of the archival, ns since the UNIX epoch.
+    pub archived_at_ns: u64,
+}
+
 /// The two vault locations a project with `slug` can occupy: active
 /// `projects/<slug>.md` and parked `projects/_parked/<slug>.md`. Used
 /// by `milestones_for_project` to resolve a slug to its note path
@@ -338,6 +359,23 @@ pub trait VaultIndex: Send + Sync {
         from: &str,
         to: &str,
     ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError>;
+
+    // archival snapshots -------------------------------------------------
+    /// Record (or replace) the archival snapshot for `path`. Written
+    /// once at archival by `stage_action_archival`; subsequent writes
+    /// for the same path simply overwrite, which is harmless because
+    /// the snapshot only matters as a stable per-path baseline.
+    fn record_archival_snapshot(
+        &self,
+        path: &VaultPath,
+        snapshot: &ArchivalSnapshot,
+    ) -> Result<(), IndexError>;
+    /// Look up the archival snapshot for `path`, or `None` if there
+    /// isn't one (the note was never archived through the lifecycle).
+    fn find_archival_snapshot(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Option<ArchivalSnapshot>, IndexError>;
 }
 
 impl VaultIndex for SqliteIndex {
@@ -666,6 +704,50 @@ impl VaultIndex for SqliteIndex {
         }
         Ok(out)
     }
+
+    fn record_archival_snapshot(
+        &self,
+        path: &VaultPath,
+        snapshot: &ArchivalSnapshot,
+    ) -> Result<(), IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        conn.execute(
+            "INSERT INTO archived_action_snapshots (note_path, frozen_size, frozen_hash, archived_at_ns) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(note_path) DO UPDATE SET \
+                 frozen_size = excluded.frozen_size, \
+                 frozen_hash = excluded.frozen_hash, \
+                 archived_at_ns = excluded.archived_at_ns",
+            params![
+                path.to_string(),
+                snapshot.frozen_size as i64,
+                snapshot.frozen_hash,
+                snapshot.archived_at_ns as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn find_archival_snapshot(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Option<ArchivalSnapshot>, IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        conn.query_row(
+            "SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots \
+             WHERE note_path = ?1",
+            params![path.to_string()],
+            |r| {
+                Ok(ArchivalSnapshot {
+                    frozen_size: r.get::<_, i64>(0)? as u64,
+                    frozen_hash: r.get(1)?,
+                    archived_at_ns: r.get::<_, i64>(2)? as u64,
+                })
+            },
+        )
+        .optional()
+        .map_err(IndexError::from)
+    }
 }
 
 /// Encode the `is_hard` flag as the `hard_soft` column's text value.
@@ -762,6 +844,7 @@ struct MemoryIndexState {
     links: HashMap<VaultPath, Vec<LinkEntry>>,
     tags: HashMap<VaultPath, Vec<String>>,
     milestones: HashMap<VaultPath, Vec<MilestoneEntry>>,
+    archival_snapshots: HashMap<VaultPath, ArchivalSnapshot>,
 }
 
 impl MemoryIndex {
@@ -786,6 +869,7 @@ impl VaultIndex for MemoryIndex {
         state.links.remove(path);
         state.tags.remove(path);
         state.milestones.remove(path);
+        state.archival_snapshots.remove(path);
         Ok(())
     }
 
@@ -951,7 +1035,27 @@ impl VaultIndex for MemoryIndex {
             })
             .collect();
         // Match SqliteIndex's `ORDER BY date`.
-        out.sort_by(|a, b| a.1.date.cmp(&b.1.date));
+        out.sort_by_key(|(_, m)| m.date.clone());
         Ok(out)
+    }
+
+    fn record_archival_snapshot(
+        &self,
+        path: &VaultPath,
+        snapshot: &ArchivalSnapshot,
+    ) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state
+            .archival_snapshots
+            .insert(path.clone(), snapshot.clone());
+        Ok(())
+    }
+
+    fn find_archival_snapshot(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Option<ArchivalSnapshot>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        Ok(state.archival_snapshots.get(path).cloned())
     }
 }

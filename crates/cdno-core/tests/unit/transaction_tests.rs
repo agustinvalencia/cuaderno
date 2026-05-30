@@ -427,4 +427,20 @@ impl VaultIndex for FailingIndex {
     ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
         self.inner.milestones_between(from, to)
     }
+    fn record_archival_snapshot(
+        &self,
+        path: &VaultPath,
+        snapshot: &cdno_core::index::ArchivalSnapshot,
+    ) -> Result<(), IndexError> {
+        if self.should_fail(false) {
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.record_archival_snapshot(path, snapshot)
+    }
+    fn find_archival_snapshot(
+        &self,
+        path: &VaultPath,
+    ) -> Result<Option<cdno_core::index::ArchivalSnapshot>, IndexError> {
+        self.inner.find_archival_snapshot(path)
+    }
 }

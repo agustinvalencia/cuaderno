@@ -144,3 +144,154 @@ fn lint_treats_explicit_null_value_as_missing() {
             .contains("missing required field `owner`")
     );
 }
+
+// ---------------------------------------------------------------------
+// Append-only-after-completion lint (#111). Archived action notes in
+// `actions/_done/<year>/` may grow new lines but must not edit their
+// pre-archival prefix. The snapshot recorded at archival time is the
+// baseline.
+// ---------------------------------------------------------------------
+
+use cdno_domain::frontmatter::EnergyLevel;
+use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
+const ACTIVE_PROJECT_FOR_ARCHIVE: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n\n## Next Actions\n";
+
+fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
+    NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap()
+        .and_time(NaiveTime::from_hms_opt(hour, minute, 0).unwrap())
+}
+
+/// Like `vault_with_notes` but also returns the backing store so a test
+/// can mutate the archived file after the fact.
+fn vault_with_notes_and_store(
+    notes: &[(&str, &str)],
+    config: VaultConfig,
+) -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in notes {
+        store.write_file(&vp(path), body).unwrap();
+    }
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, config).expect("Vault::new succeeded");
+    (vault, store)
+}
+
+/// Spin a fresh attached action on project `foo` and complete it,
+/// returning the path to the archived note (which the test can then
+/// mutate to exercise the lint).
+fn archive_a_fresh_action(vault: &Vault) -> VaultPath {
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 1, 9, 0),
+            "foo",
+            "Characterise",
+            EnergyLevel::Deep,
+        )
+        .expect("add action with note");
+    vault
+        .complete_action(dt(2026, 5, 2, 9, 0), "foo", "characterise")
+        .expect("complete action");
+    vp("actions/_done/2026/characterise.md")
+}
+
+#[test]
+fn append_only_lint_silent_on_unchanged_archived_note() {
+    let (vault, _store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    let _done = archive_a_fresh_action(&vault);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.is_empty(),
+        "unchanged archived note must be silent: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn append_only_lint_silent_when_only_appending_lines() {
+    let (vault, store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    let done = archive_a_fresh_action(&vault);
+
+    let original = store.read_file(&done).unwrap();
+    let with_followup =
+        format!("{original}\n## Six months later\nlate retrospective, see [[evidence/x]]\n");
+    store.write_file(&done, &with_followup).unwrap();
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.is_empty(),
+        "pure-append should be silent: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn append_only_lint_flags_size_changing_prefix_edit() {
+    // Replacing "completed" (9 chars) with "blocked" (7 chars) shrinks
+    // the file below `frozen_size` — the truncation branch fires.
+    let (vault, store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    let done = archive_a_fresh_action(&vault);
+
+    let original = store.read_file(&done).unwrap();
+    let modified = original.replace("status: completed", "status: blocked");
+    assert_ne!(
+        original, modified,
+        "replacement must actually change content"
+    );
+    store.write_file(&done, &modified).unwrap();
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, done);
+    assert!(
+        report.issues[0].message.contains("truncated"),
+        "message: {}",
+        report.issues[0].message
+    );
+}
+
+#[test]
+fn append_only_lint_flags_same_length_prefix_edit() {
+    // Swap one ISO date for another of the same width — the file size
+    // stays exactly the same, so the hash-mismatch branch is what fires
+    // (rather than the truncation guard).
+    let (vault, store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    let done = archive_a_fresh_action(&vault);
+
+    let original = store.read_file(&done).unwrap();
+    let modified = original.replace("completed: 2026-05-02", "completed: 2026-05-22");
+    assert_ne!(
+        original, modified,
+        "replacement must actually change content"
+    );
+    assert_eq!(
+        original.len(),
+        modified.len(),
+        "this test exercises the same-length path"
+    );
+    store.write_file(&done, &modified).unwrap();
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, done);
+    assert!(
+        report.issues[0].message.contains("append-only"),
+        "message: {}",
+        report.issues[0].message
+    );
+}

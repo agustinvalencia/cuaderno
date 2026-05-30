@@ -1,5 +1,5 @@
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, SqliteIndex, VaultIndex,
+    ArchivalSnapshot, DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, SqliteIndex, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use serde_json::json;
@@ -464,5 +464,48 @@ fn milestones_between_filters_by_date_and_sorts_across_projects() {
     assert_eq!(
         pairs,
         vec![("projects/b.md", "b-mid"), ("projects/a.md", "a-late")],
+    );
+}
+
+#[test]
+fn archival_snapshot_round_trips_and_cascades_on_note_delete() {
+    let (_d, idx) = store();
+    let path = vp("actions/_done/2026/foo.md");
+    idx.upsert_note(&sample_note("actions/_done/2026/foo.md", "action"))
+        .unwrap();
+
+    let snap = ArchivalSnapshot {
+        frozen_size: 1234,
+        frozen_hash: "deadbeefcafef00d".to_owned(),
+        archived_at_ns: 1_700_000_000_000_000_000,
+    };
+    idx.record_archival_snapshot(&path, &snap).unwrap();
+    assert_eq!(
+        idx.find_archival_snapshot(&path).unwrap(),
+        Some(snap.clone())
+    );
+
+    // Re-record overwrites (idempotent).
+    let snap2 = ArchivalSnapshot {
+        frozen_size: 9999,
+        ..snap
+    };
+    idx.record_archival_snapshot(&path, &snap2).unwrap();
+    assert_eq!(idx.find_archival_snapshot(&path).unwrap(), Some(snap2));
+
+    // Deleting the note cascades the snapshot row away.
+    idx.remove_note(&path).unwrap();
+    assert!(idx.find_archival_snapshot(&path).unwrap().is_none());
+}
+
+#[test]
+fn archival_snapshot_returns_none_when_absent() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("actions/active.md", "action"))
+        .unwrap();
+    assert!(
+        idx.find_archival_snapshot(&vp("actions/active.md"))
+            .unwrap()
+            .is_none()
     );
 }
