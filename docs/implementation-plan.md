@@ -959,15 +959,19 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 ### Phase 4: MCP Server (estimated: 3-4 weeks)
 
-**Crate scaffold + tool catalogue.** Set up `cdno-mcp` on `rmcp`. Define one typed input struct per design §11 tool and a `CuadernoServer` type with one `#[tool]`-annotated async method per name (bodies stubbed). Mirror domain summary types as DTOs deriving `JsonSchema`. (#45)
+> Live status: see [`STATUS.md`](../STATUS.md). Per-PR detail in [`CHANGELOG.md`](../CHANGELOG.md).
 
-**Handler layer.** Fill in the stubbed tool bodies: each method deserialises its typed input, calls the appropriate `Vault` method, and returns a `CallToolResult` carrying the DTO. Split into context-gathering reads (#46) and write operations (#47). No hand-rolled registry — `#[tool_router]` builds it from the `#[tool]` methods at compile time.
+**Crate scaffold + tool catalogue.** Set up `cdno-mcp` on `rmcp`. Define one typed input struct per design §11 tool and a `CuadernoServer` type with one `#[tool]`-annotated async method per name (bodies stubbed). Mirror domain summary types as DTOs deriving `JsonSchema`. **(#45 — shipped via #140.)**
 
-**Stdio transport.** Wire `rmcp::transport::stdio()` into the binary at `src/bin/stdio.rs` (the user-facing `cdno-mcp` name is set via the `[[bin]]` table); the runtime is `tokio::main` and the service loop is `server.serve(stdio()).await`. Test with Claude Desktop. (#48)
+**Handler layer.** Fill in the stubbed tool bodies: each method deserialises its typed input, calls the appropriate `Vault` method, and returns a `CallToolResult` carrying the DTO. No hand-rolled registry — `#[tool_router]` builds it from the `#[tool]` methods at compile time.
+- *Context reads (#46)* — three of seven shipped: `get_orientation`, `get_active_questions`, `get_portfolio_contents`. The other four (`get_weekly_context`, `get_monthly_context`, `get_project_context`, `get_stewardship_tracking`) defer to **(#142)** because they each need new domain queries first.
+- *Write operations (#47)* — not started.
 
-**Skill adaptation.** Update all Claude skill markdown files to use the new MCP tool names and response shapes. Test each skill end-to-end: daily-orientation, weekly-review, monthly-review, file-to-portfolio, create-project (with cap enforcement), triage.
+**Stdio transport.** Wire `rmcp::transport::stdio()` into the binary at `src/bin/stdio.rs` (the user-facing `cdno-mcp` name is set via the `[[bin]]` table); the runtime is `tokio::main` and the service loop is `server.serve(stdio()).await`. Test with Claude Desktop. **(#48 — basic wiring shipped with #45; Claude Desktop end-to-end test still pending.)**
 
-**File watcher integration.** For MCP sessions, start a file watcher thread that updates the index on external changes. This matters because the user might edit a project map in Obsidian during a Claude conversation, and the MCP server needs to see the change.
+**Skill adaptation.** Update all Claude skill markdown files to use the new MCP tool names and response shapes. Test each skill end-to-end: daily-orientation, weekly-review, monthly-review, file-to-portfolio, create-project (with cap enforcement), triage. *(#50 / #51 / #52 — not started.)*
+
+**File watcher integration.** For MCP sessions, start a file watcher thread that updates the index on external changes. This matters because the user might edit a project map in Obsidian during a Claude conversation, and the MCP server needs to see the change. *(#49 — not started.)*
 
 ### Phase 5: Cuaderno UI (estimated: 4-6 weeks)
 
