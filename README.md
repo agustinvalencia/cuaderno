@@ -73,11 +73,40 @@ cdno action complete --project surrogate-model --query "feature set B"
 
 For the full verb list: `cdno --help`, then `cdno <verb> --help`.
 
+### Connect to Claude (MCP server)
+
+Cuaderno ships an MCP server so Claude Desktop / Claude Code / any MCP-aware agent can read and write the vault. The server is a separate binary (`cdno-mcp`) that talks JSON-RPC over stdio.
+
+```bash
+# Build the MCP binary alongside the CLI
+cargo build --release --bin cdno-mcp
+ln -s "$PWD/target/release/cdno-mcp" /usr/local/bin/cdno-mcp
+```
+
+Wire it into Claude Desktop / Claude Code with:
+
+```json
+{
+  "mcpServers": {
+    "cuaderno": {
+      "command": "cdno-mcp",
+      "env": { "CUADERNO_VAULT_PATH": "/Users/you/notebook" }
+    }
+  }
+}
+```
+
+The vault path can also be omitted; the server then opens whichever vault the working directory belongs to.
+
+**Tool surface today.** Three context-gathering tools are wired through to the domain — `get_orientation`, `get_active_questions`, `get_portfolio_contents`. Twelve more (the rest of the design §11 catalogue) are advertised with schemas but return a "not yet implemented" error when called; see [`STATUS.md`](STATUS.md) for the per-tool status.
+
 ### Where to go next
 
+- **[`STATUS.md`](STATUS.md)** — current development status, phase by phase, with PR links.
 - **[`docs/design.md`](docs/design.md)** — full specification of the note types, folder structure, the RLM rationale, and the CLI / MCP / UI surfaces.
 - **[`docs/cli-ergonomics.md`](docs/cli-ergonomics.md)** — the flags-and-prompts convention every mutating verb follows. Useful when scripting, in CI, or when an interactive prompt isn't where you'd expect.
 - **[`docs/implementation-plan.md`](docs/implementation-plan.md)** — architecture, trait landscape, and the phased build sequence.
+- **[`CHANGELOG.md`](CHANGELOG.md)** — what's landed per PR since the start.
 
 ## The Research Logbook Method
 
@@ -101,17 +130,17 @@ cuaderno/
 │   ├── cdno-core/          ← file I/O, markdown parsing, SQLite indexing, file watching
 │   ├── cdno-domain/        ← note types, business rules, queries, state transitions
 │   ├── cdno-cli/           ← terminal commands (`cdno`)
-│   ├── cdno-mcp/           ← MCP server (stdio + HTTP transports)
-│   └── cdno-tauri/         ← Tauri backend for the desktop app
-├── ui/                     ← React + Tremor frontend (Tauri)
-└── skills/                 ← Claude skill definitions (markdown)
+│   ├── cdno-mcp/           ← MCP server — stdio shipped, HTTP planned (Phase 6)
+│   └── cdno-tauri/         ← Tauri backend for the desktop app (Phase 5, not yet created)
+├── ui/                     ← React + Tremor frontend (Phase 5, not yet created)
+└── skills/                 ← Claude skill definitions (Phase 4 skill adaptation, not yet created)
 ```
 
 ```
 cdno-core → cdno-domain → cdno-cli
-                        → cdno-mcp → stdio transport
-                                   → HTTP transport (Axum)
-                        → cdno-tauri → React UI
+                        → cdno-mcp → stdio transport (shipped)
+                                   → HTTP transport (Axum, Phase 6)
+                        → cdno-tauri (Phase 5) → React UI
 ```
 
 **cdno-core** has no domain knowledge — it handles markdown files with YAML frontmatter, section manipulation, SQLite indexing, and filesystem watching. Reusable in any markdown vault tool.
@@ -154,9 +183,11 @@ The tool has four consumers:
 
 ## Status
 
-Phase 2 of [the build sequence](docs/implementation-plan.md) is complete: the CLI is daily-usable end-to-end. Projects (create, state, milestones, waiting, park / activate), the action layer (bullets and the heavier manifest notes, with `add` / `promote` / `complete` / `list`), commitments (create, complete, aggregated timeline), the morning `cdno orient` and `cdno status` views, and the append-only-after-completion lint that protects archived action notes — all reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md).
+Phases 1, 2, and 3 of [the build sequence](docs/implementation-plan.md) are complete; Phase 4 is in progress. **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
 
-The MCP server (Phase 4) and the Tauri desktop UI (Phase 5) are scaffolded but not yet implemented.
+The MCP server (Phase 4) is scaffolded with the full 16-tool catalogue advertised; three context tools are wired through to the domain (`get_orientation`, `get_active_questions`, `get_portfolio_contents`), the remaining 13 return "not yet implemented" until #46-follow-ups and #47 land. The Tauri desktop UI (Phase 5) is planned but not yet started.
+
+See **[`STATUS.md`](STATUS.md)** for the per-phase and per-issue breakdown, and **[`CHANGELOG.md`](CHANGELOG.md)** for what's shipped per PR.
 
 ## Acknowledgements
 

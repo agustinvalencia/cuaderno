@@ -21,18 +21,24 @@
 //! against `T`'s `JsonSchema` and hands the typed value to the
 //! method body.
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, ErrorData, Implementation, ProtocolVersion, ServerCapabilities,
+    ServerInfo,
 };
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use cdno_domain::Vault;
+use cdno_domain::error::DomainError;
+use cdno_domain::frontmatter::QuestionDomain;
+
+use crate::dto::{OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto};
 
 // ---------------------------------------------------------------------
 // Inputs
@@ -209,13 +215,22 @@ impl CuadernoServer {
     // -----------------------------------------------------------------
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action, lapsed stewardship habits, and a suggested starting point. Bias the suggestion with `energy`."
+        description = "Today's orientation: commitments due soon, active projects with their top action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered."
     )]
-    async fn get_orientation(
+    pub async fn get_orientation(
         &self,
         Parameters(_input): Parameters<GetOrientationInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_orientation"))
+        // `energy` is intentionally ignored at the server: the domain
+        // returns the raw orientation context, and the client biases
+        // the suggestion locally. Same separation the CLI uses (see
+        // `commands/orient.rs::suggestion`).
+        let today = chrono::Local::now().date_naive();
+        let ctx = self
+            .vault
+            .orientation_context(today)
+            .map_err(into_mcp_error)?;
+        json_result(OrientationContextDto::from(ctx))
     }
 
     #[tool(
@@ -249,13 +264,21 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Every evidence note filed into a portfolio, with dates, sources, and full bodies for deep consultation."
+        description = "A portfolio's frontmatter and every evidence note filed into it (vault path, created date, source, and origin wikilink)."
     )]
-    async fn get_portfolio_contents(
+    pub async fn get_portfolio_contents(
         &self,
-        Parameters(_input): Parameters<PortfolioSlugInput>,
+        Parameters(input): Parameters<PortfolioSlugInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_portfolio_contents"))
+        let fm = self
+            .vault
+            .get_portfolio(&input.portfolio)
+            .map_err(into_mcp_error)?;
+        let evidence = self
+            .vault
+            .get_portfolio_contents(&input.portfolio)
+            .map_err(into_mcp_error)?;
+        json_result(PortfolioDetailDto::new(input.portfolio, fm, evidence))
     }
 
     #[tool(
@@ -269,13 +292,25 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Active questions, optionally filtered by domain (`research` or `life`). Grouped by domain when no filter applied."
+        description = "Every question with status: active, sorted by (domain, slug). Filter by `domain` (`research` or `life`) to limit; omit for all."
     )]
-    async fn get_active_questions(
+    pub async fn get_active_questions(
         &self,
-        Parameters(_input): Parameters<GetActiveQuestionsInput>,
+        Parameters(input): Parameters<GetActiveQuestionsInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_active_questions"))
+        let filter = match input.domain.as_deref() {
+            Some(d) => Some(
+                QuestionDomain::from_str(d)
+                    .map_err(|e| invalid_argument("domain", &e.to_string()))?,
+            ),
+            None => None,
+        };
+        let mut active = self.vault.active_questions().map_err(into_mcp_error)?;
+        if let Some(d) = filter {
+            active.retain(|q| q.domain == d);
+        }
+        let dtos: Vec<QuestionSummaryDto> = active.into_iter().map(Into::into).collect();
+        json_result(dtos)
     }
 
     // -----------------------------------------------------------------
@@ -392,13 +427,42 @@ impl ServerHandler for CuadernoServer {
 }
 
 /// Placeholder error returned by every stubbed tool method until its
-/// handler lands in #46 (context) or #47 (operations). Includes the
-/// tool name so a client sees exactly which surface isn't ready yet.
+/// handler lands. Stubs from #45 still using this:
+/// `get_weekly_context`, `get_monthly_context`, `get_project_context`,
+/// `get_stewardship_tracking`, plus every operation tool (#47).
+/// Includes the tool name so a client sees exactly which surface
+/// isn't ready yet.
 fn not_yet_implemented(tool_name: &str) -> ErrorData {
     ErrorData::internal_error(
         format!("tool '{tool_name}' is registered but not yet implemented"),
         None,
     )
+}
+
+/// Wrap a serialisable DTO as the single content item of a
+/// successful tool result. Shared by every implemented handler so
+/// the JSON-encoding step is one call site, not 16.
+fn json_result<S: serde::Serialize>(value: S) -> Result<CallToolResult, ErrorData> {
+    let content = Content::json(value)?;
+    Ok(CallToolResult::success(vec![content]))
+}
+
+/// Translate a [`DomainError`] into an rmcp [`ErrorData`]. We surface
+/// the domain's `Display` output as the JSON-RPC error message — it's
+/// already human-readable (see `cdno-domain/src/error.rs`). All
+/// variants land as `InternalError` for now; the JSON-RPC code-mapping
+/// table (per design §5.2) is a follow-up if clients start
+/// branching on the code.
+fn into_mcp_error(e: DomainError) -> ErrorData {
+    ErrorData::internal_error(e.to_string(), None)
+}
+
+/// Build an InvalidParams error pointing at a specific input field.
+/// Used by handlers that accept enum-typed strings (e.g. the
+/// `domain` filter on `get_active_questions`) and need to reject a
+/// value that doesn't parse.
+fn invalid_argument(field: &str, reason: &str) -> ErrorData {
+    ErrorData::invalid_params(format!("invalid '{field}': {reason}"), None)
 }
 
 // `ServerInfo` doesn't expose a public `with_capabilities` builder,
