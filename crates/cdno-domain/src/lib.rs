@@ -7,6 +7,7 @@ pub mod error;
 pub mod frontmatter;
 pub mod lint;
 pub mod note_type;
+pub mod recurrence;
 pub mod vault;
 
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
