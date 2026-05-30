@@ -3,7 +3,7 @@
 //! production and test-fake implementations.
 
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+    ArchivalSnapshot, DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use serde_json::json;
@@ -479,4 +479,23 @@ fn remove_note_cascades_milestones() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn archival_snapshot_round_trips_and_cascades_on_note_delete() {
+    let idx = MemoryIndex::new();
+    let path = vp("actions/_done/2026/foo.md");
+    idx.upsert_note(&sample_note("actions/_done/2026/foo.md", "action"))
+        .unwrap();
+
+    let snap = ArchivalSnapshot {
+        frozen_size: 1234,
+        frozen_hash: "deadbeefcafef00d".to_owned(),
+        archived_at_ns: 1_700_000_000_000_000_000,
+    };
+    idx.record_archival_snapshot(&path, &snap).unwrap();
+    assert_eq!(idx.find_archival_snapshot(&path).unwrap(), Some(snap));
+
+    idx.remove_note(&path).unwrap();
+    assert!(idx.find_archival_snapshot(&path).unwrap().is_none());
 }

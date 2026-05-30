@@ -66,8 +66,58 @@ impl Vault {
                     });
                 }
             }
+
+            // Append-only-after-completion (design §5.11, #111).
+            // Archived action notes (`actions/_done/<year>/`) may grow
+            // new lines but their pre-archival prefix is frozen. We
+            // verify by re-hashing the first `frozen_size` bytes and
+            // comparing to the snapshot recorded at archival time.
+            if entry.note_type == "action"
+                && path.as_path().starts_with(cdno_core::paths::ACTIONS_DONE)
+                && let Some(snap) = self.index.find_archival_snapshot(&path)?
+                && let Some(msg) = check_append_only(&self.store, &path, &snap)?
+            {
+                issues.push(LintIssue {
+                    path: path.clone(),
+                    message: msg,
+                });
+            }
         }
 
         Ok(LintReport { issues })
     }
+}
+
+/// Compare the current file against an archival snapshot. Returns
+/// `None` when the file is unchanged or has only grown past the frozen
+/// prefix (both allowed); returns a `Some(message)` describing the
+/// violation otherwise.
+fn check_append_only(
+    store: &std::sync::Arc<dyn cdno_core::store::VaultStore>,
+    path: &cdno_core::path::VaultPath,
+    snap: &cdno_core::index::ArchivalSnapshot,
+) -> Result<Option<String>, DomainError> {
+    let content = store.read_file(path)?;
+    let bytes = content.as_bytes();
+    let frozen = snap.frozen_size as usize;
+    if bytes.len() < frozen {
+        return Ok(Some(format!(
+            "archived action note was truncated below its frozen prefix \
+             (was {} bytes at archival, now {})",
+            snap.frozen_size,
+            bytes.len(),
+        )));
+    }
+    // The frozen prefix was valid UTF-8 (it's exactly the file content
+    // at archival), so slicing on `frozen` lands on a char boundary
+    // both then and now — any insert that disturbs the boundary would
+    // already perturb the hash and flag below.
+    let prefix = &content[..frozen];
+    if cdno_core::hash::content_hash(prefix) != snap.frozen_hash {
+        return Ok(Some(
+            "archived action note modified an existing line (append-only after completion)"
+                .to_owned(),
+        ));
+    }
+    Ok(None)
 }

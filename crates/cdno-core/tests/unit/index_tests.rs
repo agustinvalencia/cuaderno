@@ -21,8 +21,8 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // Bumped to 2 by the milestones migration (#109).
-    assert_eq!(version, 2);
+    // Bumped to 3 by the archived-action snapshots migration (#111).
+    assert_eq!(version, 3);
 
     // All tables exist.
     for table in [
@@ -31,6 +31,7 @@ fn open_creates_fresh_db_with_current_schema() {
         "links",
         "note_tags",
         "milestones",
+        "archived_action_snapshots",
         "schema_migrations",
     ] {
         let count: u32 = conn
@@ -57,7 +58,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 2);
+    assert_eq!(row_count, 3);
 }
 
 #[test]

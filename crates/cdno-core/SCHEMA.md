@@ -1,7 +1,7 @@
 ---
-schema_version: 2
+schema_version: 3
 applies_to_crate: cdno-core
-last_updated: 2026-05-26
+last_updated: 2026-05-30
 ---
 
 # Cuaderno Index Schema
@@ -13,10 +13,11 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 2**. The corresponding
+This document describes **schema version 3**. The corresponding
 executable migrations are `migrations/001_initial.sql` (notes,
-deadlines, links, note_tags) and `migrations/002_milestones.sql`
-(the milestones table).
+deadlines, links, note_tags), `migrations/002_milestones.sql` (the
+milestones table), and `migrations/003_archived_action_snapshots.sql`
+(the append-only-after-completion lint baseline).
 
 ## Conventions
 
@@ -191,6 +192,32 @@ CREATE INDEX idx_milestones_date ON milestones(date);
   (#32) is expected to read project deadlines from `milestones_between`
   and the redundant `deadlines` project feed retired at that point.
 
+### `archived_action_snapshots`
+
+The baseline an action note's prefix is locked against once it moves to
+`actions/_done/<year>/`. Captured once by `stage_action_archival` and
+read by the append-only-after-completion lint (design §5.11): the lint
+re-hashes the current file's first `frozen_size` bytes and flags any
+mismatch, while bytes appended past that point are allowed (the "six
+months later, follow-up" case from the decision note).
+
+```sql
+CREATE TABLE archived_action_snapshots (
+    note_path       TEXT PRIMARY KEY REFERENCES notes(path) ON DELETE CASCADE,
+    frozen_size     INTEGER NOT NULL,    -- file length at archival, bytes
+    frozen_hash     TEXT NOT NULL,       -- xxh3_64 hex digest at archival
+    archived_at_ns  INTEGER NOT NULL     -- wall-clock instant of archival
+) WITHOUT ROWID;
+```
+
+- **Set once, never reconciled.** Reconciliation rebuilds `notes`,
+  `deadlines`, `links`, `note_tags`, and `milestones` from the
+  filesystem; snapshots persist on their own. Cascade on note delete
+  drops them with the file.
+- **Hash matches `content_hash`**: same xxh3_64 algorithm, so the same
+  helper computes both. The frozen_hash is over the full file content at
+  archival (frontmatter + body); any edit anywhere in the prefix flags.
+
 ### `schema_migrations`
 
 Tracks which migration versions have been applied to the current DB.
@@ -218,6 +245,7 @@ CREATE TABLE schema_migrations (
 | Notes tagged `#X` by recency | `SELECT n.path FROM note_tags t JOIN notes n ON n.path = t.note_path WHERE t.tag = ? ORDER BY n.mtime_ns DESC` — `idx_tags_tag` + PK. |
 | `milestones_for_project(slug)` | `SELECT … FROM milestones WHERE note_path = ? OR note_path = ? ORDER BY id` — resolves slug to active + parked paths. |
 | `milestones_between(from, to)` | `SELECT … FROM milestones WHERE date IS NOT NULL AND date BETWEEN ? AND ? ORDER BY date` — `idx_milestones_date` range scan. |
+| `find_archival_snapshot(path)` | `SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots WHERE note_path = ?` — PK lookup. |
 
 ## Reconciliation semantics
 

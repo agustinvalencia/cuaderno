@@ -186,12 +186,28 @@ impl Vault {
         )?;
         let done_entry = build_index_entry_for(&done, &new_content, NoteType::Action.as_str())?;
 
+        // Snapshot the file at archival so the append-only lint (#111)
+        // has a baseline to compare against. The whole file is hashed —
+        // any future edit to the frontmatter or an existing body line
+        // flags; only bytes appended past `frozen_size` are allowed
+        // (the design's "six months later, follow-up" case).
+        let archived_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let snapshot = cdno_core::index::ArchivalSnapshot {
+            frozen_size: new_content.len() as u64,
+            frozen_hash: cdno_core::hash::content_hash(&new_content),
+            archived_at_ns,
+        };
+
         // Write-new + delete-old is a content-changing move; the index
         // swap mirrors complete_commitment.
         tx.write_file(done.clone(), new_content);
         tx.delete_file(active.clone());
         tx.upsert_note(done_entry);
         tx.remove_note(active);
+        tx.record_archival_snapshot(done, snapshot);
         Ok(())
     }
 
