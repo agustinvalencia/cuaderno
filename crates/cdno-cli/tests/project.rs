@@ -37,10 +37,11 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
         root,
         at,
         ProjectCommands::Create {
-            title: title.to_owned(),
-            context,
+            title: Some(title.to_owned()),
+            context: Some(context),
             question: None,
         },
+        true,
     )
     .expect("create");
 }
@@ -64,10 +65,11 @@ fn create_with_question_wraps_target_in_wikilink() {
         dir.path(),
         moment(2026, 5, 2, 9, 0),
         ProjectCommands::Create {
-            title: "Surrogate".to_owned(),
-            context: Context::Work,
+            title: Some("Surrogate".to_owned()),
+            context: Some(Context::Work),
             question: Some("questions/research/surrogate-cost".to_owned()),
         },
+        true,
     )
     .expect("create");
 
@@ -87,9 +89,10 @@ fn state_replaces_current_state_section() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::State {
-            slug: "x".to_owned(),
-            text: "Updated state.".to_owned(),
+            slug: Some("x".to_owned()),
+            text: Some("Updated state.".to_owned()),
         },
+        true,
     )
     .expect("state");
 
@@ -108,6 +111,7 @@ fn park_moves_file_to_parked_folder() {
         ProjectCommands::Park {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("park");
 
@@ -125,6 +129,7 @@ fn activate_moves_file_back_and_flips_status() {
         ProjectCommands::Park {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("park");
 
@@ -134,6 +139,7 @@ fn activate_moves_file_back_and_flips_status() {
         ProjectCommands::Activate {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("activate");
 
@@ -144,11 +150,22 @@ fn activate_moves_file_back_and_flips_status() {
 #[test]
 fn list_succeeds_with_and_without_active_projects() {
     let dir = vault();
-    project::run(dir.path(), moment(2026, 5, 2, 9, 0), ProjectCommands::List)
-        .expect("list (empty)");
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        ProjectCommands::List,
+        true,
+    )
+    .expect("list (empty)");
 
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Alpha", Context::Work);
-    project::run(dir.path(), moment(2026, 5, 2, 10, 0), ProjectCommands::List).expect("list (one)");
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::List,
+        true,
+    )
+    .expect("list (one)");
 }
 
 #[test]
@@ -162,6 +179,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         ProjectCommands::Show {
             slug: "alpha".to_owned(),
         },
+        true,
     )
     .expect("show active");
 
@@ -171,6 +189,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         ProjectCommands::Park {
             slug: "alpha".to_owned(),
         },
+        true,
     )
     .expect("park");
 
@@ -180,6 +199,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         ProjectCommands::Show {
             slug: "alpha".to_owned(),
         },
+        true,
     )
     .expect("show parked");
 
@@ -193,6 +213,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         ProjectCommands::Show {
             slug: "done".to_owned(),
         },
+        true,
     )
     .expect("show completed");
 }
@@ -220,6 +241,7 @@ fn show_renders_no_open_actions_branch() {
         ProjectCommands::Show {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("show with no open actions");
 }
@@ -232,9 +254,10 @@ fn show_renders_state_none_branch() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::State {
-            slug: "x".to_owned(),
-            text: "  ".to_owned(),
+            slug: Some("x".to_owned()),
+            text: Some("  ".to_owned()),
         },
+        true,
     )
     .expect("state");
 
@@ -244,6 +267,7 @@ fn show_renders_state_none_branch() {
         ProjectCommands::Show {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("show with empty state");
 }
@@ -260,6 +284,7 @@ fn show_renders_top_action_without_energy_branch() {
         ProjectCommands::Show {
             slug: "x".to_owned(),
         },
+        true,
     )
     .expect("show with bare action");
 }
@@ -280,6 +305,7 @@ fn milestone_add_writes_hard_bullet() {
                 hard: true,
             },
         },
+        true,
     )
     .expect("milestone add");
 
@@ -302,6 +328,7 @@ fn milestone_done_marks_with_completion_date() {
                 hard: true,
             },
         },
+        true,
     )
     .expect("milestone add");
 
@@ -314,6 +341,7 @@ fn milestone_done_marks_with_completion_date() {
                 query: "Submit".to_owned(),
             },
         },
+        true,
     )
     .expect("milestone done");
 
@@ -335,6 +363,7 @@ fn waiting_add_and_resolve_round_trip() {
                 description: "Compute allocation".to_owned(),
             },
         },
+        true,
     )
     .expect("waiting add");
 
@@ -350,6 +379,7 @@ fn waiting_add_and_resolve_round_trip() {
                 query: "Compute".to_owned(),
             },
         },
+        true,
     )
     .expect("waiting resolve");
 
@@ -376,4 +406,45 @@ fn parse_iso_date_rejects_other_formats_with_helpful_message() {
     let err = parse_iso_date("May 22 2026").unwrap_err();
     assert!(err.contains("YYYY-MM-DD"), "missing format hint: {err}");
     assert!(err.contains("May 22 2026"), "missing input echo: {err}");
+}
+
+// ---------------------------------------------------------------------
+// Non-interactive ergonomics for the retrofitted verbs (#114).
+// ---------------------------------------------------------------------
+
+#[test]
+fn create_in_non_interactive_errors_when_missing_title() {
+    let dir = vault();
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        ProjectCommands::Create {
+            title: None,
+            context: Some(Context::Work),
+            question: None,
+        },
+        true,
+    )
+    .expect_err("missing --title should error in non-interactive mode");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--title"), "error message: {msg}");
+}
+
+#[test]
+fn state_in_non_interactive_errors_when_missing_slug() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::State {
+            slug: None,
+            text: Some("Some state".to_owned()),
+        },
+        true,
+    )
+    .expect_err("missing --slug should error in non-interactive mode");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--slug"), "error message: {msg}");
 }

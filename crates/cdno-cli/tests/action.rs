@@ -35,10 +35,11 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
         root,
         at,
         ProjectCommands::Create {
-            title: title.to_owned(),
-            context,
+            title: Some(title.to_owned()),
+            context: Some(context),
             question: None,
         },
+        true,
     )
     .expect("create project");
 }

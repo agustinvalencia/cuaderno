@@ -131,7 +131,14 @@ fn project_full_lifecycle() {
     // create
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "ICML paper", "--context", "work"])
+        .args([
+            "project",
+            "create",
+            "--title",
+            "ICML paper",
+            "--context",
+            "work",
+        ])
         .assert()
         .success();
     let project_path = dir.path().join("projects/icml-paper.md");
@@ -140,7 +147,14 @@ fn project_full_lifecycle() {
     // state
     cdno()
         .current_dir(dir.path())
-        .args(["project", "state", "icml-paper", "Started feature B."])
+        .args([
+            "project",
+            "state",
+            "--slug",
+            "icml-paper",
+            "--text",
+            "Started feature B.",
+        ])
         .assert()
         .success();
     let body = std::fs::read_to_string(&project_path).unwrap();
@@ -236,17 +250,31 @@ fn project_list_prints_each_active_project_with_state() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "Alpha", "--context", "work"])
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
         .assert()
         .success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "Beta", "--context", "personal"])
+        .args([
+            "project",
+            "create",
+            "--title",
+            "Beta",
+            "--context",
+            "personal",
+        ])
         .assert()
         .success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "state", "alpha", "Just started."])
+        .args([
+            "project",
+            "state",
+            "--slug",
+            "alpha",
+            "--text",
+            "Just started.",
+        ])
         .assert()
         .success();
 
@@ -266,7 +294,14 @@ fn project_show_renders_summary_block() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "Surrogate Model", "--context", "work"])
+        .args([
+            "project",
+            "create",
+            "--title",
+            "Surrogate Model",
+            "--context",
+            "work",
+        ])
         .assert()
         .success();
     cdno()
@@ -274,7 +309,9 @@ fn project_show_renders_summary_block() {
         .args([
             "project",
             "state",
+            "--slug",
             "surrogate-model",
+            "--text",
             "Initial exploration.",
         ])
         .assert()
@@ -327,7 +364,7 @@ fn project_create_rejects_unknown_context() {
 
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "studies"])
+        .args(["project", "create", "--title", "X", "--context", "studies"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("studies"));
@@ -339,7 +376,7 @@ fn project_done_errors_when_action_not_found() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
 
@@ -364,7 +401,7 @@ fn project_waiting_add_and_resolve() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
 
@@ -403,7 +440,7 @@ fn project_milestone_add_and_done_round_trip() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
     cdno()
@@ -456,7 +493,7 @@ fn project_show_renders_parked_status() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
     cdno()
@@ -479,7 +516,7 @@ fn project_show_says_no_open_actions_after_completing_default() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
     // The template seeds one default action; complete it so the
@@ -529,14 +566,14 @@ fn project_show_renders_state_none_when_section_empty() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
     // Drive the state to whitespace-only; project_summary collapses
     // it to an empty snippet, and show prints `State: (none)`.
     cdno()
         .current_dir(dir.path())
-        .args(["project", "state", "x", "  "])
+        .args(["project", "state", "--slug", "x", "--text", "  "])
         .assert()
         .success();
 
@@ -577,7 +614,7 @@ fn project_milestone_date_must_be_iso_format() {
     cdno().arg("init").arg(dir.path()).assert().success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "create", "X", "--context", "work"])
+        .args(["project", "create", "--title", "X", "--context", "work"])
         .assert()
         .success();
 

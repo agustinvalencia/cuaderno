@@ -114,13 +114,13 @@ fn add(
     interactive: bool,
 ) -> Result<()> {
     let mut prompted = false;
-    let project = gather(project, "project", interactive, &mut prompted, || {
+    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
         prompt::prompt_project(vault)
     })?;
-    let title = gather(title, "title", interactive, &mut prompted, || {
+    let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
         prompt::prompt_text("Title")
     })?;
-    let energy = gather(energy, "energy", interactive, &mut prompted, || {
+    let energy = prompt::gather_or_error(energy, "energy", interactive, &mut prompted, || {
         prompt::prompt_energy()
     })?;
     // Only ask about --note when we're already in an interactive flow.
@@ -165,10 +165,10 @@ fn promote(
     interactive: bool,
 ) -> Result<()> {
     let mut prompted = false;
-    let project = gather(project, "project", interactive, &mut prompted, || {
+    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
         prompt::prompt_project(vault)
     })?;
-    let query = gather(query, "query", interactive, &mut prompted, || {
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
             .list_actions(&project)
             .context("listing actions for the bullet picker")?;
@@ -201,10 +201,10 @@ fn complete(
     interactive: bool,
 ) -> Result<()> {
     let mut prompted = false;
-    let project = gather(project, "project", interactive, &mut prompted, || {
+    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
         prompt::prompt_project(vault)
     })?;
-    let query = gather(query, "query", interactive, &mut prompted, || {
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
             .list_actions(&project)
             .context("listing actions for the bullet picker")?;
@@ -245,27 +245,6 @@ fn list(vault: &Vault, project: Option<String>, interactive: bool) -> Result<()>
 // ---------------------------------------------------------------------
 // Shared gather helper and small utilities.
 // ---------------------------------------------------------------------
-
-/// Fold a clap-optional value with the interactive / non-interactive
-/// rule: `Some` → return as-is; `None` + interactive → call `ask` and
-/// mark `prompted`; `None` + non-interactive → return a clear missing-
-/// flag error.
-fn gather<T>(
-    value: Option<T>,
-    flag: &str,
-    interactive: bool,
-    prompted: &mut bool,
-    ask: impl FnOnce() -> Result<T>,
-) -> Result<T> {
-    match value {
-        Some(v) => Ok(v),
-        None if interactive => {
-            *prompted = true;
-            ask()
-        }
-        None => Err(prompt::missing_flag(flag)),
-    }
-}
 
 /// Strip a trailing `(deep|medium|light)` suffix from a bullet label.
 /// Used when the interactive bullet picker hands back the full text —

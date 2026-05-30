@@ -30,10 +30,11 @@ fn commit_create_writes_active_commitment_file() {
         dir.path(),
         dt(2026, 5, 28, 9, 0),
         CommitCommands::Create {
-            title: "Pay rent".to_owned(),
-            due: ymd(2026, 6, 1),
-            context: Context::Personal,
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
         },
+        true,
     )
     .expect("commit create");
 
@@ -53,10 +54,11 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
         dir.path(),
         dt(2026, 5, 28, 9, 0),
         CommitCommands::Create {
-            title: "Pay rent".to_owned(),
-            due: ymd(2026, 6, 1),
-            context: Context::Personal,
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
         },
+        true,
     )
     .unwrap();
 
@@ -64,8 +66,9 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
         dir.path(),
         dt(2026, 5, 29, 14, 0),
         CommitCommands::Done {
-            slug: "pay-rent".to_owned(),
+            slug: Some("pay-rent".to_owned()),
         },
+        true,
     )
     .expect("commit done");
 
@@ -89,20 +92,22 @@ fn commitments_lists_active_in_window() {
         dir.path(),
         dt(2026, 5, 28, 9, 0),
         CommitCommands::Create {
-            title: "Pay rent".to_owned(),
-            due: ymd(2026, 6, 1),
-            context: Context::Personal,
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
         },
+        true,
     )
     .unwrap();
     commit::run(
         dir.path(),
         dt(2026, 5, 28, 9, 5),
         CommitCommands::Create {
-            title: "Book dentist".to_owned(),
-            due: ymd(2026, 8, 1),
-            context: Context::Personal,
+            title: Some("Book dentist".to_owned()),
+            due: Some(ymd(2026, 8, 1)),
+            context: Some(Context::Personal),
         },
+        true,
     )
     .unwrap();
 
@@ -125,10 +130,11 @@ fn commitments_weeks_flag_widens_the_window() {
         dir.path(),
         dt(2026, 5, 28, 9, 0),
         CommitCommands::Create {
-            title: "Book dentist".to_owned(),
-            due: ymd(2026, 8, 1),
-            context: Context::Personal,
+            title: Some("Book dentist".to_owned()),
+            due: Some(ymd(2026, 8, 1)),
+            context: Some(Context::Personal),
         },
+        true,
     )
     .unwrap();
 
@@ -148,4 +154,42 @@ fn commitments_on_empty_vault_shows_nothing_due() {
 
     let out = commitments::build_commitments(dir.path(), ymd(2026, 5, 28), 2).expect("list");
     assert!(out.contains("(nothing due)"), "empty:\n{out}");
+}
+
+// ---------------------------------------------------------------------
+// Non-interactive ergonomics for the retrofitted verbs (#114).
+// ---------------------------------------------------------------------
+
+#[test]
+fn commit_create_in_non_interactive_errors_when_missing_due() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+    let err = commit::run(
+        dir.path(),
+        dt(2026, 5, 28, 9, 0),
+        CommitCommands::Create {
+            title: Some("Pay rent".to_owned()),
+            due: None,
+            context: Some(Context::Personal),
+        },
+        true,
+    )
+    .expect_err("missing --due should error in non-interactive mode");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--due"), "error message: {msg}");
+}
+
+#[test]
+fn commit_done_in_non_interactive_errors_when_missing_slug() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+    let err = commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 14, 0),
+        CommitCommands::Done { slug: None },
+        true,
+    )
+    .expect_err("missing --slug should error in non-interactive mode");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--slug"), "error message: {msg}");
 }
