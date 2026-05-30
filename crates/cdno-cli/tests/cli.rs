@@ -210,7 +210,9 @@ fn project_full_lifecycle() {
             "project",
             "milestone",
             "add",
+            "--slug",
             "icml-paper",
+            "--title",
             "Submit camera-ready",
             "--date",
             "2026-05-22",
@@ -227,7 +229,7 @@ fn project_full_lifecycle() {
     // park
     cdno()
         .current_dir(dir.path())
-        .args(["project", "park", "icml-paper"])
+        .args(["project", "park", "--slug", "icml-paper"])
         .assert()
         .success();
     assert!(!project_path.is_file(), "active path empty after park");
@@ -237,7 +239,7 @@ fn project_full_lifecycle() {
     // activate
     cdno()
         .current_dir(dir.path())
-        .args(["project", "activate", "icml-paper"])
+        .args(["project", "activate", "--slug", "icml-paper"])
         .assert()
         .success();
     assert!(project_path.is_file(), "active path back");
@@ -411,7 +413,9 @@ fn project_waiting_add_and_resolve() {
             "project",
             "waiting",
             "add",
+            "--slug",
             "x",
+            "--description",
             "Compute allocation - 500 GPU-hours",
         ])
         .assert()
@@ -424,7 +428,9 @@ fn project_waiting_add_and_resolve() {
 
     cdno()
         .current_dir(dir.path())
-        .args(["project", "waiting", "resolve", "x", "Compute"])
+        .args([
+            "project", "waiting", "resolve", "--slug", "x", "--query", "Compute",
+        ])
         .assert()
         .success();
     let body = std::fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
@@ -449,7 +455,9 @@ fn project_milestone_add_and_done_round_trip() {
             "project",
             "milestone",
             "add",
+            "--slug",
             "x",
+            "--title",
             "Submit camera-ready",
             "--date",
             "2026-05-22",
@@ -459,7 +467,15 @@ fn project_milestone_add_and_done_round_trip() {
         .success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "milestone", "done", "x", "camera-ready"])
+        .args([
+            "project",
+            "milestone",
+            "done",
+            "--slug",
+            "x",
+            "--query",
+            "camera-ready",
+        ])
         .assert()
         .success();
 
@@ -498,7 +514,7 @@ fn project_show_renders_parked_status() {
         .success();
     cdno()
         .current_dir(dir.path())
-        .args(["project", "park", "x"])
+        .args(["project", "park", "--slug", "x"])
         .assert()
         .success();
 
@@ -624,7 +640,9 @@ fn project_milestone_date_must_be_iso_format() {
             "project",
             "milestone",
             "add",
+            "--slug",
             "x",
+            "--title",
             "First",
             "--date",
             "May 22 2026",

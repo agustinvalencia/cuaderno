@@ -47,10 +47,18 @@ pub enum ProjectCommands {
     },
 
     /// Move an active project to projects/_parked/.
-    Park { slug: String },
+    Park {
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
+    },
 
     /// Bring a parked project back, enforcing the active-project cap.
-    Activate { slug: String },
+    Activate {
+        /// Project slug (parked).
+        #[arg(long)]
+        slug: Option<String>,
+    },
 
     /// List active projects with their state snippet.
     List,
@@ -75,21 +83,27 @@ pub enum ProjectCommands {
 pub enum MilestoneCommands {
     /// Add a milestone with a target or hard date.
     Add {
-        slug: String,
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
         /// Milestone title.
-        title: String,
+        #[arg(long)]
+        title: Option<String>,
         /// Target date (YYYY-MM-DD).
         #[arg(long, value_parser = parse_iso_date)]
-        date: NaiveDate,
+        date: Option<NaiveDate>,
         /// Treat as a hard deadline (counted in commitments aggregation).
         #[arg(long)]
         hard: bool,
     },
     /// Mark a milestone as done by substring match.
     Done {
-        slug: String,
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
         /// Substring matching the milestone title.
-        query: String,
+        #[arg(long)]
+        query: Option<String>,
     },
 }
 
@@ -97,24 +111,29 @@ pub enum MilestoneCommands {
 pub enum WaitingCommands {
     /// Add a waiting-on item.
     Add {
-        slug: String,
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
         /// Description of what's blocking.
-        description: String,
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Resolve (remove) a waiting-on item by substring match.
     Resolve {
-        slug: String,
+        /// Project slug.
+        #[arg(long)]
+        slug: Option<String>,
         /// Substring matching the waiting-on item.
-        query: String,
+        #[arg(long)]
+        query: Option<String>,
     },
 }
 
 /// Dispatch a parsed `cdno project ...` invocation. `at` is the
 /// timestamp used for any daily-log writes the underlying domain
 /// operation performs. `no_interactive` is forwarded from the global
-/// CLI flag and used by the retrofitted verbs (Create, State); the
-/// pre-retrofit verbs (Park / Activate / Milestone / Waiting) still
-/// take required positionals and ignore the flag.
+/// CLI flag; every mutating verb now follows the ergonomics
+/// convention (gather missing fields → confirm-on-prompt → execute).
 pub fn run(
     root: &Path,
     at: NaiveDateTime,
@@ -132,16 +151,8 @@ pub fn run(
         ProjectCommands::State { slug, text } => {
             state(&vault, at, slug, text, interactive)?;
         }
-        ProjectCommands::Park { slug } => {
-            let path = vault.park_project(at, &slug).context("parking project")?;
-            println!("Parked at {path}");
-        }
-        ProjectCommands::Activate { slug } => {
-            let path = vault
-                .activate_project(at, &slug)
-                .context("activating project")?;
-            println!("Activated at {path}");
-        }
+        ProjectCommands::Park { slug } => park(&vault, at, slug, interactive)?,
+        ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive)?,
         ProjectCommands::List => {
             let active = vault.active_projects().context("listing active projects")?;
             print_active_list(&vault, &active)?;
@@ -158,31 +169,17 @@ pub fn run(
                 title,
                 date,
                 hard,
-            } => {
-                let path = vault
-                    .add_milestone(at, &slug, &title, date, hard)
-                    .context("adding milestone")?;
-                println!("Milestone added to {path}");
-            }
+            } => milestone_add(&vault, at, slug, title, date, hard, interactive)?,
             MilestoneCommands::Done { slug, query } => {
-                let path = vault
-                    .complete_milestone(at, &slug, &query)
-                    .context("completing milestone")?;
-                println!("Milestone done on {path}");
+                milestone_done(&vault, at, slug, query, interactive)?
             }
         },
         ProjectCommands::Waiting { action } => match action {
             WaitingCommands::Add { slug, description } => {
-                let path = vault
-                    .add_waiting_on(at, &slug, &description)
-                    .context("adding waiting-on item")?;
-                println!("Waiting-on added to {path}");
+                waiting_add(&vault, at, slug, description, interactive)?
             }
             WaitingCommands::Resolve { slug, query } => {
-                let path = vault
-                    .resolve_waiting_on(at, &slug, &query)
-                    .context("resolving waiting-on item")?;
-                println!("Waiting-on resolved on {path}");
+                waiting_resolve(&vault, at, slug, query, interactive)?
             }
         },
     }
@@ -259,6 +256,195 @@ fn state(
         .update_project_state(at, &slug, &text)
         .context("updating project state")?;
     println!("Updated {path}");
+    Ok(())
+}
+
+/// `cdno project park` — fuzzy slug picker over active projects.
+fn park(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    if prompted && !prompt::confirm_preview(&format!("About to park project '{slug}'"))? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault.park_project(at, &slug).context("parking project")?;
+    println!("Parked at {path}");
+    Ok(())
+}
+
+/// `cdno project activate` — fuzzy slug picker over *parked* projects.
+fn activate(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_parked_project(vault)
+    })?;
+    if prompted && !prompt::confirm_preview(&format!("About to activate project '{slug}'"))? {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .activate_project(at, &slug)
+        .context("activating project")?;
+    println!("Activated at {path}");
+    Ok(())
+}
+
+/// `cdno project milestone add` — slug picker, title text, calendar
+/// date, hard/soft confirm.
+fn milestone_add(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    title: Option<String>,
+    date: Option<NaiveDate>,
+    hard_flag: bool,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
+        prompt::prompt_text("Milestone title")
+    })?;
+    let date = prompt::gather_or_error(date, "date", interactive, &mut prompted, || {
+        prompt::prompt_date("Target date")
+    })?;
+    // Only ask about --hard when we're already in an interactive flow.
+    let hard = if prompted {
+        prompt::prompt_hard_soft()?
+    } else {
+        hard_flag
+    };
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to add milestone to '{slug}':\n  title: {title}\n  date:  {date}\n  hard:  {hard}"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .add_milestone(at, &slug, &title, date, hard)
+        .context("adding milestone")?;
+    println!("Milestone added to {path}");
+    Ok(())
+}
+
+/// `cdno project milestone done` — slug picker, then fuzzy open-
+/// milestone picker (via [`Vault::open_milestones`]).
+fn milestone_done(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    query: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
+        prompt::prompt_open_milestone(&slug, vault)
+    })?;
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to mark milestone '{query}' on '{slug}' as done"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .complete_milestone(at, &slug, &query)
+        .context("completing milestone")?;
+    println!("Milestone done on {path}");
+    Ok(())
+}
+
+/// `cdno project waiting add` — slug picker + text input for the
+/// blocker description.
+fn waiting_add(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    description: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let description = prompt::gather_or_error(
+        description,
+        "description",
+        interactive,
+        &mut prompted,
+        || prompt::prompt_text("Waiting on"),
+    )?;
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to add waiting-on to '{slug}': {description}"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .add_waiting_on(at, &slug, &description)
+        .context("adding waiting-on item")?;
+    println!("Waiting-on added to {path}");
+    Ok(())
+}
+
+/// `cdno project waiting resolve` — slug picker, then plain text
+/// query input. A fuzzy picker over open waiting items lands when its
+/// supporting domain query is wanted; for now a substring of the item
+/// resolves uniquely via the domain matcher.
+fn waiting_resolve(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    query: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
+        prompt::prompt_text("Waiting-on substring to resolve")
+    })?;
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to resolve waiting-on on '{slug}': '{query}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .resolve_waiting_on(at, &slug, &query)
+        .context("resolving waiting-on item")?;
+    println!("Waiting-on resolved on {path}");
     Ok(())
 }
 

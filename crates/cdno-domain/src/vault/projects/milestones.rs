@@ -6,6 +6,7 @@
 
 use chrono::{NaiveDate, NaiveDateTime};
 
+use cdno_core::index::MilestoneEntry;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -140,6 +141,14 @@ impl Vault {
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// Pending (uncompleted) milestones for a project, in source
+    /// order — the candidate set for the `cdno project milestone done`
+    /// fuzzy picker. Thin filter over [`milestones_for_project`].
+    pub fn open_milestones(&self, slug: &str) -> Result<Vec<MilestoneEntry>, DomainError> {
+        let all = self.index.milestones_for_project(slug)?;
+        Ok(all.into_iter().filter(|m| !m.completed).collect())
     }
 }
 

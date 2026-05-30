@@ -164,7 +164,9 @@ subcommands can import without per-crate Cargo edits.
 | Verb | Convention applied |
 |---|---|
 | `cdno action add / promote / complete / list` | #113 |
-| `cdno project create / state` | #114 (this PR) |
-| `cdno commit create / done` | #114 (this PR) |
-| `cdno project park / activate / milestone add+done / waiting add+resolve` | #114 follow-up — convention applies, picker prompts (active commitments, open milestones, open waitings) wait for the matching domain queries |
+| `cdno project create / state / park / activate / milestone add+done / waiting add+resolve` | #114 (split across two PRs) |
+| `cdno commit create / done` | #114 |
 | `cdno orient` (`--energy` already optional) | covered ad-hoc |
+
+**Picker prompts available**: project (active), parked project, action bullet, open milestone, energy, life-domain context, date, hard/soft.
+**Plain text prompts** (fuzzy pickers deferred): `waiting resolve` query, `commit done` slug — both pending the matching domain queries (open waiting items per project, active commitments listing).

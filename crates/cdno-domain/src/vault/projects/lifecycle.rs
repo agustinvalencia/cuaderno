@@ -47,6 +47,23 @@ impl Vault {
         Ok(out)
     }
 
+    /// Return every parked project: pairs of `(path, frontmatter)`.
+    /// Mirrors [`active_projects`](Self::active_projects); used by the
+    /// CLI's `cdno project activate` fuzzy picker, which only has
+    /// parked projects as candidates.
+    pub fn parked_projects(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
+        let mut out = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Project.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let project = ProjectFrontmatter::try_from(fm)?;
+            if project.status == ProjectStatus::Parked {
+                out.push((entry.path, project));
+            }
+        }
+        Ok(out)
+    }
+
     /// Scaffold a new project from the built-in template.
     ///
     /// Below the configurable cap (`config.max_active_projects`,
