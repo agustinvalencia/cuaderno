@@ -18,14 +18,17 @@
 //! stewardship list` (#43) presents only one of them, so the
 //! collision is unlikely outside hand edits.
 
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::Context;
+use crate::frontmatter::{Context, StewardshipFrontmatter, TrackingFrontmatter};
 use crate::note_type::NoteType;
 use crate::recurrence::Recurrence;
 
@@ -38,6 +41,45 @@ const STEWARDSHIP_TEMPLATE: &str = include_str!("../../templates/stewardship.md"
 /// Heading of the section that holds periodic commitment lines on a
 /// stewardship dashboard (design §5.6).
 pub(in crate::vault) const PERIODIC_COMMITMENTS_SECTION: &str = "Periodic Commitments";
+
+/// Which on-disk variant a stewardship lives as. Drives where tracking
+/// notes can land (only expanded stewardships have a `tracking/`
+/// subdirectory) and what `cdno stewardship show` (#44) renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StewardshipVariant {
+    /// `stewardships/<slug>.md` — single file, no tracking subdir.
+    Flat,
+    /// `stewardships/<slug>/_index.md` — folder with optional
+    /// `tracking/` and `routines/` siblings.
+    Expanded,
+}
+
+/// One row in the `Vault::list_stewardships` output. Aggregates
+/// per-stewardship metadata that's expensive to recompute by hand:
+/// the variant, the count of tracking notes filed into the folder,
+/// and the most recent tracking date (the staleness proxy that
+/// stands in for a hard "status" field — design §5.6 keeps the
+/// dashboard's status as prose in the body).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StewardshipSummary {
+    pub slug: String,
+    /// The dashboard's body H1. Empty string if absent — lint will
+    /// flag that separately.
+    pub name: String,
+    pub context: Context,
+    pub variant: StewardshipVariant,
+    /// Always `0` for [`StewardshipVariant::Flat`]: flat dashboards
+    /// have no `tracking/` subdir by design.
+    pub tracking_count: usize,
+    /// `date` of the most recent tracking note in the folder, or
+    /// `None` when none exists yet.
+    pub last_tracking_date: Option<NaiveDate>,
+    /// Days from `today` (passed into [`list_stewardships`]) back to
+    /// `last_tracking_date`. `None` when there's no tracking to
+    /// measure against. Negative for future-dated tracking (rare;
+    /// catches typos).
+    pub staleness_days: Option<i64>,
+}
 
 impl Vault {
     /// Create a flat stewardship dashboard at `stewardships/<slug>.md`
@@ -168,18 +210,137 @@ impl Vault {
         &self,
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
+        let (resolved, _variant) = self.resolve_stewardship_with_variant(slug)?;
+        Ok(resolved)
+    }
+
+    /// Like [`resolve_stewardship_by_slug`](Self::resolve_stewardship_by_slug)
+    /// but also returns which variant matched — needed by the
+    /// tracking-note op (#43) and by `cdno stewardship show` (#44).
+    pub(in crate::vault) fn resolve_stewardship_with_variant(
+        &self,
+        slug: &str,
+    ) -> Result<(VaultPath, StewardshipVariant), DomainError> {
         let (_slug, flat_path, expanded_path) = resolve_paths(slug)?;
         let flat_exists = self.store.exists(&flat_path)?;
         let expanded_exists = self.store.exists(&expanded_path)?;
         match (flat_exists, expanded_exists) {
             (true, true) => Err(DomainError::AmbiguousSlug(slug.to_owned())),
-            (true, false) => Ok(flat_path),
-            (false, true) => Ok(expanded_path),
+            (true, false) => Ok((flat_path, StewardshipVariant::Flat)),
+            (false, true) => Ok((expanded_path, StewardshipVariant::Expanded)),
             (false, false) => Err(DomainError::Store(StoreError::NotFound(format!(
                 "stewardships/{slug}(.md or /_index.md)",
             )))),
         }
     }
+
+    /// One [`StewardshipSummary`] per indexed stewardship, sorted by
+    /// slug. Counts tracking notes and finds the most recent `date`
+    /// in a single pass over the tracking index — each tracking file
+    /// is read once even when several stewardships share the scan.
+    ///
+    /// `today` lets the function stay pure (no `Local::now`); pass
+    /// `Local::now().date_naive()` at the CLI boundary.
+    ///
+    /// A malformed stewardship or tracking note propagates its parse
+    /// error rather than being silently skipped — lint is the place
+    /// to surface partial-coverage warnings.
+    pub fn list_stewardships(
+        &self,
+        today: NaiveDate,
+    ) -> Result<Vec<StewardshipSummary>, DomainError> {
+        let stewardship_entries = self.index.list_by_type(NoteType::Stewardship.as_str())?;
+        let tracking_entries = self.index.list_by_type(NoteType::Tracking.as_str())?;
+
+        // Single pass over tracking: bucket by the `stewardship`
+        // field of each note's frontmatter, which is the canonical
+        // grouping key (robust against hand-edited filenames).
+        let mut by_stewardship: HashMap<String, (usize, Option<NaiveDate>)> = HashMap::new();
+        for entry in &tracking_entries {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let tf = TrackingFrontmatter::try_from(fm)?;
+            let bucket = by_stewardship
+                .entry(tf.stewardship.clone())
+                .or_insert((0, None));
+            bucket.0 += 1;
+            bucket.1 = Some(match bucket.1 {
+                Some(prev) => prev.max(tf.date),
+                None => tf.date,
+            });
+        }
+
+        let mut out = Vec::with_capacity(stewardship_entries.len());
+        for s_entry in stewardship_entries {
+            let raw = self.store.read_file(&s_entry.path)?;
+            let (fm, body) = Frontmatter::parse(&raw)?;
+            let sf = StewardshipFrontmatter::try_from(fm)?;
+            let slug = stewardship_slug_from_path(&s_entry.path);
+            let variant = stewardship_variant_from_path(&s_entry.path);
+            // Flat stewardships have no tracking subdir; report zero
+            // even if a defensive bucket somehow exists.
+            let (tracking_count, last_tracking_date) = match variant {
+                StewardshipVariant::Flat => (0, None),
+                StewardshipVariant::Expanded => {
+                    by_stewardship.get(&slug).copied().unwrap_or((0, None))
+                }
+            };
+            let staleness_days = last_tracking_date.map(|d| (today - d).num_days());
+            out.push(StewardshipSummary {
+                slug,
+                name: extract_h1(body),
+                context: sf.context,
+                variant,
+                tracking_count,
+                last_tracking_date,
+                staleness_days,
+            });
+        }
+        out.sort_by(|a, b| a.slug.cmp(&b.slug));
+        Ok(out)
+    }
+}
+
+/// Extract the slug from a stewardship's path. Handles both flat
+/// (`stewardships/<slug>.md`) and expanded
+/// (`stewardships/<slug>/_index.md`) layouts.
+pub(in crate::vault) fn stewardship_slug_from_path(path: &VaultPath) -> String {
+    let p = path.as_path();
+    if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
+        return p
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+    }
+    p.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned()
+}
+
+/// Infer the variant from a stewardship's path: `_index.md` filename
+/// signals expanded; anything else signals flat.
+pub(in crate::vault) fn stewardship_variant_from_path(path: &VaultPath) -> StewardshipVariant {
+    if path.as_path().file_name().and_then(|s| s.to_str()) == Some("_index.md") {
+        StewardshipVariant::Expanded
+    } else {
+        StewardshipVariant::Flat
+    }
+}
+
+/// Return the text of the first ATX H1 line in `body`, with the
+/// leading `# ` and trailing whitespace stripped. Falls back to
+/// `String::new()` when no H1 is present.
+fn extract_h1(body: &str) -> String {
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("# ") {
+            return rest.trim().to_owned();
+        }
+    }
+    String::new()
 }
 
 /// Compute the canonical slug and both on-disk paths for a stewardship

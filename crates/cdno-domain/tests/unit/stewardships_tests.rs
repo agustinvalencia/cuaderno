@@ -10,10 +10,10 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, StewardshipFrontmatter};
 use cdno_domain::recurrence::Recurrence;
+use cdno_domain::{StewardshipSummary, StewardshipVariant, Vault};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -307,6 +307,93 @@ fn add_periodic_commitment_stacks_multiple_lines_in_order() {
     let tax_idx = body.find("Tax declaration").expect("first line present");
     let budget_idx = body.find("Budget review").expect("second line present");
     assert!(tax_idx < budget_idx, "insertion order preserved");
+}
+
+// ---------------------------------------------------------------------
+// list_stewardships
+// ---------------------------------------------------------------------
+
+fn today() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 5, 1).unwrap()
+}
+
+#[test]
+fn list_stewardships_returns_empty_for_empty_vault() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    assert!(vault.list_stewardships(today()).unwrap().is_empty());
+}
+
+#[test]
+fn list_stewardships_carries_name_context_variant_sorted_by_slug() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .unwrap();
+
+    let summaries = vault.list_stewardships(today()).unwrap();
+    let slugs: Vec<&str> = summaries.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["finances", "health"]);
+
+    let fin = summaries.iter().find(|s| s.slug == "finances").unwrap();
+    assert_eq!(fin.name, "Finances");
+    assert_eq!(fin.context, Context::Household);
+    assert_eq!(fin.variant, StewardshipVariant::Flat);
+    assert_eq!(fin.tracking_count, 0);
+    assert_eq!(fin.last_tracking_date, None);
+    assert_eq!(fin.staleness_days, None);
+
+    let h = summaries.iter().find(|s| s.slug == "health").unwrap();
+    assert_eq!(h.variant, StewardshipVariant::Expanded);
+    assert_eq!(h.tracking_count, 0);
+}
+
+#[test]
+fn list_stewardships_counts_tracking_and_reports_latest_date() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    vault
+        .add_tracking_entry(dt(2026, 4, 10, 9, 0), "health", "gym", "")
+        .unwrap();
+    vault
+        .add_tracking_entry(dt(2026, 4, 20, 9, 0), "health", "body", "")
+        .unwrap();
+    vault
+        .add_tracking_entry(dt(2026, 4, 15, 9, 0), "health", "swim", "")
+        .unwrap();
+
+    let summaries = vault.list_stewardships(today()).unwrap();
+    let h = summaries.iter().find(|s| s.slug == "health").unwrap();
+    assert_eq!(h.tracking_count, 3);
+    assert_eq!(
+        h.last_tracking_date,
+        Some(NaiveDate::from_ymd_opt(2026, 4, 20).unwrap())
+    );
+    assert_eq!(h.staleness_days, Some(11));
+}
+
+#[test]
+fn list_stewardships_keeps_flat_count_at_zero_even_if_orphan_tracking_exists() {
+    // Hand-seed a tracking note that erroneously names a flat
+    // stewardship. The summary must still report zero — flat
+    // dashboards have no tracking subdir by design.
+    let orphan = "---\ntype: tracking\nstewardship: finances\nactivity: gym\ndate: 2026-04-10\nduration_min: null\nroutine: null\n---\n\n# Gym\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        (
+            "stewardships/finances.md",
+            "---\ntype: stewardship\ncontext: household\n---\n\n# Finances\n",
+        ),
+        ("stewardships/finances/tracking/2026-04-10-gym.md", orphan),
+    ]);
+
+    let summaries: Vec<StewardshipSummary> = vault.list_stewardships(today()).unwrap();
+    let fin = summaries.iter().find(|s| s.slug == "finances").unwrap();
+    assert_eq!(fin.variant, StewardshipVariant::Flat);
+    assert_eq!(fin.tracking_count, 0);
 }
 
 // ---------------------------------------------------------------------

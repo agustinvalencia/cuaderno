@@ -66,6 +66,11 @@ pub enum DomainError {
     #[error("ambiguous slug '{0}' \u{2014} matches more than one note across domains")]
     AmbiguousSlug(String),
 
+    #[error(
+        "stewardship '{0}' is flat \u{2014} only expanded stewardships have a tracking/ subdir; convert it by moving to stewardships/{0}/_index.md first"
+    )]
+    TrackingOnFlatStewardship(String),
+
     #[error("required field '{field}' cannot be empty")]
     EmptyField { field: &'static str },
 

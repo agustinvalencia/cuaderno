@@ -26,7 +26,7 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
-use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
+use super::stewardships::{PERIODIC_COMMITMENTS_SECTION, stewardship_slug_from_path};
 
 const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
 
@@ -406,25 +406,4 @@ fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
         .unwrap_or(after_marker);
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
     Some((title, date))
-}
-
-/// Extract the slug of a stewardship from its `_index.md` (expanded)
-/// or root-level `.md` (flat) path. Returns `""` for malformed paths;
-/// the caller already filtered to `type: stewardship`.
-fn stewardship_slug_from_path(path: &VaultPath) -> String {
-    let p = path.as_path();
-    if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
-        // Expanded: stewardships/<slug>/_index.md
-        return p
-            .parent()
-            .and_then(|d| d.file_name())
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_owned();
-    }
-    // Flat: stewardships/<slug>.md
-    p.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_owned()
 }

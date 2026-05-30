@@ -14,5 +14,6 @@ pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport};
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, LapsedHabit,
-    OrientationContext, PortfolioSummary, ProjectSummary, QuestionSummary, TopAction, Vault,
+    OrientationContext, PortfolioSummary, ProjectSummary, QuestionSummary, StewardshipSummary,
+    StewardshipVariant, TopAction, Vault,
 };
