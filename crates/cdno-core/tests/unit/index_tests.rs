@@ -21,8 +21,8 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // Bumped to 3 by the archived-action snapshots migration (#111).
-    assert_eq!(version, 3);
+    // Single combined initial migration — see SCHEMA.md.
+    assert_eq!(version, 1);
 
     // All tables exist.
     for table in [
@@ -58,7 +58,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 3);
+    assert_eq!(row_count, 1);
 }
 
 #[test]

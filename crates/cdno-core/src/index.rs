@@ -23,23 +23,11 @@ use crate::path::VaultPath;
 ///
 /// Every schema change is a new entry appended here. Migrations are
 /// applied strictly in order; never edit a migration that has shipped.
-const MIGRATIONS: &[(u32, &str, &str)] = &[
-    (
-        1,
-        "Initial schema: notes, deadlines, links, note_tags, schema_migrations",
-        include_str!("../migrations/001_initial.sql"),
-    ),
-    (
-        2,
-        "Milestones index table",
-        include_str!("../migrations/002_milestones.sql"),
-    ),
-    (
-        3,
-        "Archived action snapshots for append-only lint",
-        include_str!("../migrations/003_archived_action_snapshots.sql"),
-    ),
-];
+const MIGRATIONS: &[(u32, &str, &str)] = &[(
+    1,
+    "Initial schema: notes, deadlines, links, note_tags, milestones, archived_action_snapshots",
+    include_str!("../migrations/001_initial.sql"),
+)];
 
 /// SQLite-backed implementation of the vault index.
 ///
