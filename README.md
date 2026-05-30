@@ -9,6 +9,76 @@ A vault management tool implementing the **Research Logbook Method** (RLM) — a
 **Command**: `cdno` (alias: `cdrn`)
 **Full name**: cuaderno ("notebook" / "logbook" in Spanish)
 
+## Getting Started
+
+### Install (from source)
+
+Cuaderno is in active pre-release development; the only install path today is building from source. A Homebrew tap and pre-built binaries are planned but not yet shipped.
+
+```bash
+git clone https://github.com/agustinvalencia/cuaderno
+cd cuaderno
+cargo build --release
+# The binary lands at target/release/cdno — symlink or copy it
+# somewhere on your PATH, for example:
+ln -s "$PWD/target/release/cdno" /usr/local/bin/cdno
+```
+
+Verify:
+
+```bash
+cdno --version
+```
+
+### Initialise a vault
+
+```bash
+cdno init ~/notebook   # creates the folder tree + .cuaderno/ config
+cd ~/notebook
+```
+
+`init` lays down the full vault structure (journal, projects, commitments, actions, portfolios, …) and writes a local config at `.cuaderno/config.toml`. From inside any subdirectory `cdno` discovers the vault root automatically.
+
+### The daily loop in five commands
+
+Capture a project, queue an action, promise a deadline, run the morning view, mark something done:
+
+```bash
+# 1. Start a new project. With no flags, in a TTY, cdno prompts for
+#    title and context; piping or `--no-interactive` requires every
+#    flag explicitly. The same flag-or-prompt pattern applies to
+#    every mutating verb — see docs/cli-ergonomics.md.
+cdno project create --title "Surrogate model" --context work
+
+# 2. Add a next action. `--note` creates a manifest action note
+#    alongside the bullet for heavier multi-day work.
+cdno action add --project surrogate-model \
+                --title "Run feature set B on full geometry mesh" \
+                --energy deep
+
+# 3. Promise something with a deadline.
+cdno commit create --title "Pay rent" --due 2026-06-01 --context personal
+
+# 4. Morning orientation: commitments due in the next 48h plus
+#    anything overdue, your active projects with their top next
+#    action, and a suggested starting point. `--energy` biases the
+#    suggestion toward a project whose top action matches.
+cdno orient --energy deep
+
+# 5. Mark an action done. Wikilinked bullets archive their attached
+#    note to actions/_done/<year>/ automatically and the file is
+#    locked against prefix edits by the append-only lint.
+cdno action complete --project surrogate-model --query "feature set B"
+```
+
+For the full verb list: `cdno --help`, then `cdno <verb> --help`.
+
+### Where to go next
+
+- **[`docs/design.md`](docs/design.md)** — full specification of the note types, folder structure, the RLM rationale, and the CLI / MCP / UI surfaces.
+- **[`docs/cli-ergonomics.md`](docs/cli-ergonomics.md)** — the flags-and-prompts convention every mutating verb follows. Useful when scripting, in CI, or when an interactive prompt isn't where you'd expect.
+- **[`docs/implementation-plan.md`](docs/implementation-plan.md)** — architecture, trait landscape, and the phased build sequence.
+
 ## The Research Logbook Method
 
 The RLM distils practices from Faraday, Darwin, Hamming, Knuth, and Tao into six pillars:
@@ -84,9 +154,11 @@ The tool has four consumers:
 
 ## Status
 
-In early development — design and implementation planning are complete, initial crate scaffolding is next.
+Phase 2 of [the build sequence](docs/implementation-plan.md) is complete: the CLI is daily-usable end-to-end. Projects (create, state, milestones, waiting, park / activate), the action layer (bullets and the heavier manifest notes, with `add` / `promote` / `complete` / `list`), commitments (create, complete, aggregated timeline), the morning `cdno orient` and `cdno status` views, and the append-only-after-completion lint that protects archived action notes — all reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md).
 
-## Acknoledgements
+The MCP server (Phase 4) and the Tauri desktop UI (Phase 5) are scaffolded but not yet implemented.
+
+## Acknowledgements
 
 - The planning a task management has carried out mostly by Claude with `gh cli`
 - The software has been mostly architected by me, with second opinions of Claude
