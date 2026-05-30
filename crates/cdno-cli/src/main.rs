@@ -23,6 +23,12 @@ use cdno_domain::frontmatter::EnergyLevel;
     version
 )]
 struct Cli {
+    /// Disable interactive prompts; missing required args become
+    /// errors rather than prompting. Useful for scripts and CI.
+    /// Always implicit when stdout is not a TTY.
+    #[arg(long, global = true)]
+    no_interactive: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -139,7 +145,12 @@ fn main() -> Result<()> {
         }
         Commands::Action { subcommand } => {
             let root = discover_vault_root_or_error()?;
-            commands::action::run(&root, Local::now().naive_local(), subcommand)
+            commands::action::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+            )
         }
         Commands::Commit { subcommand } => {
             let root = discover_vault_root_or_error()?;

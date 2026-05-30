@@ -36,6 +36,11 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
 
+# Interactive CLI prompts (fuzzy selectors, calendar widgets, confirms)
+# applied for missing-but-required-in-TTY args. CLI-only; library and
+# domain crates never see prompts.
+inquire = "0.7"
+
 # Binary-only error glue. Library crates use thiserror; the CLI
 # translates structured errors into human-readable output here.
 anyhow = "1"

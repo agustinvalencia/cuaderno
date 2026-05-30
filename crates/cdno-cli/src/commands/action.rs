@@ -3,9 +3,12 @@
 //! shims; `list` reads `Vault::list_actions` and formats the bullets
 //! with their attached-note status inline.
 //!
-//! Replaces the earlier `cdno project action` / `cdno project done`
-//! entry points — straight rename, no deprecation, since the CLI is
-//! unshipped.
+//! Promptable fields are declared `Option<T>`. In a TTY (and unless
+//! `--no-interactive` is set) a missing field is gathered via the
+//! `prompt` module; in non-interactive sessions missing fields error
+//! with a clear "missing --flag" message. The handler tracks whether
+//! anything was prompted and renders a preview-and-confirm step in
+//! that case, matching the design's "confirm-on-prompt only" rule.
 
 use std::path::Path;
 
@@ -14,9 +17,10 @@ use chrono::NaiveDateTime;
 use clap::Subcommand;
 
 use cdno_domain::frontmatter::{ActionStatus, EnergyLevel};
-use cdno_domain::{ActionListEntry, AttachedAction};
+use cdno_domain::{ActionListEntry, AttachedAction, Vault};
 
 use crate::bootstrap;
+use crate::prompt;
 
 #[derive(Debug, Subcommand)]
 pub enum ActionCommands {
@@ -24,12 +28,14 @@ pub enum ActionCommands {
     /// note alongside the bullet and wikilinks it.
     Add {
         /// Project slug.
-        project: String,
+        #[arg(long)]
+        project: Option<String>,
         /// Action title.
-        title: String,
+        #[arg(long)]
+        title: Option<String>,
         /// Energy bucket: deep, medium, or light.
         #[arg(long)]
-        energy: EnergyLevel,
+        energy: Option<EnergyLevel>,
         /// Promote on creation: also write an action note and wikilink
         /// the bullet to it.
         #[arg(long)]
@@ -40,9 +46,11 @@ pub enum ActionCommands {
     /// Substring-matches the bullet text; energy is inherited.
     Promote {
         /// Project slug.
-        project: String,
+        #[arg(long)]
+        project: Option<String>,
         /// Substring matching the bullet to promote.
-        query: String,
+        #[arg(long)]
+        query: Option<String>,
     },
 
     /// Mark a next action as completed by case-insensitive substring
@@ -50,58 +58,230 @@ pub enum ActionCommands {
     /// `actions/_done/<year>/`.
     Complete {
         /// Project slug.
-        project: String,
+        #[arg(long)]
+        project: Option<String>,
         /// Substring matching the action to complete.
-        query: String,
+        #[arg(long)]
+        query: Option<String>,
     },
 
     /// List a project's open action bullets, with the attached-note
     /// status (active / blocked / completed) inline when present.
     List {
         /// Project slug.
-        project: String,
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
-pub fn run(root: &Path, at: NaiveDateTime, command: ActionCommands) -> Result<()> {
+pub fn run(
+    root: &Path,
+    at: NaiveDateTime,
+    command: ActionCommands,
+    no_interactive: bool,
+) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
+    let interactive = prompt::is_interactive(no_interactive);
+
     match command {
         ActionCommands::Add {
             project,
             title,
             energy,
             note,
-        } => {
-            if note {
-                let path = vault
-                    .add_action_with_note(at, &project, &title, energy)
-                    .context("adding action with note")?;
-                println!("Action added to projects/{project}.md with note {path}");
-            } else {
-                let path = vault
-                    .add_action(at, &project, &title, energy)
-                    .context("adding action")?;
-                println!("Action added to {path}");
-            }
-        }
+        } => add(&vault, at, project, title, energy, note, interactive),
         ActionCommands::Promote { project, query } => {
-            let note_path = vault
-                .promote_action(at, &project, &query)
-                .context("promoting action")?;
-            println!("Promoted to {note_path}");
+            promote(&vault, at, project, query, interactive)
         }
         ActionCommands::Complete { project, query } => {
-            let project_path = vault
-                .complete_action(at, &project, &query)
-                .context("completing action")?;
-            println!("Action done on {project_path}");
+            complete(&vault, at, project, query, interactive)
         }
-        ActionCommands::List { project } => {
-            let entries = vault.list_actions(&project).context("listing actions")?;
-            print!("{}", render_list(&project, &entries));
-        }
+        ActionCommands::List { project } => list(&vault, project, interactive),
+    }
+}
+
+// ---------------------------------------------------------------------
+// Per-verb handlers — gather missing fields, confirm-on-prompt, execute.
+// ---------------------------------------------------------------------
+
+fn add(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: Option<String>,
+    title: Option<String>,
+    energy: Option<EnergyLevel>,
+    note_flag: bool,
+    interactive: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let project = gather(project, "project", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let title = gather(title, "title", interactive, &mut prompted, || {
+        prompt::prompt_text("Title")
+    })?;
+    let energy = gather(energy, "energy", interactive, &mut prompted, || {
+        prompt::prompt_energy()
+    })?;
+    // Only ask about --note when we're already in an interactive flow.
+    // A user who provided every other flag and omitted --note clearly
+    // wants the default (plain bullet).
+    let note = if prompted {
+        prompt::prompt_confirm("Promote on creation? (writes an action note)", note_flag)?
+    } else {
+        note_flag
+    };
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to add to project '{project}':\n  title:  {title}\n  energy: {}\n  note:   {}",
+            energy.as_str(),
+            yesno(note),
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    if note {
+        let path = vault
+            .add_action_with_note(at, &project, &title, energy)
+            .context("adding action with note")?;
+        println!("Action added to projects/{project}.md with note {path}");
+    } else {
+        let path = vault
+            .add_action(at, &project, &title, energy)
+            .context("adding action")?;
+        println!("Action added to {path}");
     }
     Ok(())
+}
+
+fn promote(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: Option<String>,
+    query: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let project = gather(project, "project", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = gather(query, "query", interactive, &mut prompted, || {
+        let entries = vault
+            .list_actions(&project)
+            .context("listing actions for the bullet picker")?;
+        let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
+        let picked = prompt::prompt_bullet(&project, &labels)?;
+        Ok(strip_energy_for_query(&picked))
+    })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to promote action on '{project}': '{query}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let note_path = vault
+        .promote_action(at, &project, &query)
+        .context("promoting action")?;
+    println!("Promoted to {note_path}");
+    Ok(())
+}
+
+fn complete(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: Option<String>,
+    query: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let project = gather(project, "project", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = gather(query, "query", interactive, &mut prompted, || {
+        let entries = vault
+            .list_actions(&project)
+            .context("listing actions for the bullet picker")?;
+        let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
+        let picked = prompt::prompt_bullet(&project, &labels)?;
+        Ok(strip_energy_for_query(&picked))
+    })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to complete action on '{project}': '{query}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let project_path = vault
+        .complete_action(at, &project, &query)
+        .context("completing action")?;
+    println!("Action done on {project_path}");
+    Ok(())
+}
+
+fn list(vault: &Vault, project: Option<String>, interactive: bool) -> Result<()> {
+    // List is read-only — no confirm step even if we prompt for the
+    // project, since nothing is being mutated.
+    let project = match project {
+        Some(p) => p,
+        None if interactive => prompt::prompt_project(vault)?,
+        None => return Err(prompt::missing_flag("project")),
+    };
+    let entries = vault.list_actions(&project).context("listing actions")?;
+    print!("{}", render_list(&project, &entries));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Shared gather helper and small utilities.
+// ---------------------------------------------------------------------
+
+/// Fold a clap-optional value with the interactive / non-interactive
+/// rule: `Some` → return as-is; `None` + interactive → call `ask` and
+/// mark `prompted`; `None` + non-interactive → return a clear missing-
+/// flag error.
+fn gather<T>(
+    value: Option<T>,
+    flag: &str,
+    interactive: bool,
+    prompted: &mut bool,
+    ask: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    match value {
+        Some(v) => Ok(v),
+        None if interactive => {
+            *prompted = true;
+            ask()
+        }
+        None => Err(prompt::missing_flag(flag)),
+    }
+}
+
+/// Strip a trailing `(deep|medium|light)` suffix from a bullet label.
+/// Used when the interactive bullet picker hands back the full text —
+/// the domain's substring matcher strips the same suffix on its end,
+/// so the query without the suffix is what resolves uniquely.
+fn strip_energy_for_query(text: &str) -> String {
+    for suffix in [" (deep)", " (medium)", " (light)"] {
+        if let Some(stripped) = text.strip_suffix(suffix) {
+            return stripped.to_owned();
+        }
+    }
+    text.to_owned()
+}
+
+fn yesno(b: bool) -> &'static str {
+    if b { "yes" } else { "no" }
 }
 
 /// Render `cdno action list` output. Pure so tests can exercise the
