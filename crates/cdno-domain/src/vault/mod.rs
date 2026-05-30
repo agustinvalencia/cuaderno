@@ -38,12 +38,14 @@ mod log;
 mod orient;
 mod portfolios;
 mod projects;
+mod questions;
 mod slug;
 
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
+pub use questions::QuestionSummary;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any

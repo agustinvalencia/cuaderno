@@ -8,5 +8,6 @@ mod unit {
     mod orient_tests;
     mod portfolios_tests;
     mod projects_tests;
+    mod questions_tests;
     mod vault_tests;
 }
