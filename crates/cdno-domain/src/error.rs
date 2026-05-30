@@ -63,6 +63,9 @@ pub enum DomainError {
         candidates: Vec<String>,
     },
 
+    #[error("ambiguous slug '{0}' \u{2014} matches more than one note across domains")]
+    AmbiguousSlug(String),
+
     #[error("required field '{field}' cannot be empty")]
     EmptyField { field: &'static str },
 
