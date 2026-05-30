@@ -155,7 +155,9 @@ fn project_full_lifecycle() {
         .args([
             "action",
             "add",
+            "--project",
             "icml-paper",
+            "--title",
             "Run ablation",
             "--energy",
             "deep",
@@ -171,7 +173,14 @@ fn project_full_lifecycle() {
     // action complete
     cdno()
         .current_dir(dir.path())
-        .args(["action", "complete", "icml-paper", "ablation"])
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "icml-paper",
+            "--query",
+            "ablation",
+        ])
         .assert()
         .success();
     let body = std::fs::read_to_string(&project_path).unwrap();
@@ -274,7 +283,14 @@ fn project_show_renders_summary_block() {
     // what's at the top.
     cdno()
         .current_dir(dir.path())
-        .args(["action", "complete", "surrogate-model", "first concrete"])
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "surrogate-model",
+            "--query",
+            "first concrete",
+        ])
         .assert()
         .success();
     cdno()
@@ -282,7 +298,9 @@ fn project_show_renders_summary_block() {
         .args([
             "action",
             "add",
+            "--project",
             "surrogate-model",
+            "--title",
             "Email supervisor",
             "--energy",
             "light",
@@ -327,7 +345,14 @@ fn project_done_errors_when_action_not_found() {
 
     cdno()
         .current_dir(dir.path())
-        .args(["action", "complete", "x", "ghost-action"])
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "x",
+            "--query",
+            "ghost-action",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("ghost-action"));
@@ -461,7 +486,14 @@ fn project_show_says_no_open_actions_after_completing_default() {
     // `Top: (no open actions)` branch fires.
     cdno()
         .current_dir(dir.path())
-        .args(["action", "complete", "x", "first concrete"])
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "x",
+            "--query",
+            "first concrete",
+        ])
         .assert()
         .success();
 

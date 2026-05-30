@@ -207,9 +207,10 @@ fn show_renders_no_open_actions_branch() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "first concrete".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("first concrete".to_owned()),
         },
+        true,
     )
     .expect("action complete");
 

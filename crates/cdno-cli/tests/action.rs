@@ -1,6 +1,12 @@
 //! In-process tests for `commands::action::run`. Calls the dispatcher
 //! directly — Linux tarpaulin can't instrument subprocess code, so
 //! direct dispatch is the only way to keep coverage honest.
+//!
+//! All tests pass `no_interactive = true` so prompts never fire: the
+//! ergonomics convention only kicks in when at least one promptable
+//! field is `None`, and these tests always provide every field
+//! explicitly. That mirrors the agentic (MCP / Tauri) shape, which
+//! also supplies full args at the transport boundary.
 
 use std::fs;
 use std::path::Path;
@@ -50,11 +56,12 @@ fn add_appends_open_bullet_with_energy() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Run ablation".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Run ablation".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: false,
         },
+        true,
     )
     .expect("action add");
 
@@ -63,7 +70,6 @@ fn add_appends_open_bullet_with_energy() {
         body.contains("- [ ] Run ablation (deep)"),
         "bullet:\n{body}"
     );
-    // No action note was created.
     assert!(!dir.path().join("actions/run-ablation.md").exists());
 }
 
@@ -80,11 +86,12 @@ fn add_with_note_writes_note_and_wikilink_bullet() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Characterise sample efficiency".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Characterise sample efficiency".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: true,
         },
+        true,
     )
     .expect("action add --note");
 
@@ -109,16 +116,16 @@ fn add_with_note_writes_note_and_wikilink_bullet() {
 fn promote_attaches_note_to_existing_bullet() {
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-    // Seed a plain bullet via `add`.
     action::run(
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Draft methods section".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Draft methods section".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: false,
         },
+        true,
     )
     .unwrap();
 
@@ -126,9 +133,10 @@ fn promote_attaches_note_to_existing_bullet() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ActionCommands::Promote {
-            project: "x".to_owned(),
-            query: "draft methods".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("draft methods".to_owned()),
         },
+        true,
     )
     .expect("promote");
 
@@ -160,11 +168,12 @@ fn complete_removes_matching_plain_bullet() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Run ablation".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Run ablation".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: false,
         },
+        true,
     )
     .expect("add");
 
@@ -172,9 +181,10 @@ fn complete_removes_matching_plain_bullet() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "ablation".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("ablation".to_owned()),
         },
+        true,
     )
     .expect("complete");
 
@@ -190,11 +200,12 @@ fn complete_on_wikilink_bullet_archives_the_note() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Characterise sample efficiency".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Characterise sample efficiency".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: true,
         },
+        true,
     )
     .unwrap();
 
@@ -202,9 +213,10 @@ fn complete_on_wikilink_bullet_archives_the_note() {
         dir.path(),
         moment(2026, 5, 3, 17, 0),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "characterise".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("characterise".to_owned()),
         },
+        true,
     )
     .expect("complete");
 
@@ -231,9 +243,10 @@ fn complete_errors_when_action_not_found() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "nothing-like-this".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("nothing-like-this".to_owned()),
         },
+        true,
     )
     .expect_err("query should not match");
     assert!(format!("{err:#}").contains("nothing-like-this"));
@@ -247,43 +260,41 @@ fn complete_errors_when_action_not_found() {
 fn list_renders_plain_and_attached_bullets_with_status() {
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-    // First, complete the template's default action so list starts
-    // from a known state.
     action::run(
         dir.path(),
         moment(2026, 5, 2, 9, 30),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "first concrete".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("first concrete".to_owned()),
         },
+        true,
     )
     .unwrap();
-    // Add one plain bullet and one wikilink bullet.
     action::run(
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Run ablation".to_owned(),
-            energy: EnergyLevel::Deep,
+            project: Some("x".to_owned()),
+            title: Some("Run ablation".to_owned()),
+            energy: Some(EnergyLevel::Deep),
             note: false,
         },
+        true,
     )
     .unwrap();
     action::run(
         dir.path(),
         moment(2026, 5, 2, 10, 5),
         ActionCommands::Add {
-            project: "x".to_owned(),
-            title: "Characterise sample efficiency".to_owned(),
-            energy: EnergyLevel::Medium,
+            project: Some("x".to_owned()),
+            title: Some("Characterise sample efficiency".to_owned()),
+            energy: Some(EnergyLevel::Medium),
             note: true,
         },
+        true,
     )
     .unwrap();
 
-    // The `list` command prints; we render the same data via the pure
-    // helper to assert content without capturing stdout.
     let (vault_obj, _r) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let entries = vault_obj.list_actions("x").expect("list");
     let out = action::render_list("x", &entries);
@@ -303,14 +314,14 @@ fn list_renders_plain_and_attached_bullets_with_status() {
 fn list_on_empty_section_shows_placeholder() {
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
-    // Complete the template's default action.
     action::run(
         dir.path(),
         moment(2026, 5, 2, 9, 30),
         ActionCommands::Complete {
-            project: "x".to_owned(),
-            query: "first concrete".to_owned(),
+            project: Some("x".to_owned()),
+            query: Some("first concrete".to_owned()),
         },
+        true,
     )
     .unwrap();
 
@@ -318,4 +329,29 @@ fn list_on_empty_section_shows_placeholder() {
     let entries = vault_obj.list_actions("x").expect("list");
     let out = action::render_list("x", &entries);
     assert!(out.contains("(no open actions)"), "placeholder:\n{out}");
+}
+
+// ---------------------------------------------------------------------
+// Non-interactive ergonomics: missing required flag errors clearly.
+// ---------------------------------------------------------------------
+
+#[test]
+fn add_without_project_in_non_interactive_errors() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Add {
+            project: None,
+            title: Some("Run ablation".to_owned()),
+            energy: Some(EnergyLevel::Deep),
+            note: false,
+        },
+        true,
+    )
+    .expect_err("missing --project should error in non-interactive mode");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--project"), "error message: {msg}");
 }
