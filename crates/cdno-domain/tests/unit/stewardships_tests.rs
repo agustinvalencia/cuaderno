@@ -13,6 +13,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, StewardshipFrontmatter};
+use cdno_domain::recurrence::Recurrence;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -190,6 +191,122 @@ fn create_expanded_errors_when_flat_with_same_slug_exists() {
         DomainError::Store(StoreError::AlreadyExists(_))
     ));
     assert!(msg.contains("stewardships/finances.md"), "msg: {msg}");
+}
+
+// ---------------------------------------------------------------------
+// add_periodic_commitment
+// ---------------------------------------------------------------------
+
+#[test]
+fn add_periodic_commitment_appends_line_to_flat_dashboard() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .unwrap();
+    let path = vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "finances",
+            "Tax declaration",
+            Recurrence::Yearly,
+            NaiveDate::from_ymd_opt(2026, 5, 2).unwrap(),
+        )
+        .expect("add_periodic_commitment");
+
+    assert_eq!(path, vp("stewardships/finances.md"));
+    let body = read_body(&store, &path);
+    assert!(
+        body.contains("- Tax declaration \u{2014} yearly \u{2014} next: 2026-05-02"),
+        "body:\n{body}"
+    );
+}
+
+#[test]
+fn add_periodic_commitment_appends_line_to_expanded_dashboard() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    let path = vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "health",
+            "Dental check-up",
+            Recurrence::EveryNMonths(6),
+            NaiveDate::from_ymd_opt(2026, 4, 15).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(path, vp("stewardships/health/_index.md"));
+    let body = read_body(&store, &path);
+    assert!(
+        body.contains("- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-04-15"),
+        "body:\n{body}"
+    );
+}
+
+#[test]
+fn add_periodic_commitment_errors_on_empty_title() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .unwrap();
+    let err = vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "finances",
+            "   ",
+            Recurrence::Yearly,
+            NaiveDate::from_ymd_opt(2026, 5, 2).unwrap(),
+        )
+        .expect_err("empty title should error");
+    assert!(matches!(err, DomainError::EmptyField { field: "title" }));
+}
+
+#[test]
+fn add_periodic_commitment_errors_when_stewardship_missing() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    let err = vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "nonexistent",
+            "Anything",
+            Recurrence::Yearly,
+            NaiveDate::from_ymd_opt(2026, 5, 2).unwrap(),
+        )
+        .expect_err("missing stewardship should error");
+    assert!(matches!(err, DomainError::Store(_)));
+}
+
+#[test]
+fn add_periodic_commitment_stacks_multiple_lines_in_order() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .unwrap();
+    vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "finances",
+            "Tax declaration",
+            Recurrence::Yearly,
+            NaiveDate::from_ymd_opt(2026, 5, 2).unwrap(),
+        )
+        .unwrap();
+    vault
+        .add_periodic_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "finances",
+            "Budget review",
+            Recurrence::Monthly,
+            NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
+        )
+        .unwrap();
+
+    let body = read_body(&store, &vp("stewardships/finances.md"));
+    let tax_idx = body.find("Tax declaration").expect("first line present");
+    let budget_idx = body.find("Budget review").expect("second line present");
+    assert!(tax_idx < budget_idx, "insertion order preserved");
 }
 
 // ---------------------------------------------------------------------

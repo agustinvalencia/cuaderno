@@ -9,6 +9,7 @@ mod unit {
     mod portfolios_tests;
     mod projects_tests;
     mod questions_tests;
+    mod recurrence_tests;
     mod stewardships_tests;
     mod vault_tests;
 }

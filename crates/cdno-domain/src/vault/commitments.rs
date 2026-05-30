@@ -13,6 +13,7 @@ use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -25,6 +26,7 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
+use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 
 const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
 
@@ -240,8 +242,36 @@ impl Vault {
             });
         }
 
-        // Source 2: stewardship periodic commitments — Phase 3. No
-        // stewardship notes are indexed yet, so nothing to read.
+        // Source 2: stewardship periodic commitments. Parse each
+        // stewardship's `## Periodic Commitments` section; a line
+        // whose `next:` date falls inside the [from, to] window is
+        // surfaced as one commitment entry. Malformed lines are
+        // skipped (lint is the place to surface them) so a single
+        // typo doesn't break the whole aggregation.
+        for entry in self.index.list_by_type(NoteType::Stewardship.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let slug = stewardship_slug_from_path(&entry.path);
+            let Ok(doc) = MarkdownDocument::parse(raw) else {
+                continue;
+            };
+            let Ok(section) = doc.section(PERIODIC_COMMITMENTS_SECTION) else {
+                continue;
+            };
+            for line in section.lines() {
+                let Some((title, next)) = parse_periodic_line(line) else {
+                    continue;
+                };
+                if next < from || next > to {
+                    continue;
+                }
+                entries.push(CommitmentEntry {
+                    date: next,
+                    title,
+                    source: CommitmentSource::Stewardship(slug.clone()),
+                    is_overdue: next < today,
+                });
+            }
+        }
 
         // Source 3: standalone active commitment notes.
         for entry in self.index.list_by_type(NoteType::Commitment.as_str())? {
@@ -342,4 +372,59 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
         }
     }
     slug
+}
+
+/// Parse one line of a `## Periodic Commitments` section into
+/// `(title, next_date)`. Returns `None` for anything that doesn't fit
+/// the canonical shape from design §5.6:
+///
+/// ```text
+/// - Title \u{2014} <recurrence> \u{2014} next: YYYY-MM-DD
+/// ```
+///
+/// We discard the recurrence on the parse side — the aggregator only
+/// cares about *when* the next occurrence is due. Trailing
+/// `(overdue)` is tolerated and stripped before the date parse so
+/// hand-annotated lines still round-trip.
+fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
+    let rest = line.trim_start().strip_prefix("- ")?;
+    let parts: Vec<&str> = rest.splitn(3, '\u{2014}').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let title = parts[0].trim().to_owned();
+    if title.is_empty() {
+        return None;
+    }
+    let next_part = parts[2].trim();
+    let after_marker = next_part.strip_prefix("next:")?.trim();
+    // Strip a trailing `(overdue)` annotation if present so the
+    // remainder is a clean date string.
+    let date_str = after_marker
+        .split_whitespace()
+        .next()
+        .unwrap_or(after_marker);
+    let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
+    Some((title, date))
+}
+
+/// Extract the slug of a stewardship from its `_index.md` (expanded)
+/// or root-level `.md` (flat) path. Returns `""` for malformed paths;
+/// the caller already filtered to `type: stewardship`.
+fn stewardship_slug_from_path(path: &VaultPath) -> String {
+    let p = path.as_path();
+    if p.file_name().and_then(|s| s.to_str()) == Some("_index.md") {
+        // Expanded: stewardships/<slug>/_index.md
+        return p
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+    }
+    // Flat: stewardships/<slug>.md
+    p.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned()
 }

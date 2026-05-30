@@ -435,3 +435,97 @@ fn commitments_does_not_duplicate_a_milestone_pinned_action() {
     );
     assert_eq!(got[0].title, "Submit paper");
 }
+
+// ---------------------------------------------------------------------
+// Source 2: stewardship periodic commitments
+// ---------------------------------------------------------------------
+
+/// Stewardship body shaped like the design §5.6 expanded example,
+/// with a `## Periodic Commitments` section pre-populated. The
+/// aggregation parses each `- title — recurrence — next: YYYY-MM-DD`
+/// line.
+fn stewardship_with_periodics(slug: &str, lines: &str) -> String {
+    let context = "personal";
+    format!(
+        "---\ntype: stewardship\ncontext: {context}\n---\n\n# {slug}\n\n## Current Status\nN/A.\n\n## Periodic Commitments\n{lines}"
+    )
+}
+
+#[test]
+fn commitments_surfaces_periodic_lines_from_a_flat_stewardship() {
+    let lines = "- Tax declaration \u{2014} yearly \u{2014} next: 2026-06-01\n- Budget review \u{2014} monthly \u{2014} next: 2026-05-30\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(NaiveDate, &str, &CommitmentSource)> = got
+        .iter()
+        .map(|c| (c.date, c.title.as_str(), &c.source))
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                ymd(2026, 5, 30),
+                "Budget review",
+                &CommitmentSource::Stewardship("finances".to_owned()),
+            ),
+            (
+                ymd(2026, 6, 1),
+                "Tax declaration",
+                &CommitmentSource::Stewardship("finances".to_owned()),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn commitments_surfaces_periodic_lines_from_an_expanded_stewardship() {
+    let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-05-28\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/health/_index.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(
+        got[0].source,
+        CommitmentSource::Stewardship("health".to_owned())
+    );
+    assert_eq!(got[0].title, "Dental check-up");
+    assert_eq!(got[0].date, ymd(2026, 5, 28));
+}
+
+#[test]
+fn commitments_flags_overdue_periodic_within_lookback_and_excludes_outside_window() {
+    let lines = "- Recent overdue \u{2014} monthly \u{2014} next: 2026-05-20\n- Ancient overdue \u{2014} monthly \u{2014} next: 2026-04-20\n- Distant future \u{2014} yearly \u{2014} next: 2026-07-01\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "only the recent overdue periodic: {got:?}");
+    assert_eq!(got[0].title, "Recent overdue");
+    assert!(got[0].is_overdue);
+}
+
+#[test]
+fn commitments_tolerates_overdue_annotation_and_skips_malformed_periodic_lines() {
+    let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-05-28 (overdue)\n- Garbage line without separators\n- \u{2014} \u{2014} next: not-a-date\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/health/_index.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(
+        got.len(),
+        1,
+        "only the well-formed periodic line surfaces: {got:?}"
+    );
+    assert_eq!(got[0].title, "Dental check-up");
+}
