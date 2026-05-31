@@ -2,12 +2,9 @@
 //! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: 15 of 16 tools wired through to the domain. The last
-//! remaining stub is `get_stewardship_tracking`, which lands as the
-//! final GH #142 follow-up. Its body returns
-//! [`rmcp::ErrorData::internal_error`] via `not_yet_implemented` so
-//! a client that calls it gets a clear "not implemented" response
-//! rather than a panic.
+//! Status: all 16 design §11 tools are wired through to the
+//! domain. The `not_yet_implemented` placeholder has been retired
+//! with no stubs left.
 //!
 //! # Imports note
 //!
@@ -39,7 +36,7 @@ use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 
 use crate::dto::{
     MonthlyContextDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
-    ProjectSlotsDto, QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
+    ProjectSlotsDto, QuestionSummaryDto, StewardshipTrackingDto, WeeklyContextDto, WriteResultDto,
 };
 
 // ---------------------------------------------------------------------
@@ -383,13 +380,31 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "(not yet implemented \u{2014} see GH #142) Structured tracking data for a stewardship's activity (gym sessions, body measurements, ...) for trend analysis. `period` is a lookback like `30d`, `6m`."
+        description = "Structured tracking data for a stewardship's activity (gym sessions, body measurements, swim sets, ...) for trend analysis. `activity` filters to the named activity slug per design \u{00a7}11. `period` is a lookback like `30d`, `4w`, `6m`, `1y`; defaults to `90d` when omitted. Calendar-aware: months and years subtract via chrono rather than rough day counts."
     )]
-    async fn get_stewardship_tracking(
+    pub async fn get_stewardship_tracking(
         &self,
-        Parameters(_input): Parameters<GetStewardshipTrackingInput>,
+        Parameters(input): Parameters<GetStewardshipTrackingInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_stewardship_tracking"))
+        let today = chrono::Local::now().date_naive();
+        let from = match input.period.as_deref() {
+            Some(p) => {
+                parse_period_into_from_date(p, today).map_err(|e| invalid_argument("period", &e))?
+            }
+            None => today - chrono::Duration::days(90),
+        };
+        let entries = self
+            .vault
+            .list_tracking(&input.stewardship, Some(&input.activity), from, today)
+            .map_err(into_mcp_error)?;
+
+        json_result(StewardshipTrackingDto {
+            stewardship: input.stewardship,
+            activity: Some(input.activity),
+            from,
+            to: today,
+            entries: entries.into_iter().map(Into::into).collect(),
+        })
     }
 
     #[tool(
@@ -629,18 +644,6 @@ impl ServerHandler for CuadernoServer {
     }
 }
 
-/// Placeholder error returned by every stubbed tool method until
-/// its handler lands. With #142a/b/c shipped (weekly, monthly, and
-/// project context), `get_stewardship_tracking` is the only stub
-/// left — lands as the final GH #142 follow-up. Includes the tool
-/// name so a client sees exactly which surface isn't ready yet.
-fn not_yet_implemented(tool_name: &str) -> ErrorData {
-    ErrorData::internal_error(
-        format!("tool '{tool_name}' is registered but not yet implemented"),
-        None,
-    )
-}
-
 /// Wrap a serialisable DTO as the single content item of a
 /// successful tool result. Shared by every implemented handler so
 /// the JSON-encoding step is one call site, not 16.
@@ -676,6 +679,46 @@ fn monday_of_iso_week(date: chrono::NaiveDate) -> chrono::NaiveDate {
     use chrono::Datelike;
     let days_since_monday = date.weekday().num_days_from_monday() as i64;
     date - chrono::Duration::days(days_since_monday)
+}
+
+/// Parse a `period` lookback string into a `from` date relative to
+/// `today`. Recognised shapes:
+///
+/// - `Nd` — N days back (any N >= 1)
+/// - `Nw` — N weeks back (N × 7 days)
+/// - `Nm` — N calendar months back (chrono `checked_sub_months`)
+/// - `Ny` — N calendar years back (chrono `checked_sub_months` × 12)
+///
+/// Returns an `Err(reason)` string for anything off-shape; the
+/// handler wraps it in `INVALID_PARAMS`. Calendar arithmetic
+/// (months / years) over- or under-flowing the chrono date range
+/// also surfaces as an error rather than silently saturating.
+fn parse_period_into_from_date(
+    period: &str,
+    today: chrono::NaiveDate,
+) -> Result<chrono::NaiveDate, String> {
+    let trimmed = period.trim();
+    if trimmed.is_empty() {
+        return Err("empty".to_owned());
+    }
+    let (n_str, unit) = trimmed.split_at(trimmed.len() - 1);
+    let n: u32 = n_str
+        .parse()
+        .map_err(|_| format!("expected `Nd|Nw|Nm|Ny`, got `{period}`"))?;
+    if n == 0 {
+        return Err("N must be >= 1".to_owned());
+    }
+    match unit {
+        "d" => Ok(today - chrono::Duration::days(n as i64)),
+        "w" => Ok(today - chrono::Duration::weeks(n as i64)),
+        "m" => today
+            .checked_sub_months(chrono::Months::new(n))
+            .ok_or_else(|| format!("`{period}` overflows the supported date range")),
+        "y" => today
+            .checked_sub_months(chrono::Months::new(n.saturating_mul(12)))
+            .ok_or_else(|| format!("`{period}` overflows the supported date range")),
+        other => Err(format!("unit must be one of d, w, m, y (got `{other}`)")),
+    }
 }
 
 /// Extract the question slug from a wikilink target string like

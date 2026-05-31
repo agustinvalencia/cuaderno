@@ -21,7 +21,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | #45 | `cdno-mcp` crate scaffold on `rmcp`, all 16 tool schemas advertised, stdio binary | Complete | #140 |
 | — | Doc tidy: implementation plan §5.2 updated for rmcp choice | Complete | #141 |
 | #46 | `HandlerRegistry` + 7 context-gathering handlers | Partial — 3 of 7 handlers shipped (`get_orientation`, `get_active_questions`, `get_portfolio_contents`); registry covered by `#[tool_router]` macro | (this PR) |
-| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Partial — domain queries in #145; `get_weekly_context` in #146; `get_monthly_context` in #147; `get_project_context` (this PR); 1 handler to go | #145 + #146 + #147 + (this PR) |
+| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Complete — #145 (8 domain queries), #146 (weekly), #147 (monthly), #148 (project), this PR (stewardship_tracking) | #145 + #146 + #147 + #148 + (this PR) |
 | #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Complete | (this PR) |
 | #48 | Stdio transport polish + Claude Desktop end-to-end test | Not started | — |
 | #49 | File watcher integration for live external edits | Not started | — |
@@ -39,7 +39,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `get_weekly_context` | Wired |
 | `get_monthly_context` | Wired |
 | `get_project_context` | Wired |
-| `get_stewardship_tracking` | Stub (#142) |
+| `get_stewardship_tracking` | Wired |
 | `append_to_log` | Wired |
 | `file_to_portfolio` | Wired |
 | `update_project_state` | Wired |
@@ -50,7 +50,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `complete_commitment` | Wired |
 | `create_tracking_entry` | Wired |
 
-15 of 16 are wired through to the domain. The 1 remaining stub (`get_stewardship_tracking`) lands as the final GH #142 follow-up. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
+**All 16 design §11 tools are wired through to the domain.** No stubs remain. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
 
 ## What works today
 
@@ -68,7 +68,7 @@ Reachable from the terminal via `cdno`:
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
-- **Context reads** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question)
+- **Context reads (7)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`)
 - **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`)
 
 Each operation returns a `WriteResultDto { path, message }` so clients can chain on the touched file path.

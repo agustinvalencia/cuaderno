@@ -94,30 +94,22 @@ fn every_tool_has_description_and_object_input_schema() {
     }
 }
 
-/// The four context tools deferred to GH #142 are still advertised
-/// in `tools/list` (so MCP clients see the full design §11
-/// catalogue) but their bodies return `INTERNAL_ERROR` via
-/// `not_yet_implemented`. Their descriptions must say so upfront so
-/// the agent's tool-selection step has the status before it picks
-/// the tool — otherwise the only signal of unimplemented-ness is the
-/// error response after the agent already committed to calling.
+/// No tools should still be flagged as "not yet implemented" in
+/// their description now that GH #142 is fully closed (every
+/// design §11 tool has a real handler). This is the post-condition
+/// counterpart to the earlier `stub_tools_flag_their_status_in_the_description`
+/// test, kept so a future regression that re-stubs a tool without
+/// flagging the description fails loudly.
 #[test]
-fn stub_tools_flag_their_status_in_the_description() {
+fn no_advertised_tool_flags_itself_as_unimplemented() {
     let server = empty_server();
-    // #142a wired get_weekly_context; #142b get_monthly_context;
-    // #142c get_project_context. Only get_stewardship_tracking is
-    // still stubbed; the final follow-up lands next.
-    let stubs = ["get_stewardship_tracking"];
-    let tools = server.advertised_tools();
-    for name in stubs {
-        let tool = tools
-            .iter()
-            .find(|t| t.name.as_ref() == name)
-            .unwrap_or_else(|| panic!("stub tool '{name}' missing from catalogue"));
+    for tool in server.advertised_tools() {
         let desc = tool.description.as_ref().unwrap();
         assert!(
-            desc.contains("not yet implemented"),
-            "stub '{name}' description should flag implementation status: {desc}"
+            !desc.to_lowercase().contains("not yet implemented"),
+            "tool '{}' still advertised as unimplemented: {}",
+            tool.name,
+            desc
         );
     }
 }

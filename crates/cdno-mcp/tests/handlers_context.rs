@@ -515,3 +515,128 @@ async fn get_project_context_errors_on_missing_project() {
         .expect_err("missing project should error");
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
+
+// ---------------------------------------------------------------------
+// get_stewardship_tracking
+// ---------------------------------------------------------------------
+
+use cdno_mcp::server::GetStewardshipTrackingInput;
+
+#[tokio::test]
+async fn get_stewardship_tracking_returns_entries_in_default_window() {
+    // Default period is 90d. Seed tracking notes inside and outside
+    // that window; only the recent ones should surface.
+    let server = server_with(|vault| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Health", Context::Personal)
+            .unwrap();
+        // Within 90 days of today.
+        let recent = chrono::Local::now().naive_local() - chrono::Duration::days(10);
+        vault
+            .add_tracking_entry(recent, "health", "gym", None, "Felt strong")
+            .unwrap();
+        // 200 days ago — outside the default window.
+        let old = chrono::Local::now().naive_local() - chrono::Duration::days(200);
+        vault
+            .add_tracking_entry(old, "health", "gym", None, "Old session")
+            .unwrap();
+    });
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "health".to_owned(),
+            activity: "gym".to_owned(),
+            period: None,
+        }))
+        .await
+        .expect("get_stewardship_tracking");
+    let value = decode_json(&result);
+    assert_eq!(value["stewardship"], "health");
+    assert_eq!(value["activity"], "gym");
+    let entries = value["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1, "{value}");
+    // body_excerpt is the first non-blank line after the H1; for the
+    // gym template that's the table header rather than the rendered
+    // {{content}} block. The Notes section content lives elsewhere
+    // in the body — we just check the path lands under the right
+    // tracking subdir.
+    assert_eq!(entries[0]["activity"], "gym");
+    assert!(
+        entries[0]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("stewardships/health/tracking/")
+    );
+}
+
+#[tokio::test]
+async fn get_stewardship_tracking_filters_by_activity() {
+    let server = server_with(|vault| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Health", Context::Personal)
+            .unwrap();
+        let now = chrono::Local::now().naive_local() - chrono::Duration::days(5);
+        vault
+            .add_tracking_entry(now, "health", "gym", None, "")
+            .unwrap();
+        let now2 = chrono::Local::now().naive_local() - chrono::Duration::days(6);
+        vault
+            .add_tracking_entry(now2, "health", "body", None, "")
+            .unwrap();
+    });
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "health".to_owned(),
+            activity: "body".to_owned(),
+            period: None,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let entries = value["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["activity"], "body");
+}
+
+#[tokio::test]
+async fn get_stewardship_tracking_accepts_period_units() {
+    // Spot-check each unit (d/w/m/y) parses without an error.
+    let server = server_with(|vault| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Health", Context::Personal)
+            .unwrap();
+    });
+    for period in ["7d", "2w", "3m", "1y"] {
+        let result = server
+            .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+                stewardship: "health".to_owned(),
+                activity: "gym".to_owned(),
+                period: Some(period.to_owned()),
+            }))
+            .await;
+        assert!(
+            result.is_ok(),
+            "period `{period}` should parse but errored: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_stewardship_tracking_rejects_unknown_period_unit_with_invalid_params() {
+    let server = server_with(|vault| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Health", Context::Personal)
+            .unwrap();
+    });
+    for bad in ["30x", "abc", "0d", "10"] {
+        let err = server
+            .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+                stewardship: "health".to_owned(),
+                activity: "gym".to_owned(),
+                period: Some(bad.to_owned()),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "period `{bad}`");
+        assert!(err.message.contains("period"), "msg: {}", err.message);
+    }
+}
