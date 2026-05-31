@@ -2,13 +2,14 @@
 //! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Tools are stubs in this PR (#45). #46 fills in the
-//! context-gathering tools (`get_orientation`, `get_*_context`,
-//! queries); #47 fills in the operation tools (`append_to_log`,
-//! `update_project_state`, the create/complete pairs). The stubs
-//! return [`rmcp::ErrorData::internal_error`] so a client that calls
-//! one before its handler lands gets a clear "not implemented"
-//! response rather than a panic.
+//! Status (as of #47 — operation handlers): 12 of 16 tools wired
+//! through to the domain. The four remaining stubs (the deferred
+//! context tools — `get_weekly_context`, `get_monthly_context`,
+//! `get_project_context`, `get_stewardship_tracking`) need new
+//! domain queries first and land in GH #142. Their bodies return
+//! [`rmcp::ErrorData::internal_error`] via `not_yet_implemented` so
+//! a client that calls one gets a clear "not implemented" response
+//! rather than a panic.
 //!
 //! # Imports note
 //!
@@ -36,9 +37,9 @@ use serde::Deserialize;
 
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::QuestionDomain;
+use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 
-use crate::dto::{OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto};
+use crate::dto::{OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto, WriteResultDto};
 
 // ---------------------------------------------------------------------
 // Inputs
@@ -234,7 +235,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "This week's wins, completed actions, project state changes, stewardship status, and commitments for the next two weeks."
+        description = "(not yet implemented \u{2014} see GH #142) This week's wins, completed actions, project state changes, stewardship status, and commitments for the next two weeks."
     )]
     async fn get_weekly_context(
         &self,
@@ -244,7 +245,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Strategic monthly scan: wins patterns, active questions, portfolio health, project stuck-detection, stewardship overview, and a six-week commitments lookahead."
+        description = "(not yet implemented \u{2014} see GH #142) Strategic monthly scan: wins patterns, active questions, portfolio health, project stuck-detection, stewardship overview, and a six-week commitments lookahead."
     )]
     async fn get_monthly_context(
         &self,
@@ -254,7 +255,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: the project map, recent daily log entries mentioning it, linked portfolio summaries, and the linked question."
+        description = "(not yet implemented \u{2014} see GH #142) Full context for a single project: the project map, recent daily log entries mentioning it, linked portfolio summaries, and the linked question."
     )]
     async fn get_project_context(
         &self,
@@ -282,7 +283,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Structured tracking data for a stewardship's activity (gym sessions, body measurements, ...) for trend analysis. `period` is a lookback like `30d`, `6m`."
+        description = "(not yet implemented \u{2014} see GH #142) Structured tracking data for a stewardship's activity (gym sessions, body measurements, ...) for trend analysis. `period` is a lookback like `30d`, `6m`."
     )]
     async fn get_stewardship_tracking(
         &self,
@@ -320,89 +321,191 @@ impl CuadernoServer {
     #[tool(
         description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist."
     )]
-    async fn append_to_log(
+    pub async fn append_to_log(
         &self,
-        Parameters(_input): Parameters<AppendToLogInput>,
+        Parameters(input): Parameters<AppendToLogInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("append_to_log"))
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .log_to_daily_note(at, &input.text)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Logged to {}", path),
+        ))
     }
 
     #[tool(
-        description = "Create an evidence note in the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it."
+        description = "Create an evidence note in the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. `content` is optional — empty string is fine; the user can flesh out the note after."
     )]
-    async fn file_to_portfolio(
+    pub async fn file_to_portfolio(
         &self,
-        Parameters(_input): Parameters<FileToPortfolioInput>,
+        Parameters(input): Parameters<FileToPortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("file_to_portfolio"))
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .file_evidence(
+                at,
+                &input.portfolio,
+                &input.source,
+                &input.origin,
+                &input.content,
+            )
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Filed evidence at {}", path),
+        ))
     }
 
     #[tool(
-        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction."
+        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire."
     )]
-    async fn update_project_state(
+    pub async fn update_project_state(
         &self,
-        Parameters(_input): Parameters<UpdateProjectStateInput>,
+        Parameters(input): Parameters<UpdateProjectStateInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("update_project_state"))
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .update_project_state(at, &input.project, &input.new_state)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Updated state on {}", path),
+        ))
     }
 
     #[tool(
-        description = "Append a next-action bullet to a project. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it."
+        description = "Append a next-action bullet to a project. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`."
     )]
-    async fn add_action(
+    pub async fn add_action(
         &self,
-        Parameters(_input): Parameters<AddActionInput>,
+        Parameters(input): Parameters<AddActionInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("add_action"))
+        let at = chrono::Local::now().naive_local();
+        let energy = EnergyLevel::from_str(&input.energy)
+            .map_err(|e| invalid_argument("energy", &e.to_string()))?;
+        let path = if input.with_note {
+            self.vault
+                .add_action_with_note(at, &input.project, &input.title, energy)
+                .map_err(into_mcp_error)?
+        } else {
+            self.vault
+                .add_action(at, &input.project, &input.title, energy)
+                .map_err(into_mcp_error)?
+        };
+        let label = if input.with_note {
+            "Added action with note at"
+        } else {
+            "Added action bullet to"
+        };
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("{label} {}", path),
+        ))
     }
 
     #[tool(
-        description = "Promote an existing bullet to an action note: matches the bullet by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it."
+        description = "Promote an existing bullet to an action note: matches the bullet on the project by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it. Errors with `INTERNAL_ERROR` on ambiguous matches (multiple bullets contain `query`)."
     )]
-    async fn promote_action(
+    pub async fn promote_action(
         &self,
-        Parameters(_input): Parameters<ActionQueryInput>,
+        Parameters(input): Parameters<ActionQueryInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("promote_action"))
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .promote_action(at, &input.project, &input.query)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Promoted action note at {}", path),
+        ))
     }
 
     #[tool(
-        description = "Complete an action: removes the bullet, logs the completion, and (if a note is attached) archives it to `actions/_done/<year>/`."
+        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`."
     )]
-    async fn complete_action(
+    pub async fn complete_action(
         &self,
-        Parameters(_input): Parameters<ActionQueryInput>,
+        Parameters(input): Parameters<ActionQueryInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("complete_action"))
-    }
-
-    #[tool(description = "Create a standalone commitment note with a due date and life context.")]
-    async fn create_commitment(
-        &self,
-        Parameters(_input): Parameters<CreateCommitmentInput>,
-    ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("create_commitment"))
-    }
-
-    #[tool(
-        description = "Mark a commitment as completed: stamps the frontmatter, moves the file to `commitments/_done/<year>/`, and logs to the daily entry."
-    )]
-    async fn complete_commitment(
-        &self,
-        Parameters(_input): Parameters<CompleteCommitmentInput>,
-    ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("complete_commitment"))
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .complete_action(at, &input.project, &input.query)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Completed action on {}", path),
+        ))
     }
 
     #[tool(
-        description = "Scaffold a tracking note under an expanded stewardship. Built-in templates for `gym`, `body`, and `swim`; generic fallback for anything else. Returns the path for editing."
+        description = "Create a standalone commitment note with a due date and life context. `project` and `stewardship` are reserved on the input schema for the eventual originating-source link but ignored today \u{2014} the domain currently writes both as null per design \u{00a7}5.9 (originating commitments are tracked inline at their source: project milestones, stewardship periodic commitments)."
     )]
-    async fn create_tracking_entry(
+    pub async fn create_commitment(
         &self,
-        Parameters(_input): Parameters<CreateTrackingEntryInput>,
+        Parameters(input): Parameters<CreateCommitmentInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("create_tracking_entry"))
+        let at = chrono::Local::now().naive_local();
+        let context = Context::from_str(&input.context)
+            .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        // input.project and input.stewardship are deliberately unused
+        // today; see tool description.
+        let path = self
+            .vault
+            .create_commitment(at, &input.title, input.due, context)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created commitment at {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Mark an active commitment as completed: stamps the `status` and `completed` frontmatter fields, moves the file to `commitments/_done/<year>/`, and logs to today's daily entry. All in one atomic transaction."
+    )]
+    pub async fn complete_commitment(
+        &self,
+        Parameters(input): Parameters<CompleteCommitmentInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .complete_commitment(at, &input.commitment)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Completed commitment, archived to {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Scaffold a tracking note under an expanded stewardship. Built-in templates for `gym`, `body`, and `swim`; generic fallback for anything else. `routine` is the bare slug of a routine doc (e.g. `upper-body-a`); the server wraps it into the gym template's `routine:` wikilink. Returns the new path for the user to flesh out."
+    )]
+    pub async fn create_tracking_entry(
+        &self,
+        Parameters(input): Parameters<CreateTrackingEntryInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .add_tracking_entry(
+                at,
+                &input.stewardship,
+                &input.activity,
+                input.routine.as_deref(),
+                &input.content,
+            )
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Tracked at {}", path),
+        ))
     }
 }
 
@@ -427,11 +530,12 @@ impl ServerHandler for CuadernoServer {
 }
 
 /// Placeholder error returned by every stubbed tool method until its
-/// handler lands. Stubs from #45 still using this:
-/// `get_weekly_context`, `get_monthly_context`, `get_project_context`,
-/// `get_stewardship_tracking`, plus every operation tool (#47).
-/// Includes the tool name so a client sees exactly which surface
-/// isn't ready yet.
+/// handler lands. With #47 closed, the remaining stubs are the four
+/// context tools deferred to GH #142 (`get_weekly_context`,
+/// `get_monthly_context`, `get_project_context`,
+/// `get_stewardship_tracking`) because each needs new domain
+/// queries first. Includes the tool name so a client sees exactly
+/// which surface isn't ready yet.
 fn not_yet_implemented(tool_name: &str) -> ErrorData {
     ErrorData::internal_error(
         format!("tool '{tool_name}' is registered but not yet implemented"),

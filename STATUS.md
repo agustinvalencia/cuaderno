@@ -22,7 +22,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | — | Doc tidy: implementation plan §5.2 updated for rmcp choice | Complete | #141 |
 | #46 | `HandlerRegistry` + 7 context-gathering handlers | Partial — 3 of 7 handlers shipped (`get_orientation`, `get_active_questions`, `get_portfolio_contents`); registry covered by `#[tool_router]` macro | (this PR) |
 | #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Not started | — |
-| #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Not started | — |
+| #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Complete | (this PR) |
 | #48 | Stdio transport polish + Claude Desktop end-to-end test | Not started | — |
 | #49 | File watcher integration for live external edits | Not started | — |
 | #50 | Update existing Claude skills for the new domain model | Not started | — |
@@ -40,17 +40,17 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `get_monthly_context` | Stub (#142) |
 | `get_project_context` | Stub (#142) |
 | `get_stewardship_tracking` | Stub (#142) |
-| `append_to_log` | Stub (#47) |
-| `file_to_portfolio` | Stub (#47) |
-| `update_project_state` | Stub (#47) |
-| `add_action` | Stub (#47) |
-| `promote_action` | Stub (#47) |
-| `complete_action` | Stub (#47) |
-| `create_commitment` | Stub (#47) |
-| `complete_commitment` | Stub (#47) |
-| `create_tracking_entry` | Stub (#47) |
+| `append_to_log` | Wired |
+| `file_to_portfolio` | Wired |
+| `update_project_state` | Wired |
+| `add_action` | Wired |
+| `promote_action` | Wired |
+| `complete_action` | Wired |
+| `create_commitment` | Wired (`project` / `stewardship` reserved fields ignored; see tool description) |
+| `complete_commitment` | Wired |
+| `create_tracking_entry` | Wired |
 
-All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
+12 of 16 are wired through to the domain. The 4 remaining stubs (the deferred context tools — `get_weekly_context`, `get_monthly_context`, `get_project_context`, `get_stewardship_tracking`) need new domain queries and land in GH #142. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
 
 ## What works today
 
@@ -68,9 +68,10 @@ Reachable from the terminal via `cdno`:
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
-- `get_orientation` — orientation context for "what should I work on today?"
-- `get_active_questions` — active questions, optional domain filter
-- `get_portfolio_contents` — full portfolio detail with all evidence
+- **Context reads** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`
+- **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`)
+
+Each operation returns a `WriteResultDto { path, message }` so clients can chain on the touched file path.
 
 ## How this file is maintained
 

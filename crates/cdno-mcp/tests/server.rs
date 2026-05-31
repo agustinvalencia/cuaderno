@@ -93,3 +93,33 @@ fn every_tool_has_description_and_object_input_schema() {
         );
     }
 }
+
+/// The four context tools deferred to GH #142 are still advertised
+/// in `tools/list` (so MCP clients see the full design §11
+/// catalogue) but their bodies return `INTERNAL_ERROR` via
+/// `not_yet_implemented`. Their descriptions must say so upfront so
+/// the agent's tool-selection step has the status before it picks
+/// the tool — otherwise the only signal of unimplemented-ness is the
+/// error response after the agent already committed to calling.
+#[test]
+fn stub_tools_flag_their_status_in_the_description() {
+    let server = empty_server();
+    let stubs = [
+        "get_weekly_context",
+        "get_monthly_context",
+        "get_project_context",
+        "get_stewardship_tracking",
+    ];
+    let tools = server.advertised_tools();
+    for name in stubs {
+        let tool = tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("stub tool '{name}' missing from catalogue"));
+        let desc = tool.description.as_ref().unwrap();
+        assert!(
+            desc.contains("not yet implemented"),
+            "stub '{name}' description should flag implementation status: {desc}"
+        );
+    }
+}
