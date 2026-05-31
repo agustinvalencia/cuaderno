@@ -24,7 +24,9 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
-use cdno_mcp::server::{GetActiveQuestionsInput, GetOrientationInput, PortfolioSlugInput};
+use cdno_mcp::server::{
+    EmptyInput, GetActiveQuestionsInput, GetOrientationInput, PortfolioSlugInput,
+};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorCode, RawContent};
@@ -252,5 +254,77 @@ async fn get_portfolio_contents_errors_on_missing_portfolio() {
         err.message.contains("nonexistent") || err.message.to_lowercase().contains("not found"),
         "msg: {}",
         err.message
+    );
+}
+
+// ---------------------------------------------------------------------
+// get_weekly_context
+// ---------------------------------------------------------------------
+//
+// These tests can only assert on shape and on data clearly inside or
+// outside the current ISO week (which depends on when the test
+// runs). Seed log entries on today and assert they appear; the
+// week_of field is checked to equal today's Monday.
+
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
+fn monday_of(date: NaiveDate) -> NaiveDate {
+    use chrono::Datelike;
+    let days = date.weekday().num_days_from_monday() as i64;
+    date - chrono::Duration::days(days)
+}
+
+fn seed_daily_with_log(vault_root_store: &Arc<dyn VaultStore>, date: NaiveDate, log_text: &str) {
+    let path = cdno_core::path::VaultPath::new(cdno_core::paths::daily_note_relpath(date)).unwrap();
+    let body = format!(
+        "---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n- **09:00**: {log_text}\n",
+        date = date.format("%Y-%m-%d"),
+    );
+    vault_root_store.write_file(&path, &body).unwrap();
+}
+
+#[tokio::test]
+async fn get_weekly_context_returns_shape_with_week_of_set_to_monday() {
+    let server = empty_server();
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+    let value = decode_json(&result);
+    assert_eq!(
+        value["week_of"].as_str().unwrap(),
+        monday_of(today()).format("%Y-%m-%d").to_string()
+    );
+    // Shape: four arrays + week_of. Order-independent presence check.
+    for key in ["logs", "completed_actions", "state_changes", "commitments"] {
+        assert!(
+            value[key].is_array(),
+            "expected `{key}` to be an array: {value}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn get_weekly_context_includes_a_log_from_today() {
+    // Build a server over a hand-seeded store so we can write today's
+    // daily entry into the same vault the server reads.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    seed_daily_with_log(&store, today(), "MCP weekly smoke");
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let logs = value["logs"].as_array().unwrap();
+    assert!(
+        logs.iter()
+            .any(|l| l["text"].as_str().unwrap().contains("MCP weekly smoke")),
+        "today's seeded log line should appear: {logs:?}"
     );
 }

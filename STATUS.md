@@ -21,7 +21,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | #45 | `cdno-mcp` crate scaffold on `rmcp`, all 16 tool schemas advertised, stdio binary | Complete | #140 |
 | — | Doc tidy: implementation plan §5.2 updated for rmcp choice | Complete | #141 |
 | #46 | `HandlerRegistry` + 7 context-gathering handlers | Partial — 3 of 7 handlers shipped (`get_orientation`, `get_active_questions`, `get_portfolio_contents`); registry covered by `#[tool_router]` macro | (this PR) |
-| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Partial — 8 supporting domain queries shipped (this PR); 4 handlers to plug in | (this PR) |
+| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Partial — 8 supporting domain queries shipped in #145; `get_weekly_context` handler wired (this PR); 3 handlers to go | #145 + (this PR) |
 | #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Complete | (this PR) |
 | #48 | Stdio transport polish + Claude Desktop end-to-end test | Not started | — |
 | #49 | File watcher integration for live external edits | Not started | — |
@@ -36,7 +36,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `get_orientation` | Wired |
 | `get_active_questions` | Wired |
 | `get_portfolio_contents` | Wired |
-| `get_weekly_context` | Stub (#142) |
+| `get_weekly_context` | Wired |
 | `get_monthly_context` | Stub (#142) |
 | `get_project_context` | Stub (#142) |
 | `get_stewardship_tracking` | Stub (#142) |
@@ -50,7 +50,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `complete_commitment` | Wired |
 | `create_tracking_entry` | Wired |
 
-12 of 16 are wired through to the domain. The 4 remaining stubs (the deferred context tools — `get_weekly_context`, `get_monthly_context`, `get_project_context`, `get_stewardship_tracking`) need new domain queries and land in GH #142. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
+13 of 16 are wired through to the domain. The 3 remaining stubs (`get_monthly_context`, `get_project_context`, `get_stewardship_tracking`) land one PR each as the next GH #142 follow-ups — the supporting domain queries shipped with #145. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
 
 ## What works today
 
@@ -68,7 +68,7 @@ Reachable from the terminal via `cdno`:
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
-- **Context reads** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`
+- **Context reads** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments lookahead)
 - **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`)
 
 Each operation returns a `WriteResultDto { path, message }` so clients can chain on the touched file path.
