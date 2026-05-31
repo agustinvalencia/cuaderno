@@ -1,5 +1,6 @@
 [package]
 name = "cdno-mcp"
+description = "MCP server exposing a Cuaderno vault to Claude / Kiro / Gemini CLI and any other MCP-aware agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
