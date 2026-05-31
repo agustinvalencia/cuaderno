@@ -344,6 +344,34 @@ impl StewardshipDetailDto {
 }
 
 // ---------------------------------------------------------------------
+// Write-op result
+// ---------------------------------------------------------------------
+
+/// Uniform output shape for every operation tool — carries the
+/// vault-relative path of the file the op touched (the new evidence
+/// note, the updated project map, the appended-to daily, …) plus a
+/// short human-readable summary line that mirrors the CLI's success
+/// message. JSON-object shape (not a bare string) keeps the schema
+/// extensible: future fields like `affected_ids` or `warnings` slot
+/// in without breaking clients.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct WriteResultDto {
+    /// Vault-relative path of the file the op touched.
+    pub path: String,
+    /// Short summary line — what the CLI would print on success.
+    pub message: String,
+}
+
+impl WriteResultDto {
+    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // Enum-to-wire-string mappings
 // ---------------------------------------------------------------------
 
