@@ -22,7 +22,7 @@
 //! Each DTO implements [`From`] from its domain counterpart so
 //! handlers (#46, #47) convert in one explicit line.
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime};
 use schemars::JsonSchema;
 use serde::Serialize;
 
@@ -31,9 +31,9 @@ use cdno_domain::frontmatter::{
     QuestionDomain, QuestionStatus, StewardshipFrontmatter,
 };
 use cdno_domain::{
-    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, LapsedHabit,
-    OrientationContext, PortfolioSummary, ProjectSummary, QuestionSummary, StewardshipSummary,
-    StewardshipVariant, TopAction,
+    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
+    DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary, ProjectStateChange,
+    ProjectSummary, QuestionSummary, StewardshipSummary, StewardshipVariant, TopAction,
 };
 
 // ---------------------------------------------------------------------
@@ -341,6 +341,87 @@ impl StewardshipDetailDto {
             body_markdown: body,
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Weekly context — composes four query slices for the
+// `get_weekly_context` MCP tool. Mirrors the design §11 surface.
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DailyLogLineDto {
+    pub date: NaiveDate,
+    pub time: NaiveTime,
+    pub text: String,
+}
+
+impl From<DailyLogLine> for DailyLogLineDto {
+    fn from(l: DailyLogLine) -> Self {
+        Self {
+            date: l.date,
+            time: l.time,
+            text: l.text,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CompletedActionEntryDto {
+    pub slug: String,
+    pub project: String,
+    pub title: String,
+    pub completed: NaiveDate,
+    pub path: String,
+}
+
+impl From<CompletedActionEntry> for CompletedActionEntryDto {
+    fn from(a: CompletedActionEntry) -> Self {
+        Self {
+            slug: a.slug,
+            project: a.project,
+            title: a.title,
+            completed: a.completed,
+            path: a.path.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectStateChangeDto {
+    pub date: NaiveDate,
+    pub project: String,
+    pub old_state: String,
+    pub new_state: String,
+}
+
+impl From<ProjectStateChange> for ProjectStateChangeDto {
+    fn from(c: ProjectStateChange) -> Self {
+        Self {
+            date: c.date,
+            project: c.project,
+            old_state: c.old_state,
+            new_state: c.new_state,
+        }
+    }
+}
+
+/// Top-level output of `get_weekly_context`. The four slices are
+/// what design §11 calls for: this week's daily logs, what got
+/// done, project state changes during the week, and the lookahead
+/// of upcoming commitments.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct WeeklyContextDto {
+    /// The Monday of the ISO week the rest of the slices cover.
+    /// Echoed back so clients render the week explicitly rather than
+    /// relying on a local "today" interpretation.
+    pub week_of: NaiveDate,
+    pub logs: Vec<DailyLogLineDto>,
+    pub completed_actions: Vec<CompletedActionEntryDto>,
+    pub state_changes: Vec<ProjectStateChangeDto>,
+    /// Commitments in the next two weeks (design §11 explicit
+    /// figure). Overdue rows from the standing 30-day look-back
+    /// still surface — `is_overdue` flags them.
+    pub commitments: Vec<CommitmentEntryDto>,
 }
 
 // ---------------------------------------------------------------------

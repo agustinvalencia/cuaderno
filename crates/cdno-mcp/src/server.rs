@@ -2,14 +2,13 @@
 //! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status (as of #47 — operation handlers): 12 of 16 tools wired
-//! through to the domain. The four remaining stubs (the deferred
-//! context tools — `get_weekly_context`, `get_monthly_context`,
-//! `get_project_context`, `get_stewardship_tracking`) need new
-//! domain queries first and land in GH #142. Their bodies return
-//! [`rmcp::ErrorData::internal_error`] via `not_yet_implemented` so
-//! a client that calls one gets a clear "not implemented" response
-//! rather than a panic.
+//! Status: 13 of 16 tools wired through to the domain. The three
+//! remaining stubs (`get_monthly_context`, `get_project_context`,
+//! `get_stewardship_tracking`) land one PR each as GH #142
+//! follow-ups now that the supporting domain queries are in. Their
+//! bodies return [`rmcp::ErrorData::internal_error`] via
+//! `not_yet_implemented` so a client that calls one gets a clear
+//! "not implemented" response rather than a panic.
 //!
 //! # Imports note
 //!
@@ -39,7 +38,9 @@ use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 
-use crate::dto::{OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto, WriteResultDto};
+use crate::dto::{
+    OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
+};
 
 // ---------------------------------------------------------------------
 // Inputs
@@ -235,13 +236,34 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "(not yet implemented \u{2014} see GH #142) This week's wins, completed actions, project state changes, stewardship status, and commitments for the next two weeks."
+        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
     )]
-    async fn get_weekly_context(
+    pub async fn get_weekly_context(
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_weekly_context"))
+        let today = chrono::Local::now().date_naive();
+        let monday = monday_of_iso_week(today);
+        let sunday = monday + chrono::Duration::days(6);
+
+        let logs = self.vault.weekly_logs(today).map_err(into_mcp_error)?;
+        let completed = self
+            .vault
+            .completed_actions_between(monday, sunday)
+            .map_err(into_mcp_error)?;
+        let state_changes = self
+            .vault
+            .project_state_changes_between(monday, sunday)
+            .map_err(into_mcp_error)?;
+        let commitments = self.vault.commitments(today, 14).map_err(into_mcp_error)?;
+
+        json_result(WeeklyContextDto {
+            week_of: monday,
+            logs: logs.into_iter().map(Into::into).collect(),
+            completed_actions: completed.into_iter().map(Into::into).collect(),
+            state_changes: state_changes.into_iter().map(Into::into).collect(),
+            commitments: commitments.into_iter().map(Into::into).collect(),
+        })
     }
 
     #[tool(
@@ -529,13 +551,12 @@ impl ServerHandler for CuadernoServer {
     }
 }
 
-/// Placeholder error returned by every stubbed tool method until its
-/// handler lands. With #47 closed, the remaining stubs are the four
-/// context tools deferred to GH #142 (`get_weekly_context`,
-/// `get_monthly_context`, `get_project_context`,
-/// `get_stewardship_tracking`) because each needs new domain
-/// queries first. Includes the tool name so a client sees exactly
-/// which surface isn't ready yet.
+/// Placeholder error returned by every stubbed tool method until
+/// its handler lands. With #47 closed and #142a (get_weekly_context)
+/// shipped, the three remaining stubs are `get_monthly_context`,
+/// `get_project_context`, `get_stewardship_tracking` — each lands as
+/// its own GH #142 follow-up PR. Includes the tool name so a client
+/// sees exactly which surface isn't ready yet.
 fn not_yet_implemented(tool_name: &str) -> ErrorData {
     ErrorData::internal_error(
         format!("tool '{tool_name}' is registered but not yet implemented"),
@@ -567,6 +588,17 @@ fn into_mcp_error(e: DomainError) -> ErrorData {
 /// value that doesn't parse.
 fn invalid_argument(field: &str, reason: &str) -> ErrorData {
     ErrorData::invalid_params(format!("invalid '{field}': {reason}"), None)
+}
+
+/// Compute the Monday of the ISO-8601 week containing `date`. ISO
+/// week (Mon-Sun) rather than locale week so behaviour is identical
+/// across deployments. Duplicates the domain's internal helper of
+/// the same name; kept here rather than re-exporting it because
+/// each handler may want a different windowing strategy in future.
+fn monday_of_iso_week(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let days_since_monday = date.weekday().num_days_from_monday() as i64;
+    date - chrono::Duration::days(days_since_monday)
 }
 
 // `ServerInfo` doesn't expose a public `with_capabilities` builder,
