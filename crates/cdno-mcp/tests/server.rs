@@ -104,9 +104,10 @@ fn every_tool_has_description_and_object_input_schema() {
 #[test]
 fn stub_tools_flag_their_status_in_the_description() {
     let server = empty_server();
-    // get_weekly_context wired in #142a; get_monthly_context in
-    // #142b. The remaining two stubs land one PR each.
-    let stubs = ["get_project_context", "get_stewardship_tracking"];
+    // #142a wired get_weekly_context; #142b get_monthly_context;
+    // #142c get_project_context. Only get_stewardship_tracking is
+    // still stubbed; the final follow-up lands next.
+    let stubs = ["get_stewardship_tracking"];
     let tools = server.advertised_tools();
     for name in stubs {
         let tool = tools

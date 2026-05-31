@@ -387,3 +387,131 @@ async fn get_monthly_context_surfaces_active_questions_and_portfolios() {
     assert_eq!(value["active_questions"].as_array().unwrap().len(), 1);
     assert_eq!(value["portfolios"].as_array().unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------
+// get_project_context
+// ---------------------------------------------------------------------
+
+use cdno_domain::frontmatter::Context;
+
+#[tokio::test]
+async fn get_project_context_returns_frontmatter_body_and_empty_collections() {
+    use cdno_mcp::server::ProjectSlugInput;
+    let server = server_with(|vault| {
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0).date(),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("get_project_context");
+    let value = decode_json(&result);
+
+    assert_eq!(value["slug"], "surrogate-model");
+    assert_eq!(value["frontmatter"]["context"], "work");
+    assert_eq!(value["frontmatter"]["status"], "active");
+    assert!(
+        value["body_markdown"]
+            .as_str()
+            .unwrap()
+            .contains("# Surrogate model")
+    );
+    assert!(value["recent_mentions"].as_array().unwrap().is_empty());
+    assert!(
+        value["backlinks"]["questions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(value["core_question"].is_null());
+}
+
+#[tokio::test]
+async fn get_project_context_resolves_core_question_when_set() {
+    use cdno_domain::frontmatter::QuestionDomain;
+    let server = server_with(|vault| {
+        // Create question first so the project's core_question
+        // wikilink resolves to an existing note.
+        vault
+            .create_question(
+                moment(2026, 1, 10, 9, 0),
+                QuestionDomain::Research,
+                "Surrogate cost",
+            )
+            .unwrap();
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0).date(),
+                "Surrogate model",
+                Context::Work,
+                Some("questions/research/surrogate-cost"),
+            )
+            .unwrap();
+    });
+
+    use cdno_mcp::server::ProjectSlugInput;
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+
+    let core = &value["core_question"];
+    assert!(!core.is_null(), "core_question should resolve: {value}");
+    assert_eq!(core["slug"], "surrogate-cost");
+    assert_eq!(core["domain"], "research");
+}
+
+#[tokio::test]
+async fn get_project_context_returns_none_for_unresolved_core_question() {
+    // Project sets core_question to a wikilink target that doesn't
+    // resolve — the field is included as null rather than erroring.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let project_body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\ncore_question: \"[[questions/research/missing]]\"\n---\n\n# Surrogate model\n\n## Current State\nN/A.\n\n## Next Actions\n";
+    store
+        .write_file(
+            &cdno_core::path::VaultPath::new("projects/surrogate-model.md").unwrap(),
+            project_body,
+        )
+        .unwrap();
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    use cdno_mcp::server::ProjectSlugInput;
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    assert!(value["core_question"].is_null());
+    assert_eq!(
+        value["frontmatter"]["core_question"], "[[questions/research/missing]]",
+        "raw wikilink still surfaced in frontmatter even when unresolved"
+    );
+}
+
+#[tokio::test]
+async fn get_project_context_errors_on_missing_project() {
+    let server = empty_server();
+    use cdno_mcp::server::ProjectSlugInput;
+    let err = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "nonexistent".to_owned(),
+        }))
+        .await
+        .expect_err("missing project should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+}
