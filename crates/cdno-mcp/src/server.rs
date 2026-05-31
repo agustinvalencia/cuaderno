@@ -2,11 +2,10 @@
 //! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: 13 of 16 tools wired through to the domain. The three
-//! remaining stubs (`get_monthly_context`, `get_project_context`,
-//! `get_stewardship_tracking`) land one PR each as GH #142
-//! follow-ups now that the supporting domain queries are in. Their
-//! bodies return [`rmcp::ErrorData::internal_error`] via
+//! Status: 14 of 16 tools wired through to the domain. The two
+//! remaining stubs (`get_project_context`, `get_stewardship_tracking`)
+//! land one PR each as the next GH #142 follow-ups. Their bodies
+//! return [`rmcp::ErrorData::internal_error`] via
 //! `not_yet_implemented` so a client that calls one gets a clear
 //! "not implemented" response rather than a panic.
 //!
@@ -39,7 +38,8 @@ use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 
 use crate::dto::{
-    OrientationContextDto, PortfolioDetailDto, QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
+    MonthlyContextDto, OrientationContextDto, PortfolioDetailDto, ProjectSlotsDto,
+    QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
 };
 
 // ---------------------------------------------------------------------
@@ -267,13 +267,48 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "(not yet implemented \u{2014} see GH #142) Strategic monthly scan: wins patterns, active questions, portfolio health, project stuck-detection, stewardship overview, and a six-week commitments lookahead."
+        description = "Strategic monthly scan: the past 30 days' completed actions (wins patterns), every active question, the portfolio health table, active projects unchanged for >2 weeks (stuck-detection), every stewardship dashboard, a six-week commitments lookahead, and active-project slot allocation against the configured cap."
     )]
-    async fn get_monthly_context(
+    pub async fn get_monthly_context(
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_monthly_context"))
+        let today = chrono::Local::now().date_naive();
+        let since = today - chrono::Duration::days(30);
+
+        let completed = self
+            .vault
+            .completed_actions_between(since, today)
+            .map_err(into_mcp_error)?;
+        let active_questions = self.vault.active_questions().map_err(into_mcp_error)?;
+        let portfolios = self.vault.list_portfolios(today).map_err(into_mcp_error)?;
+        // Design §11: "project stuck-check, unchanged >2 weeks" — 14 days.
+        let stuck = self
+            .vault
+            .stuck_projects(today, 14)
+            .map_err(into_mcp_error)?;
+        let stewardships = self
+            .vault
+            .list_stewardships(today)
+            .map_err(into_mcp_error)?;
+        // Six-week (42-day) lookahead per design §11.
+        let commitments = self.vault.commitments(today, 42).map_err(into_mcp_error)?;
+        let active_count = self.vault.active_projects().map_err(into_mcp_error)?.len();
+        let cap = self.vault.config().vault.max_active_projects;
+
+        json_result(MonthlyContextDto {
+            since,
+            completed_actions: completed.into_iter().map(Into::into).collect(),
+            active_questions: active_questions.into_iter().map(Into::into).collect(),
+            portfolios: portfolios.into_iter().map(Into::into).collect(),
+            stuck_projects: stuck.into_iter().map(Into::into).collect(),
+            stewardships: stewardships.into_iter().map(Into::into).collect(),
+            commitments: commitments.into_iter().map(Into::into).collect(),
+            slots: ProjectSlotsDto {
+                active: active_count,
+                cap,
+            },
+        })
     }
 
     #[tool(
@@ -552,11 +587,11 @@ impl ServerHandler for CuadernoServer {
 }
 
 /// Placeholder error returned by every stubbed tool method until
-/// its handler lands. With #47 closed and #142a (get_weekly_context)
-/// shipped, the three remaining stubs are `get_monthly_context`,
-/// `get_project_context`, `get_stewardship_tracking` — each lands as
-/// its own GH #142 follow-up PR. Includes the tool name so a client
-/// sees exactly which surface isn't ready yet.
+/// its handler lands. With #142a + #142b (weekly + monthly context)
+/// shipped, the two remaining stubs are `get_project_context` and
+/// `get_stewardship_tracking` — each lands as its own GH #142
+/// follow-up PR. Includes the tool name so a client sees exactly
+/// which surface isn't ready yet.
 fn not_yet_implemented(tool_name: &str) -> ErrorData {
     ErrorData::internal_error(
         format!("tool '{tool_name}' is registered but not yet implemented"),

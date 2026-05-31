@@ -328,3 +328,62 @@ async fn get_weekly_context_includes_a_log_from_today() {
         "today's seeded log line should appear: {logs:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// get_monthly_context
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn get_monthly_context_returns_shape_with_since_and_slots() {
+    let server = empty_server();
+    let result = server
+        .get_monthly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_monthly_context");
+    let value = decode_json(&result);
+    // since = today - 30 days
+    let expected = (today() - chrono::Duration::days(30))
+        .format("%Y-%m-%d")
+        .to_string();
+    assert_eq!(value["since"].as_str().unwrap(), expected);
+    // Seven slices + slots block.
+    for key in [
+        "completed_actions",
+        "active_questions",
+        "portfolios",
+        "stuck_projects",
+        "stewardships",
+        "commitments",
+    ] {
+        assert!(
+            value[key].is_array(),
+            "expected `{key}` to be an array: {value}"
+        );
+    }
+    assert_eq!(value["slots"]["active"].as_u64().unwrap(), 0);
+    // Default cap from VaultConfig::default().
+    assert_eq!(value["slots"]["cap"].as_u64().unwrap(), 5);
+}
+
+#[tokio::test]
+async fn get_monthly_context_surfaces_active_questions_and_portfolios() {
+    let server = server_with(|vault| {
+        vault
+            .create_question(
+                moment(2026, 1, 10, 9, 0),
+                QuestionDomain::Research,
+                "What truly matters?",
+            )
+            .unwrap();
+        vault
+            .create_portfolio(moment(2026, 1, 12, 9, 0), "Does X beat Y?", None)
+            .unwrap();
+    });
+    let result = server
+        .get_monthly_context(Parameters(EmptyInput::default()))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    assert_eq!(value["active_questions"].as_array().unwrap().len(), 1);
+    assert_eq!(value["portfolios"].as_array().unwrap().len(), 1);
+}
