@@ -26,6 +26,11 @@ cdno-domain = { workspace = true }
 # error mapping.
 rmcp = { workspace = true }
 
+# Structured logging on stderr for the cdno-mcp binary. Stdout is
+# the JSON-RPC channel; logging there would corrupt the protocol.
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
 # Async runtime for the rmcp service loop. The domain layer stays
 # synchronous; we call into it from a thread pool when the handler
 # is async (rmcp's ServiceExt is async).
@@ -46,3 +51,6 @@ anyhow = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 chrono = { workspace = true }
+# cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
+# via `cdno init` before launching cdno-mcp against it.
+cdno-cli = { path = "../cdno-cli" }

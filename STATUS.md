@@ -23,7 +23,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | #46 | `HandlerRegistry` + 7 context-gathering handlers | Partial — 3 of 7 handlers shipped (`get_orientation`, `get_active_questions`, `get_portfolio_contents`); registry covered by `#[tool_router]` macro | (this PR) |
 | #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Complete — #145 (8 domain queries), #146 (weekly), #147 (monthly), #148 (project), this PR (stewardship_tracking) | #145 + #146 + #147 + #148 + (this PR) |
 | #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Complete | (this PR) |
-| #48 | Stdio transport polish + Claude Desktop end-to-end test | Not started | — |
+| #48 | Stdio transport polish + Claude Desktop end-to-end test | Complete — protocol surface verified via subprocess JSON-RPC e2e tests; stderr `tracing` logging on the binary (RUST_LOG-controlled); better startup error messages. The "actually try it in Claude Desktop" smoke is a separate manual checklist item. | (this PR) |
 | #49 | File watcher integration for live external edits | Not started | — |
 | #50 | Update existing Claude skills for the new domain model | Not started | — |
 | #51 | Create new cuaderno-native skills (daily-orientation, weekly-review, monthly-review, file-to-portfolio, create-project, triage) | Not started | — |
