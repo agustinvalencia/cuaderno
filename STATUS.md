@@ -21,7 +21,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | #45 | `cdno-mcp` crate scaffold on `rmcp`, all 16 tool schemas advertised, stdio binary | Complete | #140 |
 | — | Doc tidy: implementation plan §5.2 updated for rmcp choice | Complete | #141 |
 | #46 | `HandlerRegistry` + 7 context-gathering handlers | Partial — 3 of 7 handlers shipped (`get_orientation`, `get_active_questions`, `get_portfolio_contents`); registry covered by `#[tool_router]` macro | (this PR) |
-| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Not started | — |
+| #142 | Remaining 4 context handlers + supporting domain queries (weekly/monthly context, project context, stewardship tracking) | Partial — 8 supporting domain queries shipped (this PR); 4 handlers to plug in | (this PR) |
 | #47 | 9 operation handlers (append_to_log, file_to_portfolio, update_project_state, add/promote/complete_action, create/complete_commitment, create_tracking_entry) | Complete | (this PR) |
 | #48 | Stdio transport polish + Claude Desktop end-to-end test | Not started | — |
 | #49 | File watcher integration for live external edits | Not started | — |
