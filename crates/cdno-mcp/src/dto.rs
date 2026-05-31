@@ -468,6 +468,85 @@ pub struct MonthlyContextDto {
 }
 
 // ---------------------------------------------------------------------
+// Project context — composes the full project map, recent daily-log
+// mentions, body backlinks grouped by source type, and (when set)
+// the resolved core_question for the `get_project_context` MCP tool.
+// ---------------------------------------------------------------------
+
+/// Typed project frontmatter on the wire. Mirrors
+/// [`cdno_domain::frontmatter::ProjectFrontmatter`] one-for-one.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectFrontmatterDto {
+    pub context: String,
+    pub status: String,
+    pub created: NaiveDate,
+    /// Raw wikilink string when set (e.g.
+    /// `"[[questions/research/surrogate-cost]]"`); `None` when the
+    /// project has no `core_question:` frontmatter field.
+    pub core_question: Option<String>,
+}
+
+impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDto {
+    fn from(fm: cdno_domain::frontmatter::ProjectFrontmatter) -> Self {
+        Self {
+            context: fm.context.as_str().to_owned(),
+            status: fm.status.as_str().to_owned(),
+            created: fm.created,
+            core_question: fm.core_question,
+        }
+    }
+}
+
+/// Wire-format mirror of [`cdno_domain::ProjectBacklinks`]. Carries
+/// the raw paths grouped by source note type. Same body-wikilinks-only
+/// scope limitation as the domain query (see its doc comment).
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
+pub struct ProjectBacklinksDto {
+    pub portfolios: Vec<String>,
+    pub questions: Vec<String>,
+    pub evidence: Vec<String>,
+    pub actions: Vec<String>,
+    pub other: Vec<String>,
+}
+
+impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
+    fn from(b: cdno_domain::ProjectBacklinks) -> Self {
+        let to_strings = |paths: Vec<cdno_core::path::VaultPath>| -> Vec<String> {
+            paths.into_iter().map(|p| p.to_string()).collect()
+        };
+        Self {
+            portfolios: to_strings(b.portfolios),
+            questions: to_strings(b.questions),
+            evidence: to_strings(b.evidence),
+            actions: to_strings(b.actions),
+            other: to_strings(b.other),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectContextDto {
+    pub slug: String,
+    pub frontmatter: ProjectFrontmatterDto,
+    /// Full body of the project map (everything after the closing
+    /// `---` of the frontmatter).
+    pub body_markdown: String,
+    /// Log lines from daily notes (past 30 days) that wikilink the
+    /// project either bare or qualified.
+    pub recent_mentions: Vec<DailyLogLineDto>,
+    /// Body-level backlinks grouped by source note type. Frontmatter
+    /// wikilinks aren't indexed and don't appear here — see the
+    /// [`cdno_domain::Vault::project_backlinks`] doc comment.
+    pub backlinks: ProjectBacklinksDto,
+    /// The question this project answers, when `core_question:` is
+    /// set on the project map AND that question exists in the vault.
+    /// Resolved by parsing the wikilink target and looking it up;
+    /// `None` if the field is absent, the wikilink doesn't parse, or
+    /// the target question has been deleted.
+    pub core_question: Option<QuestionSummaryDto>,
+}
+
+// ---------------------------------------------------------------------
 // Write-op result
 // ---------------------------------------------------------------------
 

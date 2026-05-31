@@ -2,12 +2,12 @@
 //! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: 14 of 16 tools wired through to the domain. The two
-//! remaining stubs (`get_project_context`, `get_stewardship_tracking`)
-//! land one PR each as the next GH #142 follow-ups. Their bodies
-//! return [`rmcp::ErrorData::internal_error`] via
-//! `not_yet_implemented` so a client that calls one gets a clear
-//! "not implemented" response rather than a panic.
+//! Status: 15 of 16 tools wired through to the domain. The last
+//! remaining stub is `get_stewardship_tracking`, which lands as the
+//! final GH #142 follow-up. Its body returns
+//! [`rmcp::ErrorData::internal_error`] via `not_yet_implemented` so
+//! a client that calls it gets a clear "not implemented" response
+//! rather than a panic.
 //!
 //! # Imports note
 //!
@@ -38,8 +38,8 @@ use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 
 use crate::dto::{
-    MonthlyContextDto, OrientationContextDto, PortfolioDetailDto, ProjectSlotsDto,
-    QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
+    MonthlyContextDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
+    ProjectSlotsDto, QuestionSummaryDto, WeeklyContextDto, WriteResultDto,
 };
 
 // ---------------------------------------------------------------------
@@ -312,13 +312,56 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "(not yet implemented \u{2014} see GH #142) Full context for a single project: the project map, recent daily log entries mentioning it, linked portfolio summaries, and the linked question."
+        description = "Full context for a single project: typed frontmatter, the full body of the project map, recent daily-log mentions (past 30 days, bare or qualified wikilinks), body backlinks grouped by source note type, and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
     )]
-    async fn get_project_context(
+    pub async fn get_project_context(
         &self,
-        Parameters(_input): Parameters<ProjectSlugInput>,
+        Parameters(input): Parameters<ProjectSlugInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        Err(not_yet_implemented("get_project_context"))
+        let today = chrono::Local::now().date_naive();
+        let since = today - chrono::Duration::days(30);
+
+        let (fm, body) = self
+            .vault
+            .get_project_full(&input.project)
+            .map_err(into_mcp_error)?;
+        let mentions = self
+            .vault
+            .daily_log_mentions(&input.project, since)
+            .map_err(into_mcp_error)?;
+        let backlinks = self
+            .vault
+            .project_backlinks(&input.project)
+            .map_err(into_mcp_error)?;
+
+        // Resolve core_question when present. Parse the wikilink
+        // target out of `"[[questions/<domain>/<slug>]]"`, look it
+        // up in the full question list (active OR otherwise), and
+        // include the summary. Quietly silent on any parse / lookup
+        // failure — better to return None than to surface a "broken
+        // wikilink" error from a read-only context query. Lint is
+        // where that surfaces.
+        let core_question = if let Some(link) = fm.core_question.as_deref() {
+            parse_question_slug_from_wikilink(link)
+                .and_then(|slug| {
+                    self.vault
+                        .list_questions()
+                        .ok()
+                        .and_then(|qs| qs.into_iter().find(|q| q.slug == slug))
+                })
+                .map(QuestionSummaryDto::from)
+        } else {
+            None
+        };
+
+        json_result(ProjectContextDto {
+            slug: input.project,
+            frontmatter: fm.into(),
+            body_markdown: body,
+            recent_mentions: mentions.into_iter().map(Into::into).collect(),
+            backlinks: backlinks.into(),
+            core_question,
+        })
     }
 
     #[tool(
@@ -587,11 +630,10 @@ impl ServerHandler for CuadernoServer {
 }
 
 /// Placeholder error returned by every stubbed tool method until
-/// its handler lands. With #142a + #142b (weekly + monthly context)
-/// shipped, the two remaining stubs are `get_project_context` and
-/// `get_stewardship_tracking` — each lands as its own GH #142
-/// follow-up PR. Includes the tool name so a client sees exactly
-/// which surface isn't ready yet.
+/// its handler lands. With #142a/b/c shipped (weekly, monthly, and
+/// project context), `get_stewardship_tracking` is the only stub
+/// left — lands as the final GH #142 follow-up. Includes the tool
+/// name so a client sees exactly which surface isn't ready yet.
 fn not_yet_implemented(tool_name: &str) -> ErrorData {
     ErrorData::internal_error(
         format!("tool '{tool_name}' is registered but not yet implemented"),
@@ -634,6 +676,22 @@ fn monday_of_iso_week(date: chrono::NaiveDate) -> chrono::NaiveDate {
     use chrono::Datelike;
     let days_since_monday = date.weekday().num_days_from_monday() as i64;
     date - chrono::Duration::days(days_since_monday)
+}
+
+/// Extract the question slug from a wikilink target string like
+/// `"[[questions/research/surrogate-cost]]"`. Returns `None` for any
+/// shape that isn't a `questions/<domain>/<slug>` wikilink — keeps
+/// `get_project_context` silent when a project's `core_question:`
+/// points somewhere odd (handled in lint, not here).
+fn parse_question_slug_from_wikilink(link: &str) -> Option<String> {
+    let inside = link.trim().strip_prefix("[[")?.strip_suffix("]]")?;
+    let rest = inside.strip_prefix("questions/")?;
+    // questions/<domain>/<slug> — must have at least one `/` left.
+    let slug = rest.rsplit_once('/').map(|(_, slug)| slug)?;
+    if slug.is_empty() {
+        return None;
+    }
+    Some(slug.to_owned())
 }
 
 // `ServerInfo` doesn't expose a public `with_capabilities` builder,
