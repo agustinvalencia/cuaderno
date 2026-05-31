@@ -34,6 +34,7 @@ use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary, ProjectStateChange,
     ProjectSummary, QuestionSummary, StewardshipSummary, StewardshipVariant, TopAction,
+    TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -544,6 +545,53 @@ pub struct ProjectContextDto {
     /// `None` if the field is absent, the wikilink doesn't parse, or
     /// the target question has been deleted.
     pub core_question: Option<QuestionSummaryDto>,
+}
+
+// ---------------------------------------------------------------------
+// Stewardship tracking — wire-format mirrors for the
+// `get_stewardship_tracking` MCP tool.
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackingEntryDto {
+    pub path: String,
+    pub stewardship: String,
+    pub activity: String,
+    pub date: NaiveDate,
+    pub duration_min: Option<u32>,
+    /// Raw wikilink string when present (gym/swim templates only).
+    pub routine: Option<String>,
+    /// First non-blank body line after the H1, capped at 200 chars.
+    pub body_excerpt: String,
+}
+
+impl From<TrackingEntry> for TrackingEntryDto {
+    fn from(e: TrackingEntry) -> Self {
+        Self {
+            path: e.path.to_string(),
+            stewardship: e.stewardship,
+            activity: e.activity,
+            date: e.date,
+            duration_min: e.duration_min,
+            routine: e.routine,
+            body_excerpt: e.body_excerpt,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct StewardshipTrackingDto {
+    pub stewardship: String,
+    /// Activity filter applied (`None` if all activities returned).
+    pub activity: Option<String>,
+    /// Inclusive start of the lookback window, echoed back so clients
+    /// render it explicitly rather than re-parsing the `period` input.
+    pub from: NaiveDate,
+    /// Inclusive end of the window (today).
+    pub to: NaiveDate,
+    /// Tracking notes in the window, most-recent-first; ties broken
+    /// by activity then path.
+    pub entries: Vec<TrackingEntryDto>,
 }
 
 // ---------------------------------------------------------------------
