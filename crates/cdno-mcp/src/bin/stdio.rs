@@ -9,11 +9,15 @@
 //! table. A future `bin/server.rs` will host the HTTP transport
 //! under a separate binary name.
 //!
-//! Stub today: tools answer with "not yet implemented" until #46 and
-//! #47 fill in the handlers. Wiring it up here means MCP clients
-//! can already register the server, list the advertised tools, and
-//! see the schemas — which is how Claude Desktop / Claude Code
-//! discover capabilities at startup.
+//! # Logging
+//!
+//! Structured logs go to **stderr**, never stdout (stdout is the
+//! JSON-RPC channel — anything written there corrupts the
+//! protocol). Filter verbosity at runtime via `RUST_LOG`, e.g.
+//! `RUST_LOG=cdno_mcp=debug,cdno_domain=info` to debug a real
+//! Claude session without rebuilding. Default level is `info` so a
+//! freshly-launched server logs its vault path and any startup
+//! failure without further configuration.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,25 +31,54 @@ use cdno_domain::Vault;
 use cdno_mcp::CuadernoServer;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_tracing();
+
     let root = vault_root_from_env()?;
-    let vault = open_vault(&root)?;
+    tracing::info!(vault_root = %root.display(), "starting cdno-mcp");
+
+    let vault = open_vault(&root).inspect_err(|e| {
+        tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
+    })?;
+    tracing::info!("vault opened; serving 16 design \u{00a7}11 tools over stdio");
+
     let server = CuadernoServer::new(Arc::new(vault));
 
     // `ServiceExt::serve(transport)` performs the MCP init handshake,
     // routes incoming `tools/call` requests through the
     // `#[tool_router]` table, and runs until the client disconnects.
-    let running = server
-        .serve(stdio())
-        .await
-        .context("failed to start MCP service over stdio")?;
-    running
-        .waiting()
-        .await
-        .context("MCP service exited with an error")?;
+    let running = server.serve(stdio()).await.inspect_err(|e| {
+        tracing::error!(error = %e, "failed to start MCP service over stdio");
+    })?;
+
+    let result = running.waiting().await;
+    if let Err(ref e) = result {
+        tracing::error!(error = %e, "MCP service exited with an error");
+    } else {
+        tracing::info!("MCP client disconnected; shutting down");
+    }
+    result.context("MCP service exited with an error")?;
     Ok(())
+}
+
+/// Initialise the `tracing` subscriber: write to **stderr** (stdout
+/// is the JSON-RPC channel and must not be written to from anywhere
+/// else), default to `info`, allow `RUST_LOG` to override.
+fn init_tracing() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        // No ANSI colour codes — these go to log files / Claude
+        // Desktop's MCP log pane and the escapes would be noise.
+        .with_ansi(false)
+        // Compact format is easier to scan in a log pane than the
+        // full pretty form, but still includes timestamp + level.
+        .compact()
+        .try_init();
 }
 
 /// Resolve the vault root from `CUADERNO_VAULT_PATH`, falling back
@@ -66,8 +99,11 @@ fn open_vault(root: &Path) -> Result<Vault> {
     let cuaderno_dir = root.join(paths::CUADERNO_DIR);
     if !cuaderno_dir.is_dir() {
         bail!(
-            "no Cuaderno vault at {}; run `cdno init` first.",
-            root.display()
+            "no Cuaderno vault at {} (looked for `.cuaderno/`).\n\
+             Hint: run `cdno init {}` to scaffold one, or set \
+             `CUADERNO_VAULT_PATH` to point at an existing vault.",
+            root.display(),
+            root.display(),
         );
     }
 
@@ -78,7 +114,15 @@ fn open_vault(root: &Path) -> Result<Vault> {
         SqliteIndex::open(root.join(paths::INDEX_DB))
             .with_context(|| format!("opening {}", root.join(paths::INDEX_DB).display()))?,
     );
-    let (vault, _report) =
+    let (vault, report) =
         Vault::new(store, index, config).context("constructing vault and reconciling index")?;
+    tracing::debug!(
+        scanned = report.scanned,
+        added = report.added,
+        updated = report.updated,
+        removed = report.removed,
+        errors = report.errors.len(),
+        "reconciliation complete",
+    );
     Ok(vault)
 }

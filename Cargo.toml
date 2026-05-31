@@ -77,6 +77,13 @@ schemars = { version = "1", features = ["chrono04"] }
 # and Tauri).
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
 
+# Structured logging for the MCP server binary. Writes to stderr
+# (never stdout — stdio is the JSON-RPC channel). Filter via the
+# RUST_LOG env var so users can debug a real Claude session without
+# rebuilding (e.g. RUST_LOG=cdno_mcp=debug).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
 cdno-domain = { path = "crates/cdno-domain" }
