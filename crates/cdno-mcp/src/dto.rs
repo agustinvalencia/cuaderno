@@ -425,6 +425,49 @@ pub struct WeeklyContextDto {
 }
 
 // ---------------------------------------------------------------------
+// Monthly context — composes seven slices for the
+// `get_monthly_context` MCP tool. Design §11 calls this the
+// strategic scan: wins patterns, active questions, portfolio
+// health, project stuck-detection, stewardship overview, a six-week
+// commitments lookahead, and project slot allocation against the cap.
+// ---------------------------------------------------------------------
+
+/// Active-project slot usage against the configured cap (default 5
+/// per design §3.1). Useful for the monthly-review "should I drop /
+/// pick up a project" decision.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectSlotsDto {
+    /// Current count of active projects (status: active under
+    /// `projects/`, not `projects/_parked/`).
+    pub active: usize,
+    /// Configured cap (`max_active_projects` in vault config).
+    pub cap: u8,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MonthlyContextDto {
+    /// Start of the 30-day "past month" window — `today - 30 days`.
+    /// Echoed back so clients render the window explicitly.
+    pub since: NaiveDate,
+    /// Completed action notes from the past 30 days, oldest-first.
+    pub completed_actions: Vec<CompletedActionEntryDto>,
+    /// Every question with `status: active`, sorted by (domain, slug).
+    pub active_questions: Vec<QuestionSummaryDto>,
+    /// Every portfolio with its evidence count and staleness.
+    pub portfolios: Vec<PortfolioSummaryDto>,
+    /// Active projects whose map hasn't been edited in 14 days
+    /// (design §11's "unchanged > 2 weeks" stuck-detection rule).
+    pub stuck_projects: Vec<ProjectSummaryDto>,
+    /// Every stewardship dashboard.
+    pub stewardships: Vec<StewardshipSummaryDto>,
+    /// Commitments in the next six weeks (design §11 explicit
+    /// figure).
+    pub commitments: Vec<CommitmentEntryDto>,
+    /// Active-project slots against the cap.
+    pub slots: ProjectSlotsDto,
+}
+
+// ---------------------------------------------------------------------
 // Write-op result
 // ---------------------------------------------------------------------
 
