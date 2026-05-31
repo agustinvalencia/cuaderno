@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-driven release: pushing `vX.Y.Z` builds binaries for every
+# supported target, creates a GitHub release, and uploads the
+# archives + their SHA256 sidecars. The Homebrew formula in
+# `agustinvalencia/homebrew-tap` then references these URLs.
+#
+# Triggering: `git tag v0.1.0 && git push origin v0.1.0`.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: v${{ steps.get_version.outputs.version }}
+          draft: false
+          # Tags containing a hyphen (e.g. `v0.1.0-rc1`) are treated
+          # as pre-releases so they don't fight for "latest" on the
+          # repo home page.
+          prerelease: ${{ contains(github.ref, '-') }}
+          generate_release_notes: true
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (aarch64 Linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binaries
+        # `--bins` builds every binary in the workspace: `cdno`
+        # (from cdno-cli) and `cdno-mcp` (from cdno-mcp).
+        run: cargo build --release --target ${{ matrix.target }} --bins
+        env:
+          # Cross-compiling Linux aarch64 needs the right linker.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package
+        # The archive ships both binaries plus LICENSE and README so
+        # a user who downloads the tarball directly (no Homebrew)
+        # gets everything they need in one folder.
+        run: |
+          ARCHIVE_DIR="cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}"
+          mkdir "$ARCHIVE_DIR"
+          cp "target/${{ matrix.target }}/release/cdno" "$ARCHIVE_DIR/"
+          cp "target/${{ matrix.target }}/release/cdno-mcp" "$ARCHIVE_DIR/"
+          cp LICENSE "$ARCHIVE_DIR/"
+          cp README.md "$ARCHIVE_DIR/"
+          tar czvf "${ARCHIVE_DIR}.tar.gz" "$ARCHIVE_DIR"
+          shasum -a 256 "${ARCHIVE_DIR}.tar.gz" > "${ARCHIVE_DIR}.tar.gz.sha256"
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
+            cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz.sha256

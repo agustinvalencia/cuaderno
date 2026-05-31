@@ -2,6 +2,8 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
+**Current release**: 0.1.0 (2026-05-31). The CLI is daily-usable end-to-end and the MCP server is production-ready against Claude Desktop / Claude Code / Kiro / Gemini CLI.
+
 ## Phase summary
 
 | Phase | Scope | Status |
@@ -9,7 +11,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | **1 — Foundation** | Workspace layout, `cdno-core` traits + impls (`VaultStore`, `VaultIndex`, transactions, reconciliation, markdown parsing, hashing), `cdno-domain` skeleton, basic CLI bootstrap | Complete |
 | **2 — Daily loop** | Projects (5-cap, state, milestones, waiting-on, park/activate), actions (bullets + manifest notes, add/promote/complete/list), commitments (create/complete + aggregation timeline), orient/status/lint, flags-and-prompts ergonomics retrofit, append-only-after-completion lint | Complete |
 | **3 — Knowledge & stewardship** | Portfolios + evidence (create, file, list, show), questions (CRUD + status transitions + grouped list), stewardships (flat + expanded, list, show, periodic commitments, tracking notes with built-in templates), `cdno track` | Complete |
-| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 16-tool schema catalogue, stdio binary | In progress — see table below |
+| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 16-tool schema catalogue, stdio binary | Core complete (all 16 tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
 | **5 — Tauri UI** | `cdno-tauri` backend, React frontend with Tremor, Home / Weekly / Commitments views | Not started |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | Not started |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |

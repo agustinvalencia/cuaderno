@@ -6,7 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-### Added — Phase 4 (MCP server, in progress)
+_Nothing yet — see the current branch for in-flight work._
+
+## [0.1.0] - 2026-05-31
+
+First tagged release. Cuts the line under everything shipped across Phases 1, 2, 3, and the closing surface of Phase 4 (all 16 design §11 MCP tools wired, stdio binary polished + e2e-tested). The CLI is daily-usable end-to-end; the MCP server is production-ready against Claude Desktop / Claude Code / Kiro / Gemini CLI.
+
+### Added — Phase 4 (MCP server)
 
 - **Stdio transport polish + subprocess end-to-end tests** (closes #48). The protocol surface (JSON-RPC framing, init handshake, `tools/list`, `tools/call`, error formatting, binary main) was already done by rmcp + #45; this PR adds: structured stderr logging via `tracing` (filter via `RUST_LOG`, defaults to `info`, never writes to stdout because that's the JSON-RPC channel); better startup error messages with `cdno init`/`CUADERNO_VAULT_PATH` hints; a `tests/e2e_stdio.rs` integration test suite that spawns the actual `cdno-mcp` binary, speaks JSON-RPC at it through stdin/stdout, and verifies the init handshake, the full 16-tool `tools/list` catalogue, a successful read tool (`get_orientation`), a successful write tool (`append_to_log` with on-disk artefact verification), and the error path for an unknown tool name. (GH #48)
 - **`get_stewardship_tracking` MCP handler** — composes `Vault::list_tracking(stewardship, activity, from, today)` with a small `period` parser supporting `Nd | Nw | Nm | Ny` (calendar-aware months and years via `chrono::Months`). Defaults to `90d` when `period` is omitted. Activity is required per design §11. Unknown period shapes / out-of-range arithmetic surface as `INVALID_PARAMS`. The `from` / `to` bounds are echoed back so clients render the window explicitly. **Closes GH #142**: all 16 design §11 tools are now wired through to the domain; the `not_yet_implemented` placeholder helper retired. (GH #142, final follow-up)
