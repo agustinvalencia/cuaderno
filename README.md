@@ -11,17 +11,26 @@ A vault management tool implementing the **Research Logbook Method** (RLM) — a
 
 ## Getting Started
 
-### Install (from source)
+### Install
 
-Cuaderno is in active pre-release development; the only install path today is building from source. A Homebrew tap and pre-built binaries are planned but not yet shipped.
+**Homebrew** (macOS + Linux, recommended):
+
+```bash
+brew install agustinvalencia/tap/cuaderno
+```
+
+That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mcp` (the MCP server for Claude / Kiro / Gemini CLI). Pre-built bottles for macOS arm64 + intel and Linux x86_64 + aarch64.
+
+**From source** (everywhere else, or if you want to track `main`):
 
 ```bash
 git clone https://github.com/agustinvalencia/cuaderno
 cd cuaderno
-cargo build --release
-# The binary lands at target/release/cdno — symlink or copy it
-# somewhere on your PATH, for example:
+cargo build --release --bins
+# Binaries land at target/release/cdno and target/release/cdno-mcp.
+# Symlink both somewhere on your PATH, for example:
 ln -s "$PWD/target/release/cdno" /usr/local/bin/cdno
+ln -s "$PWD/target/release/cdno-mcp" /usr/local/bin/cdno-mcp
 ```
 
 Verify:
@@ -75,13 +84,7 @@ For the full verb list: `cdno --help`, then `cdno <verb> --help`.
 
 ### Connect to Claude (MCP server)
 
-Cuaderno ships an MCP server so Claude Desktop / Claude Code / any MCP-aware agent can read and write the vault. The server is a separate binary (`cdno-mcp`) that talks JSON-RPC over stdio.
-
-```bash
-# Build the MCP binary alongside the CLI
-cargo build --release --bin cdno-mcp
-ln -s "$PWD/target/release/cdno-mcp" /usr/local/bin/cdno-mcp
-```
+Cuaderno ships an MCP server so Claude Desktop / Claude Code / any MCP-aware agent can read and write the vault. The server is a separate binary, `cdno-mcp`, that talks JSON-RPC over stdio. It's already on your PATH if you installed via Homebrew or symlinked the `from source` build above.
 
 Wire it into Claude Desktop / Claude Code with:
 
