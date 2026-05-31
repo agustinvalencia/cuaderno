@@ -103,7 +103,7 @@ impl Vault {
     /// Errors only when the slug doesn't resolve to either folder
     /// (`Store(NotFound)`) or when the file's frontmatter is
     /// malformed.
-    pub(super) fn resolve_any_project(
+    pub(in crate::vault) fn resolve_any_project(
         &self,
         slug: &str,
     ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {

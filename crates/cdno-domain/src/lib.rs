@@ -13,7 +13,8 @@ pub mod vault;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport};
 pub use vault::{
-    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, LapsedHabit,
-    OrientationContext, PortfolioSummary, ProjectSummary, QuestionSummary, StewardshipSummary,
-    StewardshipVariant, TopAction, Vault,
+    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
+    DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary, ProjectBacklinks,
+    ProjectStateChange, ProjectSummary, QuestionSummary, StewardshipSummary, StewardshipVariant,
+    TopAction, TrackingEntry, Vault,
 };
