@@ -14,6 +14,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
 use cdno_domain::{PortfolioSummary, Vault};
@@ -21,6 +22,7 @@ use cdno_domain::{PortfolioSummary, Vault};
 use cdno_core::path::VaultPath;
 
 use crate::bootstrap;
+use crate::completions;
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -45,7 +47,7 @@ pub enum PortfolioCommands {
     /// Show a portfolio's frontmatter and its evidence inventory.
     Show {
         /// Portfolio slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
     },
 }

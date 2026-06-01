@@ -11,12 +11,14 @@ use std::path::Path;
 use anyhow::{Context as AnyhowContext, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{Context, StewardshipFrontmatter};
 use cdno_domain::recurrence::Recurrence;
 use cdno_domain::{StewardshipSummary, StewardshipVariant, Vault};
 
 use crate::bootstrap;
+use crate::completions;
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -47,7 +49,7 @@ pub enum StewardshipCommands {
     /// dashboard body.
     Show {
         /// Stewardship slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_stewardship))]
         slug: Option<String>,
     },
 
@@ -56,7 +58,7 @@ pub enum StewardshipCommands {
     /// the aggregated `cdno commitments` view.
     AddPeriodic {
         /// Stewardship slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_stewardship))]
         stewardship: Option<String>,
         /// Title of the commitment (e.g. "Dental check-up").
         #[arg(long)]

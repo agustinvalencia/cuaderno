@@ -41,6 +41,14 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
 
+# Shell completion script generation + dynamic per-flag value
+# completion. The `unstable-dynamic` feature gates the runtime
+# completion engine (env-var-detected, returns candidates without
+# launching the full app); it's still flagged unstable upstream but
+# the API surface we touch (`CompleteEnv`, `ArgValueCompleter`,
+# `CompletionCandidate`) has been stable for several minor releases.
+clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
+
 # Interactive CLI prompts (fuzzy selectors, calendar widgets, confirms)
 # applied for missing-but-required-in-TTY args. CLI-only; library and
 # domain crates never see prompts.
