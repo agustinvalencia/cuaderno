@@ -18,6 +18,7 @@ path = "src/main.rs"
 cdno-core.workspace = true
 cdno-domain.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 inquire.workspace = true
 anyhow.workspace = true
 chrono.workspace = true

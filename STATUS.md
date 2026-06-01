@@ -67,6 +67,7 @@ Reachable from the terminal via `cdno`:
 - `portfolio create / list / show` and `file` (file evidence into a portfolio)
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)
 - `stewardship create / list / show / add-periodic` and `track <activity>`
+- `completions <shell>` — emit a shell-completion shim (bash, zsh, fish, elvish, powershell) with **dynamic vault-aware tab completion** for slug-valued flags (`--project`, `--portfolio`, `--stewardship`, `--slug` on project/question verbs)
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 

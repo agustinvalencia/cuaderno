@@ -14,11 +14,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{QuestionDomain, QuestionStatus};
 
 use crate::bootstrap;
+use crate::completions;
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -38,7 +40,7 @@ pub enum QuestionCommands {
     /// questions.
     Park {
         /// Question slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
         slug: Option<String>,
     },
 
@@ -46,7 +48,7 @@ pub enum QuestionCommands {
     /// questions.
     Answer {
         /// Question slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
         slug: Option<String>,
     },
 
@@ -54,7 +56,7 @@ pub enum QuestionCommands {
     /// not already retired.
     Retire {
         /// Question slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
         slug: Option<String>,
     },
 
@@ -62,7 +64,7 @@ pub enum QuestionCommands {
     /// not already active.
     Activate {
         /// Question slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
         slug: Option<String>,
     },
 }

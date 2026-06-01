@@ -8,7 +8,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{Local, NaiveDateTime};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::engine::ArgValueCompleter;
+use clap_complete::env::CompleteEnv;
 
 use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
@@ -16,6 +18,7 @@ use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::commands::question::QuestionCommands;
 use cdno_cli::commands::stewardship::StewardshipCommands;
+use cdno_cli::completions;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
 
@@ -101,7 +104,7 @@ enum Commands {
     /// File a piece of evidence into a portfolio.
     File {
         /// Portfolio slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
         /// Citation, experiment id, conversation reference, …
         #[arg(long)]
@@ -146,7 +149,7 @@ enum Commands {
         activity: String,
         /// Stewardship slug. Defaults to the only expanded
         /// stewardship if there's exactly one; otherwise required.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_stewardship))]
         stewardship: Option<String>,
         /// Bare slug of a routine doc — wrapped into
         /// `[[stewardships/<stewardship>/routines/<routine>]]` and
@@ -174,9 +177,25 @@ enum Commands {
         #[arg(long, default_value_t = 2)]
         weeks: u32,
     },
+
+    /// Print a shell-completion script. Source it in your shell's
+    /// rc file. Dynamic vault-aware suggestions for `--project`,
+    /// `--portfolio`, `--stewardship`, `--slug` etc. are wired into
+    /// the same script — the binary is re-invoked by the shell when
+    /// you press TAB.
+    Completions {
+        /// Target shell (`bash`, `zsh`, `fish`, `elvish`, or
+        /// `powershell`).
+        shell: clap_complete::Shell,
+    },
 }
 
 fn main() -> Result<()> {
+    // Runtime completion intercept: when the shell invokes us with
+    // the completion env var set, this returns candidates and exits
+    // before `Cli::parse()` runs (so an unset vault is harmless).
+    CompleteEnv::with_factory(Cli::command).complete();
+
     let cli = Cli::parse();
     match cli.command {
         Commands::Init { path } => {
@@ -306,6 +325,12 @@ fn main() -> Result<()> {
         Commands::Commitments { weeks } => {
             let root = discover_vault_root_or_error()?;
             commands::commitments::run(&root, Local::now().date_naive(), weeks)
+        }
+        Commands::Completions { shell } => {
+            // Script emission needs no vault — sourcing is a shell-rc-time
+            // operation; the vault may not exist yet (and the dynamic
+            // engine's vault opens happen later, on TAB).
+            completions::print_script(shell).context("emitting completion script")
         }
     }
 }

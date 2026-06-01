@@ -6,7 +6,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-_Nothing yet — see the current branch for in-flight work._
+### Added
+
+- **Shell completions, both static script + dynamic vault-aware values** — new `cdno completions <shell>` subcommand emits the registration shim for bash, zsh, fish, elvish, or powershell. The shim uses `clap_complete`'s dynamic engine (gated by the `unstable-dynamic` feature on `clap_complete = "4.5"`): pressing TAB re-invokes `cdno` with `COMPLETE=<shell>` set, which `CompleteEnv::with_factory(Cli::command).complete()` at the top of `main` intercepts before the normal parse runs. Per-flag `ArgValueCompleter` closures open the vault on the fly and surface real slugs as candidates: `--project` (active), `--slug` on project verbs (active for state/park/milestone/waiting, parked for activate, both for show), `--portfolio` (on `cdno file` and `portfolio show`), `--stewardship` (on `cdno track` and `stewardship add-periodic`), `--slug` on `stewardship show`, and `--slug` on every `question` lifecycle verb (park/answer/retire/activate). Completers fail silently when the vault can't be opened — TAB does nothing rather than smearing an error across the prompt. 12 subprocess integration tests in `crates/cdno-cli/tests/completions.rs` cover script emission per shell and runtime intercept behaviour against seeded temp vaults. The Homebrew formula will need a `generate_completions_from_executable bin/"cdno", "completions"` line in a separate tap PR after v0.2.0 cuts.
 
 ## [0.1.0] - 2026-05-31
 

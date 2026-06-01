@@ -15,11 +15,13 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{ActionStatus, EnergyLevel};
 use cdno_domain::{ActionListEntry, AttachedAction, Vault};
 
 use crate::bootstrap;
+use crate::completions;
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -28,7 +30,7 @@ pub enum ActionCommands {
     /// note alongside the bullet and wikilinks it.
     Add {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         project: Option<String>,
         /// Action title.
         #[arg(long)]
@@ -46,7 +48,7 @@ pub enum ActionCommands {
     /// Substring-matches the bullet text; energy is inherited.
     Promote {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         project: Option<String>,
         /// Substring matching the bullet to promote.
         #[arg(long)]
@@ -58,7 +60,7 @@ pub enum ActionCommands {
     /// `actions/_done/<year>/`.
     Complete {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         project: Option<String>,
         /// Substring matching the action to complete.
         #[arg(long)]
@@ -69,7 +71,7 @@ pub enum ActionCommands {
     /// status (active / blocked / completed) inline when present.
     List {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         project: Option<String>,
     },
 }

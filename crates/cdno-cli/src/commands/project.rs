@@ -11,10 +11,12 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 use clap::Subcommand;
+use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{Context as ProjectContext, ProjectStatus};
 
 use crate::bootstrap;
+use crate::completions;
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommands {
@@ -39,7 +41,7 @@ pub enum ProjectCommands {
     /// Update the Current State section, auto-logging the previous body.
     State {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
         /// New state text.
         #[arg(long)]
@@ -49,14 +51,14 @@ pub enum ProjectCommands {
     /// Move an active project to projects/_parked/.
     Park {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
     },
 
     /// Bring a parked project back, enforcing the active-project cap.
     Activate {
         /// Project slug (parked).
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_parked_project))]
         slug: Option<String>,
     },
 
@@ -64,7 +66,10 @@ pub enum ProjectCommands {
     List,
 
     /// Show a compact summary of a single project (any status).
-    Show { slug: String },
+    Show {
+        #[arg(add = ArgValueCompleter::new(completions::complete_any_project))]
+        slug: String,
+    },
 
     /// Manage project milestones.
     Milestone {
@@ -84,7 +89,7 @@ pub enum MilestoneCommands {
     /// Add a milestone with a target or hard date.
     Add {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
         /// Milestone title.
         #[arg(long)]
@@ -99,7 +104,7 @@ pub enum MilestoneCommands {
     /// Mark a milestone as done by substring match.
     Done {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
         /// Substring matching the milestone title.
         #[arg(long)]
@@ -112,7 +117,7 @@ pub enum WaitingCommands {
     /// Add a waiting-on item.
     Add {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
         /// Description of what's blocking.
         #[arg(long)]
@@ -121,7 +126,7 @@ pub enum WaitingCommands {
     /// Resolve (remove) a waiting-on item by substring match.
     Resolve {
         /// Project slug.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
         slug: Option<String>,
         /// Substring matching the waiting-on item.
         #[arg(long)]
