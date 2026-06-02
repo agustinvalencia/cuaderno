@@ -4,7 +4,7 @@
 //! the vault root from CWD, and delegates to a library handler. All
 //! real work lives in [`cdno_cli`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use chrono::{Local, NaiveDateTime};
@@ -34,6 +34,14 @@ struct Cli {
     /// Always implicit when stdout is not a TTY.
     #[arg(long, global = true)]
     no_interactive: bool,
+
+    /// Path to the Cuaderno vault to operate on. Overrides both vault
+    /// discovery and the `CUADERNO_VAULT_PATH` environment variable.
+    /// When omitted, cdno discovers the vault by walking up from the
+    /// current directory, then falls back to `CUADERNO_VAULT_PATH` —
+    /// letting `cdno log`, `cdno capture`, etc. run from anywhere.
+    #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
+    vault: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -207,7 +215,7 @@ fn main() -> Result<()> {
             commands::init::run(&target)
         }
         Commands::Log { message, at } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             let at = match at {
                 Some(s) => parse_timestamp(&s)?,
                 None => Local::now().naive_local(),
@@ -215,15 +223,15 @@ fn main() -> Result<()> {
             commands::log::run(&root, at, &message)
         }
         Commands::Lint => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::lint::run(&root)
         }
         Commands::Capture { text } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::capture::run(&root, Local::now().naive_local(), &text)
         }
         Commands::Project { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::project::run(
                 &root,
                 Local::now().naive_local(),
@@ -232,15 +240,15 @@ fn main() -> Result<()> {
             )
         }
         Commands::Orient { energy } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::orient::run(&root, Local::now().date_naive(), energy)
         }
         Commands::Status => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::status::run(&root, Local::now().date_naive())
         }
         Commands::Action { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::action::run(
                 &root,
                 Local::now().naive_local(),
@@ -249,7 +257,7 @@ fn main() -> Result<()> {
             )
         }
         Commands::Portfolio { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::portfolio::run(
                 &root,
                 Local::now().naive_local(),
@@ -263,7 +271,7 @@ fn main() -> Result<()> {
             origin,
             content,
         } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::file::run(
                 &root,
                 Local::now().naive_local(),
@@ -275,7 +283,7 @@ fn main() -> Result<()> {
             )
         }
         Commands::Question { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::question::run(
                 &root,
                 Local::now().naive_local(),
@@ -284,11 +292,11 @@ fn main() -> Result<()> {
             )
         }
         Commands::Questions => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::questions::run(&root)
         }
         Commands::Stewardship { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::stewardship::run(
                 &root,
                 Local::now().naive_local(),
@@ -302,7 +310,7 @@ fn main() -> Result<()> {
             routine,
             content,
         } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::track::run(
                 &root,
                 Local::now().naive_local(),
@@ -314,7 +322,7 @@ fn main() -> Result<()> {
             )
         }
         Commands::Commit { subcommand } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::commit::run(
                 &root,
                 Local::now().naive_local(),
@@ -323,7 +331,7 @@ fn main() -> Result<()> {
             )
         }
         Commands::Commitments { weeks } => {
-            let root = discover_vault_root_or_error()?;
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::commitments::run(&root, Local::now().date_naive(), weeks)
         }
         Commands::Completions { shell } => {
@@ -335,16 +343,27 @@ fn main() -> Result<()> {
     }
 }
 
+/// Environment variable naming the vault to operate on when none is
+/// discovered from the current directory. Shared with the MCP server,
+/// which already honours the same name.
+const ENV_VAULT_PATH: &str = "CUADERNO_VAULT_PATH";
+
 /// Resolve the vault root for commands that operate on an existing
-/// vault. Walks ancestors of CWD looking for the `.cuaderno/` marker;
-/// errors with a `cdno init` hint when none is found.
-fn discover_vault_root_or_error() -> Result<PathBuf> {
+/// vault, reading the real CWD and environment and delegating the
+/// precedence policy to [`bootstrap::resolve_vault_root`]. Errors with
+/// a hint naming all three mechanisms when none resolves.
+fn resolve_vault_root_or_error(vault_flag: Option<&Path>) -> Result<PathBuf> {
     let cwd =
         std::env::current_dir().context("could not determine the current working directory")?;
-    bootstrap::discover_vault_root(&cwd).ok_or_else(|| {
+    let env_value = std::env::var(ENV_VAULT_PATH).ok();
+
+    bootstrap::resolve_vault_root(vault_flag, &cwd, env_value.as_deref()).ok_or_else(|| {
         anyhow!(
-            "{} is not inside a Cuaderno vault; run `cdno init` to create one",
-            cwd.display()
+            "{} is not inside a Cuaderno vault.\n\
+             Point cdno at one with `--vault <path>`, set ${} to your vault, \
+             or run `cdno init` to create one.",
+            cwd.display(),
+            ENV_VAULT_PATH,
         )
     })
 }

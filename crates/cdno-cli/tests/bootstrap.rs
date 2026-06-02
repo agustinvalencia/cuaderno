@@ -53,6 +53,59 @@ fn discover_vault_root_returns_none_when_no_marker_in_ancestors() {
 }
 
 #[test]
+fn resolve_vault_root_prefers_explicit_flag_over_everything() {
+    // CWD is itself a vault and the env var points at a third place;
+    // the explicit flag must still win.
+    let flagged = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    make_minimal_vault(cwd.path());
+
+    let resolved =
+        bootstrap::resolve_vault_root(Some(flagged.path()), cwd.path(), Some("/some/env/vault"));
+
+    assert_eq!(resolved.as_deref(), Some(flagged.path()));
+}
+
+#[test]
+fn resolve_vault_root_prefers_cwd_discovery_over_env() {
+    // Inside a vault with the env var pointing elsewhere: discovery
+    // must win so a stray CUADERNO_VAULT_PATH can't misroute writes.
+    let cwd = tempdir().unwrap();
+    make_minimal_vault(cwd.path());
+    let nested = cwd.path().join("projects");
+    fs::create_dir_all(&nested).unwrap();
+
+    let resolved = bootstrap::resolve_vault_root(None, &nested, Some("/some/env/vault"));
+
+    assert_eq!(resolved.as_deref(), Some(cwd.path()));
+}
+
+#[test]
+fn resolve_vault_root_falls_back_to_env_outside_any_vault() {
+    // CWD is not inside a vault: the env var is the fallback.
+    let cwd = tempdir().unwrap();
+
+    let resolved = bootstrap::resolve_vault_root(None, cwd.path(), Some("/env/vault"));
+
+    assert_eq!(resolved, Some(Path::new("/env/vault").to_path_buf()));
+}
+
+#[test]
+fn resolve_vault_root_treats_blank_env_as_unset() {
+    let cwd = tempdir().unwrap();
+
+    assert!(bootstrap::resolve_vault_root(None, cwd.path(), Some("   ")).is_none());
+    assert!(bootstrap::resolve_vault_root(None, cwd.path(), Some("")).is_none());
+}
+
+#[test]
+fn resolve_vault_root_returns_none_when_nothing_resolves() {
+    let cwd = tempdir().unwrap();
+
+    assert!(bootstrap::resolve_vault_root(None, cwd.path(), None).is_none());
+}
+
+#[test]
 fn open_vault_errors_with_helpful_message_when_cuaderno_dir_missing() {
     let dir = tempdir().unwrap();
 

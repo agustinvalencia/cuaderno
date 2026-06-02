@@ -92,6 +92,76 @@ fn log_errors_clearly_when_run_outside_any_vault() {
 }
 
 #[test]
+fn vault_flag_targets_a_vault_from_outside_any_vault() {
+    // The reported workflow: jot something down without cd-ing into
+    // the vault. `--vault <path>` from an unrelated directory writes
+    // to that vault.
+    let vault = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    cdno().arg("init").arg(vault.path()).assert().success();
+
+    cdno()
+        .current_dir(elsewhere.path())
+        .args(["--vault", vault.path().to_str().unwrap()])
+        .args(["log", "from a flag", "--at", "2026-04-25T09:00:00"])
+        .assert()
+        .success();
+
+    assert!(
+        vault
+            .path()
+            .join("journal/2026/daily/2026-04-25.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn env_var_targets_a_vault_from_outside_any_vault() {
+    let vault = tempdir().unwrap();
+    let elsewhere = tempdir().unwrap();
+    cdno().arg("init").arg(vault.path()).assert().success();
+
+    cdno()
+        .current_dir(elsewhere.path())
+        .env("CUADERNO_VAULT_PATH", vault.path())
+        .args(["log", "from the env var", "--at", "2026-04-25T09:00:00"])
+        .assert()
+        .success();
+
+    assert!(
+        vault
+            .path()
+            .join("journal/2026/daily/2026-04-25.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn cwd_discovery_wins_over_env_var() {
+    // Standing inside vault A while CUADERNO_VAULT_PATH points at
+    // vault B: the write must land in A. Guards against a stray env
+    // var silently misrouting writes in a multi-vault setup.
+    let inside = tempdir().unwrap();
+    let env_vault = tempdir().unwrap();
+    cdno().arg("init").arg(inside.path()).assert().success();
+    cdno().arg("init").arg(env_vault.path()).assert().success();
+
+    cdno()
+        .current_dir(inside.path())
+        .env("CUADERNO_VAULT_PATH", env_vault.path())
+        .args(["log", "lands in cwd vault", "--at", "2026-04-25T09:00:00"])
+        .assert()
+        .success();
+
+    let daily = "journal/2026/daily/2026-04-25.md";
+    assert!(inside.path().join(daily).is_file(), "cwd vault written");
+    assert!(
+        !env_vault.path().join(daily).is_file(),
+        "env vault must be untouched"
+    );
+}
+
+#[test]
 fn capture_creates_an_inbox_file_when_run_from_inside_a_vault() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();

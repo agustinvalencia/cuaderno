@@ -8,6 +8,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 _Nothing yet — see the current branch for in-flight work._
 
+## [0.1.2] - 2026-06-02
+
+Patch release: `cdno` no longer has to be run from inside the vault.
+
+### Added
+
+- **Run `cdno` from outside the vault** (#155) — a new global `--vault <path>` flag plus support for the `CUADERNO_VAULT_PATH` environment variable (the same name the MCP server already honours) let quick verbs like `cdno log` / `cdno capture` run from any directory, instead of failing unless invoked from inside the vault tree. Resolution precedence is `--vault` > a vault discovered by walking up from the current directory > `CUADERNO_VAULT_PATH`; cwd-discovery deliberately beats the env var so a stray `CUADERNO_VAULT_PATH` can't misroute writes when working inside a different vault. Blank / whitespace-only env values are treated as unset. The precedence policy lives in a pure `bootstrap::resolve_vault_root(flag, cwd, env)` (unit-tested across the matrix in `tests/bootstrap.rs`); `main` supplies the real CWD/environment, and three subprocess tests in `tests/cli.rs` cover the flag, the env var, and the cwd-beats-env guarantee end-to-end. The outside-any-vault error now names all three mechanisms. Deferred to a follow-up: a user-level config `default_vault` (the fourth fallback layer from #155).
+
 ## [0.1.1] - 2026-06-01
 
 Patch release adding shell completion support. No behavioural changes to existing CLI or MCP surfaces.

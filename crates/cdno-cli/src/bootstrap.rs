@@ -28,6 +28,41 @@ pub fn discover_vault_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+/// Resolve which vault root to operate on, in precedence order:
+///
+/// 1. `vault_flag` — an explicit `--vault <path>`, wins unconditionally.
+/// 2. A vault discovered by walking up from `cwd` — so running *inside*
+///    a vault always targets that vault, even when `env_vault_path`
+///    points elsewhere. Discovery must beat the env fallback or a stray
+///    `CUADERNO_VAULT_PATH` would silently misroute writes in a
+///    multi-vault setup.
+/// 3. `env_vault_path` — the `CUADERNO_VAULT_PATH` value, the "I'm
+///    outside any vault" fallback. Empty / whitespace-only values are
+///    treated as unset so an accidentally-exported blank var doesn't
+///    resolve to `""`.
+///
+/// Returns `None` when nothing resolves; the caller renders the error.
+/// Pure over its inputs — `main` supplies the real CWD and environment
+/// — so the precedence policy is testable without touching either.
+pub fn resolve_vault_root(
+    vault_flag: Option<&Path>,
+    cwd: &Path,
+    env_vault_path: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(path) = vault_flag {
+        return Some(path.to_path_buf());
+    }
+    if let Some(root) = discover_vault_root(cwd) {
+        return Some(root);
+    }
+    if let Some(value) = env_vault_path
+        && !value.trim().is_empty()
+    {
+        return Some(PathBuf::from(value));
+    }
+    None
+}
+
 /// Open a Cuaderno vault rooted at `root`: load config, open the
 /// SQLite index, run startup reconciliation.
 ///
