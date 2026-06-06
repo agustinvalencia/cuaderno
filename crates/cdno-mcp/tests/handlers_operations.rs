@@ -19,7 +19,8 @@ use cdno_domain::frontmatter::{Context, EnergyLevel};
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AppendToLogInput, CompleteCommitmentInput,
-    CreateCommitmentInput, CreateTrackingEntryInput, FileToPortfolioInput, UpdateProjectStateInput,
+    CreateCommitmentInput, CreateTrackingEntryInput, FileToPortfolioInput, ReadDailyNoteInput,
+    UpdateProjectStateInput, UpsertDailySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -453,4 +454,77 @@ async fn create_tracking_entry_errors_on_flat_stewardship() {
         msg.contains("flat") || msg.contains("tracking"),
         "msg: {msg}"
     );
+}
+
+// ---------------------------------------------------------------------
+// read_daily_note (GH #158)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn read_daily_note_reports_absence_for_a_fresh_vault() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let result = server
+        .read_daily_note(Parameters(ReadDailyNoteInput { date: None }))
+        .await
+        .expect("read_daily_note");
+    let value = decode_json(&result);
+
+    assert_eq!(value["exists"].as_bool(), Some(false));
+    assert_eq!(value["markdown"].as_str(), Some(""));
+    assert!(value["path"].as_str().unwrap().ends_with(".md"));
+}
+
+#[tokio::test]
+async fn read_daily_note_returns_markdown_when_present() {
+    let (server, _store) = server_with(|_v, store| seed_today_daily(&store));
+
+    let result = server
+        .read_daily_note(Parameters(ReadDailyNoteInput { date: None }))
+        .await
+        .expect("read_daily_note");
+    let value = decode_json(&result);
+
+    assert_eq!(value["exists"].as_bool(), Some(true));
+    assert!(value["markdown"].as_str().unwrap().contains("## Logs"));
+}
+
+// ---------------------------------------------------------------------
+// upsert_daily_section (GH #158)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn upsert_daily_section_writes_a_planning_section() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .upsert_daily_section(Parameters(UpsertDailySectionInput {
+            section: "intention".to_owned(),
+            content: "Ship #158".to_owned(),
+            date: None,
+        }))
+        .await
+        .expect("upsert_daily_section");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("## Intention"), "body:\n{body}");
+    assert!(body.contains("Ship #158"), "body:\n{body}");
+}
+
+#[tokio::test]
+async fn upsert_daily_section_rejects_history_section_with_invalid_params() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let err = server
+        .upsert_daily_section(Parameters(UpsertDailySectionInput {
+            section: "Logs".to_owned(),
+            content: "sneaky".to_owned(),
+            date: None,
+        }))
+        .await
+        .expect_err("Logs is append-only and not on the allowlist");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("section"));
 }

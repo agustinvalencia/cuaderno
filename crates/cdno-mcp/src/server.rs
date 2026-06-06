@@ -1,10 +1,11 @@
 //! `CuadernoServer` — the rmcp [`ServerHandler`] that exposes the
-//! design §11 tools to MCP clients (Claude Desktop, Claude Code, any
+//! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 16 design §11 tools are wired through to the
-//! domain. The `not_yet_implemented` placeholder has been retired
-//! with no stubs left.
+//! Status: all 18 tools are wired through to the domain — the 16
+//! design §11 tools plus the two daily-note tools (`read_daily_note`,
+//! `upsert_daily_section`) added in GH #158. The `not_yet_implemented`
+//! placeholder has been retired with no stubs left.
 //!
 //! # Imports note
 //!
@@ -30,13 +31,14 @@ use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
+use cdno_domain::{DailySection, Vault};
 
 use crate::dto::{
-    MonthlyContextDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
-    ProjectSlotsDto, QuestionSummaryDto, StewardshipTrackingDto, WeeklyContextDto, WriteResultDto,
+    DailyNoteViewDto, MonthlyContextDto, OrientationContextDto, PortfolioDetailDto,
+    ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, StewardshipTrackingDto,
+    WeeklyContextDto, WriteResultDto,
 };
 
 // ---------------------------------------------------------------------
@@ -169,6 +171,27 @@ pub struct CreateTrackingEntryInput {
     pub routine: Option<String>,
     #[serde(default)]
     pub content: String,
+}
+
+/// Input for `read_daily_note` (GH #158). `date` defaults to today
+/// when omitted.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadDailyNoteInput {
+    /// ISO `YYYY-MM-DD`. Omitted = today.
+    pub date: Option<chrono::NaiveDate>,
+}
+
+/// Input for `upsert_daily_section` (GH #158). `section` is one of the
+/// mutable planning sections; `content` defaults to empty (which
+/// clears the section to just its heading); `date` defaults to today.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpsertDailySectionInput {
+    /// One of `Standup`, `Intention`, `Agenda` (case-insensitive).
+    pub section: String,
+    #[serde(default)]
+    pub content: String,
+    /// ISO `YYYY-MM-DD`. Omitted = today.
+    pub date: Option<chrono::NaiveDate>,
 }
 
 // ---------------------------------------------------------------------
@@ -429,6 +452,20 @@ impl CuadernoServer {
         json_result(dtos)
     }
 
+    #[tool(
+        description = "Read the daily note for a date (defaults to today). Returns `{ path, exists, markdown }`. A day with no note yet returns `exists: false` and empty `markdown` rather than erroring, so callers can check for pre-planned content (a written intention, a pre-filled agenda) before deciding what to write."
+    )]
+    pub async fn read_daily_note(
+        &self,
+        Parameters(input): Parameters<ReadDailyNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let date = input
+            .date
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let view = self.vault.read_daily_note(date).map_err(into_mcp_error)?;
+        json_result(DailyNoteViewDto::from(view))
+    }
+
     // -----------------------------------------------------------------
     // Operations (write, used by skills and UI)
     // -----------------------------------------------------------------
@@ -620,6 +657,28 @@ impl CuadernoServer {
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Tracked at {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Create-or-replace a planning section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they only grow via `append_to_log`. Overwrites the section if present, creates it (and the daily note) if not. An empty `content` clears the section to just its heading."
+    )]
+    pub async fn upsert_daily_section(
+        &self,
+        Parameters(input): Parameters<UpsertDailySectionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let date = input
+            .date
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let section = DailySection::from_str(&input.section)
+            .map_err(|reason| invalid_argument("section", &reason))?;
+        let path = self
+            .vault
+            .upsert_daily_section(date, section, &input.content)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Updated {} on {}", section.heading(), path),
         ))
     }
 }

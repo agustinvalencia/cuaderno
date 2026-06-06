@@ -11,7 +11,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | **1 — Foundation** | Workspace layout, `cdno-core` traits + impls (`VaultStore`, `VaultIndex`, transactions, reconciliation, markdown parsing, hashing), `cdno-domain` skeleton, basic CLI bootstrap | Complete |
 | **2 — Daily loop** | Projects (5-cap, state, milestones, waiting-on, park/activate), actions (bullets + manifest notes, add/promote/complete/list), commitments (create/complete + aggregation timeline), orient/status/lint, flags-and-prompts ergonomics retrofit, append-only-after-completion lint | Complete |
 | **3 — Knowledge & stewardship** | Portfolios + evidence (create, file, list, show), questions (CRUD + status transitions + grouped list), stewardships (flat + expanded, list, show, periodic commitments, tracking notes with built-in templates), `cdno track` | Complete |
-| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 16-tool schema catalogue, stdio binary | Core complete (all 16 tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
+| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 18-tool schema catalogue, stdio binary | Core complete (16 design §11 tools + 2 daily-note tools (#158) wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
 | **5 — Tauri UI** | `cdno-tauri` backend, React frontend with Tremor, Home / Weekly / Commitments views | Not started |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | Not started |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |
@@ -51,8 +51,10 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `create_commitment` | Wired (`project` / `stewardship` reserved fields ignored; see tool description) |
 | `complete_commitment` | Wired |
 | `create_tracking_entry` | Wired |
+| `read_daily_note` | Wired (#158) |
+| `upsert_daily_section` | Wired (#158; `section` allowlisted to `{Standup, Intention, Agenda}`) |
 
-**All 16 design §11 tools are wired through to the domain.** No stubs remain. All 16 are advertised in `tools/list` with full schemas — Claude can discover them at startup. Stubs return JSON-RPC `INTERNAL_ERROR` with a `"not yet implemented"` message when called.
+**All 18 tools are wired through to the domain** — the 16 design §11 tools plus the two daily-note tools added in #158. No stubs remain. All 18 are advertised in `tools/list` with full schemas, so Claude can discover them at startup.
 
 ## What works today
 
@@ -71,8 +73,8 @@ Reachable from the terminal via `cdno`:
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
-- **Context reads (7)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`)
-- **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`)
+- **Context reads (8)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`), `read_daily_note` (a day's markdown, or `exists: false` when none yet)
+- **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`), `upsert_daily_section` (set/replace a `{Standup, Intention, Agenda}` planning section)
 
 Each operation returns a `WriteResultDto { path, message }` so clients can chain on the touched file path.
 
