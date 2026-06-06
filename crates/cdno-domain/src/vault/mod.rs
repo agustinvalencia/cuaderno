@@ -33,6 +33,7 @@ mod actions;
 mod capture;
 mod commitments;
 mod context;
+mod daily;
 mod index_entry;
 mod lint;
 mod log;
@@ -48,6 +49,7 @@ pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
 };
+pub use daily::{DailyNoteView, DailySection};
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};

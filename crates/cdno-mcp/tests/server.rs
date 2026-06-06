@@ -39,15 +39,16 @@ fn server_announces_name_and_tools_capability() {
 }
 
 #[test]
-fn advertised_catalogue_matches_design_section_11_verbatim() {
+fn advertised_catalogue_matches_expected_surface() {
     let server = empty_server();
     let tools = server.advertised_tools();
     let got: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
 
     // Sorted to match `advertised_tools`'s order so a failure points
-    // at the missing or extra tool cleanly.
+    // at the missing or extra tool cleanly. The 16 design §11 tools
+    // plus the two daily-note tools added in GH #158.
     let mut expected = vec![
-        // Context (7)
+        // Context (8)
         "get_orientation",
         "get_weekly_context",
         "get_monthly_context",
@@ -55,7 +56,8 @@ fn advertised_catalogue_matches_design_section_11_verbatim() {
         "get_portfolio_contents",
         "get_stewardship_tracking",
         "get_active_questions",
-        // Operations (9)
+        "read_daily_note",
+        // Operations (10)
         "append_to_log",
         "file_to_portfolio",
         "update_project_state",
@@ -65,10 +67,11 @@ fn advertised_catalogue_matches_design_section_11_verbatim() {
         "create_commitment",
         "complete_commitment",
         "create_tracking_entry",
+        "upsert_daily_section",
     ];
     expected.sort();
-    assert_eq!(got, expected, "advertised tool set drifted from design §11");
-    assert_eq!(tools.len(), 16);
+    assert_eq!(got, expected, "advertised tool set drifted");
+    assert_eq!(tools.len(), 18);
 }
 
 #[test]

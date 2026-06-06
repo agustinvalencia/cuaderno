@@ -595,6 +595,30 @@ pub struct StewardshipTrackingDto {
 }
 
 // ---------------------------------------------------------------------
+// Daily note (GH #158)
+// ---------------------------------------------------------------------
+
+/// Output of `read_daily_note`. `exists: false` with empty `markdown`
+/// is the normal answer for a day with no note yet — callers branch on
+/// it rather than catching an error.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DailyNoteViewDto {
+    pub path: String,
+    pub exists: bool,
+    pub markdown: String,
+}
+
+impl From<cdno_domain::DailyNoteView> for DailyNoteViewDto {
+    fn from(v: cdno_domain::DailyNoteView) -> Self {
+        Self {
+            path: v.path.to_string(),
+            exists: v.exists,
+            markdown: v.markdown,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------
 // Write-op result
 // ---------------------------------------------------------------------
 

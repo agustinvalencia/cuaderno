@@ -87,7 +87,11 @@ impl Vault {
 
 /// Vault-relative path for a daily note of the given date —
 /// `journal/<year>/daily/YYYY-MM-DD.md`.
-fn daily_note_path(date: NaiveDate) -> Result<VaultPath, DomainError> {
+///
+/// `pub(in crate::vault)` so the daily-note read/section-write module
+/// (`vault/daily.rs`) resolves the same path without duplicating the
+/// relpath rule.
+pub(in crate::vault) fn daily_note_path(date: NaiveDate) -> Result<VaultPath, DomainError> {
     Ok(VaultPath::new(cdno_core::paths::daily_note_relpath(date))?)
 }
 
@@ -98,15 +102,26 @@ fn format_log_line(time: NaiveTime, entry: &str) -> String {
     format!("- **{:02}:{:02}**: {}\n", time.hour(), time.minute(), entry,)
 }
 
-/// Minimal scaffold for a brand-new daily note, pre-populated with the
-/// first log line inside `## Logs`. Format chosen to satisfy the
-/// reconciliation contract (valid frontmatter with `type: daily`) and
-/// give the `## Logs` section a stable home.
-fn scaffold_daily_note(date: NaiveDate, first_log_line: &str) -> String {
+/// Base scaffold for a brand-new daily note: valid frontmatter
+/// (`type: daily`, satisfying the reconciliation contract), the date
+/// heading, and an empty `## Logs` section as a stable home for the
+/// first log line.
+///
+/// `pub(in crate::vault)` so `upsert_daily_section` can seed a fresh
+/// note when a planning section is written before any log line exists.
+pub(in crate::vault) fn scaffold_daily_note_base(date: NaiveDate) -> String {
     format!(
-        "---\ndate: {date}\ntype: daily\n---\n\n# {heading}\n\n## {section}\n{first_log_line}",
+        "---\ndate: {date}\ntype: daily\n---\n\n# {heading}\n\n## {section}\n",
         date = date.format("%Y-%m-%d"),
         heading = date.format("%A, %-d %B %Y"),
         section = DAILY_LOGS_SECTION,
     )
+}
+
+/// Minimal scaffold for a brand-new daily note, pre-populated with the
+/// first log line inside `## Logs`.
+fn scaffold_daily_note(date: NaiveDate, first_log_line: &str) -> String {
+    let mut note = scaffold_daily_note_base(date);
+    note.push_str(first_log_line);
+    note
 }

@@ -6,7 +6,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-_Nothing yet — see the current branch for in-flight work._
+### Added — Phase 4 (MCP server)
+
+- **Richer daily-note MCP tools** (#158) — two new tools (16 → 18) so skills can persist structured planning content and read it back, which `append_to_log` (single log lines only) couldn't support. `read_daily_note(date?)` returns `{ path, exists, markdown }`, reporting `exists: false` for a day with no note yet rather than erroring, so a skill can check for pre-planned content before writing. `upsert_daily_section(section, content, date?)` creates-or-replaces a daily-note planning section; `section` is allowlisted to `{Standup, Intention, Agenda}` via a typed `DailySection` enum and any other value (including the append-only `Logs`/`Notes`) is rejected as `INVALID_PARAMS`. The append-only history sections are deliberately unreachable through the overwrite path — `## Logs` survives a section upsert untouched. Empty `content` clears a section to just its heading. Domain methods live in a new `crates/cdno-domain/src/vault/daily.rs`; the daily scaffold was refactored so a planning section can seed a fresh note with an empty `## Logs`.
 
 ## [0.1.2] - 2026-06-02
 

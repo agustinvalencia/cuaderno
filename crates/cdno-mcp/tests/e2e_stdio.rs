@@ -212,7 +212,7 @@ fn initialize_returns_server_info_and_tools_capability() {
 }
 
 #[test]
-fn tools_list_returns_all_sixteen_advertised_tools() {
+fn tools_list_returns_all_advertised_tools() {
     let dir = TempDir::new().unwrap();
     make_vault(dir.path());
     let mut mcp = McpSubprocess::spawn(dir.path());
@@ -224,8 +224,8 @@ fn tools_list_returns_all_sixteen_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        16,
-        "expected the full design §11 catalogue, got {}",
+        18,
+        "expected the full catalogue (16 design §11 + 2 daily-note tools), got {}",
         tools.len()
     );
 }
