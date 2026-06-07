@@ -19,7 +19,8 @@ use cdno_domain::frontmatter::{Context, EnergyLevel};
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AppendToLogInput, CompleteCommitmentInput,
-    CreateCommitmentInput, CreateTrackingEntryInput, FileToPortfolioInput, ReadDailyNoteInput,
+    CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput, CreateQuestionInput,
+    CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput, ReadDailyNoteInput,
     UpdateProjectStateInput, UpsertDailySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -527,4 +528,167 @@ async fn upsert_daily_section_rejects_history_section_with_invalid_params() {
         .expect_err("Logs is append-only and not on the allowlist");
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     assert!(err.message.contains("section"));
+}
+
+// ---------------------------------------------------------------------
+// Structural creation (GH #162)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_project_creates_a_project_map() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Widget Redesign".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+        }))
+        .await
+        .expect("create_project");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.starts_with("projects/"), "path: {path}");
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("type: project"), "body:\n{body}");
+}
+
+#[tokio::test]
+async fn create_project_rejects_unknown_context_with_invalid_params() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let err = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "X".to_owned(),
+            context: "nonsense".to_owned(),
+            core_question: None,
+        }))
+        .await
+        .expect_err("unknown context should error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("context"));
+}
+
+#[tokio::test]
+async fn create_project_at_the_cap_is_seeded_parked() {
+    // Seed the default cap (5) of active projects. The 6th isn't
+    // rejected — it's created parked, since the cap is enforced on
+    // activation, not creation.
+    let (server, store) = server_with(|vault, _s| {
+        let today = moment(2026, 1, 1, 9, 0).date();
+        for i in 1..=5 {
+            vault
+                .create_project(today, &format!("Project {i}"), Context::Work, None)
+                .expect("seed project");
+        }
+    });
+
+    let result = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Sixth".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+        }))
+        .await
+        .expect("sixth project is created, just parked");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(
+        path.starts_with("projects/_parked/"),
+        "at the cap the new project is parked, got {path}"
+    );
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("status: parked")
+    );
+}
+
+#[tokio::test]
+async fn create_question_creates_a_note_and_rejects_unknown_domain() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .create_question(Parameters(CreateQuestionInput {
+            domain: "research".to_owned(),
+            text: "What is the best benchmark?".to_owned(),
+        }))
+        .await
+        .expect("create_question");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(path.starts_with("questions/research/"), "path: {path}");
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("type: question")
+    );
+
+    let err = server
+        .create_question(Parameters(CreateQuestionInput {
+            domain: "philosophy".to_owned(),
+            text: "?".to_owned(),
+        }))
+        .await
+        .expect_err("unknown domain should error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("domain"));
+}
+
+#[tokio::test]
+async fn create_portfolio_creates_an_index() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .create_portfolio(Parameters(CreatePortfolioInput {
+            question: "Reference material".to_owned(),
+            project: None,
+        }))
+        .await
+        .expect("create_portfolio");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(path.starts_with("portfolios/"), "path: {path}");
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("type: portfolio")
+    );
+}
+
+#[tokio::test]
+async fn create_stewardship_honours_the_expanded_flag() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let flat = server
+        .create_stewardship(Parameters(CreateStewardshipInput {
+            name: "Finances".to_owned(),
+            context: "personal".to_owned(),
+            expanded: false,
+        }))
+        .await
+        .expect("flat stewardship");
+    let flat_path = decode_json(&flat)["path"].as_str().unwrap().to_owned();
+    assert!(flat_path.ends_with("finances.md"), "flat path: {flat_path}");
+
+    let expanded = server
+        .create_stewardship(Parameters(CreateStewardshipInput {
+            name: "Health".to_owned(),
+            context: "personal".to_owned(),
+            expanded: true,
+        }))
+        .await
+        .expect("expanded stewardship");
+    let exp_path = decode_json(&expanded)["path"].as_str().unwrap().to_owned();
+    assert!(
+        exp_path.ends_with("health/_index.md"),
+        "expanded path: {exp_path}"
+    );
+    assert!(
+        store
+            .read_file(&vp(&exp_path))
+            .unwrap()
+            .contains("type: stewardship")
+    );
 }
