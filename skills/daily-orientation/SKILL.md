@@ -174,6 +174,13 @@ A single timestamped line in the daily log, so the day's start is in the history
 append_to_log(text: "Started the day — focus [[<project-slug>]]: <top action>.")
 ```
 
+If step 1 found the note already set up ahead of time (a pre-filled `## Intention` or `## Agenda`), say so in the line, so the history shows today was planned, not improvised:
+```
+append_to_log(text: "Started the day on a pre-planned note — focus [[<project-slug>]]: <top action>.")
+```
+
+Don't try to reconstruct *when* it was planned from this note — the daily note can't tell you (log lines are time-only, and the planning happened elsewhere). The dated record of "created this note ahead of time" belongs in the planning day's own log, written by the planning skill when it happens — not back-dated here.
+
 ### 10. Launch with momentum
 
 Reduce initiation friction to the smallest first step, then get out of the way:
@@ -195,8 +202,8 @@ Go get it. I'm here if you need me.
 
 ## Edge cases
 
-### Late start
-Adapt the greeting ("Hey — it's [Day] afternoon, let's get oriented quick"), only show calendar time from now onward, still write the standup + suggest one action + log a line.
+### Starting later in the day
+"Late" is by the clock, not a judgement. Greet by time of day: morning before 12:00, afternoon 12:00–17:00, evening after 17:00. When the first orientation of the day lands in the afternoon or later there's less runway to plan, so compress: greet for the time of day ("Hey — it's [Day] afternoon, let's orient quick"), show only calendar time from now onward, and shrink the ask to one action. Still write the standup, suggest one action, and log a line. No shame for a later start — just less day left.
 
 ### Nothing active
 No active projects: offer `/create-project`. No commitments and no actions: "Clean slate — what's one thing worth a dent today?"
