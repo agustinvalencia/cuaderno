@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+_Nothing yet — see the current branch for in-flight work._
+
+## [0.1.3] - 2026-06-07
+
+Minor release: the MCP server grows from 16 to 22 tools — daily-note persistence and structural creation — so an AI client can manage a vault end-to-end, not just operate the daily loop. No changes to existing CLI or tool behaviour.
+
 ### Added — Phase 4 (MCP server)
 
 - **Structural-creation MCP tools** (#162) — four tools (18 → 22) so Claude can create note types, not just operate on existing ones: `create_project` (active below the configurable cap, seeded parked at/above it — the cap is enforced on activation, not creation), `create_portfolio`, `create_question` (`research`/`life`), and `create_stewardship` (`expanded` flag dispatches flat file vs folder with a lazy `tracking/`). Each wraps the domain create method the CLI already uses and returns `WriteResultDto`; unknown `context`/`domain` values are rejected as `INVALID_PARAMS`. This unblocks seeding/managing a vault entirely from Claude (e.g. standing up active projects during an mdv → cdno migration). Lifecycle ops (park/activate, question transitions, periodic commitments) remain a follow-up.
