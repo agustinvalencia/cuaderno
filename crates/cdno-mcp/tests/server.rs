@@ -57,7 +57,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_stewardship_tracking",
         "get_active_questions",
         "read_daily_note",
-        // Operations (10)
+        // Operations (14)
         "append_to_log",
         "file_to_portfolio",
         "update_project_state",
@@ -68,10 +68,14 @@ fn advertised_catalogue_matches_expected_surface() {
         "complete_commitment",
         "create_tracking_entry",
         "upsert_daily_section",
+        "create_project",
+        "create_portfolio",
+        "create_question",
+        "create_stewardship",
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 18);
+    assert_eq!(tools.len(), 22);
 }
 
 #[test]

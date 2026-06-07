@@ -2,9 +2,11 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 18 tools are wired through to the domain — the 16
-//! design §11 tools plus the two daily-note tools (`read_daily_note`,
-//! `upsert_daily_section`) added in GH #158. The `not_yet_implemented`
+//! Status: all 22 tools are wired through to the domain — the 16
+//! design §11 tools, the two daily-note tools (`read_daily_note`,
+//! `upsert_daily_section`, GH #158), and the four structural-creation
+//! tools (`create_project`, `create_portfolio`, `create_question`,
+//! `create_stewardship`, GH #162). The `not_yet_implemented`
 //! placeholder has been retired with no stubs left.
 //!
 //! # Imports note
@@ -192,6 +194,45 @@ pub struct UpsertDailySectionInput {
     pub content: String,
     /// ISO `YYYY-MM-DD`. Omitted = today.
     pub date: Option<chrono::NaiveDate>,
+}
+
+/// Input for `create_project` (GH #162). `core_question` is an optional
+/// bare wikilink target (e.g. `questions/research/foo`).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateProjectInput {
+    pub title: String,
+    /// One of the [`Context`] variants (kebab-case: `work`,
+    /// `household`, `personal`, …).
+    pub context: String,
+    pub core_question: Option<String>,
+}
+
+/// Input for `create_portfolio` (GH #162). `project` optionally links
+/// the portfolio to a project slug.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreatePortfolioInput {
+    /// The question or topic the portfolio gathers evidence for.
+    pub question: String,
+    pub project: Option<String>,
+}
+
+/// Input for `create_question` (GH #162).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateQuestionInput {
+    /// `research` or `life`.
+    pub domain: String,
+    pub text: String,
+}
+
+/// Input for `create_stewardship` (GH #162). `expanded` makes a folder
+/// stewardship (with a lazy `tracking/`) instead of a flat file.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateStewardshipInput {
+    pub name: String,
+    /// One of the [`Context`] variants (kebab-case).
+    pub context: String,
+    #[serde(default)]
+    pub expanded: bool,
 }
 
 // ---------------------------------------------------------------------
@@ -679,6 +720,89 @@ impl CuadernoServer {
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Updated {} on {}", section.heading(), path),
+        ))
+    }
+
+    #[tool(
+        description = "Create a new project map. Below the active-project cap (default 5) the project is created active; at or above the cap it's created parked (`projects/_parked/<slug>`) so you can capture it without parking another first — the cap is enforced on activation, not creation. `context` is a kebab-case Context (`work`, `household`, `personal`, …). `core_question` is an optional bare wikilink target (e.g. `questions/research/foo`) linking the project to the question it answers."
+    )]
+    pub async fn create_project(
+        &self,
+        Parameters(input): Parameters<CreateProjectInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
+        let context = Context::from_str(&input.context)
+            .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        let path = self
+            .vault
+            .create_project(today, &input.title, context, input.core_question.as_deref())
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created project at {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project slug."
+    )]
+    pub async fn create_portfolio(
+        &self,
+        Parameters(input): Parameters<CreatePortfolioInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .create_portfolio(at, &input.question, input.project.as_deref())
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created portfolio at {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Create a research or life question note. `domain` is `research` or `life`."
+    )]
+    pub async fn create_question(
+        &self,
+        Parameters(input): Parameters<CreateQuestionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let domain = QuestionDomain::from_str(&input.domain)
+            .map_err(|e| invalid_argument("domain", &e.to_string()))?;
+        let path = self
+            .vault
+            .create_question(at, domain, &input.text)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created question at {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Create a stewardship. With `expanded: true` it's a folder stewardship (`stewardships/<slug>/_index.md` with a lazy `tracking/`); otherwise a flat file. `context` is a kebab-case Context."
+    )]
+    pub async fn create_stewardship(
+        &self,
+        Parameters(input): Parameters<CreateStewardshipInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let context = Context::from_str(&input.context)
+            .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        let path = if input.expanded {
+            self.vault
+                .create_stewardship_expanded(at, &input.name, context)
+                .map_err(into_mcp_error)?
+        } else {
+            self.vault
+                .create_stewardship_flat(at, &input.name, context)
+                .map_err(into_mcp_error)?
+        };
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created stewardship at {}", path),
         ))
     }
 }

@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        18,
-        "expected the full catalogue (16 design §11 + 2 daily-note tools), got {}",
+        22,
+        "expected the full catalogue (16 design §11 + 2 daily-note + 4 creation tools), got {}",
         tools.len()
     );
 }
