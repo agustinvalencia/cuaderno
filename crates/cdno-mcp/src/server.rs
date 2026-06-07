@@ -9,16 +9,15 @@
 //! `create_stewardship`, GH #162). The `not_yet_implemented`
 //! placeholder has been retired with no stubs left.
 //!
-//! # Imports note
+//! # Layout note
 //!
-//! `JsonSchema` comes from the top-level `schemars` crate (pinned to
-//! the same major as rmcp's transitive version — the derive macro's
-//! hygiene resolves `::schemars::...` paths, so the re-export at
-//! `rmcp::schemars` alone isn't enough). `Parameters<T>` lives at
+//! Tool input structs live in [`crate::input`] and helpers in
+//! `crate::util`; this module holds the server struct, the tool
+//! handlers, and the `ServerHandler` wiring. `Parameters<T>` lives at
 //! `rmcp::handler::server::wrapper::Parameters` — the canonical
 //! tool-argument extractor; rmcp deserialises the incoming JSON
-//! against `T`'s `JsonSchema` and hands the typed value to the
-//! method body.
+//! against the input type's `JsonSchema` and hands the typed value to
+//! the method body.
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -26,14 +25,10 @@ use std::sync::Arc;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, ErrorData, Implementation, ProtocolVersion, ServerCapabilities,
-    ServerInfo,
+    CallToolResult, ErrorData, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
 };
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
-use schemars::JsonSchema;
-use serde::Deserialize;
 
-use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 use cdno_domain::{DailySection, Vault};
 
@@ -42,198 +37,13 @@ use crate::dto::{
     ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, StewardshipTrackingDto,
     WeeklyContextDto, WriteResultDto,
 };
-
-// ---------------------------------------------------------------------
-// Inputs
-// ---------------------------------------------------------------------
-//
-// Each tool's input lives here as a `derive(Deserialize, JsonSchema)`
-// struct. Tools with no parameters take `Parameters<EmptyInput>` —
-// rmcp generates an `object`-typed empty schema rather than `null`.
-//
-// Enum-typed inputs (energy, context, question domain) are typed as
-// `String` here rather than the domain enum because the domain types
-// do not derive `JsonSchema` (they live in `cdno-domain`, which has
-// no schemars dependency). Handlers parse via `FromStr` when they
-// land in #46 / #47.
-
-/// Empty input for tools that take no parameters.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct EmptyInput {}
-
-/// Input for [`CuadernoServer::get_orientation`]. `energy` biases the
-/// suggested starting point per design §11.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetOrientationInput {
-    /// Optional bias toward `"deep"`, `"medium"`, or `"light"`.
-    pub energy: Option<String>,
-}
-
-/// Input for tools that take a single project slug.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ProjectSlugInput {
-    pub project: String,
-}
-
-/// Input for tools that take a single portfolio slug.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct PortfolioSlugInput {
-    pub portfolio: String,
-}
-
-/// Input for `get_stewardship_tracking` (design §11).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetStewardshipTrackingInput {
-    pub stewardship: String,
-    pub activity: String,
-    /// `period` is a free-form lookback window (e.g. `"30d"`,
-    /// `"6m"`); parsing lands with the handler in #46.
-    pub period: Option<String>,
-}
-
-/// Input for `get_active_questions` (design §11). `domain` is
-/// optional — when omitted, all domains are returned.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct GetActiveQuestionsInput {
-    /// Optional filter: `"research"` or `"life"`. Omitted = all.
-    pub domain: Option<String>,
-}
-
-/// Input for `append_to_log`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AppendToLogInput {
-    pub text: String,
-}
-
-/// Input for `file_to_portfolio`. `origin` is the bare wikilink
-/// target (e.g. `"projects/surrogate-model"`); the domain wraps it
-/// per design §5.5.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FileToPortfolioInput {
-    pub portfolio: String,
-    pub source: String,
-    pub origin: String,
-    #[serde(default)]
-    pub content: String,
-}
-
-/// Input for `update_project_state`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpdateProjectStateInput {
-    pub project: String,
-    pub new_state: String,
-}
-
-/// Input for `add_action`. `with_note` flips between the inline
-/// bullet (default) and the heavier action-note form (design §5.11).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct AddActionInput {
-    pub project: String,
-    pub title: String,
-    /// One of `"deep"`, `"medium"`, `"light"`.
-    pub energy: String,
-    #[serde(default)]
-    pub with_note: bool,
-}
-
-/// Input for the substring-match action verbs (`promote_action`,
-/// `complete_action`). `query` is matched against the bullet text.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ActionQueryInput {
-    pub project: String,
-    pub query: String,
-}
-
-/// Input for `create_commitment`.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateCommitmentInput {
-    pub title: String,
-    /// ISO `YYYY-MM-DD`.
-    pub due: chrono::NaiveDate,
-    /// One of the [`cdno_domain::frontmatter::Context`] variants
-    /// (kebab-case: `work`, `household`, `personal`, …).
-    pub context: String,
-    pub project: Option<String>,
-    pub stewardship: Option<String>,
-}
-
-/// Input for `complete_commitment` — commitment slug.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CompleteCommitmentInput {
-    pub commitment: String,
-}
-
-/// Input for `create_tracking_entry`. `routine` is the bare slug of
-/// a routine doc (gym/swim templates only); domain wraps the
-/// wikilink.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateTrackingEntryInput {
-    pub stewardship: String,
-    pub activity: String,
-    pub routine: Option<String>,
-    #[serde(default)]
-    pub content: String,
-}
-
-/// Input for `read_daily_note` (GH #158). `date` defaults to today
-/// when omitted.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ReadDailyNoteInput {
-    /// ISO `YYYY-MM-DD`. Omitted = today.
-    pub date: Option<chrono::NaiveDate>,
-}
-
-/// Input for `upsert_daily_section` (GH #158). `section` is one of the
-/// mutable planning sections; `content` defaults to empty (which
-/// clears the section to just its heading); `date` defaults to today.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct UpsertDailySectionInput {
-    /// One of `Standup`, `Intention`, `Agenda` (case-insensitive).
-    pub section: String,
-    #[serde(default)]
-    pub content: String,
-    /// ISO `YYYY-MM-DD`. Omitted = today.
-    pub date: Option<chrono::NaiveDate>,
-}
-
-/// Input for `create_project` (GH #162). `core_question` is an optional
-/// bare wikilink target (e.g. `questions/research/foo`).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateProjectInput {
-    pub title: String,
-    /// One of the [`Context`] variants (kebab-case: `work`,
-    /// `household`, `personal`, …).
-    pub context: String,
-    pub core_question: Option<String>,
-}
-
-/// Input for `create_portfolio` (GH #162). `project` optionally links
-/// the portfolio to a project slug.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreatePortfolioInput {
-    /// The question or topic the portfolio gathers evidence for.
-    pub question: String,
-    pub project: Option<String>,
-}
-
-/// Input for `create_question` (GH #162).
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateQuestionInput {
-    /// `research` or `life`.
-    pub domain: String,
-    pub text: String,
-}
-
-/// Input for `create_stewardship` (GH #162). `expanded` makes a folder
-/// stewardship (with a lazy `tracking/`) instead of a flat file.
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateStewardshipInput {
-    pub name: String,
-    /// One of the [`Context`] variants (kebab-case).
-    pub context: String,
-    #[serde(default)]
-    pub expanded: bool,
-}
+// Re-exported so the existing `cdno_mcp::server::*Input` paths (used by
+// tests) keep resolving after the structs moved to `crate::input`.
+pub use crate::input::*;
+use crate::util::{
+    into_mcp_error, invalid_argument, json_result, monday_of_iso_week, parse_period_into_from_date,
+    parse_question_slug_from_wikilink,
+};
 
 // ---------------------------------------------------------------------
 // Server
@@ -825,99 +635,6 @@ impl ServerHandler for CuadernoServer {
             // actual tool list at runtime).
             .with_capabilities(ServerCapabilities::builder().enable_tools().build())
     }
-}
-
-/// Wrap a serialisable DTO as the single content item of a
-/// successful tool result. Shared by every implemented handler so
-/// the JSON-encoding step is one call site, not 16.
-fn json_result<S: serde::Serialize>(value: S) -> Result<CallToolResult, ErrorData> {
-    let content = Content::json(value)?;
-    Ok(CallToolResult::success(vec![content]))
-}
-
-/// Translate a [`DomainError`] into an rmcp [`ErrorData`]. We surface
-/// the domain's `Display` output as the JSON-RPC error message — it's
-/// already human-readable (see `cdno-domain/src/error.rs`). All
-/// variants land as `InternalError` for now; the JSON-RPC code-mapping
-/// table (per design §5.2) is a follow-up if clients start
-/// branching on the code.
-fn into_mcp_error(e: DomainError) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
-}
-
-/// Build an InvalidParams error pointing at a specific input field.
-/// Used by handlers that accept enum-typed strings (e.g. the
-/// `domain` filter on `get_active_questions`) and need to reject a
-/// value that doesn't parse.
-fn invalid_argument(field: &str, reason: &str) -> ErrorData {
-    ErrorData::invalid_params(format!("invalid '{field}': {reason}"), None)
-}
-
-/// Compute the Monday of the ISO-8601 week containing `date`. ISO
-/// week (Mon-Sun) rather than locale week so behaviour is identical
-/// across deployments. Duplicates the domain's internal helper of
-/// the same name; kept here rather than re-exporting it because
-/// each handler may want a different windowing strategy in future.
-fn monday_of_iso_week(date: chrono::NaiveDate) -> chrono::NaiveDate {
-    use chrono::Datelike;
-    let days_since_monday = date.weekday().num_days_from_monday() as i64;
-    date - chrono::Duration::days(days_since_monday)
-}
-
-/// Parse a `period` lookback string into a `from` date relative to
-/// `today`. Recognised shapes:
-///
-/// - `Nd` — N days back (any N >= 1)
-/// - `Nw` — N weeks back (N × 7 days)
-/// - `Nm` — N calendar months back (chrono `checked_sub_months`)
-/// - `Ny` — N calendar years back (chrono `checked_sub_months` × 12)
-///
-/// Returns an `Err(reason)` string for anything off-shape; the
-/// handler wraps it in `INVALID_PARAMS`. Calendar arithmetic
-/// (months / years) over- or under-flowing the chrono date range
-/// also surfaces as an error rather than silently saturating.
-fn parse_period_into_from_date(
-    period: &str,
-    today: chrono::NaiveDate,
-) -> Result<chrono::NaiveDate, String> {
-    let trimmed = period.trim();
-    if trimmed.is_empty() {
-        return Err("empty".to_owned());
-    }
-    let (n_str, unit) = trimmed.split_at(trimmed.len() - 1);
-    let n: u32 = n_str
-        .parse()
-        .map_err(|_| format!("expected `Nd|Nw|Nm|Ny`, got `{period}`"))?;
-    if n == 0 {
-        return Err("N must be >= 1".to_owned());
-    }
-    match unit {
-        "d" => Ok(today - chrono::Duration::days(n as i64)),
-        "w" => Ok(today - chrono::Duration::weeks(n as i64)),
-        "m" => today
-            .checked_sub_months(chrono::Months::new(n))
-            .ok_or_else(|| format!("`{period}` overflows the supported date range")),
-        "y" => today
-            .checked_sub_months(chrono::Months::new(n.saturating_mul(12)))
-            .ok_or_else(|| format!("`{period}` overflows the supported date range")),
-        other => Err(format!("unit must be one of d, w, m, y (got `{other}`)")),
-    }
-}
-
-/// Extract the question slug from a wikilink target string like
-/// `"[[questions/research/surrogate-cost]]"`. Returns `None` for any
-/// shape that isn't a `questions/<domain>/<slug>` wikilink — keeps
-/// `get_project_context` silent when a project's `core_question:`
-/// points somewhere odd (handled in lint, not here).
-fn parse_question_slug_from_wikilink(link: &str) -> Option<String> {
-    let inside = link.trim().strip_prefix("[[")?.strip_suffix("]]")?;
-    let rest = inside.strip_prefix("questions/")?;
-    // questions/<domain>/<slug> — must have at least one `/` left.
-    let slug = rest.rsplit_once('/').map(|(_, slug)| slug)?;
-    if slug.is_empty() {
-        return None;
-    }
-    Some(slug.to_owned())
 }
 
 // `ServerInfo` doesn't expose a public `with_capabilities` builder,
