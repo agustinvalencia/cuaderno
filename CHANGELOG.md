@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+_Nothing yet — see the current branch for in-flight work._
+
+## [0.1.4] - 2026-06-08
+
+Minor release: the MCP server gains the project/question/stewardship lifecycle tools (26 tools total), so an AI client can move notes through their lifecycle, not just create them.
+
 ### Added — Phase 4 (MCP server)
 
 - **Lifecycle MCP tools** (#166) — four tools (22 → 26) so a client can move notes through their lifecycle, not just create them: `park_project`, `activate_project` (enforces the active cap — errors if full, the inverse of `create_project`), `set_question_status` (`active`/`parked`/`answered`/`retired`; unknown → `INVALID_PARAMS`), and `add_periodic_commitment` (recurrence `daily`/`weekly`/`monthly`/`yearly`/`every N months` + next-occurrence date). Each wraps the domain method the CLI already uses and returns `WriteResultDto`. The lifecycle handlers live in a separate `lifecycle.rs` as their own `#[tool_router]`, merged into the dispatch table in `CuadernoServer::new` (with `#[tool_handler(router = self.tool_router)]` so the wire `tools/list` serves the merged set) — the first slice of the handler-group split; the remaining context/operations/creation groups can peel off the same way.
