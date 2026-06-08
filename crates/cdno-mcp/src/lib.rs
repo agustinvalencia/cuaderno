@@ -30,6 +30,7 @@
 
 pub mod dto;
 pub mod input;
+mod lifecycle;
 pub mod server;
 mod util;
 
