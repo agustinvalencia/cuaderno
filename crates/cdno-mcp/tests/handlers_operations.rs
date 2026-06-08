@@ -15,13 +15,14 @@ use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
-use cdno_domain::frontmatter::{Context, EnergyLevel};
+use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    ActionQueryInput, AddActionInput, AppendToLogInput, CompleteCommitmentInput,
-    CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput, CreateQuestionInput,
-    CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput, ReadDailyNoteInput,
-    UpdateProjectStateInput, UpsertDailySectionInput,
+    ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput,
+    CompleteCommitmentInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
+    CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
+    ProjectSlugInput, ReadDailyNoteInput, SetQuestionStatusInput, UpdateProjectStateInput,
+    UpsertDailySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -691,4 +692,166 @@ async fn create_stewardship_honours_the_expanded_flag() {
             .unwrap()
             .contains("type: stewardship")
     );
+}
+
+// ---------------------------------------------------------------------
+// Lifecycle (GH #166)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn park_project_moves_it_to_parked() {
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_project(
+                moment(2026, 1, 1, 9, 0).date(),
+                "Widget",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .park_project(Parameters(ProjectSlugInput {
+            project: "widget".to_owned(),
+        }))
+        .await
+        .expect("park_project");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(path.starts_with("projects/_parked/"), "path: {path}");
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("status: parked")
+    );
+}
+
+#[tokio::test]
+async fn activate_project_brings_it_back() {
+    let (server, store) = server_with(|vault, _s| {
+        let today = moment(2026, 1, 1, 9, 0).date();
+        vault
+            .create_project(today, "Widget", Context::Work, None)
+            .unwrap();
+        vault
+            .park_project(moment(2026, 1, 1, 9, 0), "widget")
+            .unwrap();
+    });
+
+    let result = server
+        .activate_project(Parameters(ProjectSlugInput {
+            project: "widget".to_owned(),
+        }))
+        .await
+        .expect("activate_project");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(path.starts_with("projects/widget"), "path: {path}");
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("status: active")
+    );
+}
+
+#[tokio::test]
+async fn activate_project_at_the_cap_errors() {
+    // 5 active (the cap) + 1 auto-parked; activating the parked one fails.
+    let (server, _store) = server_with(|vault, _s| {
+        let today = moment(2026, 1, 1, 9, 0).date();
+        for i in 1..=5 {
+            vault
+                .create_project(today, &format!("P{i}"), Context::Work, None)
+                .unwrap();
+        }
+        vault
+            .create_project(today, "Parked One", Context::Work, None)
+            .unwrap();
+    });
+
+    let err = server
+        .activate_project(Parameters(ProjectSlugInput {
+            project: "parked-one".to_owned(),
+        }))
+        .await
+        .expect_err("activating past the cap should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    assert!(err.message.contains("cap"), "msg: {}", err.message);
+}
+
+#[tokio::test]
+async fn set_question_status_updates_and_rejects_unknown() {
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_question(
+                moment(2026, 1, 1, 9, 0),
+                QuestionDomain::Research,
+                "is it fast",
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .set_question_status(Parameters(SetQuestionStatusInput {
+            question: "is-it-fast".to_owned(),
+            status: "answered".to_owned(),
+        }))
+        .await
+        .expect("set_question_status");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("status: answered")
+    );
+
+    let err = server
+        .set_question_status(Parameters(SetQuestionStatusInput {
+            question: "is-it-fast".to_owned(),
+            status: "ponder".to_owned(),
+        }))
+        .await
+        .expect_err("unknown status should error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("status"));
+}
+
+#[tokio::test]
+async fn add_periodic_commitment_appends_and_rejects_unknown_recurrence() {
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Gym", Context::Personal)
+            .unwrap();
+    });
+
+    let result = server
+        .add_periodic_commitment(Parameters(AddPeriodicCommitmentInput {
+            stewardship: "gym".to_owned(),
+            title: "Pay membership".to_owned(),
+            recurrence: "monthly".to_owned(),
+            next_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+        }))
+        .await
+        .expect("add_periodic_commitment");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("Pay membership")
+    );
+
+    let err = server
+        .add_periodic_commitment(Parameters(AddPeriodicCommitmentInput {
+            stewardship: "gym".to_owned(),
+            title: "x".to_owned(),
+            recurrence: "fortnightly".to_owned(),
+            next_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+        }))
+        .await
+        .expect_err("unknown recurrence should error");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("recurrence"));
 }

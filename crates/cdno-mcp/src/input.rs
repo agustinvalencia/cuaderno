@@ -194,3 +194,24 @@ pub struct CreateStewardshipInput {
     #[serde(default)]
     pub expanded: bool,
 }
+
+// `park_project` / `activate_project` (GH #166) reuse [`ProjectSlugInput`].
+
+/// Input for `set_question_status` (GH #166).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetQuestionStatusInput {
+    pub question: String,
+    /// One of `active`, `parked`, `answered`, `retired`.
+    pub status: String,
+}
+
+/// Input for `add_periodic_commitment` (GH #166).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddPeriodicCommitmentInput {
+    pub stewardship: String,
+    pub title: String,
+    /// `daily`, `weekly`, `monthly`, `yearly`, or `every N months`.
+    pub recurrence: String,
+    /// ISO `YYYY-MM-DD` — the next occurrence date.
+    pub next_date: chrono::NaiveDate,
+}

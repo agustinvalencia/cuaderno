@@ -2,12 +2,13 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 22 tools are wired through to the domain — the 16
-//! design §11 tools, the two daily-note tools (`read_daily_note`,
-//! `upsert_daily_section`, GH #158), and the four structural-creation
-//! tools (`create_project`, `create_portfolio`, `create_question`,
-//! `create_stewardship`, GH #162). The `not_yet_implemented`
-//! placeholder has been retired with no stubs left.
+//! Status: all 26 tools are wired through to the domain — the 16
+//! design §11 tools, the two daily-note tools (GH #158), the four
+//! structural-creation tools (GH #162), and the four lifecycle tools
+//! (`park_project`, `activate_project`, `set_question_status`,
+//! `add_periodic_commitment`, GH #166). The lifecycle group lives in
+//! `lifecycle.rs` as a separate `#[tool_router]` merged in `new()` —
+//! the first slice of the handler-group split.
 //!
 //! # Layout note
 //!
@@ -54,8 +55,9 @@ use crate::util::{
 /// [`ToolRouter`] built by the `#[tool_router]` macro.
 #[derive(Clone)]
 pub struct CuadernoServer {
-    #[allow(dead_code)] // populated by #46/#47 handlers
-    vault: Arc<Vault>,
+    // `pub(crate)` so handler impls in sibling modules (e.g.
+    // `lifecycle.rs`) can reach the vault.
+    pub(crate) vault: Arc<Vault>,
     // The `#[tool_router]` macro reads this via `Self::tool_router()`
     // and the `#[tool_handler]` `ServerHandler` impl dispatches
     // through it at runtime — dead-code analysis can't trace the
@@ -67,10 +69,13 @@ pub struct CuadernoServer {
 #[tool_router]
 impl CuadernoServer {
     pub fn new(vault: Arc<Vault>) -> Self {
-        Self {
-            vault,
-            tool_router: Self::tool_router(),
-        }
+        // The tool handlers are split across `#[tool_router]` impl
+        // blocks (the core set here, lifecycle ops in `lifecycle.rs`);
+        // merge their routers into the dispatch table. New groups peel
+        // off into their own routers and merge in the same way.
+        let mut tool_router = Self::tool_router();
+        tool_router.merge(Self::lifecycle_router());
+        Self { vault, tool_router }
     }
 
     /// Sorted snapshot of every advertised tool. Public so tests
@@ -617,7 +622,10 @@ impl CuadernoServer {
     }
 }
 
-#[tool_handler]
+// `router = self.tool_router` so the wire dispatch uses the MERGED
+// router built in `new()` (core + lifecycle groups), not the static
+// `Self::tool_router()` default which would only carry the core group.
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for CuadernoServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::default()
