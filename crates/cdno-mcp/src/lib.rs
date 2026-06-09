@@ -28,9 +28,12 @@
 //! should wrap each call in `tokio::task::spawn_blocking` so the
 //! event loop never stalls on disk I/O.
 
+mod context;
+mod creation;
 pub mod dto;
 pub mod input;
 mod lifecycle;
+mod operations;
 pub mod server;
 mod util;
 
