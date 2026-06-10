@@ -52,7 +52,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `complete_commitment` | Wired |
 | `create_tracking_entry` | Wired |
 | `read_daily_note` | Wired (#158) |
-| `upsert_daily_section` | Wired (#158; `section` allowlisted to `{Standup, Intention, Agenda}`) |
+| `upsert_daily_section` | Wired (#158/#170; sections `{Standup, Intention, Agenda, Meeting}`; `append` mode for live meeting notes) |
 | `create_project` | Wired (#162; at/above the cap, seeded parked) |
 | `create_portfolio` | Wired (#162) |
 | `create_question` | Wired (#162) |
@@ -82,7 +82,7 @@ Reachable from the terminal via `cdno`:
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
 - **Context reads (8)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`), `read_daily_note` (a day's markdown, or `exists: false` when none yet)
-- **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`), `upsert_daily_section` (set/replace a `{Standup, Intention, Agenda}` planning section)
+- **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`), `upsert_daily_section` (write a `{Standup, Intention, Agenda, Meeting}` section — replace, or `append` for live meeting notes)
 - **Structural creation (#162)** — `create_project` (active below the cap, parked at/above it), `create_portfolio`, `create_question` (research/life), `create_stewardship` (flat or expanded)
 - **Lifecycle (#166)** — `park_project`, `activate_project` (cap-enforced), `set_question_status` (active/parked/answered/retired), `add_periodic_commitment` (recurrence + next date)
 

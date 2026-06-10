@@ -8,15 +8,16 @@
 //! - [`Vault::upsert_daily_section`] — create-or-replace a *planning*
 //!   section of the daily note.
 //!
-//! # Why only the planning sections are writable
+//! # Which sections are writable
 //!
 //! The daily note is append-only for its **history**: `## Logs` (and
 //! any `## Notes` captures) only ever grow, via
-//! [`Vault::log_to_daily_note`]. The planning sections — Standup,
-//! Intention, Agenda — are today's mutable scratch: a skill rewrites
-//! them each morning. [`DailySection`] is the type-level allowlist
-//! that keeps `upsert_daily_section` away from the history sections,
-//! so the overwrite path can never clobber the log.
+//! [`Vault::log_to_daily_note`]. The other sections — Standup,
+//! Intention, Agenda (mutable planning scratch, typically replaced) and
+//! Meeting (live notes, typically appended) — are writable via
+//! `upsert_daily_section`. [`DailySection`] is the type-level allowlist
+//! that keeps it away from the history sections, so neither the
+//! overwrite nor the append path can ever clobber the log.
 
 use std::str::FromStr;
 
@@ -43,15 +44,19 @@ pub struct DailyNoteView {
     pub markdown: String,
 }
 
-/// The planning sections of a daily note that [`Vault::upsert_daily_section`]
-/// may set or replace. The append-only history sections (`## Logs`,
-/// `## Notes`) are deliberately absent — they only grow, so they have
-/// no variant here and cannot be reached through the overwrite path.
+/// The non-history sections of a daily note that
+/// [`Vault::upsert_daily_section`] may write. `Standup`/`Intention`/
+/// `Agenda` are mutable planning scratch (typically replaced); `Meeting`
+/// accrues live meeting notes (typically appended). The append-only
+/// history sections (`## Logs`, `## Notes`) are deliberately absent —
+/// they grow only via [`Vault::log_to_daily_note`] and cannot be reached
+/// here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DailySection {
     Standup,
     Intention,
     Agenda,
+    Meeting,
 }
 
 impl DailySection {
@@ -61,6 +66,7 @@ impl DailySection {
             DailySection::Standup => "Standup",
             DailySection::Intention => "Intention",
             DailySection::Agenda => "Agenda",
+            DailySection::Meeting => "Meeting",
         }
     }
 }
@@ -76,8 +82,9 @@ impl FromStr for DailySection {
             "standup" => Ok(DailySection::Standup),
             "intention" => Ok(DailySection::Intention),
             "agenda" => Ok(DailySection::Agenda),
+            "meeting" => Ok(DailySection::Meeting),
             other => Err(format!(
-                "unknown daily section '{other}' (expected one of: standup, intention, agenda)"
+                "unknown daily section '{other}' (expected one of: standup, intention, agenda, meeting)"
             )),
         }
     }
@@ -107,20 +114,22 @@ impl Vault {
         }
     }
 
-    /// Create-or-replace a planning section of the daily note for
-    /// `date`, returning the note's path.
+    /// Write a non-history section of the daily note for `date`,
+    /// returning the note's path.
     ///
     /// Creates the daily note (with an empty `## Logs`) if it doesn't
-    /// exist, then `ensure_section` + `replace_section` so the call is
-    /// idempotent whether or not the section was already present. The
-    /// `## Logs` history is never touched: `ensure_section` only ever
-    /// *adds* a heading, and the replace targets `section`'s heading
-    /// alone.
+    /// exist, then `ensure_section` followed by either `replace_section`
+    /// (`append: false` — the planning sections, idempotent overwrite)
+    /// or `append_to_section` (`append: true` — live meeting notes that
+    /// accrue). The `## Logs` history is never touched: `ensure_section`
+    /// only ever *adds* a heading, and the write targets `section`'s
+    /// heading alone.
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
         section: DailySection,
         content: &str,
+        append: bool,
     ) -> Result<VaultPath, DomainError> {
         let path = daily_note_path(date)?;
         let heading = section.heading();
@@ -134,7 +143,11 @@ impl Vault {
 
         let mut doc = MarkdownDocument::parse(base)?;
         doc.ensure_section(heading)?;
-        doc.replace_section(heading, &body)?;
+        if append {
+            doc.append_to_section(heading, &body)?;
+        } else {
+            doc.replace_section(heading, &body)?;
+        }
         let new_content = doc.render().to_owned();
 
         let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;

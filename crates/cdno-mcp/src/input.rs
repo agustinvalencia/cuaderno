@@ -142,17 +142,21 @@ pub struct ReadDailyNoteInput {
     pub date: Option<chrono::NaiveDate>,
 }
 
-/// Input for `upsert_daily_section` (GH #158). `section` is one of the
-/// mutable planning sections; `content` defaults to empty (which
-/// clears the section to just its heading); `date` defaults to today.
+/// Input for `upsert_daily_section` (GH #158, #170). `section` is one of
+/// the writable daily sections; `content` defaults to empty; `date`
+/// defaults to today; `append` defaults to replace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpsertDailySectionInput {
-    /// One of `Standup`, `Intention`, `Agenda` (case-insensitive).
+    /// One of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive).
     pub section: String,
     #[serde(default)]
     pub content: String,
     /// ISO `YYYY-MM-DD`. Omitted = today.
     pub date: Option<chrono::NaiveDate>,
+    /// Append to the section instead of replacing it (for live meeting
+    /// notes that accrue). Defaults to false (replace).
+    #[serde(default)]
+    pub append: bool,
 }
 
 /// Input for `create_project` (GH #162). `core_question` is an optional

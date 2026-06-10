@@ -504,6 +504,7 @@ async fn upsert_daily_section_writes_a_planning_section() {
             section: "intention".to_owned(),
             content: "Ship #158".to_owned(),
             date: None,
+            append: false,
         }))
         .await
         .expect("upsert_daily_section");
@@ -524,11 +525,37 @@ async fn upsert_daily_section_rejects_history_section_with_invalid_params() {
             section: "Logs".to_owned(),
             content: "sneaky".to_owned(),
             date: None,
+            append: false,
         }))
         .await
         .expect_err("Logs is append-only and not on the allowlist");
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     assert!(err.message.contains("section"));
+}
+
+#[tokio::test]
+async fn upsert_daily_section_appends_meeting_notes() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    for line in ["### NFM sync", "- decided X", "- next: Y"] {
+        server
+            .upsert_daily_section(Parameters(UpsertDailySectionInput {
+                section: "Meeting".to_owned(),
+                content: line.to_owned(),
+                date: None,
+                append: true,
+            }))
+            .await
+            .expect("append meeting note");
+    }
+    // Read back today's daily and confirm all three accrued.
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let body = store.read_file(&path).unwrap();
+    assert!(body.contains("## Meeting"), "body:\n{body}");
+    assert!(
+        body.contains("### NFM sync") && body.contains("- decided X") && body.contains("- next: Y")
+    );
 }
 
 // ---------------------------------------------------------------------
