@@ -43,9 +43,14 @@ async fn main() -> Result<()> {
     let vault = open_vault(&root).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
-    tracing::info!("vault opened; serving 16 design \u{00a7}11 tools over stdio");
 
     let server = CuadernoServer::new(Arc::new(vault));
+    // Derive the count from the merged router rather than hardcoding it,
+    // so the startup log can't drift out of sync as tools are added.
+    tracing::info!(
+        tools = server.advertised_tools().len(),
+        "vault opened; serving cdno-mcp tools over stdio"
+    );
 
     // `ServiceExt::serve(transport)` performs the MCP init handshake,
     // routes incoming `tools/call` requests through the
