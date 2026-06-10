@@ -62,7 +62,12 @@ fn upsert_creates_the_note_and_section_when_absent() {
     let (vault, store) = make_vault();
 
     let path = vault
-        .upsert_daily_section(date(), DailySection::Intention, "Ship the daily-note tools")
+        .upsert_daily_section(
+            date(),
+            DailySection::Intention,
+            "Ship the daily-note tools",
+            false,
+        )
         .expect("upsert creates the note");
 
     let content = store.read_file(&path).unwrap();
@@ -81,7 +86,7 @@ fn upsert_leaves_the_logs_history_untouched() {
         .expect("log creates the note");
 
     let path = vault
-        .upsert_daily_section(date(), DailySection::Standup, "Yesterday: shipped X")
+        .upsert_daily_section(date(), DailySection::Standup, "Yesterday: shipped X", false)
         .expect("upsert succeeds");
 
     let content = store.read_file(&path).unwrap();
@@ -98,10 +103,10 @@ fn upsert_overwrites_an_existing_section() {
     let (vault, store) = make_vault();
 
     vault
-        .upsert_daily_section(date(), DailySection::Intention, "first take")
+        .upsert_daily_section(date(), DailySection::Intention, "first take", false)
         .expect("first upsert");
     let path = vault
-        .upsert_daily_section(date(), DailySection::Intention, "second take")
+        .upsert_daily_section(date(), DailySection::Intention, "second take", false)
         .expect("second upsert overwrites");
 
     let content = store.read_file(&path).unwrap();
@@ -116,16 +121,49 @@ fn upsert_overwrites_an_existing_section() {
 fn upsert_with_empty_content_clears_to_just_the_heading() {
     let (vault, store) = make_vault();
     vault
-        .upsert_daily_section(date(), DailySection::Agenda, "10:00 standup")
+        .upsert_daily_section(date(), DailySection::Agenda, "10:00 standup", false)
         .expect("seed agenda");
 
     let path = vault
-        .upsert_daily_section(date(), DailySection::Agenda, "")
+        .upsert_daily_section(date(), DailySection::Agenda, "", false)
         .expect("clear agenda");
 
     let content = store.read_file(&path).unwrap();
     assert!(content.contains("## Agenda"));
     assert!(!content.contains("10:00 standup"));
+}
+
+#[test]
+fn upsert_append_accrues_meeting_notes() {
+    let (vault, store) = make_vault();
+
+    // Live meeting note-taking: each line appends to the Meeting section.
+    vault
+        .upsert_daily_section(date(), DailySection::Meeting, "### NFM sync", true)
+        .expect("start meeting");
+    vault
+        .upsert_daily_section(
+            date(),
+            DailySection::Meeting,
+            "- decided to lift provenance",
+            true,
+        )
+        .expect("note 1");
+    let path = vault
+        .upsert_daily_section(
+            date(),
+            DailySection::Meeting,
+            "- next: phase-2 wiring",
+            true,
+        )
+        .expect("note 2");
+
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("## Meeting"));
+    // All three accrue — append never overwrites.
+    assert!(content.contains("### NFM sync"));
+    assert!(content.contains("- decided to lift provenance"));
+    assert!(content.contains("- next: phase-2 wiring"));
 }
 
 // --- DailySection allowlist ------------------------------------------

@@ -212,7 +212,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create-or-replace a planning section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they only grow via `append_to_log`. Overwrites the section if present, creates it (and the daily note) if not. An empty `content` clears the section to just its heading."
+        description = "Write a section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they grow via `append_to_log`. With `append: false` (default) the section is replaced (the planning sections); with `append: true` the content is appended (live meeting notes that accrue). Creates the section (and the daily note) if absent. An empty `content` with `append: false` clears the section to just its heading."
     )]
     pub async fn upsert_daily_section(
         &self,
@@ -225,11 +225,16 @@ impl CuadernoServer {
             .map_err(|reason| invalid_argument("section", &reason))?;
         let path = self
             .vault
-            .upsert_daily_section(date, section, &input.content)
+            .upsert_daily_section(date, section, &input.content, input.append)
             .map_err(into_mcp_error)?;
+        let verb = if input.append {
+            "Appended to"
+        } else {
+            "Updated"
+        };
         json_result(WriteResultDto::new(
             path.to_string(),
-            format!("Updated {} on {}", section.heading(), path),
+            format!("{verb} {} on {}", section.heading(), path),
         ))
     }
 }
