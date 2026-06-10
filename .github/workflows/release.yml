@@ -31,7 +31,7 @@ jobs:
 
       - name: Create GitHub Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: v${{ steps.get_version.outputs.version }}
           draft: false
@@ -104,7 +104,7 @@ jobs:
           shasum -a 256 "${ARCHIVE_DIR}.tar.gz" > "${ARCHIVE_DIR}.tar.gz.sha256"
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
