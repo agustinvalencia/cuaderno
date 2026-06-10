@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.1 (2026-06-01). The CLI is daily-usable end-to-end and the MCP server is production-ready against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.1 is a patch adding shell-completion support — no behavioural changes to existing CLI/MCP surfaces.
+**Current release**: 0.1.5 (2026-06-10). The CLI is daily-usable end-to-end and the MCP server is production-ready (26 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.5 adds native meeting-note capture — `upsert_daily_section` gains a `Meeting` section + append mode (#170) — without a `meeting` note type.
 
 ## Phase summary
 

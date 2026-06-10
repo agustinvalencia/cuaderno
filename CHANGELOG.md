@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-06-10
+
+Minor release: native meeting-note capture. `upsert_daily_section` gains a `Meeting` section and an append mode so a skill can take live meeting notes that accrue into the daily note — without adding a `meeting` note type (the RLM decomposes a meeting into the chronological log + evidence + actions/commitments). Tool count unchanged (26).
+
 ### Added — Phase 4 (MCP server)
 
 - **Daily `Meeting` section + append mode** (#170) — `upsert_daily_section` gains a `Meeting` allowlist value (`{Standup, Intention, Agenda, Meeting}`) and an `append` flag: `append: false` (default) replaces the section as before; `append: true` appends to it, so a meeting skill can take live notes that accrue into the daily `## Meeting` section. The append-only history sections (`## Logs`, `## Notes`) remain off-limits — they grow only through `append_to_log`. cuaderno keeps no `meeting` note type (the RLM decomposes a meeting into the chronological log + evidence + actions/commitments); this is the minimal surface for capturing meeting notes natively.
