@@ -721,3 +721,42 @@ fn project_milestone_date_must_be_iso_format() {
         .failure()
         .stderr(predicate::str::contains("YYYY-MM-DD"));
 }
+
+#[test]
+fn search_runs_and_reports_no_matches_on_an_empty_vault() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["search", "anything"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(no matches)"));
+}
+
+#[test]
+fn search_rejects_an_unknown_note_type() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["search", "anything", "--type", "bogus"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid --type"));
+}
+
+#[test]
+fn search_rejects_a_non_iso_date() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["search", "anything", "--from", "yesterday"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("YYYY-MM-DD"));
+}

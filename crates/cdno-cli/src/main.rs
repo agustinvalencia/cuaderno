@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{Local, NaiveDateTime};
+use chrono::{Local, NaiveDate, NaiveDateTime};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::engine::ArgValueCompleter;
 use clap_complete::env::CompleteEnv;
@@ -186,6 +186,30 @@ enum Commands {
         weeks: u32,
     },
 
+    /// Full-text search across all notes, ranked best-first. Free-text
+    /// query with optional filters by note type, date window, and
+    /// portfolio.
+    Search {
+        /// Search text. Matched case-insensitively; terms are ANDed.
+        /// Quotes and operators are treated as literal words.
+        query: String,
+        /// Restrict to one note type (e.g. `daily`, `project`, `evidence`).
+        #[arg(long = "type", value_name = "TYPE")]
+        note_type: Option<String>,
+        /// Inclusive earliest note date (YYYY-MM-DD).
+        #[arg(long, value_parser = cdno_cli::commands::project::parse_iso_date)]
+        from: Option<NaiveDate>,
+        /// Inclusive latest note date (YYYY-MM-DD).
+        #[arg(long, value_parser = cdno_cli::commands::project::parse_iso_date)]
+        to: Option<NaiveDate>,
+        /// Restrict to notes in this portfolio.
+        #[arg(long)]
+        portfolio: Option<String>,
+        /// Maximum results to return.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+
     /// Print a shell-completion script. Source it in your shell's
     /// rc file. Dynamic vault-aware suggestions for `--project`,
     /// `--portfolio`, `--stewardship`, `--slug` etc. are wired into
@@ -333,6 +357,17 @@ fn main() -> Result<()> {
         Commands::Commitments { weeks } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::commitments::run(&root, Local::now().date_naive(), weeks)
+        }
+        Commands::Search {
+            query,
+            note_type,
+            from,
+            to,
+            portfolio,
+            limit,
+        } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::search::run(&root, &query, note_type, from, to, portfolio, limit)
         }
         Commands::Completions { shell } => {
             // Script emission needs no vault — sourcing is a shell-rc-time
