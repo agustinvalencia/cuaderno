@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-11
+
+Minor release: full-text content search across the vault — the first way to answer "where did we say X?" rather than only retrieving by note type, slug, or date. Tool count 26 → 27.
+
+### Added — content search (#172)
+
+- **FTS5 content search** (#172) — a SQLite FTS5 index over note title + body, surfaced through a new `search_notes` MCP tool (26 → 27) and a `cdno search` CLI command. Results are ranked best-first (bm25, with a note's H1 title weighted above its body), porter-stemmed for forgiving recall (a singular query matches the plural), and carry a bracketed snippet of the match. Optional filters narrow by note type, an inclusive date window (a daily note's filename date, else the note's `created`), and portfolio. Delivered in three layers: the core index plus its write/reconcile maintenance lifecycle — the index stays live on every write and is self-healed by reconciliation (#175); the domain `Vault::search` with query sanitisation, so arbitrary user text (stray quotes, bare operators, punctuation) becomes a safe `MATCH` rather than an error, plus the `search_notes` tool (#176); and the `cdno search` command with `--type`/`--from`/`--to`/`--portfolio`/`--limit` (#177).
+
 ## [0.1.5] - 2026-06-10
 
 Minor release: native meeting-note capture. `upsert_daily_section` gains a `Meeting` section and an append mode so a skill can take live meeting notes that accrue into the daily note — without adding a `meeting` note type (the RLM decomposes a meeting into the chronological log + evidence + actions/commitments). Tool count unchanged (26).

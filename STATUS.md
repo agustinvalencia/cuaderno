@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.5 (2026-06-10). The CLI is daily-usable end-to-end and the MCP server is production-ready (26 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.5 adds native meeting-note capture — `upsert_daily_section` gains a `Meeting` section + append mode (#170) — without a `meeting` note type.
+**Current release**: 0.1.6 (2026-06-11). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.6 adds full-text content search across the vault (#172) — a porter-stemmed FTS5 index over note title + body, exposed as the `search_notes` MCP tool and a `cdno search` CLI command, with note-type / date / portfolio filters.
 
 ## Phase summary
 
@@ -11,7 +11,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | **1 — Foundation** | Workspace layout, `cdno-core` traits + impls (`VaultStore`, `VaultIndex`, transactions, reconciliation, markdown parsing, hashing), `cdno-domain` skeleton, basic CLI bootstrap | Complete |
 | **2 — Daily loop** | Projects (5-cap, state, milestones, waiting-on, park/activate), actions (bullets + manifest notes, add/promote/complete/list), commitments (create/complete + aggregation timeline), orient/status/lint, flags-and-prompts ergonomics retrofit, append-only-after-completion lint | Complete |
 | **3 — Knowledge & stewardship** | Portfolios + evidence (create, file, list, show), questions (CRUD + status transitions + grouped list), stewardships (flat + expanded, list, show, periodic commitments, tracking notes with built-in templates), `cdno track` | Complete |
-| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 26-tool schema catalogue, stdio binary | Core complete (16 §11 + 2 daily-note (#158) + 4 structural-creation (#162) + 4 lifecycle (#166) tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
+| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 27-tool schema catalogue, stdio binary | Core complete (16 §11 + 2 daily-note (#158) + 4 structural-creation (#162) + 4 lifecycle (#166) + `search_notes` (#172) tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
 | **5 — Tauri UI** | `cdno-tauri` backend, React frontend with Tremor, Home / Weekly / Commitments views | Not started |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | Not started |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |
@@ -61,8 +61,9 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `activate_project` | Wired (#166; errors at the active cap) |
 | `set_question_status` | Wired (#166; `active`/`parked`/`answered`/`retired`) |
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
+| `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 26 tools are wired through to the domain** — the 16 design §11 tools, the two daily-note tools (#158), the four structural-creation tools (#162), and the four lifecycle tools (#166). No stubs remain. All 26 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 27 tools are wired through to the domain** — the 16 design §11 tools, the two daily-note tools (#158), the four structural-creation tools (#162), the four lifecycle tools (#166), and `search_notes` (#172). No stubs remain. All 27 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 
@@ -77,11 +78,12 @@ Reachable from the terminal via `cdno`:
 - `portfolio create / list / show` and `file` (file evidence into a portfolio)
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)
 - `stewardship create / list / show / add-periodic` and `track <activity>`
+- `search <query>` — full-text content search across the vault, ranked best-first, with optional `--type` / `--from` / `--to` / `--portfolio` / `--limit` filters
 - `completions <shell>` — emit a shell-completion shim (bash, zsh, fish, elvish, powershell) with **dynamic vault-aware tab completion** for slug-valued flags (`--project`, `--portfolio`, `--stewardship`, `--slug` on project/question verbs)
 
 Reachable from Claude via MCP (`cdno-mcp` binary):
 
-- **Context reads (8)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`), `read_daily_note` (a day's markdown, or `exists: false` when none yet)
+- **Context reads (9)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`), `read_daily_note` (a day's markdown, or `exists: false` when none yet), `search_notes` (#172 — FTS5 full-text search over title + body, ranked best-first, with optional note-type / date-window / portfolio filters)
 - **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`), `upsert_daily_section` (write a `{Standup, Intention, Agenda, Meeting}` section — replace, or `append` for live meeting notes)
 - **Structural creation (#162)** — `create_project` (active below the cap, parked at/above it), `create_portfolio`, `create_question` (research/life), `create_stewardship` (flat or expanded)
 - **Lifecycle (#166)** — `park_project`, `activate_project` (cap-enforced), `set_question_status` (active/parked/answered/retired), `add_periodic_commitment` (recurrence + next date)
