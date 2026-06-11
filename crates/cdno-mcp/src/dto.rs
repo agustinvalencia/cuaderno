@@ -33,8 +33,8 @@ use cdno_domain::frontmatter::{
 use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary, ProjectStateChange,
-    ProjectSummary, QuestionSummary, StewardshipSummary, StewardshipVariant, TopAction,
-    TrackingEntry,
+    ProjectSummary, QuestionSummary, SearchResultEntry, StewardshipSummary, StewardshipVariant,
+    TopAction, TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -674,5 +674,33 @@ fn stewardship_variant_str(v: StewardshipVariant) -> &'static str {
     match v {
         StewardshipVariant::Flat => "flat",
         StewardshipVariant::Expanded => "expanded",
+    }
+}
+
+// ---------------------------------------------------------------------
+// Search (#172)
+// ---------------------------------------------------------------------
+
+/// One ranked `search_notes` hit. `score` is the raw bm25 relevance —
+/// lower is a better match (results arrive already sorted best-first).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SearchResultDto {
+    pub path: String,
+    pub note_type: String,
+    pub title: Option<String>,
+    /// Excerpt of the match with the query terms wrapped in `[`…`]`.
+    pub snippet: String,
+    pub score: f64,
+}
+
+impl From<SearchResultEntry> for SearchResultDto {
+    fn from(r: SearchResultEntry) -> Self {
+        Self {
+            path: r.path.to_string(),
+            note_type: r.note_type,
+            title: r.title,
+            snippet: r.snippet,
+            score: r.score,
+        }
     }
 }

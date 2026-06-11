@@ -12,6 +12,7 @@ mod unit {
     mod projects_tests;
     mod questions_tests;
     mod recurrence_tests;
+    mod search_tests;
     mod stewardships_tests;
     mod tracking_tests;
     mod vault_tests;
