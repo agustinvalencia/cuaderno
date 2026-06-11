@@ -11,7 +11,8 @@
 //! 2. **Filters.** Note type, date range, and portfolio. The core index
 //!    returns ranked hits unfiltered, so we over-fetch and filter here.
 //!    note_type comes straight off the hit (no I/O); date and portfolio
-//!    read the note's frontmatter.
+//!    read the note's frontmatter. A date bound excludes notes with no
+//!    determinable date (project maps, questions, …).
 
 use chrono::NaiveDate;
 
@@ -107,6 +108,9 @@ impl super::Vault {
         let Some(match_query) = sanitise_fts_query(query) else {
             return Ok(Vec::new());
         };
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
 
         // With no filter, the index `LIMIT` is exact, so ask for just
         // what we need. With a filter, over-fetch and trim post-filter.
@@ -136,16 +140,23 @@ impl super::Vault {
             if filters.needs_frontmatter() {
                 // The index can momentarily lead the filesystem (a note
                 // deleted but not yet reconciled). Treat a missing file as
-                // "not a match" rather than failing the whole search.
+                // "not a match" rather than failing the whole search; a
+                // genuine I/O error still propagates.
                 let raw = match self.store.read_file(&hit.path) {
                     Ok(raw) => raw,
                     Err(StoreError::NotFound(_)) => continue,
                     Err(e) => return Err(DomainError::Store(e)),
                 };
-                let (fm, _body) = Frontmatter::parse(&raw)?;
+                // Forgiving recall: a note whose frontmatter can't be
+                // parsed (or whose field can't be read) can't be *confirmed*
+                // to pass an active filter, so skip it rather than aborting
+                // the whole search over one malformed note elsewhere.
+                let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
+                    continue;
+                };
 
                 if let Some(want) = &filters.portfolio {
-                    let got = fm.optional_field::<String>("portfolio")?;
+                    let got = fm.optional_field::<String>("portfolio").ok().flatten();
                     if got.as_deref() != Some(want.as_str()) {
                         continue;
                     }
@@ -154,7 +165,7 @@ impl super::Vault {
                 if filters.date_from.is_some() || filters.date_to.is_some() {
                     // A note with no determinable date can't satisfy a date
                     // window, so exclude it when one is set.
-                    let Some(date) = note_logical_date(&hit.path, &fm)? else {
+                    let Some(date) = note_logical_date(&hit.note_type, &hit.path, &fm) else {
                         continue;
                     };
                     if filters.date_from.is_some_and(|from| date < from) {
@@ -196,14 +207,19 @@ fn sanitise_fts_query(raw: &str) -> Option<String> {
     }
 }
 
-/// The note's logical date for date-range filtering: the date in a
-/// daily/weekly note's filename, else the frontmatter `created` field,
-/// else `None` (undated note — e.g. a project map).
-fn note_logical_date(path: &VaultPath, fm: &Frontmatter) -> Result<Option<NaiveDate>, DomainError> {
-    if let Some(stem) = path.as_path().file_stem().and_then(|s| s.to_str())
+/// The note's logical date for date-range filtering: a daily note's
+/// filename date (`.../YYYY-MM-DD.md`), else the frontmatter `created`
+/// field, else `None` — an undated note (project map, question, …), which
+/// is excluded whenever a date bound is set. A malformed `created` is
+/// treated as undated rather than erroring (forgiving recall). The
+/// filename branch is gated to `daily` so a non-daily note that merely
+/// happens to be named like a date isn't mis-dated by its filename.
+fn note_logical_date(note_type: &str, path: &VaultPath, fm: &Frontmatter) -> Option<NaiveDate> {
+    if note_type == "daily"
+        && let Some(stem) = path.as_path().file_stem().and_then(|s| s.to_str())
         && let Ok(date) = NaiveDate::parse_from_str(stem, "%Y-%m-%d")
     {
-        return Ok(Some(date));
+        return Some(date);
     }
-    Ok(fm.optional_field::<NaiveDate>("created")?)
+    fm.optional_field::<NaiveDate>("created").ok().flatten()
 }

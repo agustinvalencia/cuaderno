@@ -202,6 +202,54 @@ fn date_range_filters_by_created_frontmatter() {
 }
 
 #[test]
+fn a_note_with_an_unparseable_created_is_treated_as_undated_not_fatal() {
+    let vault = vault_with(&[
+        (
+            "inbox/good.md",
+            note_with("inbox", "created: 2026-03-10\n", "Good", "alpha capture"),
+        ),
+        (
+            "inbox/bad.md",
+            note_with("inbox", "created: someday\n", "Bad", "alpha capture"),
+        ),
+    ]);
+
+    // The malformed `created` is treated as undated (excluded by the date
+    // bound), and the search still succeeds for the good note.
+    let filters = SearchFilters {
+        date_from: Some(date(2026, 2, 1)),
+        ..Default::default()
+    };
+    let hits = vault.search("alpha", &filters, 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, vp("inbox/good.md"));
+}
+
+#[test]
+fn a_non_daily_note_named_like_a_date_is_dated_by_created_not_its_filename() {
+    // The filename-date shortcut is gated to daily notes; an inbox note
+    // that merely happens to be named YYYY-MM-DD takes its `created`.
+    let vault = vault_with(&[(
+        "inbox/2026-02-15.md",
+        note_with(
+            "inbox",
+            "created: 2026-09-01\n",
+            "Misnamed",
+            "alpha capture",
+        ),
+    )]);
+
+    // Window matches the `created` (September), not the filename (February).
+    let filters = SearchFilters {
+        date_from: Some(date(2026, 8, 1)),
+        ..Default::default()
+    };
+    let hits = vault.search("alpha", &filters, 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, vp("inbox/2026-02-15.md"));
+}
+
+#[test]
 fn date_range_uses_the_daily_note_filename_date() {
     let vault = vault_with(&[
         (

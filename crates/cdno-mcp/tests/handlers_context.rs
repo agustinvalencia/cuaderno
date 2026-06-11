@@ -685,7 +685,70 @@ async fn search_notes_returns_hits_with_expected_shape() {
         assert!(hit["note_type"].is_string());
         assert!(hit["snippet"].is_string());
         assert!(hit["score"].is_number());
+        // `title` is the one Option field — present as a string or null,
+        // never absent (no skip_serializing_if).
+        let title = &hit["title"];
+        assert!(title.is_string() || title.is_null(), "title: {title}");
     }
+}
+
+#[tokio::test]
+async fn search_notes_passes_the_date_window_through() {
+    // Two questions created in different months; the `from` bound must
+    // reach the domain filter (a from/to transposition would fail here).
+    let server = server_with(|vault| {
+        vault
+            .create_question(
+                moment(2026, 1, 10, 9, 0),
+                QuestionDomain::Research,
+                "sparse attention in January",
+            )
+            .unwrap();
+        vault
+            .create_question(
+                moment(2026, 6, 10, 9, 0),
+                QuestionDomain::Research,
+                "sparse attention in June",
+            )
+            .unwrap();
+    });
+    let result = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "sparse".to_owned(),
+            note_type: None,
+            from: Some(NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()),
+            to: None,
+            portfolio: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let hits = value.as_array().unwrap();
+    assert_eq!(
+        hits.len(),
+        1,
+        "only the June question is after the `from` bound"
+    );
+    assert!(hits[0]["path"].as_str().unwrap().contains("june"));
+}
+
+#[tokio::test]
+async fn search_notes_honours_the_limit() {
+    let server = server_with(search_seed);
+    let result = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "sparse".to_owned(),
+            note_type: None,
+            from: None,
+            to: None,
+            portfolio: None,
+            limit: 1,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    assert_eq!(value.as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
