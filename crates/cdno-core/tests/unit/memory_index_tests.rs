@@ -499,3 +499,50 @@ fn archival_snapshot_round_trips_and_cascades_on_note_delete() {
     idx.remove_note(&path).unwrap();
     assert!(idx.find_archival_snapshot(&path).unwrap().is_none());
 }
+
+// ---- full-text search (the lightweight double; not FTS5-faithful) -------
+
+#[test]
+fn search_finds_substring_in_title_or_body() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/foo.md", "project"))
+        .unwrap();
+    idx.replace_fts(&vp("projects/foo.md"), Some("Budget plan"), "body text")
+        .unwrap();
+
+    // Title hit and body hit both resolve.
+    assert_eq!(idx.search("budget", 10).unwrap().len(), 1);
+    assert_eq!(idx.search("body", 10).unwrap().len(), 1);
+    // Non-match returns nothing.
+    assert!(idx.search("absent", 10).unwrap().is_empty());
+}
+
+#[test]
+fn search_ranks_title_hits_before_body_hits() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("a.md", "inbox")).unwrap();
+    idx.upsert_note(&sample_note("b.md", "inbox")).unwrap();
+    idx.replace_fts(&vp("a.md"), Some("misc"), "the budget line")
+        .unwrap();
+    idx.replace_fts(&vp("b.md"), Some("Budget"), "unrelated")
+        .unwrap();
+
+    let hits = idx.search("budget", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    // b.md matched on title (score 0.0), a.md on body only (score 1.0).
+    assert_eq!(hits[0].path, vp("b.md"));
+    assert!(hits[0].score < hits[1].score);
+}
+
+#[test]
+fn replace_fts_then_remove_note_clears_search() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("x.md", "inbox")).unwrap();
+    idx.replace_fts(&vp("x.md"), None, "findable").unwrap();
+    assert_eq!(idx.search("findable", 10).unwrap().len(), 1);
+    assert_eq!(idx.fts_indexed_paths().unwrap(), vec![vp("x.md")]);
+
+    idx.remove_note(&vp("x.md")).unwrap();
+    assert!(idx.search("findable", 10).unwrap().is_empty());
+    assert!(idx.fts_indexed_paths().unwrap().is_empty());
+}

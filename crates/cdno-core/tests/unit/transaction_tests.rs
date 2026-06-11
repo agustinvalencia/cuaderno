@@ -443,4 +443,25 @@ impl VaultIndex for FailingIndex {
     ) -> Result<Option<cdno_core::index::ArchivalSnapshot>, IndexError> {
         self.inner.find_archival_snapshot(path)
     }
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError> {
+        if self.should_fail(false) {
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.replace_fts(path, title, body)
+    }
+    fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<cdno_core::index::SearchHit>, IndexError> {
+        self.inner.search(query, limit)
+    }
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.fts_indexed_paths()
+    }
 }

@@ -44,6 +44,14 @@ pub struct ReconciliationReport {
     /// Index rows that had no corresponding filesystem file and were
     /// dropped (cascades facets).
     pub removed: usize,
+    /// Notes present in the `notes` table but absent from the FTS index
+    /// that were backfilled this pass. Non-zero on the first reconcile
+    /// after the FTS migration (or after the index is dropped), when the
+    /// per-file hash fast-path skips unchanged notes and so never
+    /// repopulates their search rows.
+    pub fts_built: usize,
+    /// FTS rows with no surviving note that were dropped this pass.
+    pub fts_removed: usize,
     /// Per-file failures — typically parse errors on a corrupted note.
     /// Reconciliation continues past these; the offending file stays
     /// unindexed until fixed.
@@ -127,7 +135,75 @@ pub fn reconcile(
         }
     }
 
+    // Phase 3: heal the FTS index by path-set diff against `notes`.
+    //
+    // Phase 1 only reindexes notes whose content changed; an unchanged
+    // note hits the hash fast-path and never re-enters the body-parsing
+    // path. So a freshly-migrated (or dropped) FTS table would stay empty
+    // for every note that hasn't been touched since. Reconcile it here,
+    // independent of the per-file hash check (and of #94's planned mtime
+    // fast-path): any note missing from FTS is backfilled from its file;
+    // any FTS row without a surviving note is dropped. Steady state is two
+    // path-set queries and an empty diff.
+    let note_paths: HashSet<VaultPath> = index.list_all_paths()?.into_iter().collect();
+    let fts_paths: HashSet<VaultPath> = index.fts_indexed_paths()?.into_iter().collect();
+
+    for path in note_paths.difference(&fts_paths) {
+        // Only backfill notes that actually exist on disk. A path in the
+        // index but absent from the filesystem walk is an orphan that
+        // Phase 2 owns; trying to read its (missing) file here would just
+        // surface a redundant error for a problem already reported.
+        if !fs_set.contains(path) {
+            continue;
+        }
+        match backfill_fts_one(store, index, path) {
+            Ok(()) => report.fts_built += 1,
+            Err(reason) => report.errors.push(ReconciliationIssue {
+                path: path.clone(),
+                reason,
+            }),
+        }
+    }
+
+    for path in fts_paths.difference(&note_paths) {
+        // An FTS row whose note is gone. `remove_note` deletes both the
+        // (already-absent) notes row and the FTS row, so it's the right
+        // primitive even though only the FTS side has anything to drop.
+        let mut tx = VaultTransaction::new(store.clone(), index.clone());
+        tx.remove_note(path.clone());
+        match tx.commit() {
+            Ok(()) => report.fts_removed += 1,
+            Err(e) => report.errors.push(ReconciliationIssue {
+                path: path.clone(),
+                reason: format!("failed to remove orphan FTS row: {e}"),
+            }),
+        }
+    }
+
     Ok(report)
+}
+
+/// Backfill the FTS row for a single note from its file on disk. Used by
+/// the reconcile FTS-heal pass for notes present in `notes` but missing
+/// from search (e.g. every note on the first open after the FTS
+/// migration). Returns a string-reason error on any read/parse failure so
+/// the caller records it without aborting the pass.
+fn backfill_fts_one(
+    store: &Arc<dyn VaultStore>,
+    index: &Arc<dyn VaultIndex>,
+    path: &VaultPath,
+) -> Result<(), String> {
+    let content = store
+        .read_file(path)
+        .map_err(|e| format!("read failed: {e}"))?;
+    let (_frontmatter, body) =
+        Frontmatter::parse(&content).map_err(|e| format!("frontmatter parse failed: {e}"))?;
+    let title = crate::extractors::first_h1(body);
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone());
+    tx.replace_fts(path.clone(), title, body.to_owned());
+    tx.commit().map_err(|e| format!("commit failed: {e}"))?;
+    Ok(())
 }
 
 /// Per-file outcome reported back to the caller counters.
@@ -219,6 +295,15 @@ fn reconcile_one(
         Vec::new()
     };
 
+    // The FTS row needs title + body. This path reindexes a note already
+    // on disk, so there's no paired file write for the commit seam to
+    // derive the body from — buffer the FTS replacement explicitly. The
+    // FTS title is the body's H1 (where notes carry their title), so it
+    // earns the bm25 title weight; `title` (frontmatter-derived) is the
+    // `notes` row's own field and is a separate concern.
+    let fts_title = crate::extractors::first_h1(body);
+    let fts_body = body.to_owned();
+
     let entry = NoteEntry {
         path: path.clone(),
         note_type,
@@ -242,6 +327,7 @@ fn reconcile_one(
     tx.replace_milestones(path.clone(), milestones);
     tx.replace_tags(path.clone(), tags);
     tx.replace_links(path.clone(), links);
+    tx.replace_fts(path.clone(), fts_title, fts_body);
     tx.commit().map_err(|e| format!("commit failed: {e}"))?;
 
     Ok(outcome)

@@ -572,6 +572,80 @@ fn orphan_removal_failure_is_reported_as_error() {
     );
 }
 
+#[test]
+fn reconcile_populates_fts_for_indexed_notes() {
+    let (store, index) = fixtures();
+    seed_note(&store, "inbox/a.md", "inbox", "");
+    seed_note(&store, "projects/b.md", "project", "status: active\n");
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    // reconcile_one wrote the FTS rows alongside the note rows, so the
+    // body text ("content for <path>") is searchable.
+    let hits = index.search("content", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(
+        index.fts_indexed_paths().unwrap(),
+        vec![vp("inbox/a.md"), vp("projects/b.md")]
+    );
+}
+
+#[test]
+fn reconcile_backfills_fts_for_notes_missing_from_search() {
+    use cdno_core::hash::content_hash;
+
+    // Simulate the state right after the FTS migration: notes are already
+    // indexed (their content hash matches) but have no FTS rows yet. The
+    // per-file pass will skip them on hash, so the dedicated FTS-heal pass
+    // is the only thing that can fill search — exactly what it's for.
+    let (store, index) = fixtures();
+    let raw = "---\ntype: inbox\ntitle: A title\n---\n# Body\n\nsearchable backfill text\n";
+    store.write_file(&vp("inbox/a.md"), raw).unwrap();
+
+    // Pre-seed the note row with the *correct* hash (so phase 1 skips it)
+    // and deliberately no FTS row.
+    index
+        .upsert_note(&NoteEntry {
+            path: vp("inbox/a.md"),
+            note_type: "inbox".to_owned(),
+            title: Some("A title".to_owned()),
+            content_hash: content_hash(raw),
+            mtime_ns: 1,
+            size: raw.len() as u64,
+            frontmatter: json!({}),
+            indexed_at_ns: 1,
+        })
+        .unwrap();
+    assert!(index.search("searchable", 10).unwrap().is_empty());
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    // Phase 1 skipped the unchanged note; phase 3 backfilled its FTS row.
+    assert_eq!(report.added, 0);
+    assert_eq!(report.updated, 0);
+    assert_eq!(report.fts_built, 1);
+    let hits = index.search("searchable", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, vp("inbox/a.md"));
+}
+
+#[test]
+fn reconcile_drops_orphan_fts_rows() {
+    // An FTS row whose note no longer exists on disk or in the index is
+    // dropped by the heal pass.
+    let (store, index) = fixtures();
+    index
+        .replace_fts(&vp("gone.md"), Some("Gone"), "orphan body")
+        .unwrap();
+    assert_eq!(index.fts_indexed_paths().unwrap(), vec![vp("gone.md")]);
+
+    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    assert_eq!(report.fts_removed, 1);
+    assert!(index.fts_indexed_paths().unwrap().is_empty());
+    assert!(report.errors.is_empty());
+}
+
 /// Test wrapper that delegates every `VaultIndex` method to an inner
 /// `MemoryIndex` except `remove_note`, which always errors. Kept
 /// inline in this file because it's specific to the orphan-failure
@@ -655,5 +729,23 @@ impl VaultIndex for FailOnRemoveIndex {
         path: &VaultPath,
     ) -> Result<Option<cdno_core::index::ArchivalSnapshot>, IndexError> {
         self.inner.find_archival_snapshot(path)
+    }
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError> {
+        self.inner.replace_fts(path, title, body)
+    }
+    fn search(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<cdno_core::index::SearchHit>, IndexError> {
+        self.inner.search(query, limit)
+    }
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        self.inner.fts_indexed_paths()
     }
 }

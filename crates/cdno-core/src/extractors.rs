@@ -251,3 +251,20 @@ fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPa
     }
     Some(first.clone())
 }
+
+/// The text of the body's first level-1 (`# `) heading, trimmed, or
+/// `None` if there isn't one.
+///
+/// Cuaderno notes carry their human title as the body H1, not a
+/// frontmatter `title:` field, so this is the canonical title source —
+/// e.g. for the FTS `title` column, where it earns the bm25 weight a
+/// `notes.title` (frontmatter-derived, ~always absent) cannot. A simple
+/// line scan, matching the per-module `extract_h1` helpers in cdno-domain
+/// (a future cleanup could collapse those onto this one).
+pub fn first_h1(body: &str) -> Option<String> {
+    body.lines().find_map(|line| {
+        line.trim_start()
+            .strip_prefix("# ")
+            .map(|text| text.trim().to_owned())
+    })
+}

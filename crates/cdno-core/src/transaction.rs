@@ -19,6 +19,7 @@
 use std::sync::Arc;
 
 use crate::error::{IndexError, StoreError, TransactionError};
+use crate::frontmatter::Frontmatter;
 use crate::index::{
     ArchivalSnapshot, DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, VaultIndex,
 };
@@ -57,6 +58,10 @@ enum IndexOp {
     ReplaceTags(VaultPath, Vec<String>),
     ReplaceMilestones(VaultPath, Vec<MilestoneEntry>),
     RecordArchivalSnapshot(VaultPath, ArchivalSnapshot),
+    /// Replace the FTS row for a note: `(path, title, body)`. Buffered
+    /// explicitly only by reconciliation; ordinary writes get their FTS
+    /// row derived from the paired file write at commit (see `commit`).
+    ReplaceFts(VaultPath, Option<String>, String),
 }
 
 /// Recorded information needed to undo one successfully-applied file
@@ -140,6 +145,17 @@ impl VaultTransaction {
             .push(IndexOp::RecordArchivalSnapshot(path, snapshot));
     }
 
+    /// Explicitly buffer a full-text-index replacement for `path`.
+    ///
+    /// Ordinary write paths do **not** call this: their FTS row is
+    /// derived automatically at commit from the paired `write_file`
+    /// content (see [`commit`](Self::commit)). Reconciliation uses it
+    /// because it reindexes a note that already exists on disk — there is
+    /// no file write in that transaction to derive the body from.
+    pub fn replace_fts(&mut self, path: VaultPath, title: Option<String>, body: String) {
+        self.index_ops.push(IndexOp::ReplaceFts(path, title, body));
+    }
+
     // ---- commit -----------------------------------------------------
 
     /// Apply every buffered operation. File ops run first, in
@@ -167,8 +183,40 @@ impl VaultTransaction {
         // collect every error so the caller sees the full picture.
         let mut index_errors: Vec<IndexError> = Vec::new();
         for op in &self.index_ops {
-            if let Err(e) = apply_index_op(&*self.index, op) {
-                index_errors.push(e);
+            let op_ok = match apply_index_op(&*self.index, op) {
+                Ok(()) => true,
+                Err(e) => {
+                    index_errors.push(e);
+                    false
+                }
+            };
+
+            // Keep the FTS projection in sync with note writes without
+            // threading the body through every write call site. `NoteEntry`
+            // carries no body, but every write that upserts a note also
+            // buffers a `write_file` of that note's full content in this
+            // same transaction — so the body is already here. Derive it and
+            // refresh the note's FTS row. This single seam covers all
+            // current and future write paths; reconciliation (which has no
+            // paired write) uses the explicit `ReplaceFts` op instead.
+            //
+            // Only mirror an upsert that actually landed: there's no point
+            // FTS-indexing a note whose metadata row failed to write. Body
+            // is the content past the frontmatter; if the content has none
+            // (malformed, or a non-note write), index it whole rather than
+            // failing the commit — FTS is best-effort and reconcile re-heals.
+            // The FTS title comes from the body's H1, not `entry.title`:
+            // notes carry their title as the H1, so that's what earns the
+            // bm25 title weight (see `extractors::first_h1`).
+            if op_ok
+                && let IndexOp::UpsertNote(entry) = op
+                && let Some(content) = latest_write_content(&self.file_ops, &entry.path)
+            {
+                let body = Frontmatter::parse(content).map_or(content, |(_, body)| body);
+                let title = crate::extractors::first_h1(body);
+                if let Err(e) = self.index.replace_fts(&entry.path, title.as_deref(), body) {
+                    index_errors.push(e);
+                }
             }
         }
 
@@ -189,6 +237,17 @@ impl std::fmt::Debug for VaultTransaction {
             .field("index_ops", &self.index_ops.len())
             .finish_non_exhaustive()
     }
+}
+
+/// Content of the last `Write` op targeting `path` in this transaction,
+/// if any. Lets the commit FTS seam recover a note's body from the file
+/// write it's paired with, instead of every write call site passing the
+/// body explicitly. The last write wins (matches what lands on disk).
+fn latest_write_content<'a>(file_ops: &'a [FileOp], path: &VaultPath) -> Option<&'a str> {
+    file_ops.iter().rev().find_map(|op| match op {
+        FileOp::Write { path: p, content } if p == path => Some(content.as_str()),
+        _ => None,
+    })
 }
 
 /// Apply a single file op, returning the undo information needed to
@@ -286,5 +345,6 @@ fn apply_index_op(index: &dyn VaultIndex, op: &IndexOp) -> Result<(), IndexError
         IndexOp::RecordArchivalSnapshot(path, snapshot) => {
             index.record_archival_snapshot(path, snapshot)
         }
+        IndexOp::ReplaceFts(path, title, body) => index.replace_fts(path, title.as_deref(), body),
     }
 }

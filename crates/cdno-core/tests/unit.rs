@@ -5,6 +5,7 @@ mod unit {
     mod file_meta_tests;
     mod frontmatter_tests;
     mod fs_store_tests;
+    mod fts_search_tests;
     mod hash_tests;
     mod index_tests;
     mod markdown_tests;

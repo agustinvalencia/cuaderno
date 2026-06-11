@@ -1,7 +1,7 @@
 ---
-schema_version: 1
+schema_version: 2
 applies_to_crate: cdno-core
-last_updated: 2026-05-30
+last_updated: 2026-06-11
 ---
 
 # Cuaderno Index Schema
@@ -13,12 +13,11 @@ backlinks, …). If the index is lost, corrupted, or behind, startup
 reconciliation rebuilds it from the filesystem — a stale index is
 recoverable, a stale file is data loss.
 
-This document describes **schema version 1**. The single executable
-migration is `migrations/001_initial.sql`. Pre-release the schema is
-delivered as one combined script — the historical milestones / archive-
-snapshots additions that landed during Phase 2 were collapsed into the
-initial migration before any release pinned them in place. The first
-post-release additive change becomes migration 002.
+This document describes **schema version 2**. Migrations:
+`migrations/001_initial.sql` (the combined initial schema — the
+milestones / archive-snapshots additions that landed during Phase 2 were
+collapsed into it before any release pinned them in place) and
+`migrations/002_fts5_search.sql` (the `notes_fts` full-text index, #172).
 
 ## Conventions
 
@@ -219,6 +218,42 @@ CREATE TABLE archived_action_snapshots (
   helper computes both. The frozen_hash is over the full file content at
   archival (frontmatter + body); any edit anywhere in the prefix flags.
 
+### `notes_fts`
+
+FTS5 inverted index over note title + body — the engine behind content
+search ("where did we say X?", #172). A **regular (self-contained)** FTS5
+table: it stores both the index and a copy of the indexed text, so
+`snippet()` and `bm25()` work directly off it with no second read of the
+`.md` file. The duplicated text is in-character for a cache — disposable
+and rebuildable from markdown.
+
+```sql
+CREATE VIRTUAL TABLE notes_fts USING fts5(
+    path UNINDEXED,                  -- stored for lookup/delete, not searched
+    title,
+    body,
+    tokenize = 'porter unicode61'    -- stem so meeting/meetings/met collapse
+);
+```
+
+- **Keyed by `path`, not rowid.** `notes` is `WITHOUT ROWID`, so there's
+  no rowid to align an external-content FTS table against. `path` is an
+  `UNINDEXED` column purely to look up and delete a row; deletion is a
+  `WHERE path = ?` scan — negligible at personal-vault scale (a
+  `path→rowid` side-table is the optimisation if a profile ever shows it).
+- **Maintained two ways, mirroring the `notes` table.** Writes update it
+  incrementally so same-session search is live; reconciliation heals it.
+  Because `NoteEntry` carries no body, the write path derives the FTS body
+  from the paired `write_file` content at `VaultTransaction::commit` — one
+  seam covering every write call site rather than 20-odd manual hooks.
+- **Porter stemming** biases for forgiving recall (search the plural, find
+  the singular); `bm25()` weights a title hit 10× a body hit.
+- **The FTS `title` is the note's body H1**, not a frontmatter `title:`
+  field (cuaderno notes carry their title as the H1, so `notes.title` is
+  ~always absent). All three population sites lift it via
+  `extractors::first_h1`. The H1 also lives in the body, so the title is
+  findable either way; the dedicated column exists only for the bm25 boost.
+
 ### `schema_migrations`
 
 Tracks which migration versions have been applied to the current DB.
@@ -247,6 +282,7 @@ CREATE TABLE schema_migrations (
 | `milestones_for_project(slug)` | `SELECT … FROM milestones WHERE note_path = ? OR note_path = ? ORDER BY id` — resolves slug to active + parked paths. |
 | `milestones_between(from, to)` | `SELECT … FROM milestones WHERE date IS NOT NULL AND date BETWEEN ? AND ? ORDER BY date` — `idx_milestones_date` range scan. |
 | `find_archival_snapshot(path)` | `SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots WHERE note_path = ?` — PK lookup. |
+| `search(query, limit)` | `SELECT f.path, n.note_type, f.title, snippet(...), bm25(notes_fts, 0, 10, 1) FROM notes_fts f JOIN notes n ON n.path = f.path WHERE notes_fts MATCH ? ORDER BY bm25(...) LIMIT ?` — FTS5 index lookup, ranked best-first. |
 
 ## Reconciliation semantics
 
@@ -259,7 +295,12 @@ Startup reconciliation (#16) treats the filesystem as truth:
    - Changed row → update `notes`, delete and re-insert dependent rows
      (deadlines, links, tags, milestones) via cascading writes.
 3. For every `notes.path` not visited in the walk → delete. Cascades
-   clean up dependents.
+   clean up dependents (and the explicit FTS delete in `remove_note`).
+4. **FTS heal.** Diff `notes` paths against `notes_fts` paths: backfill
+   any note missing from search (read file → parse body → `replace_fts`),
+   drop any FTS row whose note is gone. This is decoupled from the step-2
+   hash fast-path on purpose — an unchanged note is *skipped* there, so a
+   freshly-migrated (or dropped) FTS table is filled here, not in step 2.
 
 Because the index is rebuildable, *any* inconsistency is recoverable
 — at worst we drop and rerun migrations against an empty DB.
@@ -280,9 +321,14 @@ Because the index is rebuildable, *any* inconsistency is recoverable
   `schema_version` frontmatter is the authoritative "current state"
   indicator.
 
-## Out of scope for version 1
+## Out of scope (for now)
 
-- **FTS5 full-text search** — add when a "search notes" feature lands.
+- **Search filters** (note type, date range, portfolio) on top of
+  `notes_fts` — the core `search(query, limit)` is filter-free; filtering
+  lands with the domain `Vault::search` + `search_notes` MCP surface (#172
+  PR 2).
+- **Frontmatter fields in the FTS index** — only title + body are
+  indexed; structured frontmatter is better queried via the typed columns.
 - **Per-portfolio staleness materialisation** — derivable from
   `MAX(notes.mtime_ns) WHERE path LIKE 'portfolios/foo/%'`; only
   materialise if hot.
