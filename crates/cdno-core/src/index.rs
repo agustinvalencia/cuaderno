@@ -23,11 +23,18 @@ use crate::path::VaultPath;
 ///
 /// Every schema change is a new entry appended here. Migrations are
 /// applied strictly in order; never edit a migration that has shipped.
-const MIGRATIONS: &[(u32, &str, &str)] = &[(
-    1,
-    "Initial schema: notes, deadlines, links, note_tags, milestones, archived_action_snapshots",
-    include_str!("../migrations/001_initial.sql"),
-)];
+const MIGRATIONS: &[(u32, &str, &str)] = &[
+    (
+        1,
+        "Initial schema: notes, deadlines, links, note_tags, milestones, archived_action_snapshots",
+        include_str!("../migrations/001_initial.sql"),
+    ),
+    (
+        2,
+        "FTS5 full-text search over note title + body",
+        include_str!("../migrations/002_fts5_search.sql"),
+    ),
+];
 
 /// SQLite-backed implementation of the vault index.
 ///
@@ -273,6 +280,23 @@ pub struct ArchivalSnapshot {
     pub archived_at_ns: u64,
 }
 
+/// One ranked full-text search result from [`VaultIndex::search`].
+///
+/// `snippet` is an excerpt of the matched body with the query terms
+/// wrapped in `[`…`]`, straight from FTS5's `snippet()`. `score` is the
+/// raw `bm25()` relevance value — **lower is a better match** (it is the
+/// sort key, surfaced so callers can threshold or display it). `note_type`
+/// is joined in from the `notes` row so callers can filter/group without a
+/// second lookup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchHit {
+    pub path: VaultPath,
+    pub note_type: String,
+    pub title: Option<String>,
+    pub snippet: String,
+    pub score: f64,
+}
+
 /// The two vault locations a project with `slug` can occupy: active
 /// `projects/<slug>.md` and parked `projects/_parked/<slug>.md`. Used
 /// by `milestones_for_project` to resolve a slug to its note path
@@ -348,6 +372,28 @@ pub trait VaultIndex: Send + Sync {
         to: &str,
     ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError>;
 
+    // full-text search ------------------------------------------------
+    /// Replace the FTS row for `path` with the given title + body
+    /// (delete-then-insert; FTS5 has no clean per-row UPSERT). Mirrors
+    /// the `replace_*` facet idiom: the note's searchable text is just
+    /// another projection of the note, refreshed on every write.
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError>;
+    /// Full-text search over title + body, ranked best-first. `query` is
+    /// an FTS5 MATCH expression (bare terms, `"phrases"`, `AND`/`OR`,
+    /// `prefix*`). Title matches are weighted above body matches. At most
+    /// `limit` hits are returned.
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError>;
+    /// Every path currently present in the FTS index. Used by the
+    /// reconciliation FTS-heal pass to diff against `notes` and backfill
+    /// any note missing from search (independent of the per-file hash
+    /// fast-path, so it fills a just-migrated/dropped FTS table).
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError>;
+
     // archival snapshots -------------------------------------------------
     /// Record (or replace) the archival snapshot for `path`. Written
     /// once at archival by `stage_action_archival`; subsequent writes
@@ -404,9 +450,16 @@ impl VaultIndex for SqliteIndex {
 
     fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError> {
         // Cascade FKs drop dependent rows in deadlines, links, note_tags.
+        // `notes_fts` is a virtual table, so FK cascade doesn't reach it —
+        // delete its row explicitly under the same lock to keep search in
+        // step with the notes table.
         let conn = self.conn.lock().expect("poisoned mutex");
         conn.execute(
             "DELETE FROM notes WHERE path = ?1",
+            params![path.to_string()],
+        )?;
+        conn.execute(
+            "DELETE FROM notes_fts WHERE path = ?1",
             params![path.to_string()],
         )?;
         Ok(())
@@ -448,6 +501,90 @@ impl VaultIndex for SqliteIndex {
             let path_str = row?;
             out.push(VaultPath::new(path_str).map_err(|e| {
                 IndexError::Query(format!("invalid stored path in list_all_paths: {e}"))
+            })?);
+        }
+        Ok(out)
+    }
+
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError> {
+        // Delete-then-insert under one transaction: FTS5 regular tables
+        // have no clean per-row UPSERT, and an UNINDEXED key column can't
+        // anchor an ON CONFLICT. The delete is keyed on the UNINDEXED
+        // `path` column (an O(n) scan — negligible at vault scale; a
+        // path->rowid side-table is the optimisation if a profile ever
+        // shows it).
+        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM notes_fts WHERE path = ?1",
+            params![path.to_string()],
+        )?;
+        tx.execute(
+            "INSERT INTO notes_fts (path, title, body) VALUES (?1, ?2, ?3)",
+            params![path.to_string(), title, body],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        // Column order in `notes_fts` is (path, title, body) => indices
+        // (0, 1, 2). bm25 weights mirror that: path contributes nothing
+        // (UNINDEXED anyway), a title hit is weighted 10x a body hit so a
+        // note *about* the query outranks one that mentions it in passing.
+        // bm25 returns lower-is-better, so ORDER BY ascending is best-first.
+        // `snippet` excerpts the body column (2) with the terms bracketed.
+        let mut stmt = conn.prepare(
+            "SELECT f.path, n.note_type, f.title, \
+                    snippet(notes_fts, 2, '[', ']', '…', 10), \
+                    bm25(notes_fts, 0.0, 10.0, 1.0) \
+             FROM notes_fts f \
+             JOIN notes n ON n.path = f.path \
+             WHERE notes_fts MATCH ?1 \
+             ORDER BY bm25(notes_fts, 0.0, 10.0, 1.0) \
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![query, limit as i64], |row| {
+            let path_str: String = row.get(0)?;
+            Ok((
+                path_str,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path_str, note_type, title, snippet, score) = row?;
+            let path = VaultPath::new(&path_str)
+                .map_err(|e| IndexError::Query(format!("invalid stored path in search: {e}")))?;
+            out.push(SearchHit {
+                path,
+                note_type,
+                title,
+                snippet,
+                score,
+            });
+        }
+        Ok(out)
+    }
+
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        let conn = self.conn.lock().expect("poisoned mutex");
+        let mut stmt = conn.prepare("SELECT path FROM notes_fts ORDER BY path")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let path_str = row?;
+            out.push(VaultPath::new(path_str).map_err(|e| {
+                IndexError::Query(format!("invalid stored path in fts_indexed_paths: {e}"))
             })?);
         }
         Ok(out)
@@ -801,6 +938,35 @@ fn row_to_note_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NoteEnt
     }))
 }
 
+/// Build a short excerpt of `body` around the first occurrence of
+/// `needle` (already lowercased), bracketing the match — the
+/// [`MemoryIndex`] stand-in for FTS5's `snippet()`. Falls back to a
+/// prefix of the body when the match is title-only (not in the body).
+fn memory_snippet(body: &str, needle: &str) -> String {
+    const WINDOW: usize = 40;
+    match body.to_lowercase().find(needle) {
+        Some(pos) => {
+            let start = body[..pos]
+                .char_indices()
+                .rev()
+                .nth(WINDOW)
+                .map_or(0, |(i, _)| i);
+            let match_end = pos + needle.len();
+            let end = body[match_end..]
+                .char_indices()
+                .nth(WINDOW)
+                .map_or(body.len(), |(i, _)| match_end + i);
+            format!(
+                "{}[{}]{}",
+                &body[start..pos],
+                &body[pos..match_end],
+                &body[match_end..end]
+            )
+        }
+        None => body.chars().take(WINDOW * 2).collect(),
+    }
+}
+
 // ---------------------------------------------------------------------
 // MemoryIndex — test-only in-memory implementation of VaultIndex
 // ---------------------------------------------------------------------
@@ -833,6 +999,8 @@ struct MemoryIndexState {
     tags: HashMap<VaultPath, Vec<String>>,
     milestones: HashMap<VaultPath, Vec<MilestoneEntry>>,
     archival_snapshots: HashMap<VaultPath, ArchivalSnapshot>,
+    /// Searchable (title, body) text per note, mirroring `notes_fts`.
+    fts: HashMap<VaultPath, (Option<String>, String)>,
 }
 
 impl MemoryIndex {
@@ -858,6 +1026,7 @@ impl VaultIndex for MemoryIndex {
         state.tags.remove(path);
         state.milestones.remove(path);
         state.archival_snapshots.remove(path);
+        state.fts.remove(path);
         Ok(())
     }
 
@@ -881,6 +1050,72 @@ impl VaultIndex for MemoryIndex {
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
         let state = self.state.lock().expect("poisoned mutex");
         let mut out: Vec<VaultPath> = state.notes.keys().cloned().collect();
+        out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn replace_fts(
+        &self,
+        path: &VaultPath,
+        title: Option<&str>,
+        body: &str,
+    ) -> Result<(), IndexError> {
+        let mut state = self.state.lock().expect("poisoned mutex");
+        state
+            .fts
+            .insert(path.clone(), (title.map(str::to_owned), body.to_owned()));
+        Ok(())
+    }
+
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
+        // Deliberately simple: a case-insensitive substring match over
+        // the stored title + body, ranked title-first. This double exists
+        // for fast domain tests, not to reproduce FTS5 — it does not
+        // honour MATCH operators (`AND`/`OR`/`"phrase"`/`prefix*`) or
+        // porter stemming; assert those against `SqliteIndex`.
+        let needle = query.to_lowercase();
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut hits: Vec<SearchHit> = state
+            .fts
+            .iter()
+            .filter_map(|(path, (title, body))| {
+                let title_hit = title
+                    .as_deref()
+                    .is_some_and(|t| t.to_lowercase().contains(&needle));
+                let body_hit = body.to_lowercase().contains(&needle);
+                if !title_hit && !body_hit {
+                    return None;
+                }
+                let note_type = state
+                    .notes
+                    .get(path)
+                    .map(|n| n.note_type.clone())
+                    .unwrap_or_default();
+                Some(SearchHit {
+                    path: path.clone(),
+                    note_type,
+                    title: title.clone(),
+                    snippet: memory_snippet(body, &needle),
+                    // Lower is better; a title hit outranks a body-only
+                    // hit, matching the weighted bm25 ordering.
+                    score: if title_hit { 0.0 } else { 1.0 },
+                })
+            })
+            .collect();
+        // Stable order: score first, then path for determinism.
+        hits.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.as_path().cmp(b.path.as_path()))
+        });
+        hits.truncate(limit);
+        Ok(hits)
+    }
+
+    fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut out: Vec<VaultPath> = state.fts.keys().cloned().collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
         Ok(out)
     }

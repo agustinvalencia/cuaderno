@@ -21,10 +21,10 @@ fn open_creates_fresh_db_with_current_schema() {
             r.get(0)
         })
         .unwrap();
-    // Single combined initial migration — see SCHEMA.md.
-    assert_eq!(version, 1);
+    // 001 initial schema + 002 FTS5 search — see SCHEMA.md.
+    assert_eq!(version, 2);
 
-    // All tables exist.
+    // All tables exist (`notes_fts` is the FTS5 virtual table from 002).
     for table in [
         "notes",
         "deadlines",
@@ -33,6 +33,7 @@ fn open_creates_fresh_db_with_current_schema() {
         "milestones",
         "archived_action_snapshots",
         "schema_migrations",
+        "notes_fts",
     ] {
         let count: u32 = conn
             .query_row(
@@ -58,7 +59,7 @@ fn reopen_existing_db_is_idempotent() {
     let row_count: u32 = conn
         .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(row_count, 1);
+    assert_eq!(row_count, 2);
 }
 
 #[test]
