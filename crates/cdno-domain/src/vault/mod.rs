@@ -41,6 +41,7 @@ mod orient;
 mod portfolios;
 mod projects;
 mod questions;
+mod search;
 mod slug;
 mod stewardships;
 mod tracking;
@@ -54,6 +55,7 @@ pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 pub use questions::QuestionSummary;
+pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`

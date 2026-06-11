@@ -15,6 +15,6 @@ pub use lint::{LintIssue, LintReport};
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, DailyNoteView, DailySection, LapsedHabit, OrientationContext, PortfolioSummary,
-    ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionSummary, StewardshipSummary,
-    StewardshipVariant, TopAction, TrackingEntry, Vault,
+    ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionSummary, SearchFilters,
+    SearchResultEntry, StewardshipSummary, StewardshipVariant, TopAction, TrackingEntry, Vault,
 };

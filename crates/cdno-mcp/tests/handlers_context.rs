@@ -25,7 +25,7 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    EmptyInput, GetActiveQuestionsInput, GetOrientationInput, PortfolioSlugInput,
+    EmptyInput, GetActiveQuestionsInput, GetOrientationInput, PortfolioSlugInput, SearchNotesInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -639,4 +639,107 @@ async fn get_stewardship_tracking_rejects_unknown_period_unit_with_invalid_param
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "period `{bad}`");
         assert!(err.message.contains("period"), "msg: {}", err.message);
     }
+}
+
+// ---- search_notes (#172) ------------------------------------------------
+
+fn search_seed(vault: &Vault) {
+    vault
+        .create_question(
+            moment(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            "Does sparse attention beat dense?",
+        )
+        .unwrap();
+    vault
+        .create_portfolio(
+            moment(2026, 2, 1, 9, 0),
+            "Dense versus sparse tradeoffs",
+            None,
+        )
+        .unwrap();
+}
+
+#[tokio::test]
+async fn search_notes_returns_hits_with_expected_shape() {
+    let server = server_with(search_seed);
+    let result = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "sparse".to_owned(),
+            note_type: None,
+            from: None,
+            to: None,
+            portfolio: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let hits = value.as_array().unwrap();
+    assert!(
+        hits.len() >= 2,
+        "should find the question and the portfolio"
+    );
+    for hit in hits {
+        assert!(hit["path"].is_string());
+        assert!(hit["note_type"].is_string());
+        assert!(hit["snippet"].is_string());
+        assert!(hit["score"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn search_notes_filters_by_note_type() {
+    let server = server_with(search_seed);
+    let result = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "sparse".to_owned(),
+            note_type: Some("question".to_owned()),
+            from: None,
+            to: None,
+            portfolio: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let hits = value.as_array().unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|h| h["note_type"] == "question"));
+}
+
+#[tokio::test]
+async fn search_notes_rejects_unknown_note_type() {
+    let server = server_with(search_seed);
+    let err = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "sparse".to_owned(),
+            note_type: Some("bogus".to_owned()),
+            from: None,
+            to: None,
+            portfolio: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("note_type"), "msg: {}", err.message);
+}
+
+#[tokio::test]
+async fn search_notes_blank_query_returns_no_results() {
+    let server = server_with(search_seed);
+    let result = server
+        .search_notes(Parameters(SearchNotesInput {
+            query: "   ".to_owned(),
+            note_type: None,
+            from: None,
+            to: None,
+            portfolio: None,
+            limit: 20,
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    assert!(value.as_array().unwrap().is_empty());
 }

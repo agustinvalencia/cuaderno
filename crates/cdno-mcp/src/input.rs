@@ -219,3 +219,28 @@ pub struct AddPeriodicCommitmentInput {
     /// ISO `YYYY-MM-DD` — the next occurrence date.
     pub next_date: chrono::NaiveDate,
 }
+
+/// Input for `search_notes` (#172). `query` is required free text; every
+/// filter is optional.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchNotesInput {
+    /// Free-text query. Terms are matched case-insensitively and ANDed;
+    /// quotes/operators in the text are treated as literal words.
+    pub query: String,
+    /// Restrict to one note type (e.g. `project`, `evidence`, `daily`).
+    /// Omitted = any type.
+    pub note_type: Option<String>,
+    /// Inclusive earliest note date, ISO `YYYY-MM-DD`. Omitted = no lower bound.
+    pub from: Option<chrono::NaiveDate>,
+    /// Inclusive latest note date, ISO `YYYY-MM-DD`. Omitted = no upper bound.
+    pub to: Option<chrono::NaiveDate>,
+    /// Restrict to notes in this portfolio (their `portfolio` frontmatter).
+    pub portfolio: Option<String>,
+    /// Maximum results to return. Defaults to 20.
+    #[serde(default = "default_search_limit")]
+    pub limit: usize,
+}
+
+fn default_search_limit() -> usize {
+    20
+}

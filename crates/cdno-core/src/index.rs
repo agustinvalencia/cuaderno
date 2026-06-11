@@ -942,6 +942,20 @@ fn row_to_note_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<NoteEnt
     }))
 }
 
+/// Split a query into lowercased match terms for [`MemoryIndex::search`].
+///
+/// Accepts both a raw single word (`budget`) and the domain sanitiser's
+/// output (`"budget" "meeting"`): each whitespace-separated token has its
+/// surrounding double-quotes stripped and the FTS5 `""` escape collapsed,
+/// then is lowercased. Empty tokens are dropped.
+fn memory_query_terms(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|tok| tok.trim_matches('"').replace("\"\"", "\"").to_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
 /// Build a short excerpt of `body` around the first occurrence of
 /// `needle` (already lowercased), bracketing the match — the
 /// [`MemoryIndex`] stand-in for FTS5's `snippet()`. Falls back to a
@@ -1072,34 +1086,52 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
-        // Deliberately simple: a case-insensitive substring match over
-        // the stored title + body, ranked title-first. This double exists
-        // for fast domain tests, not to reproduce FTS5 — it does not
-        // honour MATCH operators (`AND`/`OR`/`"phrase"`/`prefix*`) or
-        // porter stemming; assert those against `SqliteIndex`.
-        let needle = query.to_lowercase();
+        // Deliberately simple: case-insensitive substring matching over the
+        // stored title + body, ranked title-first. This double exists for
+        // fast domain/MCP tests, not to reproduce FTS5 — no porter stemming
+        // and no operator grammar (assert those against `SqliteIndex`). It
+        // does, however, understand the shape the domain query sanitiser
+        // emits: whitespace-separated, double-quoted terms ANDed together
+        // (`"budget" "meeting"`). Terms are unquoted and ALL must appear —
+        // a workable stand-in for FTS5's implicit AND of quoted terms,
+        // which keeps both raw single-word queries and sanitised multi-term
+        // queries matching here. See `memory_query_terms`.
+        let terms = memory_query_terms(query);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
         let state = self.state.lock().expect("poisoned mutex");
         let mut hits: Vec<SearchHit> = state
             .fts
             .iter()
             .filter_map(|(path, (title, body))| {
-                let title_hit = title
-                    .as_deref()
-                    .is_some_and(|t| t.to_lowercase().contains(&needle));
-                let body_hit = body.to_lowercase().contains(&needle);
-                if !title_hit && !body_hit {
+                let title_lc = title.as_deref().unwrap_or_default().to_lowercase();
+                let body_lc = body.to_lowercase();
+                // AND semantics: every term must appear somewhere.
+                if !terms
+                    .iter()
+                    .all(|t| title_lc.contains(t) || body_lc.contains(t))
+                {
                     return None;
                 }
+                let title_hit = terms.iter().any(|t| title_lc.contains(t));
                 let note_type = state
                     .notes
                     .get(path)
                     .map(|n| n.note_type.clone())
                     .unwrap_or_default();
+                // Snippet around the first term that lands in the body, or
+                // the body prefix if the match is title-only.
+                let snippet_needle = terms
+                    .iter()
+                    .find(|t| body_lc.contains(*t))
+                    .map(String::as_str)
+                    .unwrap_or(&terms[0]);
                 Some(SearchHit {
                     path: path.clone(),
                     note_type,
                     title: title.clone(),
-                    snippet: memory_snippet(body, &needle),
+                    snippet: memory_snippet(body, snippet_needle),
                     // Lower is better; a title hit outranks a body-only
                     // hit, matching the weighted bm25 ordering.
                     score: if title_hit { 0.0 } else { 1.0 },

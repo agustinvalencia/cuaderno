@@ -2,11 +2,12 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 26 tools are wired through to the domain — the 16
+//! Status: all 27 tools are wired through to the domain — the 16
 //! design §11 tools, the two daily-note tools (GH #158), the four
-//! structural-creation tools (GH #162), and the four lifecycle tools
+//! structural-creation tools (GH #162), the four lifecycle tools
 //! (`park_project`, `activate_project`, `set_question_status`,
-//! `add_periodic_commitment`, GH #166). Handlers are split by group
+//! `add_periodic_commitment`, GH #166), and `search_notes` (#172).
+//! Handlers are split by group
 //! across sibling modules — `context.rs`, `operations.rs`,
 //! `creation.rs`, `lifecycle.rs` — each a `#[tool_router]` merged into
 //! the dispatch table in `new()`.

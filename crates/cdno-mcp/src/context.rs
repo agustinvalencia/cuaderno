@@ -8,12 +8,14 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
+use cdno_domain::SearchFilters;
 use cdno_domain::frontmatter::QuestionDomain;
+use cdno_domain::note_type::NoteType;
 
 use crate::dto::{
     DailyNoteViewDto, MonthlyContextDto, OrientationContextDto, PortfolioDetailDto,
-    ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, StewardshipTrackingDto,
-    WeeklyContextDto,
+    ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
+    StewardshipTrackingDto, WeeklyContextDto,
 };
 
 use crate::input::*;
@@ -255,5 +257,32 @@ impl CuadernoServer {
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let view = self.vault.read_daily_note(date).map_err(into_mcp_error)?;
         json_result(DailyNoteViewDto::from(view))
+    }
+
+    #[tool(
+        description = "Full-text search across all notes by content, ranked best-first. Optional filters: `note_type` (e.g. `project`, `evidence`, `daily`), a `from`/`to` ISO date window (matched against the note's date), and `portfolio`. Free-text `query` is matched case-insensitively with terms ANDed. Returns `{ path, note_type, title, snippet, score }` per hit — `snippet` brackets the matched terms; lower `score` is a better match."
+    )]
+    pub async fn search_notes(
+        &self,
+        Parameters(input): Parameters<SearchNotesInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let note_types = match input.note_type.as_deref() {
+            Some(t) => vec![
+                NoteType::from_str(t).map_err(|e| invalid_argument("note_type", &e.to_string()))?,
+            ],
+            None => Vec::new(),
+        };
+        let filters = SearchFilters {
+            note_types,
+            date_from: input.from,
+            date_to: input.to,
+            portfolio: input.portfolio,
+        };
+        let results = self
+            .vault
+            .search(&input.query, &filters, input.limit)
+            .map_err(into_mcp_error)?;
+        let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
+        json_result(dtos)
     }
 }
