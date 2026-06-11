@@ -6,9 +6,15 @@ use std::fs;
 use std::path::Path;
 
 use cdno_cli::commands::{init, search};
-use cdno_domain::SearchFilters;
+use cdno_core::path::VaultPath;
 use cdno_domain::note_type::NoteType;
+use cdno_domain::{SearchFilters, SearchResultEntry};
+use chrono::NaiveDate;
 use tempfile::tempdir;
+
+fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
 
 const PROJECT_ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nWorking on the sparse attention kernel.\n";
 
@@ -83,6 +89,66 @@ fn search_reports_no_matches() {
 }
 
 #[test]
-fn render_handles_empty_and_untitled() {
+fn search_date_window_excludes_out_of_range_notes() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    // The daily note is dated 2026-05-15; the project map is undated, so a
+    // date bound drops both the out-of-window daily and the undated project.
+    let filters = SearchFilters {
+        date_from: Some(date(2026, 6, 1)),
+        ..Default::default()
+    };
+    let out =
+        search::build_search(dir.path(), "sparse attention", &filters, 20).expect("search builds");
+    assert!(out.contains("(no matches)"), "output:\n{out}");
+
+    // Widen the window to include the daily note.
+    let filters = SearchFilters {
+        date_from: Some(date(2026, 5, 1)),
+        date_to: Some(date(2026, 5, 31)),
+        ..Default::default()
+    };
+    let out =
+        search::build_search(dir.path(), "sparse attention", &filters, 20).expect("search builds");
+    assert!(
+        out.contains("journal/2026/daily/2026-05-15.md"),
+        "output:\n{out}"
+    );
+    assert!(
+        !out.contains("projects/alpha.md"),
+        "undated note excluded:\n{out}"
+    );
+}
+
+#[test]
+fn search_limit_caps_the_number_of_hits() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    // Both notes match "sparse attention"; limit 1 returns only the top one.
+    let out = search::build_search(dir.path(), "sparse attention", &SearchFilters::default(), 1)
+        .expect("search builds");
+    // Exactly one numbered hit ("  1. ") and no "  2. ".
+    assert!(out.contains("  1. "), "output:\n{out}");
+    assert!(!out.contains("  2. "), "limit not honoured:\n{out}");
+}
+
+#[test]
+fn render_uses_a_placeholder_for_an_untitled_hit() {
+    let hit = SearchResultEntry {
+        path: VaultPath::new("inbox/x.md").unwrap(),
+        note_type: "inbox".to_owned(),
+        title: None,
+        snippet: "some [body] text".to_owned(),
+        score: -1.0,
+    };
+    let out = search::render("body", std::slice::from_ref(&hit));
+    assert!(out.contains("(untitled)"), "output:\n{out}");
+    assert!(out.contains("inbox/x.md"), "output:\n{out}");
+}
+
+#[test]
+fn render_reports_no_matches_for_empty_results() {
     assert!(search::render("anything", &[]).contains("(no matches)"));
 }

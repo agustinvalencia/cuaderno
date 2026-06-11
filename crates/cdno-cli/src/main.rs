@@ -194,7 +194,11 @@ enum Commands {
         /// Quotes and operators are treated as literal words.
         query: String,
         /// Restrict to one note type (e.g. `daily`, `project`, `evidence`).
-        #[arg(long = "type", value_name = "TYPE")]
+        #[arg(
+            long = "type",
+            value_name = "TYPE",
+            add = ArgValueCompleter::new(completions::complete_note_type)
+        )]
         note_type: Option<String>,
         /// Inclusive earliest note date (YYYY-MM-DD).
         #[arg(long, value_parser = cdno_cli::commands::project::parse_iso_date)]
@@ -203,7 +207,7 @@ enum Commands {
         #[arg(long, value_parser = cdno_cli::commands::project::parse_iso_date)]
         to: Option<NaiveDate>,
         /// Restrict to notes in this portfolio.
-        #[arg(long)]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
         /// Maximum results to return.
         #[arg(long, default_value_t = 20)]

@@ -161,6 +161,15 @@ pub fn complete_any_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     out
 }
 
+/// Note-type names. Used by `--type` on `cdno search`. Static (the set
+/// is fixed by [`NoteType::ALL`]), so unlike the others it needs no vault.
+pub fn complete_note_type(_current: &OsStr) -> Vec<CompletionCandidate> {
+    cdno_domain::note_type::NoteType::ALL
+        .iter()
+        .map(|nt| CompletionCandidate::new(nt.as_str()))
+        .collect()
+}
+
 /// Portfolio slugs. Used by `--portfolio` on `cdno file` and `cdno
 /// portfolio show`.
 pub fn complete_portfolio(_current: &OsStr) -> Vec<CompletionCandidate> {
