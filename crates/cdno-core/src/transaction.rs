@@ -205,15 +205,16 @@ impl VaultTransaction {
             // is the content past the frontmatter; if the content has none
             // (malformed, or a non-note write), index it whole rather than
             // failing the commit — FTS is best-effort and reconcile re-heals.
+            // The FTS title comes from the body's H1, not `entry.title`:
+            // notes carry their title as the H1, so that's what earns the
+            // bm25 title weight (see `extractors::first_h1`).
             if op_ok
                 && let IndexOp::UpsertNote(entry) = op
                 && let Some(content) = latest_write_content(&self.file_ops, &entry.path)
             {
                 let body = Frontmatter::parse(content).map_or(content, |(_, body)| body);
-                if let Err(e) = self
-                    .index
-                    .replace_fts(&entry.path, entry.title.as_deref(), body)
-                {
+                let title = crate::extractors::first_h1(body);
+                if let Err(e) = self.index.replace_fts(&entry.path, title.as_deref(), body) {
                     index_errors.push(e);
                 }
             }

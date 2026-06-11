@@ -96,6 +96,41 @@ fn title_hit_outranks_body_only_hit() {
 }
 
 #[test]
+fn title_only_match_snippets_the_title() {
+    let (_d, idx) = store();
+    // Query word is in the title, not the body.
+    index_note(
+        &idx,
+        "projects/a.md",
+        "project",
+        "Budget planning",
+        "misc notes",
+    );
+
+    let hits = idx.search("budget", 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    // snippet auto-selects the matched column, so the title term is
+    // bracketed rather than returning an unrelated body prefix.
+    assert!(
+        hits[0].snippet.contains("[Budget]"),
+        "title-only hit should snippet the title: {}",
+        hits[0].snippet
+    );
+}
+
+#[test]
+fn malformed_query_errors_rather_than_panicking() {
+    let (_d, idx) = store();
+    index_note(&idx, "a.md", "inbox", "A", "some body text");
+
+    // An unbalanced quote is an invalid FTS5 MATCH expression. It must
+    // surface as an Err (sanitising/translation is a higher-layer job),
+    // never a panic.
+    let result = idx.search("\"unbalanced", 10);
+    assert!(result.is_err(), "malformed query should return Err");
+}
+
+#[test]
 fn porter_stemmer_matches_inflections() {
     let (_d, idx) = store();
     index_note(
@@ -212,5 +247,41 @@ fn commit_makes_a_written_note_searchable_without_reconcile() {
     assert!(
         index.search("parking", 10).unwrap().len() == 1,
         "body term should be searchable"
+    );
+}
+
+#[test]
+fn commit_sources_the_fts_title_from_the_body_h1() {
+    // Notes carry their title as the H1, not a frontmatter field, so the
+    // commit seam must lift the H1 into the weighted FTS title column for
+    // the bm25 boost to mean anything. Both notes mention "budget"; only
+    // A has it as its H1, so A must rank first.
+    let dir = TempDir::new().unwrap();
+    let index: Arc<SqliteIndex> =
+        Arc::new(SqliteIndex::open(dir.path().join("index.sqlite")).unwrap());
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index_dyn: Arc<dyn VaultIndex> = index.clone();
+
+    let write = |p: &str, content: &str| {
+        let mut tx = VaultTransaction::new(store.clone(), index_dyn.clone());
+        tx.write_file(vp(p), content);
+        tx.upsert_note(note(p, "project", "ignored")); // entry.title is unused for FTS
+        tx.commit().unwrap();
+    };
+    write(
+        "projects/a.md",
+        "---\ntype: project\n---\n# Budget\n\nplanning notes\n",
+    );
+    write(
+        "projects/b.md",
+        "---\ntype: project\n---\n# Roadmap\n\nwe touched the budget once\n",
+    );
+
+    let hits = index.search("budget", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(
+        hits[0].path,
+        vp("projects/a.md"),
+        "the note whose H1 is the query term should rank first"
     );
 }

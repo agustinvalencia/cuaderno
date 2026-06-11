@@ -196,11 +196,9 @@ fn backfill_fts_one(
     let content = store
         .read_file(path)
         .map_err(|e| format!("read failed: {e}"))?;
-    let (frontmatter, body) =
+    let (_frontmatter, body) =
         Frontmatter::parse(&content).map_err(|e| format!("frontmatter parse failed: {e}"))?;
-    let title = frontmatter
-        .optional_field::<String>("title")
-        .map_err(|e| format!("invalid `title` field: {e}"))?;
+    let title = crate::extractors::first_h1(body);
 
     let mut tx = VaultTransaction::new(store.clone(), index.clone());
     tx.replace_fts(path.clone(), title, body.to_owned());
@@ -297,11 +295,13 @@ fn reconcile_one(
         Vec::new()
     };
 
-    // The FTS row needs title + body. Capture them before `entry`
-    // consumes `title`; this path reindexes a note already on disk, so
-    // there's no paired file write for the commit seam to derive the body
-    // from — buffer the FTS replacement explicitly.
-    let fts_title = title.clone();
+    // The FTS row needs title + body. This path reindexes a note already
+    // on disk, so there's no paired file write for the commit seam to
+    // derive the body from — buffer the FTS replacement explicitly. The
+    // FTS title is the body's H1 (where notes carry their title), so it
+    // earns the bm25 title weight; `title` (frontmatter-derived) is the
+    // `notes` row's own field and is a separate concern.
+    let fts_title = crate::extractors::first_h1(body);
     let fts_body = body.to_owned();
 
     let entry = NoteEntry {

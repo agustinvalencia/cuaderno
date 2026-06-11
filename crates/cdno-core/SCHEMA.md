@@ -248,6 +248,11 @@ CREATE VIRTUAL TABLE notes_fts USING fts5(
   seam covering every write call site rather than 20-odd manual hooks.
 - **Porter stemming** biases for forgiving recall (search the plural, find
   the singular); `bm25()` weights a title hit 10× a body hit.
+- **The FTS `title` is the note's body H1**, not a frontmatter `title:`
+  field (cuaderno notes carry their title as the H1, so `notes.title` is
+  ~always absent). All three population sites lift it via
+  `extractors::first_h1`. The H1 also lives in the body, so the title is
+  findable either way; the dedicated column exists only for the bm25 boost.
 
 ### `schema_migrations`
 

@@ -539,10 +539,14 @@ impl VaultIndex for SqliteIndex {
         // (UNINDEXED anyway), a title hit is weighted 10x a body hit so a
         // note *about* the query outranks one that mentions it in passing.
         // bm25 returns lower-is-better, so ORDER BY ascending is best-first.
-        // `snippet` excerpts the body column (2) with the terms bracketed.
+        // `snippet`'s column arg is -1 (auto-select): it excerpts whichever
+        // column actually matched, so a title-only hit brackets the title
+        // term instead of returning an unrelated body prefix.
+        // The JOIN to `notes` is inner by design — an FTS row with no
+        // surviving note (transient reconcile state) is dropped, not shown.
         let mut stmt = conn.prepare(
             "SELECT f.path, n.note_type, f.title, \
-                    snippet(notes_fts, 2, '[', ']', '…', 10), \
+                    snippet(notes_fts, -1, '[', ']', '…', 10), \
                     bm25(notes_fts, 0.0, 10.0, 1.0) \
              FROM notes_fts f \
              JOIN notes n ON n.path = f.path \
