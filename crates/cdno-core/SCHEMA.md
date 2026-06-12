@@ -289,11 +289,19 @@ CREATE TABLE schema_migrations (
 Startup reconciliation (#16) treats the filesystem as truth:
 
 1. `walk_dir` the vault for every `.md` file.
-2. For each file: compare `mtime_ns + content_hash` with the `notes` row.
-   - Missing row → insert, also insert deadlines, links, tags, milestones.
-   - Matching row → skip.
-   - Changed row → update `notes`, delete and re-insert dependent rows
-     (deadlines, links, tags, milestones) via cascading writes.
+2. For each file:
+   - **Fast path (#94)** — `stat` the file and compare `mtime_ns + size`
+     with the `notes` row; if both match, the file is assumed unchanged and
+     skipped without a read or hash. Writes stamp the file's real mtime into
+     the row (`VaultTransaction::commit`), so cdno-authored notes hit this
+     path too. mtime is a pre-filter, not the authority — a false "unchanged"
+     only leaves a stale row the next genuine edit corrects.
+   - **Slow path** — on a fast-path miss (or a missing row), read + hash and
+     compare `content_hash`:
+     - Missing row → insert, also insert deadlines, links, tags, milestones.
+     - Hash matches (mtime touched, bytes identical) → skip.
+     - Changed → update `notes`, delete and re-insert dependent rows
+       (deadlines, links, tags, milestones) via cascading writes.
 3. For every `notes.path` not visited in the walk → delete. Cascades
    clean up dependents (and the explicit FTS delete in `remove_note`).
 4. **FTS heal.** Diff `notes` paths against `notes_fts` paths: backfill

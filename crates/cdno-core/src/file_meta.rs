@@ -1,6 +1,6 @@
 use std::fs::Metadata;
 use std::io;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Snapshot of a file's modification time and size.
 ///
@@ -15,6 +15,17 @@ pub struct FileMeta {
 impl FileMeta {
     pub fn new(mtime: SystemTime, size: u64) -> Self {
         Self { mtime, size }
+    }
+
+    /// `mtime` as nanoseconds since the UNIX epoch — the form stored in
+    /// `NoteEntry::mtime_ns` and compared by the reconcile fast-path.
+    /// Pre-epoch times (which shouldn't occur on a live filesystem) clamp
+    /// to 0.
+    pub fn mtime_ns(&self) -> u64 {
+        self.mtime
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
     }
 }
 

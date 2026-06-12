@@ -222,17 +222,35 @@ fn reconcile_one(
     path: &VaultPath,
     vault_paths: &HashSet<VaultPath>,
 ) -> Result<Outcome, String> {
-    // Read content up-front: we need it to hash, and we'll also need
-    // it to parse for added/updated notes. A single read is cheaper
-    // than the mtime-check-then-read dance for vault-scale data.
+    let existing = index
+        .find_by_path(path)
+        .map_err(|e| format!("index lookup failed: {e}"))?;
+    let meta = store
+        .metadata(path)
+        .map_err(|e| format!("metadata failed: {e}"))?;
+
+    // Fast path (#94): an already-indexed file whose mtime and size both
+    // match is assumed unchanged — skip the read + hash entirely. mtime can
+    // lie (preserved across a copy, drift across filesystems); the only cost
+    // of a false "unchanged" is a stale row the next genuine edit fixes, and
+    // the content hash on the slow path below stays the source of truth.
+    // Note writes store the file's real mtime (`VaultTransaction::commit`),
+    // so cdno's own notes hit this path too — the steady-state win for CLI
+    // verbs that re-reconcile on every invocation.
+    if let Some(entry) = &existing
+        && entry.mtime_ns == meta.mtime_ns()
+        && entry.size == meta.size
+    {
+        return Ok(Outcome::Skipped);
+    }
+
+    // Slow path: read + hash. Either the fast path missed (mtime/size
+    // drifted) or this is a new file. The hash decides whether content
+    // really changed — an mtime touch with identical bytes still skips.
     let content = store
         .read_file(path)
         .map_err(|e| format!("read failed: {e}"))?;
     let hash = content_hash(&content);
-
-    let existing = index
-        .find_by_path(path)
-        .map_err(|e| format!("index lookup failed: {e}"))?;
 
     if let Some(entry) = &existing
         && entry.content_hash == hash
@@ -242,10 +260,7 @@ fn reconcile_one(
 
     // Either a brand-new note or one whose content_hash drifted.
     // Parse, build the NoteEntry + facets, commit atomically.
-    let meta = store
-        .metadata(path)
-        .map_err(|e| format!("metadata failed: {e}"))?;
-    let mtime_ns = system_time_to_ns(meta.mtime);
+    let mtime_ns = meta.mtime_ns();
     let indexed_at_ns = system_time_to_ns(SystemTime::now());
 
     let (frontmatter, body) =
