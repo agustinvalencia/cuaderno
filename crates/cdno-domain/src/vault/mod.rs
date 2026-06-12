@@ -43,6 +43,7 @@ mod projects;
 mod questions;
 mod search;
 mod slug;
+mod slug_hint;
 mod stewardships;
 mod tracking;
 

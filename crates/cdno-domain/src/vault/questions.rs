@@ -208,8 +208,26 @@ impl Vault {
             found = Some((path, qf));
         }
         found.ok_or_else(|| {
-            DomainError::Store(StoreError::NotFound(format!("questions/*/{slug}.md")))
+            DomainError::Store(StoreError::NotFound(format!(
+                "questions/*/{slug}.md{}",
+                self.available_questions_hint()
+            )))
         })
+    }
+
+    /// " — available questions: …" suffix for a question slug not-found,
+    /// listing every indexed question slug so a caller can self-correct.
+    /// See [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
+    fn available_questions_hint(&self) -> String {
+        super::slug_hint::available_slugs_hint(
+            self.index.as_ref(),
+            NoteType::Question.as_str(),
+            "questions",
+            |path| {
+                let slug = path.as_path().file_stem()?.to_str()?.to_owned();
+                Some((slug.clone(), slug))
+            },
+        )
     }
 }
 

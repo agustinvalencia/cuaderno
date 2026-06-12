@@ -248,28 +248,21 @@ impl Vault {
     /// empty suffix rather than masking the original not-found. Startup
     /// reconciliation normally keeps this current.
     fn available_stewardships_hint(&self) -> String {
-        let Ok(entries) = self.index.list_by_type(NoteType::Stewardship.as_str()) else {
-            return String::new();
-        };
-        // Sort by slug, not the rendered string, so an `(expanded)` suffix
-        // can't reorder a slug relative to a hyphenated sibling.
-        let mut items: Vec<(String, String)> = entries
-            .iter()
-            .map(|e| {
-                let slug = stewardship_slug_from_path(&e.path);
-                let display = match stewardship_variant_from_path(&e.path) {
+        // Expanded stewardships are flagged — only they accept tracking
+        // notes — but both sort by the bare slug.
+        crate::vault::slug_hint::available_slugs_hint(
+            self.index.as_ref(),
+            NoteType::Stewardship.as_str(),
+            "stewardships",
+            |path| {
+                let slug = stewardship_slug_from_path(path);
+                let display = match stewardship_variant_from_path(path) {
                     StewardshipVariant::Expanded => format!("{slug} (expanded)"),
                     StewardshipVariant::Flat => slug.clone(),
                 };
-                (slug, display)
-            })
-            .collect();
-        if items.is_empty() {
-            return String::new();
-        }
-        items.sort_by(|a, b| a.0.cmp(&b.0));
-        let rendered: Vec<String> = items.into_iter().map(|(_, display)| display).collect();
-        format!(" — available stewardships: {}", rendered.join(", "))
+                Some((slug, display))
+            },
+        )
     }
 
     /// Read a single stewardship's dashboard. Returns the typed
