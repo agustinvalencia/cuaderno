@@ -421,3 +421,50 @@ fn flat_and_expanded_with_different_slugs_coexist() {
         Context::Personal
     );
 }
+
+// ---------------------------------------------------------------------
+// not-found hint (self-correcting slug errors)
+// ---------------------------------------------------------------------
+
+#[test]
+fn not_found_error_lists_the_available_stewardships() {
+    // The motivating failure: a caller (often an agent) guesses a slug
+    // that doesn't exist. The not-found error names the valid set so it
+    // can self-correct instead of guessing again.
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Gym", Context::Personal)
+        .unwrap();
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 11, 9, 0), "Health", Context::Personal)
+        .unwrap();
+
+    let err = vault.get_stewardship("fitness").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.contains("available stewardships:"),
+        "missing hint: {msg}"
+    );
+    assert!(msg.contains("gym"), "missing flat slug: {msg}");
+    // Expanded stewardships are flagged — only they accept tracking notes.
+    assert!(
+        msg.contains("health (expanded)"),
+        "missing expanded flag: {msg}"
+    );
+}
+
+#[test]
+fn not_found_error_has_no_hint_when_no_stewardships_exist() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+
+    let err = vault.get_stewardship("anything").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    // Base message still names the looked-up slug; no dangling "available"
+    // suffix when there's nothing to suggest.
+    assert!(msg.contains("stewardships/anything"), "msg: {msg}");
+    assert!(!msg.contains("available stewardships"), "msg: {msg}");
+}

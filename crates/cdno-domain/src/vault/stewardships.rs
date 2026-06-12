@@ -229,9 +229,41 @@ impl Vault {
             (true, false) => Ok((flat_path, StewardshipVariant::Flat)),
             (false, true) => Ok((expanded_path, StewardshipVariant::Expanded)),
             (false, false) => Err(DomainError::Store(StoreError::NotFound(format!(
-                "stewardships/{slug}(.md or /_index.md)",
+                "stewardships/{slug}(.md or /_index.md){hint}",
+                hint = self.available_stewardships_hint(),
             )))),
         }
+    }
+
+    /// A human-readable " — available stewardships: …" suffix listing
+    /// the slugs that *do* exist, expanded ones flagged (only those
+    /// accept tracking notes). Appended to the not-found error so a
+    /// caller — or an agent driving the MCP server — sees the valid
+    /// set and can self-correct instead of guessing again (the failure
+    /// mode that motivated this: a client invented `fitness` when the
+    /// real slug was `gym`).
+    ///
+    /// Best-effort: an index read error yields an empty suffix rather
+    /// than masking the original not-found.
+    fn available_stewardships_hint(&self) -> String {
+        let Ok(entries) = self.index.list_by_type(NoteType::Stewardship.as_str()) else {
+            return String::new();
+        };
+        let mut slugs: Vec<String> = entries
+            .iter()
+            .map(|e| {
+                let slug = stewardship_slug_from_path(&e.path);
+                match stewardship_variant_from_path(&e.path) {
+                    StewardshipVariant::Expanded => format!("{slug} (expanded)"),
+                    StewardshipVariant::Flat => slug,
+                }
+            })
+            .collect();
+        if slugs.is_empty() {
+            return String::new();
+        }
+        slugs.sort();
+        format!(" — available stewardships: {}", slugs.join(", "))
     }
 
     /// Read a single stewardship's dashboard. Returns the typed
