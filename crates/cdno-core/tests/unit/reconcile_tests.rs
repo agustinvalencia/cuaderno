@@ -868,6 +868,42 @@ fn a_changed_file_is_still_detected_after_the_fast_path() {
 }
 
 #[test]
+fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
+    // mtime bumped, bytes identical (a `touch`, a git checkout, a
+    // save-without-edit). The first pass after the touch still has to read
+    // to confirm via the hash, but it must re-stamp the row so the *next*
+    // pass fast-paths instead of re-reading forever.
+    let mem = Arc::new(MemoryVaultStore::new());
+    let raw = "---\ntype: inbox\ntitle: A\n---\n# A\n\nstable body\n".to_owned();
+    mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
+
+    let counting = Arc::new(CountingStore::new(mem.clone()));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    reconcile(&store, &index).unwrap();
+
+    // Rewrite identical bytes — bumps the memory store's mtime, same content.
+    mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
+
+    // Pass after the touch: fast path misses (mtime drifted), so the file is
+    // read once and hash-matched; nothing is reindexed.
+    counting.reset();
+    let report = reconcile(&store, &index).unwrap();
+    assert_eq!(report.updated, 0);
+    assert_eq!(report.added, 0);
+    assert_eq!(counting.reads(), 1, "touched file is read once to confirm");
+
+    // Next pass: the re-stamp made mtime match, so it fast-paths — no read.
+    counting.reset();
+    reconcile(&store, &index).unwrap();
+    assert_eq!(
+        counting.reads(),
+        0,
+        "a touched-but-identical file must not re-read forever"
+    );
+}
+
+#[test]
 fn commit_stamps_the_real_file_mtime_so_a_written_note_fast_paths() {
     // A domain-style write: the entry carries a placeholder mtime (the domain
     // uses the entry-build instant, never the file's mtime). The commit seam

@@ -183,10 +183,11 @@ impl VaultTransaction {
         // knowable. The domain stamps `NoteEntry::mtime_ns` with the
         // entry-build instant (`build_index_entry_for` uses `now()`), which
         // is close to but never equals the file's mtime — leaving the index
-        // row's mtime a small lie. Correct it from the file just written so
-        // the reconcile mtime fast-path (#94) can trust `mtime_ns` and skip
-        // re-reading unchanged notes. Reconcile's own upserts have no paired
-        // file write and already carry the real mtime, so they're untouched.
+        // row's mtime a small lie. Correct it (and `size`, which reconcile
+        // compares alongside mtime) from the file just written so the
+        // reconcile fast-path (#94) can trust the row and skip re-reading
+        // unchanged notes. Reconcile's own upserts have no paired file write
+        // and already carry the real mtime, so they're untouched.
         for op in &mut self.index_ops {
             if let IndexOp::UpsertNote(entry) = op
                 && latest_write_content(&self.file_ops, &entry.path).is_some()
