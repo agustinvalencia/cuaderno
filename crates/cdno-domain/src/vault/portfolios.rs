@@ -133,9 +133,10 @@ impl Vault {
             cdno_core::paths::PORTFOLIOS
         ))?;
         if !self.store.exists(&portfolio_index)? {
-            return Err(DomainError::Store(StoreError::NotFound(
-                portfolio_index.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{portfolio_index}{}",
+                self.available_portfolios_hint()
+            ))));
         }
 
         let created = at.date();

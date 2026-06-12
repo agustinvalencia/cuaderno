@@ -423,24 +423,24 @@ fn active_questions_returns_empty_for_empty_vault() {
 }
 
 #[test]
-fn question_not_found_lists_available_questions() {
+fn question_not_found_lists_available_questions_sorted_across_domains() {
     let (vault, _store) = vault_with_seeded_store(&[]);
+    // Two questions in different domains, created out of slug order.
     vault
-        .create_question(
-            dt(2026, 1, 10, 9, 0),
-            QuestionDomain::Research,
-            "Does sparse beat dense?",
-        )
+        .create_question(dt(2026, 1, 10, 9, 0), QuestionDomain::Research, "Zeta path")
+        .unwrap();
+    vault
+        .create_question(dt(2026, 1, 11, 9, 0), QuestionDomain::Life, "Alpha path")
         .unwrap();
 
     let err = vault
-        .set_question_status(dt(2026, 1, 11, 9, 0), "missing", QuestionStatus::Parked)
+        .set_question_status(dt(2026, 1, 12, 9, 0), "missing", QuestionStatus::Parked)
         .unwrap_err();
     let DomainError::Store(StoreError::NotFound(msg)) = err else {
         panic!("expected Store(NotFound), got {err:?}");
     };
     assert!(
-        msg.contains("available questions: does-sparse-beat-dense"),
-        "got: {msg}"
+        msg.ends_with("available questions: alpha-path, zeta-path"),
+        "expected slug-sorted hint across domains, got: {msg}"
     );
 }

@@ -271,9 +271,10 @@ impl Vault {
         } else if self.store.exists(&parked_path)? {
             parked_path
         } else {
-            return Err(DomainError::Store(StoreError::NotFound(
-                active_path.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_projects_hint()
+            ))));
         };
         let raw = self.store.read_file(&path)?;
         let (fm, body) = Frontmatter::parse(&raw)?;

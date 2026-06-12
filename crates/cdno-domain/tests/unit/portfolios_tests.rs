@@ -505,3 +505,29 @@ fn portfolio_not_found_lists_available_portfolios() {
         "got: {msg}"
     );
 }
+
+#[test]
+fn file_evidence_not_found_lists_available_portfolios() {
+    // The write path (file_to_portfolio MCP tool) also names the valid set.
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse models", None)
+        .unwrap();
+
+    let err = vault
+        .file_evidence(
+            dt(2026, 3, 15, 10, 0),
+            "ghost",
+            "Source",
+            "projects/foo",
+            "body",
+        )
+        .unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.contains("available portfolios: sparse-models"),
+        "got: {msg}"
+    );
+}
