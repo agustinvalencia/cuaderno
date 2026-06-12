@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-06-12
+
+Minor release: self-correcting slug errors and a faster reconcile. No new tools or commands — quality and ergonomics over the existing surface. Tool count unchanged (27).
+
+### Changed
+
+- **Self-correcting slug not-found errors** (#180, #181) — when a slug doesn't resolve, the error now names the valid set, e.g. `file not found: projects/srrogate-model.md — available projects: nfm, surrogate-model, wedding (parked)`. So a caller that guessed wrong — most often an agent driving the MCP server — sees the options and self-corrects instead of retrying blind (the failure that motivated this: a client invented `fitness` when the real stewardship was `gym`). Covers every slug-keyed lookup — projects, portfolios, questions, commitments, and stewardships — through one shared helper, with parked/expanded/done variants flagged and fulfilled commitments excluded. The hint flows out unchanged through both the MCP and CLI surfaces.
+
+### Performance
+
+- **Reconcile mtime fast-path** (#94) — startup reconciliation now skips the read + content-hash for files whose `mtime` and `size` are unchanged since the last index write, instead of reading and re-hashing every `.md` file on every pass. The steady-state win is for CLI verbs that re-reconcile on every invocation (`cdno log`, `cdno capture`). To make cdno's own writes eligible, `VaultTransaction::commit` now stamps the file's real mtime into the index row (it previously stored the entry-build instant, which never matched the file). mtime is a pre-filter only — the content hash stays the source of truth, and a touched-but-identical file is re-stamped so it fast-paths next pass rather than re-reading forever.
+
 ## [0.1.6] - 2026-06-11
 
 Minor release: full-text content search across the vault — the first way to answer "where did we say X?" rather than only retrieving by note type, slug, or date. Tool count 26 → 27.
