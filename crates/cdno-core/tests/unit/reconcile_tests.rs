@@ -1,12 +1,16 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use cdno_core::error::IndexError;
+use cdno_core::error::{IndexError, StoreError};
+use cdno_core::file_meta::FileMeta;
+use cdno_core::hash::content_hash;
 use cdno_core::index::{
     DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_core::transaction::VaultTransaction;
 use serde_json::json;
 
 fn vp(p: &str) -> VaultPath {
@@ -748,4 +752,202 @@ impl VaultIndex for FailOnRemoveIndex {
     fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.fts_indexed_paths()
     }
+}
+
+// ---- #94: mtime fast-path -------------------------------------------------
+
+/// Wraps a `MemoryVaultStore` and counts `read_file` calls, so a test can
+/// prove the reconcile fast-path skips reading unchanged files. Every other
+/// method delegates straight through.
+struct CountingStore {
+    inner: Arc<MemoryVaultStore>,
+    reads: AtomicUsize,
+}
+
+impl CountingStore {
+    fn new(inner: Arc<MemoryVaultStore>) -> Self {
+        Self {
+            inner,
+            reads: AtomicUsize::new(0),
+        }
+    }
+    fn reads(&self) -> usize {
+        self.reads.load(Ordering::Relaxed)
+    }
+    fn reset(&self) {
+        self.reads.store(0, Ordering::Relaxed);
+    }
+}
+
+impl VaultStore for CountingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.inner.read_file(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+}
+
+#[test]
+fn second_pass_skips_reading_unchanged_files() {
+    let mem = Arc::new(MemoryVaultStore::new());
+    seed_note(&mem, "inbox/a.md", "inbox", "");
+    seed_note(&mem, "projects/b.md", "project", "status: active\n");
+
+    let counting = Arc::new(CountingStore::new(mem));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    // First pass indexes both files — each is read once.
+    let first = reconcile(&store, &index).unwrap();
+    assert_eq!(first.added, 2);
+    assert_eq!(counting.reads(), 2);
+
+    // Second pass: nothing changed, so the mtime+size fast path skips both
+    // without a single read.
+    counting.reset();
+    let second = reconcile(&store, &index).unwrap();
+    assert_eq!(second.added, 0);
+    assert_eq!(second.updated, 0);
+    assert_eq!(
+        counting.reads(),
+        0,
+        "unchanged files must not be re-read on the second pass"
+    );
+}
+
+#[test]
+fn a_changed_file_is_still_detected_after_the_fast_path() {
+    let mem = Arc::new(MemoryVaultStore::new());
+    seed_note(&mem, "inbox/a.md", "inbox", "");
+    seed_note(&mem, "inbox/b.md", "inbox", "");
+
+    let counting = Arc::new(CountingStore::new(mem.clone()));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    reconcile(&store, &index).unwrap();
+
+    // Edit one file — write_file bumps its mtime, so the fast path misses it
+    // (and only it) on the next pass.
+    mem.write_file(
+        &vp("inbox/a.md"),
+        "---\ntype: inbox\n---\n# A\n\nchanged body\n",
+    )
+    .unwrap();
+
+    counting.reset();
+    let report = reconcile(&store, &index).unwrap();
+    assert_eq!(report.updated, 1);
+    assert_eq!(
+        counting.reads(),
+        1,
+        "only the changed file is read; the untouched one fast-paths"
+    );
+}
+
+#[test]
+fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
+    // mtime bumped, bytes identical (a `touch`, a git checkout, a
+    // save-without-edit). The first pass after the touch still has to read
+    // to confirm via the hash, but it must re-stamp the row so the *next*
+    // pass fast-paths instead of re-reading forever.
+    let mem = Arc::new(MemoryVaultStore::new());
+    let raw = "---\ntype: inbox\ntitle: A\n---\n# A\n\nstable body\n".to_owned();
+    mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
+
+    let counting = Arc::new(CountingStore::new(mem.clone()));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    reconcile(&store, &index).unwrap();
+
+    // Rewrite identical bytes — bumps the memory store's mtime, same content.
+    mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
+
+    // Pass after the touch: fast path misses (mtime drifted), so the file is
+    // read once and hash-matched; nothing is reindexed.
+    counting.reset();
+    let report = reconcile(&store, &index).unwrap();
+    assert_eq!(report.updated, 0);
+    assert_eq!(report.added, 0);
+    assert_eq!(counting.reads(), 1, "touched file is read once to confirm");
+
+    // Next pass: the re-stamp made mtime match, so it fast-paths — no read.
+    counting.reset();
+    reconcile(&store, &index).unwrap();
+    assert_eq!(
+        counting.reads(),
+        0,
+        "a touched-but-identical file must not re-read forever"
+    );
+}
+
+#[test]
+fn commit_stamps_the_real_file_mtime_so_a_written_note_fast_paths() {
+    // A domain-style write: the entry carries a placeholder mtime (the domain
+    // uses the entry-build instant, never the file's mtime). The commit seam
+    // must correct it to the file's real mtime, so the very next reconcile
+    // fast-paths the note instead of re-reading it (#94, approach B).
+    let mem = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let path = vp("inbox/a.md");
+    let content = "---\ntype: inbox\n---\n# A\n\nbody\n";
+    let entry = NoteEntry {
+        path: path.clone(),
+        note_type: "inbox".to_owned(),
+        title: None,
+        content_hash: content_hash(content),
+        mtime_ns: 1, // deliberately wrong; commit should overwrite it
+        size: 1,
+        frontmatter: json!({}),
+        indexed_at_ns: 1,
+    };
+
+    let store_dyn: Arc<dyn VaultStore> = mem.clone();
+    let mut tx = VaultTransaction::new(store_dyn, index.clone());
+    tx.write_file(path.clone(), content);
+    tx.upsert_note(entry);
+    tx.commit().unwrap();
+
+    // The stored row now matches the file on disk, not the placeholder.
+    let stored = index.find_by_path(&path).unwrap().unwrap();
+    let meta = mem.metadata(&path).unwrap();
+    assert_eq!(
+        stored.mtime_ns,
+        meta.mtime_ns(),
+        "mtime corrected at commit"
+    );
+    assert_eq!(stored.size, meta.size, "size corrected at commit");
+
+    // And so reconcile reads nothing — the note fast-paths immediately.
+    let counting = Arc::new(CountingStore::new(mem));
+    let store: Arc<dyn VaultStore> = counting.clone();
+    reconcile(&store, &index).unwrap();
+    assert_eq!(
+        counting.reads(),
+        0,
+        "a freshly-written note should fast-path on the first reconcile"
+    );
 }

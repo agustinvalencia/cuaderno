@@ -163,7 +163,7 @@ impl VaultTransaction {
     /// back best-effort. Index ops run only if every file op
     /// succeeded; failures collect into a single `IndexStale` error
     /// so the caller can log and move on.
-    pub fn commit(self) -> Result<(), TransactionError> {
+    pub fn commit(mut self) -> Result<(), TransactionError> {
         // Phase 1: file ops with undo capture.
         let mut applied: Vec<Undo> = Vec::with_capacity(self.file_ops.len());
         for op in &self.file_ops {
@@ -176,6 +176,25 @@ impl VaultTransaction {
                         rollback_failures,
                     });
                 }
+            }
+        }
+
+        // The files are now on disk, so each note write's real mtime is
+        // knowable. The domain stamps `NoteEntry::mtime_ns` with the
+        // entry-build instant (`build_index_entry_for` uses `now()`), which
+        // is close to but never equals the file's mtime — leaving the index
+        // row's mtime a small lie. Correct it (and `size`, which reconcile
+        // compares alongside mtime) from the file just written so the
+        // reconcile fast-path (#94) can trust the row and skip re-reading
+        // unchanged notes. Reconcile's own upserts have no paired file write
+        // and already carry the real mtime, so they're untouched.
+        for op in &mut self.index_ops {
+            if let IndexOp::UpsertNote(entry) = op
+                && latest_write_content(&self.file_ops, &entry.path).is_some()
+                && let Ok(meta) = self.store.metadata(&entry.path)
+            {
+                entry.mtime_ns = meta.mtime_ns();
+                entry.size = meta.size;
             }
         }
 

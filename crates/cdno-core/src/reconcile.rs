@@ -5,8 +5,9 @@
 //! simple:
 //!
 //! 1. Walk every `.md` file in the vault.
-//! 2. For each file: read, hash, compare against the matching index
-//!    row. Reindex if the hash differs or no row exists.
+//! 2. For each file: take the fast path (skip on matching mtime + size,
+//!    #94), else read, hash, and compare against the matching index row.
+//!    Reindex if the hash differs or no row exists.
 //! 3. Any index row whose path isn't in the walk is an orphan — remove
 //!    it. Cascading FKs drop its deadlines, links, and tags.
 //!
@@ -138,11 +139,11 @@ pub fn reconcile(
     // Phase 3: heal the FTS index by path-set diff against `notes`.
     //
     // Phase 1 only reindexes notes whose content changed; an unchanged
-    // note hits the hash fast-path and never re-enters the body-parsing
-    // path. So a freshly-migrated (or dropped) FTS table would stay empty
-    // for every note that hasn't been touched since. Reconcile it here,
-    // independent of the per-file hash check (and of #94's planned mtime
-    // fast-path): any note missing from FTS is backfilled from its file;
+    // note hits the mtime/hash fast path and never re-enters the
+    // body-parsing path. So a freshly-migrated (or dropped) FTS table would
+    // stay empty for every note that hasn't been touched since. Reconcile it
+    // here, independent of the per-file fast path: any note missing from FTS
+    // is backfilled from its file;
     // any FTS row without a surviving note is dropped. Steady state is two
     // path-set queries and an empty diff.
     let note_paths: HashSet<VaultPath> = index.list_all_paths()?.into_iter().collect();
@@ -206,6 +207,31 @@ fn backfill_fts_one(
     Ok(())
 }
 
+/// Refresh just the `mtime_ns`/`size` of an existing index row whose
+/// content is unchanged, so a touched-but-identical file takes the
+/// reconcile fast path next pass instead of being re-read every time.
+/// Re-uses the row otherwise verbatim — no facet or FTS work. The upsert
+/// has no paired file write, so `VaultTransaction::commit` leaves the
+/// mtime we set here alone.
+fn restamp_meta(
+    store: &Arc<dyn VaultStore>,
+    index: &Arc<dyn VaultIndex>,
+    existing: &NoteEntry,
+    mtime_ns: u64,
+    size: u64,
+) -> Result<(), String> {
+    let mut updated = existing.clone();
+    updated.mtime_ns = mtime_ns;
+    updated.size = size;
+    updated.indexed_at_ns = system_time_to_ns(SystemTime::now());
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone());
+    tx.upsert_note(updated);
+    tx.commit()
+        .map_err(|e| format!("mtime re-stamp failed: {e}"))?;
+    Ok(())
+}
+
 /// Per-file outcome reported back to the caller counters.
 enum Outcome {
     Added,
@@ -222,30 +248,52 @@ fn reconcile_one(
     path: &VaultPath,
     vault_paths: &HashSet<VaultPath>,
 ) -> Result<Outcome, String> {
-    // Read content up-front: we need it to hash, and we'll also need
-    // it to parse for added/updated notes. A single read is cheaper
-    // than the mtime-check-then-read dance for vault-scale data.
+    let existing = index
+        .find_by_path(path)
+        .map_err(|e| format!("index lookup failed: {e}"))?;
+    let meta = store
+        .metadata(path)
+        .map_err(|e| format!("metadata failed: {e}"))?;
+
+    // Fast path (#94): an already-indexed file whose mtime and size both
+    // match is assumed unchanged — skip the read + hash entirely. mtime can
+    // lie (preserved across a copy, drift across filesystems); a false
+    // "unchanged" only leaves a stale row, which the next size- or
+    // mtime-changing edit corrects, and the content hash on the slow path
+    // below stays the source of truth. Note writes store the file's real
+    // mtime (`VaultTransaction::commit`), so cdno's own notes hit this path
+    // too — the steady-state win for CLI verbs that re-reconcile on every
+    // invocation.
+    if let Some(entry) = &existing
+        && entry.mtime_ns == meta.mtime_ns()
+        && entry.size == meta.size
+    {
+        return Ok(Outcome::Skipped);
+    }
+
+    // Slow path: read + hash. Either the fast path missed (mtime/size
+    // drifted) or this is a new file. The hash decides whether content
+    // really changed.
     let content = store
         .read_file(path)
         .map_err(|e| format!("read failed: {e}"))?;
     let hash = content_hash(&content);
 
-    let existing = index
-        .find_by_path(path)
-        .map_err(|e| format!("index lookup failed: {e}"))?;
-
     if let Some(entry) = &existing
         && entry.content_hash == hash
     {
+        // mtime/size drifted but the bytes are identical — a `touch`, a git
+        // checkout restoring the same content, an editor save-without-edit.
+        // Re-stamp the row's mtime/size so the *next* pass takes the fast
+        // path instead of re-reading this file on every reconcile forever.
+        // Content is unchanged, so facets and FTS are left untouched.
+        restamp_meta(store, index, entry, meta.mtime_ns(), meta.size)?;
         return Ok(Outcome::Skipped);
     }
 
     // Either a brand-new note or one whose content_hash drifted.
     // Parse, build the NoteEntry + facets, commit atomically.
-    let meta = store
-        .metadata(path)
-        .map_err(|e| format!("metadata failed: {e}"))?;
-    let mtime_ns = system_time_to_ns(meta.mtime);
+    let mtime_ns = meta.mtime_ns();
     let indexed_at_ns = system_time_to_ns(SystemTime::now());
 
     let (frontmatter, body) =
