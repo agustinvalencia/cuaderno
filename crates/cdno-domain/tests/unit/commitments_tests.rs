@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -528,4 +529,52 @@ fn commitments_tolerates_overdue_annotation_and_skips_malformed_periodic_lines()
         "only the well-formed periodic line surfaces: {got:?}"
     );
     assert_eq!(got[0].title, "Dental check-up");
+}
+
+#[test]
+fn complete_commitment_not_found_lists_open_commitments_excluding_done() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "Submit paper",
+            NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
+            Context::Work,
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            dt(2026, 1, 10, 9, 0),
+            "Renew passport",
+            NaiveDate::from_ymd_opt(2026, 4, 1).unwrap(),
+            Context::Personal,
+        )
+        .unwrap();
+
+    // Both open → both listed, slug-sorted.
+    let err = vault
+        .complete_commitment(dt(2026, 2, 1, 9, 0), "missing")
+        .unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.ends_with("available commitments: renew-passport, submit-paper"),
+        "got: {msg}"
+    );
+
+    // Fulfil one — it moves under commitments/_done/ and must drop out.
+    vault
+        .complete_commitment(dt(2026, 2, 1, 9, 0), "submit-paper")
+        .unwrap();
+    let err = vault
+        .complete_commitment(dt(2026, 2, 2, 9, 0), "missing")
+        .unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.ends_with("available commitments: renew-passport"),
+        "done commitment must be excluded, got: {msg}"
+    );
 }

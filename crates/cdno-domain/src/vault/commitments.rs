@@ -142,9 +142,10 @@ impl Vault {
     ) -> Result<VaultPath, DomainError> {
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
         if !self.store.exists(&active_path)? {
-            return Err(DomainError::Store(StoreError::NotFound(
-                active_path.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_commitments_hint()
+            ))));
         }
 
         let raw = self.store.read_file(&active_path)?;
@@ -193,6 +194,31 @@ impl Vault {
         tx.commit()?;
 
         Ok(done_path)
+    }
+
+    /// " — available commitments: …" suffix for a commitment slug
+    /// not-found, listing the *open* commitments (those still at
+    /// `commitments/<slug>.md`). Fulfilled ones live under
+    /// `commitments/_done/<year>/` and can't be completed again, so any
+    /// path with a `_done` component is skipped. See
+    /// [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
+    fn available_commitments_hint(&self) -> String {
+        super::slug_hint::available_slugs_hint(
+            self.index.as_ref(),
+            NoteType::Commitment.as_str(),
+            "commitments",
+            |path| {
+                if path
+                    .as_path()
+                    .components()
+                    .any(|c| c.as_os_str() == "_done")
+                {
+                    return None;
+                }
+                let slug = path.as_path().file_stem()?.to_str()?.to_owned();
+                Some((slug.clone(), slug))
+            },
+        )
     }
 
     /// Aggregate every dated commitment across the vault into one

@@ -230,9 +230,10 @@ impl Vault {
             if self.store.exists(&active_path)? {
                 return Err(DomainError::ProjectNotParked(slug.to_owned()));
             }
-            return Err(DomainError::Store(StoreError::NotFound(
-                parked_path.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{parked_path}{}",
+                self.available_projects_hint()
+            ))));
         }
         if self.store.exists(&active_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

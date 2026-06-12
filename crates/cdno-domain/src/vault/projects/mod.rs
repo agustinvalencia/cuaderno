@@ -28,6 +28,7 @@ use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 use crate::frontmatter::{ProjectFrontmatter, ProjectStatus};
+use crate::note_type::NoteType;
 
 use super::Vault;
 
@@ -77,9 +78,10 @@ impl Vault {
         } else if self.store.exists(&parked_path)? {
             return Err(DomainError::ProjectNotActive(slug.to_owned()));
         } else {
-            return Err(DomainError::Store(StoreError::NotFound(
-                active_path.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_projects_hint()
+            ))));
         };
 
         let raw = self.store.read_file(&path)?;
@@ -116,9 +118,10 @@ impl Vault {
         } else if self.store.exists(&parked_path)? {
             parked_path
         } else {
-            return Err(DomainError::Store(StoreError::NotFound(
-                active_path.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_projects_hint()
+            ))));
         };
 
         let raw = self.store.read_file(&path)?;
@@ -126,6 +129,30 @@ impl Vault {
         let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
 
         Ok((path, doc, project))
+    }
+
+    /// " — available projects: …" suffix for a project slug not-found,
+    /// listing every indexed project (parked ones flagged) so a caller can
+    /// self-correct. Shared by the resolvers, state update, and activate.
+    /// See [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
+    pub(in crate::vault) fn available_projects_hint(&self) -> String {
+        super::slug_hint::available_slugs_hint(
+            self.index.as_ref(),
+            NoteType::Project.as_str(),
+            "projects",
+            |path| {
+                let slug = project_slug_from_path(path);
+                let display = if path
+                    .as_path()
+                    .starts_with(cdno_core::paths::PROJECTS_PARKED)
+                {
+                    format!("{slug} (parked)")
+                } else {
+                    slug.clone()
+                };
+                Some((slug, display))
+            },
+        )
     }
 }
 

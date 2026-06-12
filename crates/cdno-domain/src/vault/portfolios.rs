@@ -133,9 +133,10 @@ impl Vault {
             cdno_core::paths::PORTFOLIOS
         ))?;
         if !self.store.exists(&portfolio_index)? {
-            return Err(DomainError::Store(StoreError::NotFound(
-                portfolio_index.to_string(),
-            )));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{portfolio_index}{}",
+                self.available_portfolios_hint()
+            ))));
         }
 
         let created = at.date();
@@ -228,11 +229,32 @@ impl Vault {
     pub fn get_portfolio(&self, slug: &str) -> Result<PortfolioFrontmatter, DomainError> {
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if !self.store.exists(&path)? {
-            return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{path}{}",
+                self.available_portfolios_hint()
+            ))));
         }
         let raw = self.store.read_file(&path)?;
         let (fm, _body) = Frontmatter::parse(&raw)?;
         Ok(PortfolioFrontmatter::try_from(fm)?)
+    }
+
+    /// " — available portfolios: …" suffix for a portfolio slug not-found,
+    /// listing every indexed portfolio so a caller can self-correct. See
+    /// [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
+    fn available_portfolios_hint(&self) -> String {
+        super::slug_hint::available_slugs_hint(
+            self.index.as_ref(),
+            NoteType::Portfolio.as_str(),
+            "portfolios",
+            |path| {
+                let slug = portfolio_slug_from_path(path);
+                if slug.is_empty() {
+                    return None;
+                }
+                Some((slug.clone(), slug))
+            },
+        )
     }
 
     /// Every evidence note filed into `portfolio`, paired with its

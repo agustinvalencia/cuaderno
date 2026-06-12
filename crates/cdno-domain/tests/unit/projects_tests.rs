@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -2050,4 +2051,25 @@ fn rewrite_field_in_frontmatter_errors_when_field_missing() {
         DomainError::MissingSection(name) => assert_eq!(name, "status"),
         other => panic!("expected MissingSection(status), got {other:?}"),
     }
+}
+
+#[test]
+fn project_not_found_lists_available_projects_with_parked_flagged() {
+    // Self-correcting slug error: a missing project names the valid set,
+    // parked ones flagged, sorted by slug.
+    let alpha = project_body("work", "active", "2026-04-01", "Alpha");
+    let gamma = project_body("work", "parked", "2026-04-01", "Gamma");
+    let vault = vault_with_notes(&[
+        ("projects/alpha.md", alpha.as_str()),
+        ("projects/_parked/gamma.md", gamma.as_str()),
+    ]);
+
+    let err = vault.project_summary("missing").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.ends_with("available projects: alpha, gamma (parked)"),
+        "got: {msg}"
+    );
 }

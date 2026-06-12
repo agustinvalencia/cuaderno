@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -483,4 +484,50 @@ fn get_portfolio_contents_is_empty_for_missing_portfolio() {
     let (vault, _store) = seeded_vault_with_one_portfolio();
     let out = vault.get_portfolio_contents("ghost").unwrap();
     assert!(out.is_empty());
+}
+
+#[test]
+fn portfolio_not_found_lists_available_portfolios() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse models", None)
+        .unwrap();
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Dense models", None)
+        .unwrap();
+
+    let err = vault.get_portfolio("missing").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.ends_with("available portfolios: dense-models, sparse-models"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn file_evidence_not_found_lists_available_portfolios() {
+    // The write path (file_to_portfolio MCP tool) also names the valid set.
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse models", None)
+        .unwrap();
+
+    let err = vault
+        .file_evidence(
+            dt(2026, 3, 15, 10, 0),
+            "ghost",
+            "Source",
+            "projects/foo",
+            "body",
+        )
+        .unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.contains("available portfolios: sparse-models"),
+        "got: {msg}"
+    );
 }
