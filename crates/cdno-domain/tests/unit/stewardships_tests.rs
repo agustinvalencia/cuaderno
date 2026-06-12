@@ -468,3 +468,58 @@ fn not_found_error_has_no_hint_when_no_stewardships_exist() {
     assert!(msg.contains("stewardships/anything"), "msg: {msg}");
     assert!(!msg.contains("available stewardships"), "msg: {msg}");
 }
+
+#[test]
+fn not_found_hint_is_sorted_by_slug() {
+    // Created out of alphabetical order so a dropped sort would fail.
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    for name in ["Zebra", "Mango", "Apple"] {
+        vault
+            .create_stewardship_flat(dt(2026, 1, 10, 9, 0), name, Context::Personal)
+            .unwrap();
+    }
+
+    let err = vault.get_stewardship("missing").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(
+        msg.ends_with("available stewardships: apple, mango, zebra"),
+        "expected slug-sorted hint, got: {msg}"
+    );
+}
+
+#[test]
+fn not_found_hint_omits_the_expanded_flag_for_a_flat_only_vault() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Gym", Context::Personal)
+        .unwrap();
+
+    let err = vault.get_stewardship("missing").unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(msg.contains("available stewardships: gym"), "msg: {msg}");
+    assert!(
+        !msg.contains("(expanded)"),
+        "flat-only must not flag: {msg}"
+    );
+}
+
+#[test]
+fn an_ambiguous_slug_errors_without_a_hint() {
+    // A hand-edited vault with both variants of the same slug: resolution
+    // must surface AmbiguousSlug, not a not-found-with-hint.
+    let body = "---\ntype: stewardship\ncontext: personal\ncreated: 2026-01-10\n---\n# Gym\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("stewardships/gym.md", body),
+        ("stewardships/gym/_index.md", body),
+    ]);
+
+    let err = vault.get_stewardship("gym").unwrap_err();
+    assert!(
+        matches!(err, DomainError::AmbiguousSlug(ref s) if s == "gym"),
+        "expected AmbiguousSlug, got {err:?}"
+    );
+}

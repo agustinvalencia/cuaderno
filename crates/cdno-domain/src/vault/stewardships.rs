@@ -243,27 +243,33 @@ impl Vault {
     /// mode that motivated this: a client invented `fitness` when the
     /// real slug was `gym`).
     ///
-    /// Best-effort: an index read error yields an empty suffix rather
-    /// than masking the original not-found.
+    /// Best-effort and index-derived: it reflects the last reconcile, so a
+    /// not-yet-indexed file could be omitted; an index read error yields an
+    /// empty suffix rather than masking the original not-found. Startup
+    /// reconciliation normally keeps this current.
     fn available_stewardships_hint(&self) -> String {
         let Ok(entries) = self.index.list_by_type(NoteType::Stewardship.as_str()) else {
             return String::new();
         };
-        let mut slugs: Vec<String> = entries
+        // Sort by slug, not the rendered string, so an `(expanded)` suffix
+        // can't reorder a slug relative to a hyphenated sibling.
+        let mut items: Vec<(String, String)> = entries
             .iter()
             .map(|e| {
                 let slug = stewardship_slug_from_path(&e.path);
-                match stewardship_variant_from_path(&e.path) {
+                let display = match stewardship_variant_from_path(&e.path) {
                     StewardshipVariant::Expanded => format!("{slug} (expanded)"),
-                    StewardshipVariant::Flat => slug,
-                }
+                    StewardshipVariant::Flat => slug.clone(),
+                };
+                (slug, display)
             })
             .collect();
-        if slugs.is_empty() {
+        if items.is_empty() {
             return String::new();
         }
-        slugs.sort();
-        format!(" — available stewardships: {}", slugs.join(", "))
+        items.sort_by(|a, b| a.0.cmp(&b.0));
+        let rendered: Vec<String> = items.into_iter().map(|(_, display)| display).collect();
+        format!(" — available stewardships: {}", rendered.join(", "))
     }
 
     /// Read a single stewardship's dashboard. Returns the typed
