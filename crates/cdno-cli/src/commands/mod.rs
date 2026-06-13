@@ -15,3 +15,4 @@ pub mod search;
 pub mod status;
 pub mod stewardship;
 pub mod track;
+pub mod weekly;

@@ -94,6 +94,14 @@ enum Commands {
     /// Quick snapshot: active projects and their top next actions.
     Status,
 
+    /// Show the weekly review/plan note: Wins, Challenges, One
+    /// Improvement, and Next Week's Focus. Defaults to this ISO week.
+    Weekly {
+        /// Any day in the target ISO week (YYYY-MM-DD). Defaults to this week.
+        #[arg(long)]
+        date: Option<NaiveDate>,
+    },
+
     /// Manage actions: add (with optional --note), promote a bullet to
     /// a manifest note, complete, and list.
     Action {
@@ -286,6 +294,10 @@ fn main() -> Result<()> {
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::status::run(&root, Local::now().date_naive())
+        }
+        Commands::Weekly { date } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::weekly::run(&root, Local::now().date_naive(), date)
         }
         Commands::Action { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
