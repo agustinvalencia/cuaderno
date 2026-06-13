@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-06-13
+
+Patch release: concurrent-write safety. With several agents or processes sharing one vault, writes to the same note — most acutely the daily log — could silently clobber each other; this serialises them. No new tools or commands; tool count unchanged (29).
+
+### Fixed
+
+- **Cross-process vault write lock** (#196) — every write now holds an exclusive advisory lock (std `File::lock` on `.cuaderno/.lock`) across its whole read-modify-write, so two cdno processes writing the same note serialise instead of one overwriting the other's change. The mutating ops are read-modify-write full rewrites (read the note, edit, rewrite the file); the SQLite index was already protected (WAL + busy_timeout) but the markdown files — the source of truth — were not, so a concurrent `append_to_log` or section write could drop a line. The lock is taken at transaction construction (before the read, since the lost update is born at the read), released on commit, and freed by the OS on process death; readers don't lock. Zero new dependencies (std native file locking). Proven by concurrency regression tests over `log_to_daily_note` and `add_action`.
+
 ## [0.1.11] - 2026-06-13
 
 Minor release: the weekly note becomes a first-class, writable artefact, completing the weekly loop. The MCP server gains a weekly-note read/write pair (27 → 29 tools) and the CLI gains `cdno weekly`.

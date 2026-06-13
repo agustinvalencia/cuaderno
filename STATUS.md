@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.11 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (29 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.11 makes the weekly note a first-class, writable artefact: the MCP server gains `read_weekly_note` + `upsert_weekly_section` (27 → 29 tools) to persist the design §5.2 weekly note (Wins / Challenges / One Improvement / Next Week's Focus), and the CLI gains `cdno weekly` to read it from the terminal (#193, #194). The review and the forward plan share one artefact per ISO week.
+**Current release**: 0.1.12 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (29 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.12 is a correctness fix for multi-agent use: every vault write now takes a cross-process advisory lock (`.cuaderno/.lock`) across its read-modify-write, so concurrent cdno processes can't silently clobber each other's changes to a shared note — most acutely the daily log (#196). No new tools or commands; the v0.1.11 weekly note remains the latest feature.
 
 ## Phase summary
 
