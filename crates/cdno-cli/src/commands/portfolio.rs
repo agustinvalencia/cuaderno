@@ -177,8 +177,15 @@ pub fn render_show(
         _ => out.push_str("\nEvidence (none yet)\n"),
     }
     for (_path, ev) in entries {
+        // Attachment stubs carry a media `kind` (#154); tag them so a
+        // non-markdown artefact is visually distinct from prose evidence.
+        let tag = ev
+            .kind
+            .as_deref()
+            .map(|k| format!("[{k}] "))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "  {}  {}  (origin: {})\n",
+            "  {}  {tag}{}  (origin: {})\n",
             ev.created, ev.source, ev.origin,
         ));
     }

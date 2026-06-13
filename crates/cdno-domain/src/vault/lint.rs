@@ -1,6 +1,12 @@
 //! `Vault::lint_all_notes`.
 
+use std::collections::HashSet;
+use std::path::Component;
 use std::str::FromStr;
+use std::sync::Arc;
+
+use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
 use crate::lint::{LintIssue, LintReport};
@@ -82,10 +88,109 @@ impl Vault {
                     message: msg,
                 });
             }
+
+            // Attachment stub ↔ artefact-folder pairing, forward
+            // direction (#154). An evidence note carrying a `kind`
+            // field is an attachment stub: it links a non-markdown
+            // artefact living in a sibling folder named after the
+            // stub's stem (`portfolios/<p>/<stem>.md` pairs with
+            // `portfolios/<p>/<stem>/`). The artefacts aren't indexed
+            // (only the stub is), so lint is the only thing that can
+            // notice the folder went missing — e.g. the artefacts were
+            // hand-deleted while the stub survived.
+            if entry.note_type == "evidence"
+                && entry
+                    .frontmatter
+                    .as_object()
+                    .and_then(|obj| obj.get("kind"))
+                    .is_some_and(|v| !v.is_null())
+                && let Ok(folder) = VaultPath::new(path.as_path().with_extension(""))
+                && self
+                    .store
+                    .list_dir(&folder)
+                    .map(|c| c.is_empty())
+                    .unwrap_or(true)
+            {
+                issues.push(LintIssue {
+                    path: path.clone(),
+                    message: format!(
+                        "attachment evidence links artefacts in `{folder}` but that \
+                         folder is missing or empty"
+                    ),
+                });
+            }
         }
+
+        issues.extend(orphan_artefact_issues(&self.store)?);
 
         Ok(LintReport { issues })
     }
+}
+
+/// Attachment stub ↔ artefact-folder pairing, reverse direction (#154).
+///
+/// Walks the non-markdown artefacts under `portfolios/` and reports any
+/// whose evidence stub is gone — the mirror of the forward check above.
+/// We look for the shape we create: `portfolios/<p>/<stem>/<artefact>`,
+/// which must be paired with the stub `portfolios/<p>/<stem>.md`. The
+/// artefacts are not indexed, so this filesystem walk is the only way to
+/// catch a folder whose stub was hand-deleted or moved, leaving evidence
+/// invisible to every structural retrieval.
+///
+/// Folders are reported at most once regardless of how many artefacts
+/// they hold. Anything that doesn't match the exact three-segment shape
+/// (markdown files, stray top-level non-markdown, deeper nesting we never
+/// generate) is left alone — lint is best-effort, not a fsck.
+fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>, DomainError> {
+    let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
+        return Ok(Vec::new());
+    };
+    // A vault with no portfolios yet has no `portfolios/` directory;
+    // that's not an error, just nothing to check.
+    let Ok(artefacts) = store.walk_dir(&root) else {
+        return Ok(Vec::new());
+    };
+
+    let mut issues = Vec::new();
+    let mut seen: HashSet<VaultPath> = HashSet::new();
+    for file in artefacts {
+        let p = file.as_path();
+        if p.extension().and_then(|e| e.to_str()) == Some("md") {
+            continue;
+        }
+        let Some(parent) = p.parent() else { continue };
+        let segments: Vec<&str> = parent
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => s.to_str(),
+                _ => None,
+            })
+            .collect();
+        // Exactly `portfolios/<p>/<stem>` — the folder an attachment
+        // stub owns. Deeper paths aren't a layout we produce.
+        if segments.len() != 3 || segments[0] != cdno_core::paths::PORTFOLIOS {
+            continue;
+        }
+        let Ok(folder) = VaultPath::new(parent) else {
+            continue;
+        };
+        if !seen.insert(folder.clone()) {
+            continue;
+        }
+        let Ok(stub) = VaultPath::new(parent.with_extension("md")) else {
+            continue;
+        };
+        if !store.exists(&stub).unwrap_or(false) {
+            issues.push(LintIssue {
+                message: format!(
+                    "artefact folder `{folder}` has no evidence stub `{stub}` \
+                     — orphaned attachment"
+                ),
+                path: folder,
+            });
+        }
+    }
+    Ok(issues)
 }
 
 /// Compare the current file against an archival snapshot. Returns

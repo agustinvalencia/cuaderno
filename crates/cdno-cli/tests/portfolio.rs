@@ -145,6 +145,44 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
 }
 
 #[test]
+fn portfolio_show_tags_attachment_evidence_with_its_kind() {
+    // An attachment stub renders with a `[kind]` media tag so a
+    // non-markdown artefact reads distinctly from prose evidence (#154).
+    let dir = vault();
+    seed_portfolio(dir.path());
+    let artefact = dir.path().join("derivation.pdf");
+    fs::write(&artefact, b"%PDF fake").unwrap();
+    file::run(
+        dir.path(),
+        moment(2026, 3, 15, 10, 0),
+        Some("sparse-vs-dense-ood".to_owned()),
+        Some("Chen derivation".to_owned()),
+        Some("projects/surrogate".to_owned()),
+        "The closed-form bound.".to_owned(),
+        Some(artefact),
+        false,
+        true,
+    )
+    .expect("attach");
+
+    let (vault_obj, _r) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    let fm = vault_obj.get_portfolio("sparse-vs-dense-ood").unwrap();
+    let entries = vault_obj
+        .get_portfolio_contents("sparse-vs-dense-ood")
+        .unwrap();
+    let summaries = vault_obj
+        .list_portfolios(moment(2026, 4, 1, 9, 0).date())
+        .unwrap();
+    let summary = summaries.iter().find(|s| s.slug == "sparse-vs-dense-ood");
+
+    let out = portfolio::render_show("sparse-vs-dense-ood", &fm, summary, &entries);
+    assert!(
+        out.contains("[pdf] Chen derivation"),
+        "attachment must render with a media tag:\n{out}"
+    );
+}
+
+#[test]
 fn portfolio_show_errors_when_missing_portfolio_in_non_interactive() {
     let dir = vault();
     let err = portfolio::run(

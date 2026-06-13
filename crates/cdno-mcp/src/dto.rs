@@ -231,6 +231,12 @@ pub struct EvidenceEntryDto {
     pub created: NaiveDate,
     pub source: String,
     pub origin: String,
+    /// Media kind when this evidence is a non-markdown attachment stub
+    /// (`pdf`/`image`/`video`/…, #154); omitted for a plain prose note.
+    /// Lets a retrieving agent tell media evidence apart and know to
+    /// dereference the artefact linked in the stub body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl PortfolioDetailDto {
@@ -254,6 +260,7 @@ impl PortfolioDetailDto {
                     created: ef.created,
                     source: ef.source,
                     origin: ef.origin,
+                    kind: ef.kind,
                 })
                 .collect(),
         }

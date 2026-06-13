@@ -238,6 +238,51 @@ async fn get_portfolio_contents_returns_frontmatter_and_evidence() {
             .unwrap()
             .ends_with("chen-2025.md")
     );
+    // Plain prose evidence is not an attachment: `kind` is omitted
+    // (skip_serializing_if), so the JSON has no such key.
+    assert!(
+        evidence[0].get("kind").is_none(),
+        "plain evidence must not carry a kind: {}",
+        evidence[0]
+    );
+}
+
+#[tokio::test]
+async fn get_portfolio_contents_surfaces_attachment_kind() {
+    // An attachment stub must report its media `kind` distinctly so a
+    // retrieving agent can tell it apart from prose and know to
+    // dereference the linked artefact (#154).
+    let dir = tempfile::tempdir().unwrap();
+    let artefact = dir.path().join("figure.png");
+    std::fs::write(&artefact, b"\x89PNG fake").unwrap();
+
+    let server = server_with(|vault| {
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Does sparse beat dense?", None)
+            .unwrap();
+        vault
+            .file_attachment(
+                moment(2026, 3, 15, 10, 0),
+                "does-sparse-beat-dense",
+                &artefact,
+                "Whiteboard",
+                "projects/surrogate",
+                "Sketch of the attention sparsity pattern.",
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .get_portfolio_contents(Parameters(PortfolioSlugInput {
+            portfolio: "does-sparse-beat-dense".to_owned(),
+        }))
+        .await
+        .unwrap();
+    let value = decode_json(&result);
+    let evidence = value["evidence"].as_array().unwrap();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0]["kind"], "image");
+    assert_eq!(evidence[0]["source"], "Whiteboard");
 }
 
 #[tokio::test]
