@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-06-13
+
+Patch release: sharper agent-facing slug guidance in three tool descriptions. No behaviour, API, tool, or command changes; tool count unchanged (27).
+
+### Changed
+
+- **Slug guidance in tool descriptions** (#186) — the `create_portfolio`, `file_to_portfolio`, and `create_tracking_entry` MCP tool descriptions now state that slug-typed arguments are not validated (an unknown `project`/`origin` slug is written as a dangling wikilink rather than rejected, and an invented stewardship slug only fails at lookup) and tell the caller to resolve the real slug — via `get_orientation` or the listed valid set — instead of guessing. This is the description-level complement to the self-correcting not-found errors (#180, #181), aimed at the failure mode where an agent invents a slug (e.g. `fitness` for the real `gym`). Adds a regression test pinning the stewardship not-found error to enumerate the valid slugs.
+
 ## [0.1.8] - 2026-06-13
 
 Minor release: file non-markdown artefacts — PDFs, images, figures, recordings — as portfolio evidence. The artefact is imported beside a linked markdown stub whose body is an abstract that stands in for it everywhere the bytes can't be read directly. No new tools (the existing `file_to_portfolio` gains an `attach` parameter); tool count unchanged (27).
