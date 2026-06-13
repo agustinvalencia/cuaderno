@@ -61,25 +61,29 @@ pub fn build_search(
 
 /// Render search hits, ranked best-first. Pure for testability.
 pub fn render(query: &str, results: &[SearchResultEntry]) -> String {
-    let mut out = format!("Search: {query}\n");
     if results.is_empty() {
-        out.push_str("  (no matches)\n");
-        return out;
+        return format!("Search: {query}\n  (no matches)\n");
     }
+    // One row per hit: a pinned rank column beside a block cell holding
+    // `title · type` / path / snippet. The block reflows to the terminal,
+    // so a long snippet wraps under the hit instead of overflowing (#153).
+    let mut table = crate::output::styled_table();
     for (i, r) in results.iter().enumerate() {
         let title = r.title.as_deref().unwrap_or("(untitled)");
-        out.push_str(&format!(
-            "\n  {}. {title}  \u{00b7}  {}\n",
-            i + 1,
-            r.note_type
-        ));
-        out.push_str(&format!("     {}\n", r.path.as_path().display()));
-        // Collapse the snippet's internal whitespace/newlines onto one
-        // line so each hit stays a compact three-line block.
+        let mut block = format!(
+            "{title}  \u{00b7}  {}\n{}",
+            r.note_type,
+            r.path.as_path().display()
+        );
+        // Collapse the snippet's internal whitespace/newlines so the cell
+        // re-wraps it cleanly to the available width.
         let snippet: String = r.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
         if !snippet.is_empty() {
-            out.push_str(&format!("     {snippet}\n"));
+            block.push('\n');
+            block.push_str(&snippet);
         }
+        table.add_row(vec![format!("{}.", i + 1), block]);
     }
-    out
+    crate::output::no_wrap_columns(&mut table, &[0]);
+    format!("Search: {query}\n{}\n", crate::output::render(&table))
 }
