@@ -105,11 +105,15 @@ impl Vault {
                     .and_then(|obj| obj.get("kind"))
                     .is_some_and(|v| !v.is_null())
                 && let Ok(folder) = VaultPath::new(path.as_path().with_extension(""))
+                // A missing folder reads back as `Ok(empty)` — both stores
+                // normalise "no such dir" to an empty listing — so that's
+                // the case we flag. A genuine `Err` is an I/O fault, not a
+                // pairing problem; don't manufacture an issue from it.
                 && self
                     .store
                     .list_dir(&folder)
                     .map(|c| c.is_empty())
-                    .unwrap_or(true)
+                    .unwrap_or(false)
             {
                 issues.push(LintIssue {
                     path: path.clone(),
@@ -141,6 +145,11 @@ impl Vault {
 /// they hold. Anything that doesn't match the exact three-segment shape
 /// (markdown files, stray top-level non-markdown, deeper nesting we never
 /// generate) is left alone — lint is best-effort, not a fsck.
+///
+/// Shape alone can't distinguish an artefact folder from a hand-made
+/// grouping subfolder a user might drop under a portfolio, so the message
+/// hedges ("orphaned attachment or stray file") rather than asserting the
+/// file *is* a detached artefact.
 fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
@@ -184,7 +193,7 @@ fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>,
             issues.push(LintIssue {
                 message: format!(
                     "artefact folder `{folder}` has no evidence stub `{stub}` \
-                     — orphaned attachment"
+                     — orphaned attachment or stray non-markdown file"
                 ),
                 path: folder,
             });
