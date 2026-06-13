@@ -14,7 +14,7 @@
 
 use std::io::IsTerminal;
 
-use comfy_table::{ContentArrangement, Table, presets};
+use comfy_table::{ColumnConstraint, ContentArrangement, Table, presets};
 
 /// Width assumed when stdout is not a terminal (piped, redirected, or a
 /// test calling a `render` helper directly). Wide enough to keep most
@@ -39,6 +39,21 @@ pub fn styled_table() -> Table {
         table.set_width(NON_TTY_WIDTH);
     }
     table
+}
+
+/// Pin the given columns to their content width so they never wrap, and
+/// the free-text column(s) absorb all the wrapping instead. Without this,
+/// `ContentArrangement::Dynamic` balances width across every column and
+/// will happily wrap a slug or a short badge mid-token once a third
+/// column competes for space — identifiers should stay whole and only the
+/// prose column should reflow. Call after the rows are added (columns
+/// don't exist until then).
+pub fn no_wrap_columns(table: &mut Table, columns: &[usize]) {
+    for &index in columns {
+        if let Some(column) = table.column_mut(index) {
+            column.set_constraint(ColumnConstraint::ContentWidth);
+        }
+    }
 }
 
 /// Render a table to a string with trailing whitespace stripped from each

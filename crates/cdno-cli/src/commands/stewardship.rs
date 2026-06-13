@@ -226,27 +226,32 @@ fn load_for_show(
 /// Render `cdno stewardship list` output. Public so tests can
 /// assert on the formatted text without capturing stdout.
 pub fn render_list(summaries: &[StewardshipSummary]) -> String {
-    let mut out = String::from("Stewardships\n");
     if summaries.is_empty() {
-        out.push_str("  (none \u{2014} create one with `cdno stewardship create`)\n");
-        return out;
+        return "Stewardships\n  (none \u{2014} create one with `cdno stewardship create`)\n"
+            .to_owned();
     }
+    // slug / name / variant / tracking-activity columns (#153).
+    let mut table = crate::output::styled_table();
     for s in summaries {
         let variant_badge = match s.variant {
-            StewardshipVariant::Flat => "flat",
-            StewardshipVariant::Expanded => "expanded",
+            StewardshipVariant::Flat => "[flat]",
+            StewardshipVariant::Expanded => "[expanded]",
         };
         let activity_badge = match (s.tracking_count, s.staleness_days) {
             (0, _) => "no tracking yet".to_owned(),
             (n, Some(d)) => format!("{n} tracking, last {d} days ago"),
             (n, None) => format!("{n} tracking"),
         };
-        out.push_str(&format!(
-            "  {} \u{2014} {} [{variant_badge}] ({activity_badge})\n",
-            s.slug, s.name
-        ));
+        table.add_row(vec![
+            s.slug.clone(),
+            s.name.clone(),
+            variant_badge.to_owned(),
+            activity_badge,
+        ]);
     }
-    out
+    // Keep slug, variant, and activity badge whole; only the name reflows.
+    crate::output::no_wrap_columns(&mut table, &[0, 2, 3]);
+    format!("Stewardships\n{}\n", crate::output::render(&table))
 }
 
 /// Render `cdno stewardship show` output. Public for test access.
