@@ -42,7 +42,7 @@ fn orient_renders_commitments_projects_and_suggestion() {
         "milestone commitment:\n{out}"
     );
     assert!(
-        out.contains("(project: alpha)"),
+        out.contains("project: alpha"),
         "milestone source label:\n{out}"
     );
     assert!(out.contains("Pay invoice"), "standalone commitment:\n{out}");
@@ -89,8 +89,11 @@ fn status_counts_and_lists_active_projects() {
         out.contains("2 commitments due soon"),
         "commitment count:\n{out}"
     );
+    // slug and its next-action now sit in adjacent table columns on the
+    // same row rather than joined by an em-dash.
     assert!(
-        out.contains("alpha — next: Draft the methods section (deep)"),
+        out.lines()
+            .any(|l| l.contains("alpha") && l.contains("next: Draft the methods section (deep)")),
         "project line:\n{out}"
     );
 }

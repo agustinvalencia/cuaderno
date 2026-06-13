@@ -41,9 +41,14 @@ fn render(ctx: &OrientationContext) -> String {
     if ctx.projects.is_empty() {
         out.push_str("  (no active projects)\n");
     } else {
+        // slug column stays whole; the next-action reflows (#153).
+        let mut table = crate::output::styled_table();
         for p in &ctx.projects {
-            out.push_str(&format!("  {} — next: {}\n", p.slug, project_next(p)));
+            table.add_row(vec![p.slug.clone(), format!("next: {}", project_next(p))]);
         }
+        crate::output::no_wrap_columns(&mut table, &[0]);
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
     }
 
     out

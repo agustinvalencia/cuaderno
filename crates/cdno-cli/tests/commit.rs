@@ -118,7 +118,8 @@ fn commitments_lists_active_in_window() {
         !out.contains("Book dentist"),
         "far commitment excluded:\n{out}"
     );
-    assert!(out.contains("(commitment)"), "source label:\n{out}");
+    // The source is its own table column now, not parenthesised inline.
+    assert!(out.contains("commitment"), "source label:\n{out}");
 }
 
 #[test]
