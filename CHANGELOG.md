@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-06-13
+
+Minor release: prettier CLI output. Every list-style command now renders through a shared borderless table that wraps long text to the terminal width instead of running off the edge. No new tools or commands; presentation stays in the CLI (the MCP server and domain are untouched). Tool count unchanged (27).
+
+### Changed — CLI output (#153)
+
+- **Tabular CLI output** (#153) — list-style commands render through one `comfy-table`-backed formatting helper in `cdno-cli`: borderless, terminal-width-aware, wrapping long free-text columns rather than letting them overflow, with identifier and badge columns pinned to content width so only the prose column reflows. Migrated `cdno questions` (#188); `portfolio list` and `stewardship list` (#189); the `orient`, `status`, and `commitments` dashboards (#190, which also refactored the shared `commitment_line` into `commitment_cells`); and `portfolio show` evidence plus `search` hits (#191). `comfy-table` is confined to `cdno-cli` — no presentation traits are derived on `cdno-domain` types, and the MCP stdout JSON-RPC channel never touches table code by construction.
+
 ## [0.1.9] - 2026-06-13
 
 Patch release: sharper agent-facing slug guidance in three tool descriptions. No behaviour, API, tool, or command changes; tool count unchanged (27).

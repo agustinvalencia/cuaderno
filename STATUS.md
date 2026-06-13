@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.9 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.9 is a small quality release: the `create_portfolio`, `file_to_portfolio`, and `create_tracking_entry` tool descriptions now tell agents to resolve real slugs rather than guess, since slug arguments are written unvalidated (#186). No new tools or commands; v0.1.8's non-markdown evidence (`cdno file --attach`, surfaced media `kind`, the stub-to-artefact-folder lint) remains the latest feature.
+**Current release**: 0.1.10 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.10 is a CLI polish release: every list-style command (`questions`, `portfolio`/`stewardship list`, the `orient`/`status`/`commitments` dashboards, `portfolio show`, `search`) now renders through a shared borderless table that wraps long text to the terminal instead of overflowing the edge (#153). No new tools; presentation stays in `cdno-cli` — the MCP server and domain are untouched.
 
 ## Phase summary
 
