@@ -41,7 +41,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project slug."
+        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project slug — resolve a real slug (e.g. via `get_orientation`) rather than inventing one; an unknown slug is written as a dangling link, not rejected."
     )]
     pub async fn create_portfolio(
         &self,

@@ -176,6 +176,28 @@ fn add_tracking_errors_when_stewardship_missing() {
 }
 
 #[test]
+fn add_tracking_missing_stewardship_error_lists_available_slugs() {
+    let (vault, _store) = empty_vault();
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Gym", Context::Personal)
+        .unwrap();
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .unwrap();
+    let err = vault
+        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "fitness", "gym", None, "")
+        .expect_err("invented slug should error");
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected NotFound, got {err:?}");
+    };
+    // The agent-facing message must enumerate the real slugs so a
+    // client that guessed `fitness` can self-correct to `gym`.
+    assert!(msg.contains("available stewardships:"), "msg was: {msg}");
+    assert!(msg.contains("gym (expanded)"), "msg was: {msg}");
+    assert!(msg.contains("finances"), "msg was: {msg}");
+}
+
+#[test]
 fn add_tracking_errors_on_flat_stewardship() {
     let (vault, _store) = empty_vault();
     vault
