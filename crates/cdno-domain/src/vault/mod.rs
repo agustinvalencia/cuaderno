@@ -46,6 +46,7 @@ mod slug;
 mod slug_hint;
 mod stewardships;
 mod tracking;
+mod weekly;
 
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{
@@ -58,6 +59,7 @@ pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 pub use questions::QuestionSummary;
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
+pub use weekly::{WeeklyNoteView, WeeklySection};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any

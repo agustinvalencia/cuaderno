@@ -11,7 +11,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | **1 — Foundation** | Workspace layout, `cdno-core` traits + impls (`VaultStore`, `VaultIndex`, transactions, reconciliation, markdown parsing, hashing), `cdno-domain` skeleton, basic CLI bootstrap | Complete |
 | **2 — Daily loop** | Projects (5-cap, state, milestones, waiting-on, park/activate), actions (bullets + manifest notes, add/promote/complete/list), commitments (create/complete + aggregation timeline), orient/status/lint, flags-and-prompts ergonomics retrofit, append-only-after-completion lint | Complete |
 | **3 — Knowledge & stewardship** | Portfolios + evidence (create, file, list, show), questions (CRUD + status transitions + grouped list), stewardships (flat + expanded, list, show, periodic commitments, tracking notes with built-in templates), `cdno track` | Complete |
-| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 27-tool schema catalogue, stdio binary | Core complete (16 §11 + 2 daily-note (#158) + 4 structural-creation (#162) + 4 lifecycle (#166) + `search_notes` (#172) tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
+| **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 29-tool schema catalogue, stdio binary | Core complete (16 §11 + 2 daily-note (#158) + 2 weekly-note + 4 structural-creation (#162) + 4 lifecycle (#166) + `search_notes` (#172) tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
 | **5 — Tauri UI** | `cdno-tauri` backend, React frontend with Tremor, Home / Weekly / Commitments views | Not started |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | Not started |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |
@@ -63,7 +63,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
 | `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 27 tools are wired through to the domain** — the 16 design §11 tools, the two daily-note tools (#158), the four structural-creation tools (#162), the four lifecycle tools (#166), and `search_notes` (#172). No stubs remain. All 27 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 29 tools are wired through to the domain** — the 16 design §11 tools, the two daily-note tools (#158), the two weekly-note tools (`read_weekly_note` + `upsert_weekly_section`), the four structural-creation tools (#162), the four lifecycle tools (#166), and `search_notes` (#172). No stubs remain. All 29 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 

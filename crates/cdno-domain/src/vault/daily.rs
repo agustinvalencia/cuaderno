@@ -164,8 +164,9 @@ impl Vault {
 /// Render a section body so it sits cleanly under its heading: the
 /// content trimmed, on its own line, with a single trailing newline.
 /// Empty content yields an empty section (just the heading), which is
-/// how an intention is "cleared" by writing an empty string.
-fn format_section_body(content: &str) -> String {
+/// how an intention is "cleared" by writing an empty string. Shared with
+/// the weekly-note writer, which formats its sections the same way.
+pub(in crate::vault) fn format_section_body(content: &str) -> String {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         String::new()
