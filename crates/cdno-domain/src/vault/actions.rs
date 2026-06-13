@@ -29,13 +29,13 @@ const ACTION_TEMPLATE: &str = include_str!("../../templates/action.md");
 
 impl Vault {
     /// Build a new action note at `actions/<slug>.md` and stage its
-    /// write + index upsert into a fresh, **uncommitted** transaction.
+    /// write + index upsert into the caller's transaction `tx`.
     ///
-    /// Returns the note path and the transaction so callers can add
-    /// their own operations (the project bullet rewrite for
-    /// `add_action_with_note`, the bullet-promotion edit for a future
-    /// `promote_action`) and commit everything atomically as one unit.
-    /// Nothing is written until the returned transaction is committed.
+    /// The caller owns `tx` (and the write lock it holds), opening it
+    /// before its own project read so the whole operation — the project
+    /// bullet rewrite for `add_action_with_note`, the bullet-promotion
+    /// edit for `promote_action` — commits atomically under one lock
+    /// (#196). Nothing is written until the caller commits.
     ///
     /// `milestone` is a raw wikilink string (the milestone owns the
     /// date, the action inherits it); `due` is a self-imposed deadline
@@ -43,16 +43,19 @@ impl Vault {
     /// plain `add --note` path. Errors with
     /// [`StoreError::AlreadyExists`] if an active action already holds
     /// the slug.
+    // The action's defining fields plus the caller's transaction; bundling
+    // them into a struct would obscure more than it clarifies.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_action_note(
         &self,
+        tx: &mut VaultTransaction,
         at: NaiveDateTime,
         project: &str,
         title: &str,
         energy: EnergyLevel,
         milestone: Option<&str>,
         due: Option<NaiveDate>,
-    ) -> Result<(VaultPath, VaultTransaction), DomainError> {
-        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+    ) -> Result<VaultPath, DomainError> {
         let title = title.trim();
         let slug = slugify(title);
         let path = Self::active_action_path(&slug)?;
@@ -75,7 +78,7 @@ impl Vault {
 
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
-        Ok((path, tx))
+        Ok(path)
     }
 
     /// Add an action to a project *and* create its manifest note in a
@@ -97,14 +100,13 @@ impl Vault {
         title: &str,
         energy: EnergyLevel,
     ) -> Result<VaultPath, DomainError> {
-        // Validate the parent project up front. Resolving here (rather
-        // than inside create_action_note) keeps the note builder
-        // project-agnostic and means a bad project never leaves a
-        // half-built transaction lying around.
+        // One transaction, opened before any read, so the write lock
+        // covers the project's read-modify-write as well as the note
+        // creation (#196). The project is validated under the lock; a bad
+        // project errors and the uncommitted transaction rolls back.
+        let mut tx = self.transaction()?;
         let (project_path, mut doc) = self.resolve_active_project(project)?;
-
-        let (note_path, mut tx) =
-            self.create_action_note(at, project, title, energy, None, None)?;
+        let note_path = self.create_action_note(&mut tx, at, project, title, energy, None, None)?;
         let action_slug = action_slug_from_path(&note_path);
 
         // Append the wikilinked bullet, mirroring add_action's section

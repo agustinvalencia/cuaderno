@@ -35,6 +35,7 @@ impl Vault {
         slug: &str,
         description: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let description = description.trim();
@@ -55,7 +56,6 @@ impl Vault {
 
         let log_entry = format!("waiting added on [[{slug}]] \u{2014} {description}");
 
-        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -77,6 +77,7 @@ impl Vault {
         slug: &str,
         query: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let section = doc.section(WAITING_ON_SECTION)?;
@@ -136,7 +137,6 @@ impl Vault {
 
         let log_entry = format!("waiting resolved on [[{slug}]] \u{2014} {removed_text}");
 
-        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;

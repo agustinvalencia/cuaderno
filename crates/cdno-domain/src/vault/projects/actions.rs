@@ -65,6 +65,7 @@ impl Vault {
         action: &str,
         energy: EnergyLevel,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let action_text = action.trim();
@@ -88,7 +89,6 @@ impl Vault {
 
         let log_entry = format_action_added_log_entry(slug, action_text, energy);
 
-        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -114,6 +114,7 @@ impl Vault {
         slug: &str,
         query: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
@@ -165,7 +166,6 @@ impl Vault {
 
         let log_entry = format_action_done_log_entry(slug, &removed_full_text);
 
-        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         // If the completed bullet wikilinks an action note, archive the
@@ -205,6 +205,10 @@ impl Vault {
         slug: &str,
         query: &str,
     ) -> Result<VaultPath, DomainError> {
+        // One transaction opened before the project read, so the whole
+        // read-modify-write (find the bullet, spin the note, rewrite the
+        // bullet) serialises under one write lock (#196).
+        let mut tx = self.transaction()?;
         let (project_path, mut doc) = self.resolve_active_project(slug)?;
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
@@ -257,9 +261,9 @@ impl Vault {
             })?;
         let title = strip_energy_suffix(&bullet_text).trim().to_owned();
 
-        // Spin the note (uncommitted tx) and continue staging on it so
-        // note write + bullet rewrite + daily log commit together.
-        let (note_path, mut tx) = self.create_action_note(at, slug, &title, energy, None, None)?;
+        // Spin the note onto the existing transaction so note write +
+        // bullet rewrite + daily log commit together, all under one lock.
+        let note_path = self.create_action_note(&mut tx, at, slug, &title, energy, None, None)?;
         let action_slug = note_path
             .as_path()
             .file_stem()
