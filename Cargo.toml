@@ -54,6 +54,12 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # domain crates never see prompts.
 inquire = { version = "0.7", features = ["date"] }
 
+# Tabular CLI output with automatic content wrapping. Default features
+# include `tty` (terminal-width auto-detection via crossterm) and
+# `custom_styling`. CLI-only — presentation never leaks into the domain
+# layer, and the MCP stdout JSON-RPC channel never touches table code.
+comfy-table = "7.2"
+
 # Binary-only error glue. Library crates use thiserror; the CLI
 # translates structured errors into human-readable output here.
 anyhow = "1"

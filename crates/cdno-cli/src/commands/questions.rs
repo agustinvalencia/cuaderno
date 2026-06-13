@@ -46,14 +46,20 @@ pub fn render(active: &[QuestionSummary]) -> String {
             continue;
         }
         out.push_str(&format!("\n{}\n", capitalise_first(domain.as_str())));
+        // One borderless slug/question table per domain so the question
+        // column wraps to the terminal instead of running off the edge
+        // (#153). The shared preset keeps every list command consistent.
+        let mut table = crate::output::styled_table();
         for q in in_domain {
             let text = if q.question_text.is_empty() {
                 "(no H1)".to_owned()
             } else {
                 q.question_text.clone()
             };
-            out.push_str(&format!("  {} \u{2014} {text}\n", q.slug));
+            table.add_row(vec![q.slug.clone(), text]);
         }
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
     }
     out
 }
