@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-06-13
+
+Minor release: file non-markdown artefacts — PDFs, images, figures, recordings — as portfolio evidence. The artefact is imported beside a linked markdown stub whose body is an abstract that stands in for it everywhere the bytes can't be read directly. No new tools (the existing `file_to_portfolio` gains an `attach` parameter); tool count unchanged (27).
+
+### Added — non-markdown evidence (#154)
+
+- **File attachments** (#154, #183) — `cdno file --attach <path>` (and the `file_to_portfolio` `attach` parameter) file a non-markdown artefact as evidence: the file is imported into the portfolio at `portfolios/<slug>/<stem>/<filename>` beside a linked markdown stub `portfolios/<slug>/<stem>.md`, and the stub's body becomes the artefact's abstract. The bytes are imported but never indexed — only the stub is — so that abstract is the sole thing search and other agents ever see of the artefact. The media `kind` (`pdf`/`image`/`video`/`audio`/`typst`/`latex`/`file`) is detected from the extension and recorded on the stub. `--move` removes the source after a successful import (the default copies). Import is a create-only, atomic transaction op (`FileOp::Import`) that rolls back on failure; YAML-unsafe sources and angle-bracket filenames are escaped into the stub.
+
+### Changed
+
+- **Attachment-aware portfolio retrieval and lint** (#154, #184) — `get_portfolio_contents` (and `cdno portfolio show`) now surface each evidence note's media `kind`, so a retrieving agent can tell media evidence from prose and knows to dereference the linked artefact; it is omitted for plain prose evidence. `cdno lint` gained a stub-to-artefact-folder pairing check in both directions: an attachment stub whose sibling folder is missing or empty, and an artefact folder under `portfolios/` with no evidence stub (an orphaned attachment, hedged in the message since shape alone can't tell an artefact folder from a hand-made grouping folder).
+
 ## [0.1.7] - 2026-06-12
 
 Minor release: self-correcting slug errors and a faster reconcile. No new tools or commands — quality and ergonomics over the existing surface. Tool count unchanged (27).
