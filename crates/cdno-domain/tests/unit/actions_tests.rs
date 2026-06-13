@@ -301,6 +301,12 @@ impl VaultStore for FailingStore {
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
         self.inner.metadata(path)
     }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
+        self.inner.import_external(src, dest)
+    }
 }
 
 // ---------------------------------------------------------------------

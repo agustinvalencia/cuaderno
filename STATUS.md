@@ -43,7 +43,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `get_project_context` | Wired |
 | `get_stewardship_tracking` | Wired |
 | `append_to_log` | Wired |
-| `file_to_portfolio` | Wired |
+| `file_to_portfolio` | Wired (#154; optional `attach` files a non-markdown artefact as a linked stub) |
 | `update_project_state` | Wired |
 | `add_action` | Wired |
 | `promote_action` | Wired |
@@ -75,7 +75,7 @@ Reachable from the terminal via `cdno`:
 - `action add / promote / complete / list` (bullet form + manifest note form)
 - `commit create / complete` and `commitments` aggregated view
 - `orient` / `status` — morning views
-- `portfolio create / list / show` and `file` (file evidence into a portfolio)
+- `portfolio create / list / show` and `file` (file evidence into a portfolio; `--attach <path>` files a non-markdown artefact — PDF/image/video — by copying it in and scaffolding a linked evidence stub, `--move` to relocate instead, #154)
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)
 - `stewardship create / list / show / add-periodic` and `track <activity>`
 - `search <query>` — full-text content search across the vault, ranked best-first, with optional `--type` / `--from` / `--to` / `--portfolio` / `--limit` filters

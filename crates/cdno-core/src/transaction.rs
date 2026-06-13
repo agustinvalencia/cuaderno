@@ -16,6 +16,7 @@
 //! leave the vault in a transient inconsistent state, which the
 //! startup reconciliation pass detects and fixes.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error::{IndexError, StoreError, TransactionError};
@@ -42,10 +43,27 @@ pub struct VaultTransaction {
 /// File operations the transaction can apply. Each variant owns the
 /// data it needs so the transaction is self-contained once buffered.
 enum FileOp {
-    Write { path: VaultPath, content: String },
-    Append { path: VaultPath, content: String },
-    Move { src: VaultPath, dest: VaultPath },
-    Delete { path: VaultPath },
+    Write {
+        path: VaultPath,
+        content: String,
+    },
+    Append {
+        path: VaultPath,
+        content: String,
+    },
+    Move {
+        src: VaultPath,
+        dest: VaultPath,
+    },
+    Delete {
+        path: VaultPath,
+    },
+    /// Copy an external file into the vault (non-markdown attachment,
+    /// #154). `src` is a real filesystem path; `dest` is vault-relative.
+    Import {
+        src: PathBuf,
+        dest: VaultPath,
+    },
 }
 
 /// Index operations the transaction can apply. Mirrors the
@@ -110,6 +128,13 @@ impl VaultTransaction {
 
     pub fn delete_file(&mut self, path: VaultPath) {
         self.file_ops.push(FileOp::Delete { path });
+    }
+
+    /// Buffer an import of the external file `src` into the vault at
+    /// `dest` (an attachment, #154). Committed alongside the stub write,
+    /// so a failed stub rolls the imported file back out.
+    pub fn import_external(&mut self, src: PathBuf, dest: VaultPath) {
+        self.file_ops.push(FileOp::Import { src, dest });
     }
 
     // ---- index operation buffer -------------------------------------
@@ -317,6 +342,14 @@ fn apply_file_op(store: &dyn VaultStore, op: &FileOp) -> Result<Undo, StoreError
                 path: path.clone(),
                 content,
             })
+        }
+        FileOp::Import { src, dest } => {
+            // The domain checks `dest` is unoccupied before buffering this,
+            // so the import always creates a new file — rollback deletes
+            // it. (Binary content isn't snapshotted for restore; an import
+            // never overwrites.)
+            store.import_external(src, dest)?;
+            Ok(Undo::DeleteCreated { path: dest.clone() })
         }
     }
 }

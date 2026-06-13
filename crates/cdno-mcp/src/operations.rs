@@ -40,23 +40,34 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create an evidence note in the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. `content` is optional — empty string is fine; the user can flesh out the note after."
+        description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact."
     )]
     pub async fn file_to_portfolio(
         &self,
         Parameters(input): Parameters<FileToPortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        let path = self
-            .vault
-            .file_evidence(
+        // With `attach`, file the artefact (copy + linked stub); otherwise
+        // write a plain markdown evidence note. `content` is the body /
+        // abstract respectively.
+        let path = match input.attach.as_deref() {
+            Some(artefact) => self.vault.file_attachment(
+                at,
+                &input.portfolio,
+                std::path::Path::new(artefact),
+                &input.source,
+                &input.origin,
+                &input.content,
+            ),
+            None => self.vault.file_evidence(
                 at,
                 &input.portfolio,
                 &input.source,
                 &input.origin,
                 &input.content,
-            )
-            .map_err(into_mcp_error)?;
+            ),
+        }
+        .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Filed evidence at {}", path),

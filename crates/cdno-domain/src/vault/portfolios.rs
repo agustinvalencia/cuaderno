@@ -8,6 +8,7 @@
 //! graph without any structural duplication.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use chrono::{NaiveDate, NaiveDateTime};
 
@@ -161,6 +162,106 @@ impl Vault {
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// File a non-markdown artefact as evidence (#154): copy (or, with the
+    /// CLI `--move` flag handled upstream, relocate) `artefact` into
+    /// `portfolios/<portfolio>/<evidence-slug>/`, and write a flat
+    /// `type: evidence` markdown **stub** beside it at
+    /// `portfolios/<portfolio>/<evidence-slug>.md` that links the artefact
+    /// relatively and carries a `kind` field. The stub is the indexed
+    /// citizen; the artefact rides along, referenced but never parsed.
+    /// `abstract_body` becomes the stub's prose (the only thing search and
+    /// agents see — an empty one gets a placeholder prompting for it).
+    ///
+    /// Returns the stub path. Errors mirror [`file_evidence`](Self::file_evidence),
+    /// plus `EmptyField { field: "attach" }` when `artefact` has no
+    /// filename, and `AlreadyExists` if either the stub or the artefact
+    /// destination is occupied. The copy + stub write commit atomically —
+    /// a failed stub rolls the imported artefact back out.
+    pub fn file_attachment(
+        &self,
+        at: NaiveDateTime,
+        portfolio: &str,
+        artefact: &Path,
+        source: &str,
+        origin: &str,
+        abstract_body: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let source = source.trim();
+        let origin = origin.trim();
+        if source.is_empty() {
+            return Err(DomainError::EmptyField { field: "source" });
+        }
+        if origin.is_empty() {
+            return Err(DomainError::EmptyField { field: "origin" });
+        }
+        if origin.contains("[[") || origin.contains("]]") {
+            return Err(DomainError::MalformedWikilink {
+                value: origin.to_owned(),
+            });
+        }
+        let filename = artefact
+            .file_name()
+            .and_then(|s| s.to_str())
+            .filter(|s| !s.is_empty())
+            .ok_or(DomainError::EmptyField { field: "attach" })?;
+
+        let portfolio_index = VaultPath::new(format!(
+            "{}/{portfolio}/_index.md",
+            cdno_core::paths::PORTFOLIOS
+        ))?;
+        if !self.store.exists(&portfolio_index)? {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{portfolio_index}{}",
+                self.available_portfolios_hint()
+            ))));
+        }
+
+        let created = at.date();
+        let evidence_slug = format!("{}-{}", created.format("%Y-%m-%d"), slugify(source));
+        let stub_path = VaultPath::new(format!(
+            "{}/{portfolio}/{evidence_slug}.md",
+            cdno_core::paths::PORTFOLIOS
+        ))?;
+        // The artefact keeps its original filename (recognisable) inside a
+        // folder named for the stub stem — the `X.md` ↔ `X/` pairing.
+        let artefact_dest = VaultPath::new(format!(
+            "{}/{portfolio}/{evidence_slug}/{filename}",
+            cdno_core::paths::PORTFOLIOS
+        ))?;
+        if self.store.exists(&stub_path)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                stub_path.to_string(),
+            )));
+        }
+        if self.store.exists(&artefact_dest)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                artefact_dest.to_string(),
+            )));
+        }
+
+        let kind = kind_from_extension(filename);
+        let body = render_attachment_stub(
+            created,
+            source,
+            portfolio,
+            origin,
+            kind,
+            &evidence_slug,
+            filename,
+            abstract_body,
+        );
+        let entry = build_index_entry_for(&stub_path, &body, NoteType::Evidence.as_str())?;
+
+        let mut tx = self.transaction();
+        // Import first so a failed stub write rolls the artefact back out.
+        tx.import_external(artefact.to_path_buf(), artefact_dest);
+        tx.write_file(stub_path.clone(), body);
+        tx.upsert_note(entry);
+        tx.commit()?;
+
+        Ok(stub_path)
     }
 
     /// One [`PortfolioSummary`] per indexed portfolio, sorted by
@@ -329,4 +430,91 @@ fn render_evidence_template(
         .replace("{{portfolio}}", portfolio)
         .replace("{{origin}}", &format!("[[{origin}]]"))
         .replace("{{content}}", content.trim_end())
+}
+
+/// Classify an attachment by file extension into the `kind` field an
+/// agent uses to decide how to re-read it (trust the abstract vs reopen
+/// the artefact). Unknown extensions fall back to `"file"`.
+fn kind_from_extension(filename: &str) -> &'static str {
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "pdf" => "pdf",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "heic" | "tiff" | "bmp" => "image",
+        "mp4" | "mov" | "webm" | "mkv" | "avi" => "video",
+        "mp3" | "wav" | "m4a" | "flac" | "ogg" => "audio",
+        "typ" => "typst",
+        "tex" => "latex",
+        _ => "file",
+    }
+}
+
+/// Render the markdown stub for an attachment: the evidence frontmatter
+/// (with `kind`), an H1 of the source (the FTS title), a relative link to
+/// the artefact in its sibling folder, and the abstract. The link uses
+/// angle brackets so a filename with spaces stays valid; it is a plain
+/// markdown link, never a `[[wikilink]]` (the resolver only resolves
+/// `.md` stems).
+#[allow(clippy::too_many_arguments)]
+fn render_attachment_stub(
+    created: NaiveDate,
+    source: &str,
+    portfolio: &str,
+    origin: &str,
+    kind: &str,
+    evidence_slug: &str,
+    filename: &str,
+    abstract_body: &str,
+) -> String {
+    let abstract_section = if abstract_body.trim().is_empty() {
+        "_Abstract pending — describe the artefact so it's findable._".to_owned()
+    } else {
+        abstract_body.trim_end().to_owned()
+    };
+    // Escape for the structured contexts: `source`/`origin` go into
+    // double-quoted YAML scalars, and the filename goes into an
+    // angle-bracketed CommonMark link destination. The H1 keeps the raw
+    // source (plain markdown text).
+    let source_yaml = yaml_double_quoted_escape(source);
+    let origin_yaml = yaml_double_quoted_escape(origin);
+    let link_dest = link_destination_escape(filename);
+    format!(
+        "---\n\
+         type: evidence\n\
+         created: {created}\n\
+         source: \"{source_yaml}\"\n\
+         portfolio: {portfolio}\n\
+         origin: \"[[{origin_yaml}]]\"\n\
+         kind: {kind}\n\
+         ---\n\
+         \n\
+         # {source}\n\
+         \n\
+         ## Attachment\n\
+         \n\
+         [{filename}](<./{evidence_slug}/{link_dest}>)\n\
+         \n\
+         ## Abstract\n\
+         \n\
+         {abstract_section}\n",
+        created = created.format("%Y-%m-%d"),
+    )
+}
+
+/// Escape `\` and `"` for embedding in a double-quoted YAML scalar, so a
+/// `source`/`origin` containing a quote can't break the frontmatter.
+fn yaml_double_quoted_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Escape the characters that would terminate or corrupt an
+/// angle-bracketed CommonMark link destination (`<`, `>`, `\`). Spaces
+/// are already valid inside `<…>`.
+fn link_destination_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('<', "\\<")
+        .replace('>', "\\>")
 }

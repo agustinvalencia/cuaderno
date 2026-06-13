@@ -123,6 +123,7 @@ async fn file_to_portfolio_creates_evidence_note() {
             source: "Chen 2025".to_owned(),
             origin: "projects/surrogate".to_owned(),
             content: "4x speedup at 95% accuracy.".to_owned(),
+            attach: None,
         }))
         .await
         .expect("file_to_portfolio");
@@ -146,6 +147,7 @@ async fn file_to_portfolio_errors_on_missing_portfolio() {
             source: "x".to_owned(),
             origin: "projects/foo".to_owned(),
             content: String::new(),
+            attach: None,
         }))
         .await
         .expect_err("missing portfolio should error");
@@ -881,4 +883,41 @@ async fn add_periodic_commitment_appends_and_rejects_unknown_recurrence() {
         .expect_err("unknown recurrence should error");
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
     assert!(err.message.contains("recurrence"));
+}
+
+#[tokio::test]
+async fn file_to_portfolio_attaches_a_non_markdown_artefact() {
+    let dir = tempfile::tempdir().unwrap();
+    let artefact = dir.path().join("figure.png");
+    std::fs::write(&artefact, b"\x89PNG fake").unwrap();
+
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Does sparse beat dense?", None)
+            .unwrap();
+    });
+
+    let result = server
+        .file_to_portfolio(Parameters(FileToPortfolioInput {
+            portfolio: "does-sparse-beat-dense".to_owned(),
+            source: "Whiteboard".to_owned(),
+            origin: "projects/surrogate".to_owned(),
+            content: "Sketch of the attention sparsity pattern.".to_owned(),
+            attach: Some(artefact.to_string_lossy().into_owned()),
+        }))
+        .await
+        .expect("attach via MCP");
+
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.ends_with("-whiteboard.md"), "stub path: {path}");
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("kind: image"), "{body}");
+    assert!(body.contains("Sketch of the attention"), "{body}");
+    // The artefact landed in the stub's sibling folder, filename preserved.
+    let stem = path.strip_suffix(".md").unwrap();
+    assert!(
+        store.exists(&vp(&format!("{stem}/figure.png"))).unwrap(),
+        "artefact imported beside the stub"
+    );
 }
