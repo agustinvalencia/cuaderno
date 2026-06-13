@@ -295,3 +295,97 @@ fn append_only_lint_flags_same_length_prefix_edit() {
         report.issues[0].message
     );
 }
+
+// ---------------------------------------------------------------------
+// Attachment stub ↔ artefact-folder pairing (#154). An evidence note
+// with a `kind` field is a stub linking a non-markdown artefact in a
+// sibling folder. Lint checks the pairing in both directions: a stub
+// whose folder vanished, and a folder whose stub vanished. Neither
+// artefact is indexed, so lint is the only place these go noticed.
+// ---------------------------------------------------------------------
+
+const ATTACHMENT_STUB: &str = "---\ntype: evidence\ncreated: 2026-06-13\nsource: Some Paper\nportfolio: demo\norigin: \"[[projects/foo]]\"\nkind: pdf\n---\nA descriptive abstract of the PDF.\n";
+
+const PLAIN_EVIDENCE: &str = "---\ntype: evidence\ncreated: 2026-06-13\nsource: An observation\nportfolio: demo\norigin: \"[[projects/foo]]\"\n---\nProse evidence, no artefact.\n";
+
+#[test]
+fn lint_flags_attachment_stub_with_missing_artefact_folder() {
+    // Stub carries `kind: pdf` but the sibling folder that should hold
+    // the artefact is absent — the artefacts were hand-deleted while the
+    // stub survived.
+    let stub = "portfolios/demo/2026-06-13-some-paper.md";
+    let vault = vault_with_notes(&[(stub, ATTACHMENT_STUB)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp(stub));
+    assert!(
+        report.issues[0].message.contains("missing or empty"),
+        "message: {}",
+        report.issues[0].message
+    );
+}
+
+#[test]
+fn lint_passes_attachment_stub_with_populated_folder() {
+    // Stub paired with its artefact in the sibling folder — both pairing
+    // directions are satisfied, so the report is clean.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-06-13-some-paper.md", ATTACHMENT_STUB),
+            (
+                "portfolios/demo/2026-06-13-some-paper/some-paper.pdf",
+                "%PDF-1.7 fake bytes",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_flags_orphan_artefact_folder() {
+    // An artefact sits in a stub-shaped folder but the stub is gone —
+    // the evidence is invisible to every structural retrieval.
+    let vault = vault_with_notes(
+        &[(
+            "portfolios/demo/2026-06-13-some-paper/some-paper.pdf",
+            "%PDF-1.7 fake bytes",
+        )],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(
+        report.issues[0].path,
+        vp("portfolios/demo/2026-06-13-some-paper")
+    );
+    assert!(
+        report.issues[0].message.contains("orphaned attachment"),
+        "message: {}",
+        report.issues[0].message
+    );
+}
+
+#[test]
+fn lint_ignores_plain_evidence_without_kind() {
+    // A prose evidence note (no `kind`) is not an attachment stub, so
+    // the absence of a sibling folder is expected, not an issue.
+    let vault = vault_with_notes(
+        &[(
+            "portfolios/demo/2026-06-13-an-observation.md",
+            PLAIN_EVIDENCE,
+        )],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
