@@ -285,11 +285,15 @@ fn questions_list_render_groups_by_domain() {
     // Domain headings, capitalised.
     assert!(out.contains("\nResearch\n"), "out:\n{out}");
     assert!(out.contains("\nLife\n"), "out:\n{out}");
-    // Slugs + H1 text shown.
+    // Slugs + H1 text shown (now in a borderless table, so the slug and
+    // its question sit on the same row rather than joined by an em-dash).
+    // These fixtures are short enough not to wrap at the non-tty width
+    // (100), so the question text stays on one line and `contains` holds;
+    // a fixture long enough to wrap would split mid-string and break it.
     assert!(out.contains("does-sparse-beat-dense"));
     assert!(out.contains("can-surrogates-cut-cost-10x"));
     assert!(out.contains("where-do-i-want-to-be"));
-    assert!(out.contains("\u{2014} Does sparse beat dense?"));
+    assert!(out.contains("Does sparse beat dense?"));
 }
 
 #[test]
