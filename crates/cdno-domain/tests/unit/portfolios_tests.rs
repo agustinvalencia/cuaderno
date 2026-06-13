@@ -692,3 +692,51 @@ fn file_attachment_errors_on_slug_collision() {
         DomainError::Store(StoreError::AlreadyExists(_))
     ));
 }
+
+#[test]
+fn file_attachment_escapes_a_quote_in_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let art = dir.path().join("d.pdf");
+    std::fs::write(&art, b"fake").unwrap();
+    let (vault, store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    // A double-quote in `source` must not break the YAML frontmatter.
+    let stub = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &art,
+            "Chen \"GOAT\" 2025",
+            "projects/foo",
+            "",
+        )
+        .unwrap();
+    // Round-trips through the parser, quote intact (would panic on a
+    // malformed-frontmatter parse error if unescaped).
+    let fm = read_evidence_frontmatter(&store, &stub);
+    assert_eq!(fm.source, "Chen \"GOAT\" 2025");
+    assert_eq!(fm.kind.as_deref(), Some("pdf"));
+}
+
+#[test]
+fn file_attachment_escapes_angle_brackets_in_the_filename_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let art = dir.path().join("a>b.pdf");
+    std::fs::write(&art, b"fake").unwrap();
+    let (vault, store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    let stub = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &art,
+            "Odd name",
+            "projects/foo",
+            "",
+        )
+        .unwrap();
+    let raw = store.read_file(&stub).unwrap();
+    // The `>` in the angle-bracket link destination is backslash-escaped
+    // so it doesn't terminate the destination early.
+    assert!(raw.contains("a\\>b.pdf>)"), "escaped link dest:\n{raw}");
+}

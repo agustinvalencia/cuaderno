@@ -474,13 +474,20 @@ fn render_attachment_stub(
     } else {
         abstract_body.trim_end().to_owned()
     };
+    // Escape for the structured contexts: `source`/`origin` go into
+    // double-quoted YAML scalars, and the filename goes into an
+    // angle-bracketed CommonMark link destination. The H1 keeps the raw
+    // source (plain markdown text).
+    let source_yaml = yaml_double_quoted_escape(source);
+    let origin_yaml = yaml_double_quoted_escape(origin);
+    let link_dest = link_destination_escape(filename);
     format!(
         "---\n\
          type: evidence\n\
          created: {created}\n\
-         source: \"{source}\"\n\
+         source: \"{source_yaml}\"\n\
          portfolio: {portfolio}\n\
-         origin: \"[[{origin}]]\"\n\
+         origin: \"[[{origin_yaml}]]\"\n\
          kind: {kind}\n\
          ---\n\
          \n\
@@ -488,11 +495,26 @@ fn render_attachment_stub(
          \n\
          ## Attachment\n\
          \n\
-         [{filename}](<./{evidence_slug}/{filename}>)\n\
+         [{filename}](<./{evidence_slug}/{link_dest}>)\n\
          \n\
          ## Abstract\n\
          \n\
          {abstract_section}\n",
         created = created.format("%Y-%m-%d"),
     )
+}
+
+/// Escape `\` and `"` for embedding in a double-quoted YAML scalar, so a
+/// `source`/`origin` containing a quote can't break the frontmatter.
+fn yaml_double_quoted_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Escape the characters that would terminate or corrupt an
+/// angle-bracketed CommonMark link destination (`<`, `>`, `\`). Spaces
+/// are already valid inside `<…>`.
+fn link_destination_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('<', "\\<")
+        .replace('>', "\\>")
 }

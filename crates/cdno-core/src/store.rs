@@ -69,7 +69,13 @@ pub trait VaultStore: Send + Sync {
     /// binary) bytes — it's how non-markdown attachments enter the vault
     /// (#154). The bytes are never read back through this trait; the
     /// imported file is referenced by a markdown stub, not parsed.
-    /// Fails with [`StoreError::NotFound`] if `src` doesn't exist.
+    ///
+    /// **Create-only.** Fails with [`StoreError::NotFound`] (naming `src`)
+    /// if the source doesn't exist, and with [`StoreError::AlreadyExists`]
+    /// if `dest` is already occupied — it never overwrites. That keeps the
+    /// transaction's import rollback (which deletes the created file) from
+    /// ever deleting a pre-existing one, the same no-clobber posture as
+    /// [`move_file`](Self::move_file).
     fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError>;
 }
 
@@ -267,15 +273,25 @@ impl VaultStore for MemoryVaultStore {
     }
 
     fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
-        // The in-memory store holds text, but an imported attachment may
-        // be binary — read it lossily, which round-trips exactly for the
-        // UTF-8 fixtures tests use and is harmless otherwise (the bytes
-        // are never read back as meaningful content). Reading the *source*
-        // is unavoidable — it's a real external file — but no vault I/O
-        // happens beyond recording the entry, keeping the fake disk-free
-        // for the vault itself.
-        let bytes = fs::read(src).map_err(|e| io_to_store_error(e, dest))?;
+        if !src.exists() {
+            return Err(StoreError::NotFound(format!(
+                "attachment source: {}",
+                src.display()
+            )));
+        }
         let mut files = self.files.lock().expect("poisoned mutex");
+        // Create-only, like the FS impl: refuse to clobber so the
+        // transaction's import rollback (delete-the-created-file) can never
+        // delete something that pre-existed.
+        if files.contains_key(dest) {
+            return Err(StoreError::AlreadyExists(dest.to_string()));
+        }
+        // The in-memory store holds text, but an imported attachment may be
+        // binary — read it lossily. That round-trips exactly for the UTF-8
+        // fixtures tests use and is harmless otherwise: the bytes are never
+        // read back as meaningful content. Reading the *source* is
+        // unavoidable (it's a real external file); no vault disk I/O happens.
+        let bytes = fs::read(src).map_err(|e| io_to_store_error(e, dest))?;
         files.insert(
             dest.clone(),
             MemoryFile {
@@ -461,12 +477,25 @@ impl VaultStore for FsVaultStore {
     }
 
     fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        // Name the *source* on a missing-source error — that's the path the
+        // user typed, not the (not-yet-existing) vault destination.
+        if !src.exists() {
+            return Err(StoreError::NotFound(format!(
+                "attachment source: {}",
+                src.display()
+            )));
+        }
         let full = self.resolve(dest);
+        // Create-only: refuse to overwrite an existing file, so the
+        // transaction's import rollback (delete-the-created-file) is sound
+        // and can never delete something that pre-existed. Mirrors
+        // `move_file`'s no-clobber contract.
+        if full.exists() {
+            return Err(StoreError::AlreadyExists(dest.to_string()));
+        }
         if let Some(parent) = full.parent() {
             fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
         }
-        // `fs::copy` reads `src` and writes `dest` byte-for-byte; it errors
-        // (surfaced as the dest's StoreError) if `src` is missing.
         fs::copy(src, &full).map_err(|e| io_to_store_error(e, dest))?;
         Ok(())
     }

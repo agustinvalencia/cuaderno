@@ -245,3 +245,56 @@ fn delete_file_fails_when_missing() {
     let err = store.delete_file(&vp("missing.md")).unwrap_err();
     assert!(matches!(err, StoreError::NotFound(_)));
 }
+
+// ---- import_external (#154 attachments) ---------------------------------
+
+#[test]
+fn import_external_copies_bytes_for_byte_including_non_utf8() {
+    let (dir, store) = store();
+    let src = dir.path().join("source.bin");
+    let bytes: &[u8] = &[0x89, b'P', b'N', b'G', 0x00, 0xFF, 0xFE];
+    fs::write(&src, bytes).unwrap();
+
+    store
+        .import_external(&src, &vp("portfolios/p/2026-06-13-e/fig.png"))
+        .unwrap();
+
+    let copied = fs::read(dir.path().join("portfolios/p/2026-06-13-e/fig.png")).unwrap();
+    assert_eq!(copied, bytes, "artefact copied byte-for-byte");
+    assert!(src.exists(), "import is a copy, not a move");
+}
+
+#[test]
+fn import_external_missing_source_names_the_source() {
+    let (_dir, store) = store();
+    let err = store
+        .import_external(
+            std::path::Path::new("/no/such/source-xyz.pdf"),
+            &vp("portfolios/p/e/x.pdf"),
+        )
+        .unwrap_err();
+    let StoreError::NotFound(msg) = err else {
+        panic!("expected NotFound, got {err:?}");
+    };
+    assert!(msg.contains("attachment source"), "names the source: {msg}");
+    assert!(msg.contains("source-xyz.pdf"), "{msg}");
+}
+
+#[test]
+fn import_external_refuses_to_overwrite_an_existing_dest() {
+    let (dir, store) = store();
+    let src = dir.path().join("s.bin");
+    fs::write(&src, b"first").unwrap();
+    store.import_external(&src, &vp("a/b.pdf")).unwrap();
+
+    // Create-only: a second import to the same dest must refuse, so the
+    // transaction's import rollback can't delete a pre-existing file.
+    fs::write(&src, b"second").unwrap();
+    let err = store.import_external(&src, &vp("a/b.pdf")).unwrap_err();
+    assert!(matches!(err, StoreError::AlreadyExists(_)));
+    assert_eq!(
+        fs::read(dir.path().join("a/b.pdf")).unwrap(),
+        b"first",
+        "the original copy is untouched"
+    );
+}
