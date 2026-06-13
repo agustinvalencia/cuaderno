@@ -180,18 +180,27 @@ pub fn render_show(
         }
         _ => out.push_str("\nEvidence (none yet)\n"),
     }
-    for (_path, ev) in entries {
-        // Attachment stubs carry a media `kind` (#154); tag them so a
-        // non-markdown artefact is visually distinct from prose evidence.
-        let tag = ev
-            .kind
-            .as_deref()
-            .map(|k| format!("[{k}] "))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "  {}  {tag}{}  (origin: {})\n",
-            ev.created, ev.source, ev.origin,
-        ));
+    if !entries.is_empty() {
+        // created / source / origin columns; date and origin stay whole,
+        // the source reflows (#153). Attachment stubs carry a media `kind`
+        // (#154) — tag the source cell so a non-markdown artefact stays
+        // visually distinct from prose evidence.
+        let mut table = crate::output::styled_table();
+        for (_path, ev) in entries {
+            let tag = ev
+                .kind
+                .as_deref()
+                .map(|k| format!("[{k}] "))
+                .unwrap_or_default();
+            table.add_row(vec![
+                ev.created.to_string(),
+                format!("{tag}{}", ev.source),
+                ev.origin.clone(),
+            ]);
+        }
+        crate::output::no_wrap_columns(&mut table, &[0, 2]);
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
     }
     out
 }

@@ -141,7 +141,8 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
     assert!(out.contains("Project: (none)"));
     assert!(out.contains("Evidence (1 notes, last 2026-03-15)"));
     assert!(out.contains("Chen 2025"));
-    assert!(out.contains("origin: [[projects/surrogate]]"));
+    // origin is its own table column now, no inline "origin:" label.
+    assert!(out.contains("[[projects/surrogate]]"));
 }
 
 #[test]

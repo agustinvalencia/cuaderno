@@ -129,9 +129,13 @@ fn search_limit_caps_the_number_of_hits() {
     // Both notes match "sparse attention"; limit 1 returns only the top one.
     let out = search::build_search(dir.path(), "sparse attention", &SearchFilters::default(), 1)
         .expect("search builds");
-    // Exactly one numbered hit ("  1. ") and no "  2. ".
-    assert!(out.contains("  1. "), "output:\n{out}");
-    assert!(!out.contains("  2. "), "limit not honoured:\n{out}");
+    // Exactly one hit: precisely one of the two matching notes appears.
+    let alpha = out.contains("projects/alpha.md");
+    let daily = out.contains("journal/2026/daily/2026-05-15.md");
+    assert!(
+        alpha ^ daily,
+        "limit 1 should return exactly one hit:\n{out}"
+    );
 }
 
 #[test]
