@@ -90,6 +90,7 @@ impl Vault {
         due: NaiveDate,
         context: Context,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         let slug = slugify(title);
         let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
@@ -108,7 +109,6 @@ impl Vault {
             due = due.format("%Y-%m-%d")
         );
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -140,6 +140,7 @@ impl Vault {
         at: NaiveDateTime,
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
         if !self.store.exists(&active_path)? {
             return Err(DomainError::Store(StoreError::NotFound(format!(
@@ -185,7 +186,6 @@ impl Vault {
         let title_for_log = body_title_or_slug(&new_content, slug);
         let log_entry = format!("commitment completed [[{slug}]] \u{2014} {title_for_log}");
 
-        let mut tx = self.transaction();
         tx.write_file(done_path.clone(), new_content);
         tx.delete_file(active_path.clone());
         tx.upsert_note(entry_meta);

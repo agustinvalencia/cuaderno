@@ -25,7 +25,7 @@ use crate::index::{
     ArchivalSnapshot, DeadlineEntry, LinkEntry, MilestoneEntry, NoteEntry, VaultIndex,
 };
 use crate::path::VaultPath;
-use crate::store::VaultStore;
+use crate::store::{VaultStore, VaultWriteLock};
 
 /// A buffered set of file and index operations that are applied
 /// together by [`commit`](Self::commit).
@@ -38,6 +38,11 @@ pub struct VaultTransaction {
     index: Arc<dyn VaultIndex>,
     file_ops: Vec<FileOp>,
     index_ops: Vec<IndexOp>,
+    /// The vault write lock, held from construction until this
+    /// transaction drops (after `commit`) so the whole read-modify-write
+    /// of the owning operation serialises against other processes (#196).
+    /// Held, never read — its `Drop` does the work.
+    _lock: VaultWriteLock,
 }
 
 /// File operations the transaction can apply. Each variant owns the
@@ -96,14 +101,23 @@ enum Undo {
 }
 
 impl VaultTransaction {
-    /// Create an empty transaction bound to the given store and index.
-    pub fn new(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Self {
-        Self {
+    /// Create an empty transaction bound to the given store and index,
+    /// acquiring the vault write lock up front (#196).
+    ///
+    /// The lock is taken here, not at `commit`, deliberately: the lost
+    /// update is born at the *read* (two writers read the same base, both
+    /// rewrite it), so the lock must cover the operation's read-modify-write
+    /// — which means creating the transaction *before* reading. Acquiring
+    /// can fail or time out, hence the `Result`.
+    pub fn new(store: Arc<dyn VaultStore>, index: Arc<dyn VaultIndex>) -> Result<Self, StoreError> {
+        let lock = store.acquire_write_lock()?;
+        Ok(Self {
             store,
             index,
             file_ops: Vec::new(),
             index_ops: Vec::new(),
-        }
+            _lock: lock,
+        })
     }
 
     // ---- file operation buffer --------------------------------------

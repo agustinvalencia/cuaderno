@@ -73,6 +73,7 @@ impl Vault {
         routine: Option<&str>,
         content: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let activity = activity.trim();
         if activity.is_empty() {
             return Err(DomainError::EmptyField { field: "activity" });
@@ -107,7 +108,6 @@ impl Vault {
         let body = render_tracking_template(stewardship, &activity_slug, date, routine, content);
         let entry = build_index_entry_for(&path, &body, NoteType::Tracking.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), body);
         tx.upsert_note(entry);
         tx.commit()?;

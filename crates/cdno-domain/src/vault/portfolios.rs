@@ -66,6 +66,7 @@ impl Vault {
         question: &str,
         project: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let question = question.trim();
         if question.is_empty() {
             return Err(DomainError::EmptyField { field: "question" });
@@ -81,7 +82,6 @@ impl Vault {
         let content = render_portfolio_template(question, at.date(), project);
         let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
         tx.commit()?;
@@ -115,6 +115,7 @@ impl Vault {
         origin: &str,
         content: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let source = source.trim();
         let origin = origin.trim();
         if source.is_empty() {
@@ -156,7 +157,6 @@ impl Vault {
         let body = render_evidence_template(created, source, portfolio, origin, content);
         let entry = build_index_entry_for(&path, &body, NoteType::Evidence.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), body);
         tx.upsert_note(entry);
         tx.commit()?;
@@ -188,6 +188,7 @@ impl Vault {
         origin: &str,
         abstract_body: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let source = source.trim();
         let origin = origin.trim();
         if source.is_empty() {
@@ -254,7 +255,6 @@ impl Vault {
         );
         let entry = build_index_entry_for(&stub_path, &body, NoteType::Evidence.as_str())?;
 
-        let mut tx = self.transaction();
         // Import first so a failed stub write rolls the artefact back out.
         tx.import_external(artefact.to_path_buf(), artefact_dest);
         tx.write_file(stub_path.clone(), body);

@@ -45,6 +45,7 @@ impl Vault {
         slug: &str,
         new_state: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
@@ -86,7 +87,6 @@ impl Vault {
 
         let log_entry = format_state_change_log_entry(slug, &old_state, new_trimmed);
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;

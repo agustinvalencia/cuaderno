@@ -929,7 +929,7 @@ fn commit_stamps_the_real_file_mtime_so_a_written_note_fast_paths() {
     };
 
     let store_dyn: Arc<dyn VaultStore> = mem.clone();
-    let mut tx = VaultTransaction::new(store_dyn, index.clone());
+    let mut tx = VaultTransaction::new(store_dyn, index.clone()).expect("write lock");
     tx.write_file(path.clone(), content);
     tx.upsert_note(entry);
     tx.commit().unwrap();

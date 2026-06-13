@@ -66,6 +66,7 @@ impl Vault {
         domain: QuestionDomain,
         text: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let text = text.trim();
         if text.is_empty() {
             return Err(DomainError::EmptyField { field: "question" });
@@ -88,7 +89,6 @@ impl Vault {
         let content = render_question_template(text, domain, at.date());
         let entry = build_index_entry_for(&path, &content, NoteType::Question.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
         tx.commit()?;
@@ -119,6 +119,7 @@ impl Vault {
         slug: &str,
         new_status: QuestionStatus,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, current) = self.resolve_question_by_slug(slug)?;
         if current.status == new_status {
             return Ok(path);
@@ -132,7 +133,6 @@ impl Vault {
 
         let log_entry = format_status_log_entry(current.domain, slug, current.status, new_status);
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
