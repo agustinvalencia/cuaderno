@@ -15,7 +15,7 @@ use cdno_domain::note_type::NoteType;
 use crate::dto::{
     DailyNoteViewDto, MonthlyContextDto, OrientationContextDto, PortfolioDetailDto,
     ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
-    StewardshipTrackingDto, WeeklyContextDto,
+    StewardshipTrackingDto, WeeklyContextDto, WeeklyNoteViewDto,
 };
 
 use crate::input::*;
@@ -257,6 +257,20 @@ impl CuadernoServer {
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let view = self.vault.read_daily_note(date).map_err(into_mcp_error)?;
         json_result(DailyNoteViewDto::from(view))
+    }
+
+    #[tool(
+        description = "Read the weekly-review note for the ISO week containing `date` (any day in the week; defaults to this week). Returns `{ path, exists, markdown }`. A week with no note yet returns `exists: false` and empty `markdown` rather than erroring, so a weekly-review skill can check whether the week is already started before composing. The note's sections are Wins, Challenges, One Improvement, and Next Week's Focus (the forward plan)."
+    )]
+    pub async fn read_weekly_note(
+        &self,
+        Parameters(input): Parameters<ReadWeeklyNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let date = input
+            .date
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let view = self.vault.read_weekly_note(date).map_err(into_mcp_error)?;
+        json_result(WeeklyNoteViewDto::from(view))
     }
 
     #[tool(

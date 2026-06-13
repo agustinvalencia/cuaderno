@@ -45,10 +45,10 @@ fn advertised_catalogue_matches_expected_surface() {
     let got: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
 
     // Sorted to match `advertised_tools`'s order so a failure points
-    // at the missing or extra tool cleanly. The 16 design §11 tools
-    // plus the two daily-note tools added in GH #158.
+    // at the missing or extra tool cleanly. The 16 design §11 tools,
+    // the two daily-note tools (GH #158), and the two weekly-note tools.
     let mut expected = vec![
-        // Context (9)
+        // Context (10)
         "get_orientation",
         "get_weekly_context",
         "get_monthly_context",
@@ -57,8 +57,9 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_stewardship_tracking",
         "get_active_questions",
         "read_daily_note",
+        "read_weekly_note",
         "search_notes",
-        // Operations (14)
+        // Operations (15)
         "append_to_log",
         "file_to_portfolio",
         "update_project_state",
@@ -69,6 +70,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "complete_commitment",
         "create_tracking_entry",
         "upsert_daily_section",
+        "upsert_weekly_section",
         "create_project",
         "create_portfolio",
         "create_question",
@@ -81,7 +83,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 27);
+    assert_eq!(tools.len(), 29);
 }
 
 #[test]

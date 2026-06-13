@@ -21,8 +21,8 @@ use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput,
     CompleteCommitmentInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
-    ProjectSlugInput, ReadDailyNoteInput, SetQuestionStatusInput, UpdateProjectStateInput,
-    UpsertDailySectionInput,
+    ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput, SetQuestionStatusInput,
+    UpdateProjectStateInput, UpsertDailySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -491,6 +491,98 @@ async fn read_daily_note_returns_markdown_when_present() {
 
     assert_eq!(value["exists"].as_bool(), Some(true));
     assert!(value["markdown"].as_str().unwrap().contains("## Logs"));
+}
+
+// ---------------------------------------------------------------------
+// read_weekly_note / upsert_weekly_section
+// ---------------------------------------------------------------------
+
+/// A Wednesday in ISO week 2026-W18.
+fn week_day() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 4, 29).unwrap()
+}
+
+#[tokio::test]
+async fn upsert_weekly_section_writes_a_review_section() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .upsert_weekly_section(Parameters(UpsertWeeklySectionInput {
+            section: "Next Week's Focus".to_owned(),
+            content: "Draft the methods section.".to_owned(),
+            date: Some(week_day()),
+            append: false,
+        }))
+        .await
+        .expect("upsert_weekly_section");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.ends_with("2026-W18.md"), "weekly path: {path}");
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("week: 2026-W18"), "frontmatter:\n{body}");
+    assert!(
+        body.contains("## Next Week's Focus\nDraft the methods section."),
+        "body:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_weekly_section_rejects_an_unknown_section() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let err = server
+        .upsert_weekly_section(Parameters(UpsertWeeklySectionInput {
+            section: "Retrospective".to_owned(),
+            content: "x".to_owned(),
+            date: Some(week_day()),
+            append: false,
+        }))
+        .await
+        .expect_err("unknown weekly section should be rejected");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("section"));
+}
+
+#[tokio::test]
+async fn read_weekly_note_reports_absence_then_presence() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let before = decode_json(
+        &server
+            .read_weekly_note(Parameters(ReadWeeklyNoteInput {
+                date: Some(week_day()),
+            }))
+            .await
+            .expect("read_weekly_note (absent)"),
+    );
+    assert_eq!(before["exists"].as_bool(), Some(false));
+
+    server
+        .upsert_weekly_section(Parameters(UpsertWeeklySectionInput {
+            section: "Wins".to_owned(),
+            content: "- Shipped it.".to_owned(),
+            date: Some(week_day()),
+            append: false,
+        }))
+        .await
+        .expect("seed weekly note");
+
+    let after = decode_json(
+        &server
+            .read_weekly_note(Parameters(ReadWeeklyNoteInput {
+                date: Some(week_day()),
+            }))
+            .await
+            .expect("read_weekly_note (present)"),
+    );
+    assert_eq!(after["exists"].as_bool(), Some(true));
+    assert!(
+        after["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("- Shipped it.")
+    );
 }
 
 // ---------------------------------------------------------------------

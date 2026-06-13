@@ -17,4 +17,5 @@ pub use vault::{
     DailyLogLine, DailyNoteView, DailySection, LapsedHabit, OrientationContext, PortfolioSummary,
     ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionSummary, SearchFilters,
     SearchResultEntry, StewardshipSummary, StewardshipVariant, TopAction, TrackingEntry, Vault,
+    WeeklyNoteView, WeeklySection,
 };

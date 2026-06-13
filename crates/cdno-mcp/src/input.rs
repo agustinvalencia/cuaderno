@@ -166,6 +166,31 @@ pub struct UpsertDailySectionInput {
     pub append: bool,
 }
 
+/// Input for `read_weekly_note`. `date` is any day in the target ISO
+/// week; omitted = the current week.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadWeeklyNoteInput {
+    /// ISO `YYYY-MM-DD`, any day in the week. Omitted = this week.
+    pub date: Option<chrono::NaiveDate>,
+}
+
+/// Input for `upsert_weekly_section`. `section` is one of the weekly-review
+/// sections; `date` is any day in the target ISO week (omitted = this
+/// week); `append` defaults to replace.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpsertWeeklySectionInput {
+    /// One of `Wins`, `Challenges`, `One Improvement`, `Next Week's Focus`
+    /// (case-insensitive).
+    pub section: String,
+    #[serde(default)]
+    pub content: String,
+    /// ISO `YYYY-MM-DD`, any day in the week. Omitted = this week.
+    pub date: Option<chrono::NaiveDate>,
+    /// Append to the section instead of replacing it (default: replace).
+    #[serde(default)]
+    pub append: bool,
+}
+
 /// Input for `create_project` (GH #162). `core_question` is an optional
 /// bare wikilink target (e.g. `questions/research/foo`).
 #[derive(Debug, Deserialize, JsonSchema)]
