@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.10 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.10 is a CLI polish release: every list-style command (`questions`, `portfolio`/`stewardship list`, the `orient`/`status`/`commitments` dashboards, `portfolio show`, `search`) now renders through a shared borderless table that wraps long text to the terminal instead of overflowing the edge (#153). No new tools; presentation stays in `cdno-cli` — the MCP server and domain are untouched.
+**Current release**: 0.1.11 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (29 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.11 makes the weekly note a first-class, writable artefact: the MCP server gains `read_weekly_note` + `upsert_weekly_section` (27 → 29 tools) to persist the design §5.2 weekly note (Wins / Challenges / One Improvement / Next Week's Focus), and the CLI gains `cdno weekly` to read it from the terminal (#193, #194). The review and the forward plan share one artefact per ISO week.
 
 ## Phase summary
 

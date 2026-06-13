@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-06-13
+
+Minor release: the weekly note becomes a first-class, writable artefact, completing the weekly loop. The MCP server gains a weekly-note read/write pair (27 → 29 tools) and the CLI gains `cdno weekly`.
+
+### Added — weekly note
+
+- **Weekly-note write surface** (#193) — `read_weekly_note` and `upsert_weekly_section` MCP tools (27 → 29) persist the design §5.2 weekly note (`journal/<iso-year>/weekly/<YYYY>-Www.md`): ISO-week frontmatter (`week`, `date_start` = Monday, `date_end` = Sunday) plus the four sections Wins, Challenges, One Improvement, and Next Week's Focus (the forward plan). Keyed by ISO week — any day in the week writes the same note; `append: false` (default) composes the section, `append: true` accrues. Mirrors the daily-section seam (#158); the review and the plan share one artefact per week, so cdno keeps no separate weekly-plan note.
+- **`cdno weekly`** (#194) — prints the week's note with the frontmatter stripped; `--date <YYYY-MM-DD>` selects another ISO week (any day in it); a week with no note shows a placeholder pointing at the review/planning skills. The terminal window onto the weekly note, completing CLI/MCP parity for weekly content.
+
 ## [0.1.10] - 2026-06-13
 
 Minor release: prettier CLI output. Every list-style command now renders through a shared borderless table that wraps long text to the terminal width instead of running off the edge. No new tools or commands; presentation stays in the CLI (the MCP server and domain are untouched). Tool count unchanged (27).
