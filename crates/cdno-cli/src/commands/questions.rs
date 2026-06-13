@@ -58,6 +58,8 @@ pub fn render(active: &[QuestionSummary]) -> String {
             };
             table.add_row(vec![q.slug.clone(), text]);
         }
+        // Keep the slug whole; only the question text reflows.
+        crate::output::no_wrap_columns(&mut table, &[0]);
         out.push_str(&crate::output::render(&table));
         out.push('\n');
     }

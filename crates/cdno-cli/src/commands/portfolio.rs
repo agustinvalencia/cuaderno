@@ -134,11 +134,13 @@ fn show(
 /// Render `cdno portfolio list` output. Public so tests can assert on
 /// the formatted text without capturing stdout.
 pub fn render_list(summaries: &[PortfolioSummary]) -> String {
-    let mut out = String::from("Portfolios\n");
     if summaries.is_empty() {
-        out.push_str("  (no portfolios \u{2014} create one with `cdno portfolio create`)\n");
-        return out;
+        return "Portfolios\n  (no portfolios \u{2014} create one with `cdno portfolio create`)\n"
+            .to_owned();
     }
+    // slug / question / staleness columns; the question wraps to the
+    // terminal rather than running off the edge (#153).
+    let mut table = crate::output::styled_table();
     for p in summaries {
         let badge = match p.staleness_days {
             Some(days) if p.evidence_count > 0 => {
@@ -146,9 +148,11 @@ pub fn render_list(summaries: &[PortfolioSummary]) -> String {
             }
             _ => "no evidence yet".to_owned(),
         };
-        out.push_str(&format!("  {} \u{2014} {} ({badge})\n", p.slug, p.question));
+        table.add_row(vec![p.slug.clone(), p.question.clone(), badge]);
     }
-    out
+    // Keep the slug and staleness badge whole; only the question reflows.
+    crate::output::no_wrap_columns(&mut table, &[0, 2]);
+    format!("Portfolios\n{}\n", crate::output::render(&table))
 }
 
 /// Render `cdno portfolio show` output. Public for test access.
