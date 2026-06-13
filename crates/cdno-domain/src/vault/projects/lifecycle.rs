@@ -92,6 +92,7 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active = self.active_projects()?;
         let cap = self.config.vault.max_active_projects as usize;
         let status = if active.len() >= cap {
@@ -130,7 +131,6 @@ impl Vault {
         let content = render_project_template(today, title, context, status, core_question);
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
         tx.commit()?;
@@ -152,6 +152,7 @@ impl Vault {
     ///   slug-uniqueness invariant from #24 this can't normally happen
     ///   but a manual edit or a rogue write could).
     pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (active_path, _doc) = self.resolve_active_project(slug)?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
@@ -169,7 +170,6 @@ impl Vault {
 
         let log_entry = format!("project [[{slug}]] parked");
 
-        let mut tx = self.transaction();
         tx.write_file(parked_path.clone(), new_content);
         tx.delete_file(active_path.clone());
         tx.upsert_note(entry_meta);
@@ -201,6 +201,7 @@ impl Vault {
         at: NaiveDateTime,
         slug: &str,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         // Cap check first so a "you can't activate, you're at cap"
         // error fires before any file resolution work — clearer for
         // the user when they're at cap and trying to bring something
@@ -258,7 +259,6 @@ impl Vault {
 
         let log_entry = format!("project [[{slug}]] activated");
 
-        let mut tx = self.transaction();
         tx.write_file(active_path.clone(), new_content);
         tx.delete_file(parked_path.clone());
         tx.upsert_note(entry_meta);

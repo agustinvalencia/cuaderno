@@ -39,7 +39,7 @@ fn sample_note(path: &str, note_type: &str) -> NoteEntry {
 fn empty_transaction_commits_successfully() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    let tx = VaultTransaction::new(store, index);
+    let tx = VaultTransaction::new(store, index).expect("write lock");
     assert!(tx.commit().is_ok());
 }
 
@@ -50,7 +50,8 @@ fn commit_applies_file_and_index_ops_in_order() {
     let mut tx = VaultTransaction::new(
         store.clone() as Arc<dyn VaultStore>,
         index.clone() as Arc<dyn VaultIndex>,
-    );
+    )
+    .expect("write lock");
     tx.write_file(vp("projects/foo.md"), "initial\n");
     tx.upsert_note(sample_note("projects/foo.md", "project"));
     tx.commit().unwrap();
@@ -76,7 +77,8 @@ fn commit_applies_append_on_top_of_existing_content() {
     let mut tx = VaultTransaction::new(
         store.clone() as Arc<dyn VaultStore>,
         index.clone() as Arc<dyn VaultIndex>,
-    );
+    )
+    .expect("write lock");
     tx.append_to_file(vp("log.md"), "line 2\n");
     tx.commit().unwrap();
 
@@ -93,7 +95,8 @@ fn commit_applies_move_and_delete() {
     let mut tx = VaultTransaction::new(
         store.clone() as Arc<dyn VaultStore>,
         index.clone() as Arc<dyn VaultIndex>,
-    );
+    )
+    .expect("write lock");
     tx.move_file(vp("a.md"), vp("c.md"));
     tx.delete_file(vp("b.md"));
     tx.commit().unwrap();
@@ -117,7 +120,7 @@ fn file_write_failure_rolls_back_previous_writes() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     // Overwrites an existing file — rollback must restore the original.
     tx.write_file(vp("existing.md"), "modified");
     // This will be the 2nd write → triggers the failure.
@@ -138,7 +141,7 @@ fn file_write_failure_rollback_deletes_newly_created_file() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.write_file(vp("new1.md"), "will land then get rolled back");
     tx.write_file(vp("new2.md"), "will never land");
 
@@ -156,7 +159,7 @@ fn append_failure_rolls_back_to_original_length() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.append_to_file(vp("log.md"), "appended\n"); // applies, then rolls back
     tx.write_file(vp("new.md"), "fails"); // trips the 2nd-op failure
 
@@ -173,7 +176,7 @@ fn move_failure_rolls_back_previous_moves() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.move_file(vp("a.md"), vp("a2.md")); // applies, then gets moved back
     tx.move_file(vp("b.md"), vp("b2.md")); // fails
 
@@ -189,7 +192,7 @@ fn first_op_failure_reports_no_rollback_steps() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 1));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.write_file(vp("never.md"), "nope");
 
     let err = tx.commit().unwrap_err();
@@ -218,7 +221,7 @@ fn index_failure_after_files_succeeded_reports_index_stale() {
         FailPoint::UpsertNote,
     ));
 
-    let mut tx = VaultTransaction::new(store.clone(), index);
+    let mut tx = VaultTransaction::new(store.clone(), index).expect("write lock");
     tx.write_file(vp("foo.md"), "landed");
     tx.upsert_note(sample_note("foo.md", "daily"));
 
@@ -242,7 +245,7 @@ fn multiple_index_failures_are_all_collected() {
         FailPoint::AlwaysFail,
     ));
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.upsert_note(sample_note("a.md", "daily"));
     tx.upsert_note(sample_note("b.md", "daily"));
     tx.replace_tags(vp("a.md"), vec!["x".to_owned()]);
@@ -483,7 +486,7 @@ fn import_external_commits_alongside_a_stub_write() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store.clone(), index);
+    let mut tx = VaultTransaction::new(store.clone(), index).expect("write lock");
     tx.import_external(src, vp("portfolios/p/2026-06-13-d/derivation.pdf"));
     tx.write_file(
         vp("portfolios/p/2026-06-13-d.md"),
@@ -510,7 +513,7 @@ fn import_external_rolls_back_when_a_later_op_fails() {
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(inner.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
-    let mut tx = VaultTransaction::new(store, index);
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
     tx.import_external(src, vp("portfolios/p/2026-06-13-d/derivation.pdf"));
     tx.write_file(vp("portfolios/p/2026-06-13-d.md"), "stub");
     let err = tx.commit().unwrap_err();

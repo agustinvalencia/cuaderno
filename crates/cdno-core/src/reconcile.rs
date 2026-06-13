@@ -124,7 +124,9 @@ pub fn reconcile(
             // op failure — means the note is *still* in the index, so
             // we record it as an error rather than marking it removed.
             // The next reconciliation pass will retry.
-            let mut tx = VaultTransaction::new(store.clone(), index.clone());
+            let mut tx = VaultTransaction::new(store.clone(), index.clone()).map_err(|e| {
+                IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+            })?;
             tx.remove_note(path.clone());
             match tx.commit() {
                 Ok(()) => report.removed += 1,
@@ -170,7 +172,9 @@ pub fn reconcile(
         // An FTS row whose note is gone. `remove_note` deletes both the
         // (already-absent) notes row and the FTS row, so it's the right
         // primitive even though only the FTS side has anything to drop.
-        let mut tx = VaultTransaction::new(store.clone(), index.clone());
+        let mut tx = VaultTransaction::new(store.clone(), index.clone()).map_err(|e| {
+            IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+        })?;
         tx.remove_note(path.clone());
         match tx.commit() {
             Ok(()) => report.fts_removed += 1,
@@ -201,7 +205,8 @@ fn backfill_fts_one(
         Frontmatter::parse(&content).map_err(|e| format!("frontmatter parse failed: {e}"))?;
     let title = crate::extractors::first_h1(body);
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone());
+    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+        .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.replace_fts(path.clone(), title, body.to_owned());
     tx.commit().map_err(|e| format!("commit failed: {e}"))?;
     Ok(())
@@ -225,7 +230,8 @@ fn restamp_meta(
     updated.size = size;
     updated.indexed_at_ns = system_time_to_ns(SystemTime::now());
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone());
+    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+        .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.upsert_note(updated);
     tx.commit()
         .map_err(|e| format!("mtime re-stamp failed: {e}"))?;
@@ -369,7 +375,8 @@ fn reconcile_one(
         Outcome::Added
     };
 
-    let mut tx = VaultTransaction::new(store.clone(), index.clone());
+    let mut tx = VaultTransaction::new(store.clone(), index.clone())
+        .map_err(|e| format!("acquiring write lock: {e}"))?;
     tx.upsert_note(entry);
     tx.replace_deadlines(path.clone(), deadlines);
     tx.replace_milestones(path.clone(), milestones);

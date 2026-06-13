@@ -104,7 +104,14 @@ impl Vault {
     /// Start an uncommitted transaction bound to this vault's store
     /// and index. Operation submodules use this to enqueue a batch
     /// of writes and call `commit()` when ready.
-    pub(in crate::vault) fn transaction(&self) -> VaultTransaction {
-        VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))
+    /// Acquires the vault write lock up front (#196), so the returned
+    /// transaction must be created *before* a write op reads the file it
+    /// is about to rewrite — that is what serialises the read-modify-write
+    /// against other processes. Hence `Result`.
+    pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
+        Ok(VaultTransaction::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.index),
+        )?)
     }
 }

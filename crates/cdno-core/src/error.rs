@@ -46,6 +46,9 @@ pub enum StoreError {
         path: String,
         source: std::io::Error,
     },
+
+    #[error("timed out after {0:?} waiting for the vault write lock")]
+    LockTimeout(std::time::Duration),
 }
 
 /// Errors from the vault index (VaultIndex).

@@ -235,7 +235,7 @@ fn commit_makes_a_written_note_searchable_without_reconcile() {
     let content =
         "---\ntype: inbox\ntitle: Capture\n---\n# Capture\n\nremember the parking permit\n";
 
-    let mut tx = VaultTransaction::new(store.clone(), index_dyn.clone());
+    let mut tx = VaultTransaction::new(store.clone(), index_dyn.clone()).expect("write lock");
     tx.write_file(path.clone(), content);
     tx.upsert_note(note("inbox/capture.md", "inbox", "Capture"));
     tx.commit().unwrap();
@@ -263,7 +263,7 @@ fn commit_sources_the_fts_title_from_the_body_h1() {
     let index_dyn: Arc<dyn VaultIndex> = index.clone();
 
     let write = |p: &str, content: &str| {
-        let mut tx = VaultTransaction::new(store.clone(), index_dyn.clone());
+        let mut tx = VaultTransaction::new(store.clone(), index_dyn.clone()).expect("write lock");
         tx.write_file(vp(p), content);
         tx.upsert_note(note(p, "project", "ignored")); // entry.title is unused for FTS
         tx.commit().unwrap();

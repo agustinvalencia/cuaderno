@@ -88,7 +88,7 @@ impl Vault {
 
         let log_entry = format_action_added_log_entry(slug, action_text, energy);
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -165,7 +165,7 @@ impl Vault {
 
         let log_entry = format_action_done_log_entry(slug, &removed_full_text);
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         // If the completed bullet wikilinks an action note, archive the

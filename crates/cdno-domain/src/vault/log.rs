@@ -36,7 +36,7 @@ impl Vault {
         at: NaiveDateTime,
         entry: &str,
     ) -> Result<VaultPath, DomainError> {
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         let path = self.stage_daily_log(at, entry, &mut tx)?;
         tx.commit()?;
         Ok(path)

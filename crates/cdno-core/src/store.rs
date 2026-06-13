@@ -1,13 +1,46 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::error::StoreError;
 use crate::file_meta::FileMeta;
 use crate::path::VaultPath;
+
+/// How long [`VaultStore::acquire_write_lock`] waits for the vault write
+/// lock before giving up. Bounded so a wedged holder surfaces as a
+/// [`StoreError::LockTimeout`] rather than an unbounded hang; mirrors the
+/// SQLite index's `busy_timeout`. The OS releases the lock on process
+/// death, so a crashed holder never deadlocks the next writer.
+const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Guard for the vault write lock (#196). For [`FsVaultStore`] it holds an
+/// OS advisory lock on `.cuaderno/.lock`; for in-memory stores it is a
+/// no-op. The lock releases when this guard drops — and, being tied to an
+/// open file descriptor, on process death too.
+#[derive(Debug)]
+pub struct VaultWriteLock {
+    file: Option<File>,
+}
+
+impl VaultWriteLock {
+    /// A no-op guard, for stores that share no on-disk lock file.
+    fn noop() -> Self {
+        Self { file: None }
+    }
+}
+
+impl Drop for VaultWriteLock {
+    fn drop(&mut self) {
+        if let Some(file) = &self.file {
+            // Dropping the file closes the fd, which releases the lock
+            // anyway; the explicit unlock just makes release prompt.
+            let _ = file.unlock();
+        }
+    }
+}
 
 /// Abstract storage backend for a vault.
 ///
@@ -77,6 +110,18 @@ pub trait VaultStore: Send + Sync {
     /// ever deleting a pre-existing one, the same no-clobber posture as
     /// [`move_file`](Self::move_file).
     fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError>;
+
+    /// Acquire the vault's exclusive write lock, to be held for the whole
+    /// read-modify-write of a write operation so concurrent cdno
+    /// processes serialise their writes instead of clobbering each other
+    /// (#196). The returned guard releases on drop.
+    ///
+    /// The default is a no-op — correct for in-memory stores and test
+    /// doubles, which share no on-disk file across processes.
+    /// [`FsVaultStore`] overrides it with an OS advisory lock.
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        Ok(VaultWriteLock::noop())
+    }
 }
 
 /// In-memory [`VaultStore`] used for fast, deterministic domain tests.
@@ -498,5 +543,48 @@ impl VaultStore for FsVaultStore {
         }
         fs::copy(src, &full).map_err(|e| io_to_store_error(e, dest))?;
         Ok(())
+    }
+
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        // The lock file lives in `.cuaderno/` — present in any real vault,
+        // but create it defensively so a freshly-`init`ed vault locks too.
+        let dir = self.root.join(crate::paths::CUADERNO_DIR);
+        fs::create_dir_all(&dir).map_err(|e| StoreError::Io {
+            path: crate::paths::CUADERNO_DIR.to_string(),
+            source: e,
+        })?;
+        let lock_path = dir.join(".lock");
+        let lock_name = ".cuaderno/.lock";
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| StoreError::Io {
+                path: lock_name.to_string(),
+                source: e,
+            })?;
+
+        // Poll `try_lock` to a deadline rather than block forever: a wedged
+        // holder times out, and the OS frees the lock on process death so a
+        // crashed holder never deadlocks us.
+        let deadline = Instant::now() + WRITE_LOCK_TIMEOUT;
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(VaultWriteLock { file: Some(file) }),
+                Err(TryLockError::WouldBlock) => {
+                    if Instant::now() >= deadline {
+                        return Err(StoreError::LockTimeout(WRITE_LOCK_TIMEOUT));
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(TryLockError::Error(e)) => {
+                    return Err(StoreError::Io {
+                        path: lock_name.to_string(),
+                        source: e,
+                    });
+                }
+            }
+        }
     }
 }

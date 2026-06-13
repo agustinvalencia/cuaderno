@@ -52,6 +52,7 @@ impl Vault {
         milestone: Option<&str>,
         due: Option<NaiveDate>,
     ) -> Result<(VaultPath, VaultTransaction), DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         let slug = slugify(title);
         let path = Self::active_action_path(&slug)?;
@@ -72,7 +73,6 @@ impl Vault {
         });
         let entry = build_index_entry_for(&path, &content, NoteType::Action.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
         Ok((path, tx))

@@ -177,6 +177,7 @@ impl Vault {
         recurrence: Recurrence,
         next_date: NaiveDate,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         if title.is_empty() {
             return Err(DomainError::EmptyField { field: "title" });
@@ -194,7 +195,6 @@ impl Vault {
         let entry_meta =
             build_index_entry_for(&path, &new_content, NoteType::Stewardship.as_str())?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         tx.commit()?;
@@ -419,7 +419,7 @@ fn write_stewardship(
     content: &str,
 ) -> Result<VaultPath, DomainError> {
     let entry = build_index_entry_for(path, content, NoteType::Stewardship.as_str())?;
-    let mut tx = vault.transaction();
+    let mut tx = vault.transaction()?;
     tx.write_file(path.clone(), content.to_owned());
     tx.upsert_note(entry);
     tx.commit()?;

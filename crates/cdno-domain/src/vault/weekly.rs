@@ -131,6 +131,7 @@ impl Vault {
         content: &str,
         append: bool,
     ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let path = weekly_note_path(week_of)?;
         let heading = section.heading();
         let body = format_section_body(content);
@@ -152,7 +153,6 @@ impl Vault {
 
         let entry_meta = build_index_entry_for(&path, &new_content, "weekly")?;
 
-        let mut tx = self.transaction();
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         tx.commit()?;

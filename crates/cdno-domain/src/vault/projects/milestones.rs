@@ -55,7 +55,7 @@ impl Vault {
         let log_entry =
             format!("milestone added to [[{slug}]] \u{2014} {title} ({keyword}: {date_str})");
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -134,7 +134,7 @@ impl Vault {
 
         let log_entry = format!("milestone done on [[{slug}]] \u{2014} {title}");
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;

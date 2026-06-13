@@ -55,7 +55,7 @@ impl Vault {
 
         let log_entry = format!("waiting added on [[{slug}]] \u{2014} {description}");
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -136,7 +136,7 @@ impl Vault {
 
         let log_entry = format!("waiting resolved on [[{slug}]] \u{2014} {removed_text}");
 
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;

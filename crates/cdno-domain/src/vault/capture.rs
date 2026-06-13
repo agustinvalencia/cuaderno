@@ -41,7 +41,7 @@ impl Vault {
         let content = scaffold_inbox_note(at, text);
 
         let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
-        let mut tx = self.transaction();
+        let mut tx = self.transaction()?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
         tx.commit()?;
