@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
 use crate::bootstrap;
-use crate::commands::orient::commitment_line;
+use crate::commands::orient::commitment_cells;
 
 /// Render the commitments timeline for the vault at `root` as of
 /// `today`, looking `weeks` weeks ahead (plus the standing overdue
@@ -38,13 +38,16 @@ pub fn build_commitments(root: &Path, today: NaiveDate, weeks: u32) -> Result<St
 
 fn render(entries: &[cdno_domain::CommitmentEntry], weeks: u32) -> String {
     let suffix = if weeks == 1 { "" } else { "s" };
-    let mut out = format!("Commitments (next {weeks} week{suffix}, plus overdue)\n\n");
+    let header = format!("Commitments (next {weeks} week{suffix}, plus overdue)\n\n");
     if entries.is_empty() {
-        out.push_str("  (nothing due)\n");
-    } else {
-        for entry in entries {
-            out.push_str(&format!("  {}\n", commitment_line(entry)));
-        }
+        return format!("{header}  (nothing due)\n");
     }
-    out
+    // date / title / source columns; date and source stay whole, the
+    // title reflows. Shared cell layout with `cdno orient` (#153).
+    let mut table = crate::output::styled_table();
+    for entry in entries {
+        table.add_row(commitment_cells(entry));
+    }
+    crate::output::no_wrap_columns(&mut table, &[0, 2]);
+    format!("{header}{}\n", crate::output::render(&table))
 }

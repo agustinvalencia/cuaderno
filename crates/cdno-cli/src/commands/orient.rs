@@ -49,9 +49,14 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
     if ctx.commitments.is_empty() {
         out.push_str("  (nothing due)\n");
     } else {
+        let mut table = crate::output::styled_table();
         for c in &ctx.commitments {
-            out.push_str(&format!("  {}\n", commitment_line(c)));
+            table.add_row(commitment_cells(c));
         }
+        // date and source stay whole; the title reflows.
+        crate::output::no_wrap_columns(&mut table, &[0, 2]);
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
     }
     out.push('\n');
 
@@ -59,14 +64,17 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
     if ctx.projects.is_empty() {
         out.push_str("  (none — create one with `cdno project create`)\n");
     } else {
+        // Each project is one row: the slug stays whole in its own
+        // column, and a single detail cell carries the state line plus
+        // the `next:` action, both wrapping to the terminal.
+        let mut table = crate::output::styled_table();
         for p in &ctx.projects {
-            out.push_str(&format!(
-                "  {} — {}\n    next: {}\n",
-                p.slug,
-                state_line(p),
-                project_next(p),
-            ));
+            let detail = format!("{}\nnext: {}", state_line(p), project_next(p));
+            table.add_row(vec![p.slug.clone(), detail]);
         }
+        crate::output::no_wrap_columns(&mut table, &[0]);
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
     }
     out.push('\n');
 
@@ -74,9 +82,13 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
     // there's something to show.
     if !ctx.lapsed_habits.is_empty() {
         out.push_str("Lapsed habits\n");
+        let mut table = crate::output::styled_table();
         for h in &ctx.lapsed_habits {
-            out.push_str(&format!("  {} — {}\n", h.stewardship, h.detail));
+            table.add_row(vec![h.stewardship.clone(), h.detail.clone()]);
         }
+        crate::output::no_wrap_columns(&mut table, &[0]);
+        out.push_str(&crate::output::render(&table));
+        out.push('\n');
         out.push('\n');
     }
 
@@ -86,17 +98,15 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
     out
 }
 
-/// Format one commitment line: `<date>  <title>  (<source>)` with a
-/// trailing `— overdue` marker when past due. Shared with the
-/// `cdno commitments` list view so both surfaces print identically.
-pub(crate) fn commitment_line(c: &CommitmentEntry) -> String {
-    let overdue = if c.is_overdue { "  — overdue" } else { "" };
-    format!(
-        "{}  {}  ({}){overdue}",
-        c.date,
-        c.title,
-        source_label(&c.source),
-    )
+/// The cells for one commitment row: `date` / `title` / `source`, with
+/// the overdue marker appended to the source cell. Shared with the
+/// `cdno commitments` list view so both surfaces tabulate identically.
+pub(crate) fn commitment_cells(c: &CommitmentEntry) -> Vec<String> {
+    let mut source = source_label(&c.source);
+    if c.is_overdue {
+        source.push_str("  — overdue");
+    }
+    vec![c.date.to_string(), c.title.clone(), source]
 }
 
 pub(crate) fn source_label(source: &CommitmentSource) -> String {
