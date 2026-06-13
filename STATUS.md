@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.7 (2026-06-12). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.7 is a quality release: slug not-found errors now name the valid set so a caller (often an agent) self-corrects instead of guessing again (#180, #181), and startup reconciliation gained an mtime fast-path that skips re-reading unchanged files (#94). No new tools or commands; the v0.1.6 content search (`search_notes` + `cdno search`) remains the latest surface addition.
+**Current release**: 0.1.8 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (27 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.8 lets portfolios hold non-markdown evidence: `cdno file --attach` (and the `file_to_portfolio` `attach` parameter) imports a PDF/image/figure/recording beside a linked markdown stub whose body is the artefact's abstract — the only thing search and other agents see of it — with the media `kind` recorded and surfaced through retrieval, and a `cdno lint` check that catches a broken stub-to-artefact-folder pairing either way (#154, #183, #184). No new tools; the `file_to_portfolio` tool gained the `attach` parameter.
 
 ## Phase summary
 
