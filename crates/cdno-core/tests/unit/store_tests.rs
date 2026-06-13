@@ -49,6 +49,10 @@ impl VaultStore for StubStore {
     fn metadata(&self, _path: &VaultPath) -> Result<FileMeta, StoreError> {
         unimplemented!()
     }
+
+    fn import_external(&self, _src: &std::path::Path, _dest: &VaultPath) -> Result<(), StoreError> {
+        unimplemented!()
+    }
 }
 
 fn assert_send_sync<T: Send + Sync>() {}

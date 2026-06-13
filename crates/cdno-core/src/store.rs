@@ -60,6 +60,17 @@ pub trait VaultStore: Send + Sync {
 
     /// Return the modification time and size of a file.
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError>;
+
+    /// Copy an external file (`src`, an absolute or CWD-relative real
+    /// filesystem path) into the vault at `dest`, creating parent
+    /// directories as needed.
+    ///
+    /// This is the one trait method that handles arbitrary (possibly
+    /// binary) bytes — it's how non-markdown attachments enter the vault
+    /// (#154). The bytes are never read back through this trait; the
+    /// imported file is referenced by a markdown stub, not parsed.
+    /// Fails with [`StoreError::NotFound`] if `src` doesn't exist.
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError>;
 }
 
 /// In-memory [`VaultStore`] used for fast, deterministic domain tests.
@@ -254,6 +265,26 @@ impl VaultStore for MemoryVaultStore {
             .map(|f| FileMeta::new(f.mtime, f.content.len() as u64))
             .ok_or_else(|| StoreError::NotFound(path.to_string()))
     }
+
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        // The in-memory store holds text, but an imported attachment may
+        // be binary — read it lossily, which round-trips exactly for the
+        // UTF-8 fixtures tests use and is harmless otherwise (the bytes
+        // are never read back as meaningful content). Reading the *source*
+        // is unavoidable — it's a real external file — but no vault I/O
+        // happens beyond recording the entry, keeping the fake disk-free
+        // for the vault itself.
+        let bytes = fs::read(src).map_err(|e| io_to_store_error(e, dest))?;
+        let mut files = self.files.lock().expect("poisoned mutex");
+        files.insert(
+            dest.clone(),
+            MemoryFile {
+                content: String::from_utf8_lossy(&bytes).into_owned(),
+                mtime: SystemTime::now(),
+            },
+        );
+        Ok(())
+    }
 }
 
 /// Filesystem-backed [`VaultStore`].
@@ -427,5 +458,16 @@ impl VaultStore for FsVaultStore {
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
         let std_meta = fs::metadata(self.resolve(path)).map_err(|e| io_to_store_error(e, path))?;
         FileMeta::try_from(std_meta).map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn import_external(&self, src: &Path, dest: &VaultPath) -> Result<(), StoreError> {
+        let full = self.resolve(dest);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
+        }
+        // `fs::copy` reads `src` and writes `dest` byte-for-byte; it errors
+        // (surfaced as the dest's StoreError) if `src` is missing.
+        fs::copy(src, &full).map_err(|e| io_to_store_error(e, dest))?;
+        Ok(())
     }
 }

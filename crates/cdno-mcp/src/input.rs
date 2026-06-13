@@ -74,6 +74,13 @@ pub struct FileToPortfolioInput {
     pub origin: String,
     #[serde(default)]
     pub content: String,
+    /// Optional: a server-side filesystem path to a non-markdown artefact
+    /// (PDF, image, video, …) to file as evidence (#154). When set, the
+    /// file is copied into the portfolio and a linked evidence stub is
+    /// scaffolded; `content` becomes the stub's **abstract** — write a
+    /// real, descriptive one, since it's the only thing search and other
+    /// agents will ever see of the artefact.
+    pub attach: Option<String>,
 }
 
 /// Input for `update_project_state`.

@@ -808,6 +808,9 @@ impl VaultStore for CountingStore {
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
         self.inner.metadata(path)
     }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
 }
 
 #[test]

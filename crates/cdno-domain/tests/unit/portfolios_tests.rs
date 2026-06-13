@@ -531,3 +531,164 @@ fn file_evidence_not_found_lists_available_portfolios() {
         "got: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------
+// file_attachment — non-markdown evidence (#154)
+// ---------------------------------------------------------------------
+
+fn portfolio_seed() -> (&'static str, &'static str) {
+    (
+        "portfolios/sparse-vs-dense/_index.md",
+        "---\ntype: portfolio\nquestion: \"Sparse vs dense\"\ncreated: 2026-02-01\nproject: null\n---\n\n# Sparse vs dense\n",
+    )
+}
+
+#[test]
+fn file_attachment_writes_flat_stub_and_imports_artefact() {
+    let dir = tempfile::tempdir().unwrap();
+    let artefact = dir.path().join("derivation.pdf");
+    std::fs::write(&artefact, b"%PDF-1.7 fake bytes").unwrap();
+    let (vault, store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    let stub = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &artefact,
+            "Chen derivation",
+            "projects/surrogate-model",
+            "The closed-form bound for sparse attention.",
+        )
+        .expect("attach succeeds");
+
+    // Stub flat at <portfolio>/<date>-<slug>.md; artefact in sibling folder.
+    assert_eq!(
+        stub,
+        vp("portfolios/sparse-vs-dense/2026-06-13-chen-derivation.md")
+    );
+    assert!(
+        store
+            .exists(&vp(
+                "portfolios/sparse-vs-dense/2026-06-13-chen-derivation/derivation.pdf"
+            ))
+            .unwrap(),
+        "artefact imported into the sibling folder, original filename kept"
+    );
+
+    let raw = store.read_file(&stub).unwrap();
+    assert!(raw.contains("kind: pdf"), "stub:\n{raw}");
+    assert!(
+        raw.contains("[derivation.pdf](<./2026-06-13-chen-derivation/derivation.pdf>)"),
+        "relative angle-bracket link:\n{raw}"
+    );
+    assert!(raw.contains("The closed-form bound"), "abstract:\n{raw}");
+
+    // Parses as evidence with the kind set; portfolio field intact.
+    let fm = read_evidence_frontmatter(&store, &stub);
+    assert_eq!(fm.kind.as_deref(), Some("pdf"));
+    assert_eq!(fm.portfolio, "sparse-vs-dense");
+    assert_eq!(fm.origin, "[[projects/surrogate-model]]");
+}
+
+#[test]
+fn file_attachment_infers_kind_from_extension() {
+    let dir = tempfile::tempdir().unwrap();
+    let png = dir.path().join("whiteboard.png");
+    std::fs::write(&png, b"\x89PNG fake").unwrap();
+    let (vault, store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    let stub = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &png,
+            "Whiteboard photo",
+            "projects/surrogate-model",
+            "",
+        )
+        .unwrap();
+    let fm = read_evidence_frontmatter(&store, &stub);
+    assert_eq!(fm.kind.as_deref(), Some("image"));
+}
+
+#[test]
+fn file_attachment_uses_placeholder_for_empty_abstract() {
+    let dir = tempfile::tempdir().unwrap();
+    let art = dir.path().join("clip.mp4");
+    std::fs::write(&art, b"fake").unwrap();
+    let (vault, store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    let stub = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &art,
+            "Screen recording",
+            "projects/surrogate-model",
+            "   ",
+        )
+        .unwrap();
+    let raw = store.read_file(&stub).unwrap();
+    assert!(raw.contains("kind: video"), "{raw}");
+    assert!(raw.contains("Abstract pending"), "placeholder:\n{raw}");
+}
+
+#[test]
+fn file_attachment_errors_when_portfolio_missing_with_hint() {
+    let dir = tempfile::tempdir().unwrap();
+    let art = dir.path().join("x.pdf");
+    std::fs::write(&art, b"fake").unwrap();
+    let (vault, _store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    let err = vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "ghost",
+            &art,
+            "X",
+            "projects/foo",
+            "",
+        )
+        .unwrap_err();
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected NotFound, got {err:?}");
+    };
+    assert!(
+        msg.contains("available portfolios: sparse-vs-dense"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn file_attachment_errors_on_slug_collision() {
+    let dir = tempfile::tempdir().unwrap();
+    let art = dir.path().join("a.pdf");
+    std::fs::write(&art, b"fake").unwrap();
+    let (vault, _store) = vault_with_seeded_store(&[portfolio_seed()]);
+
+    vault
+        .file_attachment(
+            dt(2026, 6, 13, 10, 0),
+            "sparse-vs-dense",
+            &art,
+            "Dup",
+            "projects/foo",
+            "",
+        )
+        .unwrap();
+    // Same day + same source ⇒ same evidence slug ⇒ stub already exists.
+    let err = vault
+        .file_attachment(
+            dt(2026, 6, 13, 11, 0),
+            "sparse-vs-dense",
+            &art,
+            "Dup",
+            "projects/foo",
+            "",
+        )
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        DomainError::Store(StoreError::AlreadyExists(_))
+    ));
+}

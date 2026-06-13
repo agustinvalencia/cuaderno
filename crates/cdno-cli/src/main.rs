@@ -109,7 +109,10 @@ enum Commands {
         subcommand: PortfolioCommands,
     },
 
-    /// File a piece of evidence into a portfolio.
+    /// File a piece of evidence into a portfolio. With `--attach`, files
+    /// a non-markdown artefact (PDF, image, video, …): the file is copied
+    /// into the portfolio and a linked evidence stub is scaffolded beside
+    /// it. Without `--attach`, writes a plain markdown evidence note.
     File {
         /// Portfolio slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
@@ -121,10 +124,19 @@ enum Commands {
         /// (e.g. `"projects/foo"`); the CLI wraps it.
         #[arg(long)]
         origin: Option<String>,
-        /// Inline body. Optional; defaults to empty so the user can
-        /// flesh out the note in their editor after creation.
+        /// Inline body. For a plain note it's the content; with `--attach`
+        /// it's the abstract. Optional; defaults to empty.
         #[arg(long, default_value = "")]
         content: String,
+        /// Path to a non-markdown artefact to file as evidence. The file
+        /// is copied into `portfolios/<slug>/<evidence-slug>/` and an
+        /// evidence stub links to it.
+        #[arg(long)]
+        attach: Option<PathBuf>,
+        /// With `--attach`, remove the source file after a successful
+        /// copy (move instead of copy).
+        #[arg(long)]
+        r#move: bool,
     },
 
     /// Manage question notes: create, then status transitions
@@ -298,6 +310,8 @@ fn main() -> Result<()> {
             source,
             origin,
             content,
+            attach,
+            r#move,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::file::run(
@@ -307,6 +321,8 @@ fn main() -> Result<()> {
                 source,
                 origin,
                 content,
+                attach,
+                r#move,
                 cli.no_interactive,
             )
         }

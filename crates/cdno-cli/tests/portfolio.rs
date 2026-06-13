@@ -119,6 +119,8 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
         Some("Chen 2025".to_owned()),
         Some("projects/surrogate".to_owned()),
         "They show 4x speedup at 95% accuracy.\n".to_owned(),
+        None,
+        false,
         true,
     )
     .expect("file evidence");
@@ -172,6 +174,8 @@ fn file_writes_evidence_note_with_wrapped_origin() {
         Some("Chen 2025".to_owned()),
         Some("projects/surrogate".to_owned()),
         "Body text.\n".to_owned(),
+        None,
+        false,
         true,
     )
     .expect("file");
@@ -198,6 +202,8 @@ fn file_writes_empty_body_when_content_omitted() {
         Some("Bare capture".to_owned()),
         Some("projects/surrogate".to_owned()),
         String::new(),
+        None,
+        false,
         true,
     )
     .expect("file with empty content");
@@ -225,6 +231,8 @@ fn file_errors_when_missing_portfolio_in_non_interactive() {
         Some("Chen 2025".to_owned()),
         Some("projects/foo".to_owned()),
         String::new(),
+        None,
+        false,
         true,
     )
     .expect_err("missing --portfolio should error");
@@ -244,9 +252,83 @@ fn file_errors_on_prewrapped_origin() {
         Some("Chen 2025".to_owned()),
         Some("[[projects/foo]]".to_owned()),
         String::new(),
+        None,
+        false,
         true,
     )
     .expect_err("pre-wrapped origin should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("malformed wikilink"), "error message: {msg}");
+}
+
+// ---------------------------------------------------------------------
+// file --attach (#154)
+// ---------------------------------------------------------------------
+
+#[test]
+fn file_attach_imports_artefact_and_writes_linked_stub() {
+    let dir = vault();
+    seed_portfolio(dir.path());
+    let artefact = dir.path().join("derivation.pdf");
+    fs::write(&artefact, b"%PDF fake").unwrap();
+
+    file::run(
+        dir.path(),
+        moment(2026, 6, 13, 10, 0),
+        Some("sparse-vs-dense-ood".to_owned()),
+        Some("Chen derivation".to_owned()),
+        Some("projects/surrogate".to_owned()),
+        "The closed-form bound.".to_owned(),
+        Some(artefact.clone()),
+        false,
+        true,
+    )
+    .expect("attach");
+
+    let stub = dir
+        .path()
+        .join("portfolios/sparse-vs-dense-ood/2026-06-13-chen-derivation.md");
+    let imported = dir
+        .path()
+        .join("portfolios/sparse-vs-dense-ood/2026-06-13-chen-derivation/derivation.pdf");
+    assert!(stub.is_file(), "stub written");
+    assert!(imported.is_file(), "artefact imported into sibling folder");
+    let body = fs::read_to_string(&stub).unwrap();
+    assert!(body.contains("kind: pdf"), "{body}");
+    assert!(
+        body.contains("[derivation.pdf](<./2026-06-13-chen-derivation/derivation.pdf>)"),
+        "{body}"
+    );
+    assert!(
+        artefact.is_file(),
+        "copy (default) leaves the source in place"
+    );
+}
+
+#[test]
+fn file_attach_move_removes_the_source() {
+    let dir = vault();
+    seed_portfolio(dir.path());
+    let artefact = dir.path().join("clip.mp4");
+    fs::write(&artefact, b"fake").unwrap();
+
+    file::run(
+        dir.path(),
+        moment(2026, 6, 13, 10, 0),
+        Some("sparse-vs-dense-ood".to_owned()),
+        Some("Recording".to_owned()),
+        Some("projects/surrogate".to_owned()),
+        String::new(),
+        Some(artefact.clone()),
+        true, // --move
+        true,
+    )
+    .expect("attach move");
+
+    assert!(!artefact.exists(), "--move removes the source");
+    assert!(
+        dir.path()
+            .join("portfolios/sparse-vs-dense-ood/2026-06-13-recording/clip.mp4")
+            .is_file()
+    );
 }

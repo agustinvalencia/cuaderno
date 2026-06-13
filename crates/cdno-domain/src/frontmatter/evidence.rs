@@ -34,6 +34,11 @@ pub struct EvidenceFrontmatter {
     /// Raw wikilink string pointing at whatever produced this
     /// evidence — a project, action note, stewardship, etc. Required.
     pub origin: String,
+    /// Media kind for an attachment stub (`pdf`/`image`/`video`/
+    /// `typst`/…, #154). `None` for a plain prose evidence note — the
+    /// field is absent unless the note references a non-markdown
+    /// artefact in a sibling folder.
+    pub kind: Option<String>,
 }
 
 impl TryFrom<Frontmatter> for EvidenceFrontmatter {
@@ -45,6 +50,7 @@ impl TryFrom<Frontmatter> for EvidenceFrontmatter {
             source: fm.require_field::<String>("source")?,
             portfolio: fm.require_field::<String>("portfolio")?,
             origin: fm.require_field::<String>("origin")?,
+            kind: fm.optional_field::<String>("kind")?,
         })
     }
 }

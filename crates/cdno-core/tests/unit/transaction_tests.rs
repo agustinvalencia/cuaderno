@@ -322,6 +322,12 @@ impl VaultStore for FailingStore {
     fn metadata(&self, path: &VaultPath) -> Result<cdno_core::file_meta::FileMeta, StoreError> {
         self.inner.metadata(path)
     }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
+        self.inner.import_external(src, dest)
+    }
 }
 
 enum FailPoint {
@@ -464,4 +470,57 @@ impl VaultIndex for FailingIndex {
     fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.fts_indexed_paths()
     }
+}
+
+// ---- import_external (#154 attachments) ---------------------------------
+
+#[test]
+fn import_external_commits_alongside_a_stub_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("derivation.pdf");
+    std::fs::write(&src, b"%PDF fake").unwrap();
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let mut tx = VaultTransaction::new(store.clone(), index);
+    tx.import_external(src, vp("portfolios/p/2026-06-13-d/derivation.pdf"));
+    tx.write_file(
+        vp("portfolios/p/2026-06-13-d.md"),
+        "---\ntype: evidence\n---\n# d\n",
+    );
+    tx.commit().unwrap();
+
+    assert!(
+        store
+            .exists(&vp("portfolios/p/2026-06-13-d/derivation.pdf"))
+            .unwrap()
+    );
+    assert!(store.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
+}
+
+#[test]
+fn import_external_rolls_back_when_a_later_op_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("derivation.pdf");
+    std::fs::write(&src, b"%PDF fake").unwrap();
+
+    let inner = Arc::new(MemoryVaultStore::new());
+    // Fail on the 2nd file op: import (1st) lands, the stub write (2nd) fails.
+    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(inner.clone(), 2));
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let mut tx = VaultTransaction::new(store, index);
+    tx.import_external(src, vp("portfolios/p/2026-06-13-d/derivation.pdf"));
+    tx.write_file(vp("portfolios/p/2026-06-13-d.md"), "stub");
+    let err = tx.commit().unwrap_err();
+    assert!(matches!(err, TransactionError::FileWrite { .. }));
+
+    // The imported artefact was rolled back out — neither file remains.
+    assert!(
+        !inner
+            .exists(&vp("portfolios/p/2026-06-13-d/derivation.pdf"))
+            .unwrap()
+    );
+    assert!(!inner.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
 }
