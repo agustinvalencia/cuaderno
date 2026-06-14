@@ -360,6 +360,27 @@ async fn create_commitment_writes_commitment_note() {
 }
 
 #[tokio::test]
+async fn create_commitment_persists_stewardship_origin_link() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+
+    let result = server
+        .create_commitment(Parameters(CreateCommitmentInput {
+            title: "Email ophthalmologist".to_owned(),
+            due: NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            context: "personal".to_owned(),
+            project: None,
+            stewardship: Some("health".to_owned()),
+        }))
+        .await
+        .expect("create_commitment");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("stewardship: health"), "frontmatter:\n{body}");
+    assert!(body.contains("project: null"), "frontmatter:\n{body}");
+}
+
+#[tokio::test]
 async fn create_commitment_rejects_unknown_context_with_invalid_params() {
     let (server, _store) = server_with(|_v, store| seed_today_daily(&store));
     let err = server
@@ -386,6 +407,8 @@ async fn complete_commitment_moves_to_done_folder() {
                 "Renew passport",
                 NaiveDate::from_ymd_opt(2026, 8, 1).unwrap(),
                 Context::Personal,
+                None,
+                None,
             )
             .unwrap();
     });

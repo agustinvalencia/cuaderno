@@ -60,6 +60,8 @@ fn create_commitment_writes_file_with_active_status() {
             "Renew passport",
             NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
             Context::Personal,
+            None,
+            None,
         )
         .expect("create succeeds");
 
@@ -75,6 +77,147 @@ fn create_commitment_writes_file_with_active_status() {
 }
 
 #[test]
+fn create_commitment_persists_origin_links_as_bare_slugs() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    let path = vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Email ophthalmologist",
+            NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+            Context::Personal,
+            Some("surrogate-model"),
+            Some("health"),
+        )
+        .expect("create succeeds");
+
+    let raw = store.read_file(&path).unwrap();
+    // Bare slugs, not wikilinks (see the storage-form decision in #199).
+    assert!(
+        raw.contains("project: surrogate-model"),
+        "frontmatter:\n{raw}"
+    );
+    assert!(raw.contains("stewardship: health"), "frontmatter:\n{raw}");
+
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert_eq!(fm.project.as_deref(), Some("surrogate-model"));
+    assert_eq!(fm.stewardship.as_deref(), Some("health"));
+}
+
+#[test]
+fn create_commitment_normalises_blank_origin_links_to_null() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    let path = vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Renew passport",
+            NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
+            Context::Personal,
+            Some("   "),
+            Some(""),
+        )
+        .expect("create succeeds");
+
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert!(fm.project.is_none(), "blank project is dropped");
+    assert!(fm.stewardship.is_none(), "blank stewardship is dropped");
+}
+
+#[test]
+fn commitments_for_stewardship_returns_only_linked_commitments_sorted_by_due() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+
+    // Two linked to health, one linked to a different stewardship, one
+    // standalone. Created out of due order to prove the sort.
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Eye exam booking",
+            ymd(2026, 9, 1),
+            Context::Personal,
+            None,
+            Some("health"),
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Email ophthalmologist",
+            ymd(2026, 6, 15),
+            Context::Personal,
+            None,
+            Some("health"),
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Renew home insurance",
+            ymd(2026, 7, 1),
+            Context::Personal,
+            None,
+            Some("finances"),
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Renew passport",
+            ymd(2026, 8, 1),
+            Context::Personal,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let linked = vault.commitments_for_stewardship("health").unwrap();
+    let slugs: Vec<&str> = linked
+        .iter()
+        .map(|(path, _)| path.as_path().file_stem().unwrap().to_str().unwrap())
+        .collect();
+    // Only the two health-linked commitments, earliest due first.
+    assert_eq!(slugs, vec!["email-ophthalmologist", "eye-exam-booking"]);
+    assert!(
+        linked
+            .iter()
+            .all(|(_, c)| c.stewardship.as_deref() == Some("health"))
+    );
+}
+
+#[test]
+fn commitments_for_project_returns_only_project_linked_commitments() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Submit camera-ready",
+            ymd(2026, 7, 10),
+            Context::Work,
+            Some("surrogate-model"),
+            None,
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Email ophthalmologist",
+            ymd(2026, 6, 15),
+            Context::Personal,
+            None,
+            Some("health"),
+        )
+        .unwrap();
+
+    let linked = vault.commitments_for_project("surrogate-model").unwrap();
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].1.project.as_deref(), Some("surrogate-model"));
+    // The stewardship-only commitment is not a project match.
+    assert!(vault.commitments_for_project("health").unwrap().is_empty());
+}
+
+#[test]
 fn create_commitment_logs_creation_to_daily_note() {
     let (vault, store) = vault_with_seeded_store(&[]);
 
@@ -84,6 +227,8 @@ fn create_commitment_logs_creation_to_daily_note() {
             "Renew passport",
             NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
             Context::Personal,
+            None,
+            None,
         )
         .expect("create succeeds");
 
@@ -109,6 +254,8 @@ fn create_commitment_errors_when_slug_collides() {
             "Renew passport",
             NaiveDate::from_ymd_opt(2026, 6, 30).unwrap(),
             Context::Personal,
+            None,
+            None,
         )
         .unwrap_err();
     assert!(
@@ -540,6 +687,8 @@ fn complete_commitment_not_found_lists_open_commitments_excluding_done() {
             "Submit paper",
             NaiveDate::from_ymd_opt(2026, 3, 1).unwrap(),
             Context::Work,
+            None,
+            None,
         )
         .unwrap();
     vault
@@ -548,6 +697,8 @@ fn complete_commitment_not_found_lists_open_commitments_excluding_done() {
             "Renew passport",
             NaiveDate::from_ymd_opt(2026, 4, 1).unwrap(),
             Context::Personal,
+            None,
+            None,
         )
         .unwrap();
 

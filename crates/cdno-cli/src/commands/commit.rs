@@ -36,6 +36,15 @@ pub enum CommitCommands {
         /// Life-domain context (work, personal, home-family, ...).
         #[arg(long)]
         context: Option<CommitmentContext>,
+        /// Optional related project slug (bare slug). Lets that project
+        /// list this commitment among its related dated items.
+        #[arg(long)]
+        project: Option<String>,
+        /// Optional related stewardship slug (bare slug). Lets that
+        /// stewardship list this commitment among its related dated
+        /// items.
+        #[arg(long)]
+        stewardship: Option<String>,
     },
 
     /// Mark a commitment as completed: stamps `status` and `completed`,
@@ -60,17 +69,31 @@ pub fn run(
             title,
             due,
             context,
-        } => create(&vault, at, title, due, context, interactive),
+            project,
+            stewardship,
+        } => create(
+            &vault,
+            at,
+            title,
+            due,
+            context,
+            project,
+            stewardship,
+            interactive,
+        ),
         CommitCommands::Done { slug } => done(&vault, at, slug, interactive),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create(
     vault: &Vault,
     at: NaiveDateTime,
     title: Option<String>,
     due: Option<NaiveDate>,
     context: Option<CommitmentContext>,
+    project: Option<String>,
+    stewardship: Option<String>,
     interactive: bool,
 ) -> Result<()> {
     let mut prompted = false;
@@ -86,15 +109,24 @@ fn create(
 
     if prompted
         && !prompt::confirm_preview(&format!(
-            "About to create commitment:\n  title:   {title}\n  due:     {due}\n  context: {}",
+            "About to create commitment:\n  title:       {title}\n  due:         {due}\n  context:     {}\n  project:     {}\n  stewardship: {}",
             context.as_str(),
+            project.as_deref().unwrap_or("(none)"),
+            stewardship.as_deref().unwrap_or("(none)"),
         ))?
     {
         println!("Aborted.");
         return Ok(());
     }
     let path = vault
-        .create_commitment(at, &title, due, context)
+        .create_commitment(
+            at,
+            &title,
+            due,
+            context,
+            project.as_deref(),
+            stewardship.as_deref(),
+        )
         .context("creating commitment")?;
     println!("Created {path}");
     Ok(())

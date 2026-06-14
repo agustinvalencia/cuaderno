@@ -33,6 +33,8 @@ fn commit_create_writes_active_commitment_file() {
             title: Some("Pay rent".to_owned()),
             due: Some(ymd(2026, 6, 1)),
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )
@@ -43,6 +45,34 @@ fn commit_create_writes_active_commitment_file() {
     assert!(raw.contains("status: active"), "frontmatter:\n{raw}");
     assert!(raw.contains("due: 2026-06-01"), "frontmatter:\n{raw}");
     assert!(raw.contains("context: personal"), "frontmatter:\n{raw}");
+    // No origin links supplied → both null.
+    assert!(raw.contains("project: null"), "frontmatter:\n{raw}");
+    assert!(raw.contains("stewardship: null"), "frontmatter:\n{raw}");
+}
+
+#[test]
+fn commit_create_writes_origin_link_slugs_from_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 28, 9, 0),
+        CommitCommands::Create {
+            title: Some("Email ophthalmologist".to_owned()),
+            due: Some(ymd(2026, 6, 15)),
+            context: Some(Context::Personal),
+            project: None,
+            stewardship: Some("health".to_owned()),
+        },
+        true,
+    )
+    .expect("commit create");
+
+    let raw = std::fs::read_to_string(dir.path().join("commitments/email-ophthalmologist.md"))
+        .expect("commitment file exists");
+    assert!(raw.contains("stewardship: health"), "frontmatter:\n{raw}");
+    assert!(raw.contains("project: null"), "frontmatter:\n{raw}");
 }
 
 #[test]
@@ -57,6 +87,8 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
             title: Some("Pay rent".to_owned()),
             due: Some(ymd(2026, 6, 1)),
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )
@@ -95,6 +127,8 @@ fn commitments_lists_active_in_window() {
             title: Some("Pay rent".to_owned()),
             due: Some(ymd(2026, 6, 1)),
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )
@@ -106,6 +140,8 @@ fn commitments_lists_active_in_window() {
             title: Some("Book dentist".to_owned()),
             due: Some(ymd(2026, 8, 1)),
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )
@@ -134,6 +170,8 @@ fn commitments_weeks_flag_widens_the_window() {
             title: Some("Book dentist".to_owned()),
             due: Some(ymd(2026, 8, 1)),
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )
@@ -172,6 +210,8 @@ fn commit_create_in_non_interactive_errors_when_missing_due() {
             title: Some("Pay rent".to_owned()),
             due: None,
             context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
         },
         true,
     )

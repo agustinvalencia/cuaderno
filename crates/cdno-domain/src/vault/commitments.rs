@@ -72,11 +72,19 @@ impl Vault {
     /// `at` provides both the timestamp for the daily-log entry and
     /// the date stamped in the `created:` frontmatter field. `due`
     /// is the deadline; the commitments aggregation query (#32) reads
-    /// it from the index. `project` and `stewardship` are always
-    /// `null` for the standalone case this function handles —
-    /// originating commitments (project milestones, stewardship
-    /// periodic commitments) are tracked inline at their source per
-    /// design.md §5.9.
+    /// it from the index.
+    ///
+    /// `project` and `stewardship` are optional origin-link slugs. They
+    /// record which project or stewardship a standalone commitment
+    /// relates to, so that side can list its related dated items via
+    /// [`Vault::commitments_for_project`] /
+    /// [`Vault::commitments_for_stewardship`]. Both are bare slugs
+    /// (matching `action.project` and `tracking.stewardship`), not
+    /// wikilinks — frontmatter wikilinks aren't indexed, and the
+    /// backlink queries match on the slug directly. `None` for a purely
+    /// standalone commitment, which remains the dominant case per
+    /// design.md §5.9. The links are loose pointers: existence of the
+    /// target isn't validated here.
     ///
     /// Errors only on slug collisions: if `commitments/<slug>.md`
     /// already exists, returns [`StoreError::AlreadyExists`].
@@ -89,6 +97,8 @@ impl Vault {
         title: &str,
         due: NaiveDate,
         context: Context,
+        project: Option<&str>,
+        stewardship: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
@@ -101,7 +111,12 @@ impl Vault {
         }
 
         let created = at.date();
-        let content = render_commitment_template(title, due, created, context);
+        // Normalise blank links to absent so an empty `--stewardship ""`
+        // doesn't write a meaningless slug into the frontmatter.
+        let project = normalise_link(project);
+        let stewardship = normalise_link(stewardship);
+        let content =
+            render_commitment_template(title, due, created, context, project, stewardship);
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 
         let log_entry = format!(
@@ -346,6 +361,53 @@ impl Vault {
         entries.sort_by_key(|entry| entry.date);
         Ok(entries)
     }
+
+    /// Standalone commitment notes whose `stewardship:` origin link
+    /// equals `slug`, sorted by due date. The backlink complement to
+    /// the `stewardship` parameter of [`Vault::create_commitment`]: a
+    /// stewardship dashboard can list the dated commitments that point
+    /// at it. Both active and completed commitments are returned —
+    /// `status` lives in the frontmatter, so the caller decides whether
+    /// to show fulfilled ones.
+    pub fn commitments_for_stewardship(
+        &self,
+        slug: &str,
+    ) -> Result<Vec<(VaultPath, CommitmentFrontmatter)>, DomainError> {
+        self.linked_commitments(|c| c.stewardship.as_deref() == Some(slug))
+    }
+
+    /// Standalone commitment notes whose `project:` origin link equals
+    /// `slug`, sorted by due date. The project-side mirror of
+    /// [`Vault::commitments_for_stewardship`].
+    pub fn commitments_for_project(
+        &self,
+        slug: &str,
+    ) -> Result<Vec<(VaultPath, CommitmentFrontmatter)>, DomainError> {
+        self.linked_commitments(|c| c.project.as_deref() == Some(slug))
+    }
+
+    /// Shared scan behind the origin-link backlink queries: walk every
+    /// indexed commitment note, parse its frontmatter, keep the ones
+    /// matching `pred`, and return them sorted by due date. The scan
+    /// mirrors source 3 of [`Vault::commitments`] but without the date
+    /// window — a backlink view wants the whole relationship, not just
+    /// the next few weeks.
+    fn linked_commitments(
+        &self,
+        pred: impl Fn(&CommitmentFrontmatter) -> bool,
+    ) -> Result<Vec<(VaultPath, CommitmentFrontmatter)>, DomainError> {
+        let mut matches = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Commitment.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let commitment = CommitmentFrontmatter::try_from(fm)?;
+            if pred(&commitment) {
+                matches.push((entry.path, commitment));
+            }
+        }
+        matches.sort_by_key(|(_, commitment)| commitment.due);
+        Ok(matches)
+    }
 }
 
 /// Parse an ISO `YYYY-MM-DD` date, returning `None` for any other
@@ -372,19 +434,28 @@ fn render_commitment_template(
     due: NaiveDate,
     created: NaiveDate,
     context: Context,
+    project: Option<&str>,
+    stewardship: Option<&str>,
 ) -> String {
     COMMITMENT_TEMPLATE
         .replace("{{title}}", title)
         .replace("{{status}}", CommitmentStatus::Active.as_str())
         .replace("{{due}}", &due.format("%Y-%m-%d").to_string())
         .replace("{{created}}", &created.format("%Y-%m-%d").to_string())
-        // `null` for the optional fields — both the completion date
-        // and the project/stewardship origin links are absent for a
-        // freshly-created standalone commitment.
+        // `completed` is always `null` for a freshly-created commitment;
+        // it's stamped on completion. The origin links carry the slug
+        // when supplied, else `null` for a purely standalone commitment.
         .replace("{{completed}}", "null")
         .replace("{{context}}", context.as_str())
-        .replace("{{project}}", "null")
-        .replace("{{stewardship}}", "null")
+        .replace("{{project}}", project.unwrap_or("null"))
+        .replace("{{stewardship}}", stewardship.unwrap_or("null"))
+}
+
+/// Trim an optional origin-link slug and drop it if blank. Keeps a
+/// stray `--stewardship ""` or whitespace-only value from being written
+/// as a bogus link target.
+fn normalise_link(link: Option<&str>) -> Option<&str> {
+    link.map(str::trim).filter(|s| !s.is_empty())
 }
 
 /// Pull the heading text from the rendered body for the daily-log

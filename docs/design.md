@@ -512,7 +512,7 @@ Requires: new photo, current passport, application form from
 Polisen website.
 ```
 
-**Lifecycle**: lives in `commitments/` while active. Moves to `commitments/_done/` on completion. The `project` and `stewardship` fields are null for standalone commitments, or link to the relevant source for commitments that originate elsewhere (though those are typically tracked inline as milestone dates or periodic commitments rather than as separate files).
+**Lifecycle**: lives in `commitments/` while active. Moves to `commitments/_done/` on completion. The `project` and `stewardship` fields are null for standalone commitments, or link to the relevant source for commitments that originate elsewhere (though those are typically tracked inline as milestone dates or periodic commitments rather than as separate files). The links are **bare slugs** (e.g. `stewardship: health`), matching `action.project` and `tracking.stewardship` — not wikilinks, since frontmatter wikilinks aren't indexed as backlinks. The source side reads them back via the type-scan-and-filter backlink queries (`commitments_for_project` / `commitments_for_stewardship`), so a stewardship dashboard can list the dated commitments that point at it. The links are loose pointers: target existence isn't validated on creation.
 
 ### 5.10 Contexts
 

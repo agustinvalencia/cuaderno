@@ -159,7 +159,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a standalone commitment note with a due date and life context. `project` and `stewardship` are reserved on the input schema for the eventual originating-source link but ignored today \u{2014} the domain currently writes both as null per design \u{00a7}5.9 (originating commitments are tracked inline at their source: project milestones, stewardship periodic commitments)."
+        description = "Create a standalone commitment note with a due date and life context. Optional `project` and `stewardship` are bare origin-link slugs recording which project or stewardship the commitment relates to; that source can then list its related dated items. Omit both for a purely standalone commitment (the common case per design \u{00a7}5.9). The links are loose pointers \u{2014} the target's existence isn't validated."
     )]
     pub async fn create_commitment(
         &self,
@@ -168,11 +168,16 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
-        // input.project and input.stewardship are deliberately unused
-        // today; see tool description.
         let path = self
             .vault
-            .create_commitment(at, &input.title, input.due, context)
+            .create_commitment(
+                at,
+                &input.title,
+                input.due,
+                context,
+                input.project.as_deref(),
+                input.stewardship.as_deref(),
+            )
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
