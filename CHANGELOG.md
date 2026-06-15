@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-06-15
+
+Minor release: commitments can now record where they came from. `create_commitment` persists the optional `project` / `stewardship` origin links it previously dropped, and a project or stewardship can list the dated commitments that point at it. No new tools or commands; tool count unchanged (29).
+
+### Added
+
+- **Commitment origin links** (#199) — `create_commitment` now persists the `project` and `stewardship` fields instead of writing them as `null`. Inputs are canonicalised through the filename slugifier (so `Health` resolves to the `health` stewardship) and stored as quoted YAML scalars, which keeps an arbitrary input from injecting YAML or being read back as a non-string scalar. The links are bare slugs (matching `action.project` / `tracking.stewardship`), not wikilinks — frontmatter wikilinks aren't indexed as backlinks. They are loose pointers: the target's existence isn't validated. The MCP `create_commitment` tool gains working `project` / `stewardship` arguments and the CLI gains `--project` / `--stewardship` flags.
+- **Commitment backlink queries** (#199) — `Vault::commitments_for_project` and `Vault::commitments_for_stewardship` return the standalone commitments linked to a project or stewardship, sorted by due date (active and completed). They use the type-scan-and-filter idiom rather than the link index, so a stewardship dashboard can surface its related dated items. Not yet exposed through a dedicated MCP/UI read surface.
+
 ## [0.1.12] - 2026-06-13
 
 Patch release: concurrent-write safety. With several agents or processes sharing one vault, writes to the same note — most acutely the daily log — could silently clobber each other; this serialises them. No new tools or commands; tool count unchanged (29).

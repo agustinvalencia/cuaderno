@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.12 (2026-06-13). The CLI is daily-usable end-to-end and the MCP server is production-ready (29 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.12 is a correctness fix for multi-agent use: every vault write now takes a cross-process advisory lock (`.cuaderno/.lock`) across its read-modify-write, so concurrent cdno processes can't silently clobber each other's changes to a shared note — most acutely the daily log (#196). No new tools or commands; the v0.1.11 weekly note remains the latest feature.
+**Current release**: 0.1.13 (2026-06-15). The CLI is daily-usable end-to-end and the MCP server is production-ready (29 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.13 wires the commitment origin links: `create_commitment` now persists its `project` / `stewardship` fields (canonicalised to slugs, stored as quoted scalars) instead of dropping them, and `commitments_for_project` / `commitments_for_stewardship` let a project or stewardship list the dated commitments pointing at it (#199). No new tools or commands; tool count unchanged (29).
 
 ## Phase summary
 
@@ -48,7 +48,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | `add_action` | Wired |
 | `promote_action` | Wired |
 | `complete_action` | Wired |
-| `create_commitment` | Wired (`project` / `stewardship` reserved fields ignored; see tool description) |
+| `create_commitment` | Wired (`project` / `stewardship` origin links persisted as slugs; #199) |
 | `complete_commitment` | Wired |
 | `create_tracking_entry` | Wired |
 | `read_daily_note` | Wired (#158) |
