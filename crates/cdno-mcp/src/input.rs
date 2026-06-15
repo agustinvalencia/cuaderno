@@ -119,7 +119,15 @@ pub struct CreateCommitmentInput {
     /// One of the [`cdno_domain::frontmatter::Context`] variants
     /// (kebab-case: `work`, `household`, `personal`, …).
     pub context: String,
+    /// Optional origin-link slug of a related project (bare slug, e.g.
+    /// `surrogate-model`). Lets the project list its related dated
+    /// commitments. Loose pointer — not validated against existing
+    /// projects.
     pub project: Option<String>,
+    /// Optional origin-link slug of a related stewardship (bare slug,
+    /// e.g. `health`). Lets the stewardship list its related dated
+    /// commitments. Loose pointer — not validated against existing
+    /// stewardships.
     pub stewardship: Option<String>,
 }
 

@@ -61,12 +61,13 @@ impl FromStr for CommitmentStatus {
 /// struct exists, every required field is guaranteed present and
 /// well-typed — downstream code does not re-validate.
 ///
-/// `project` and `stewardship` are wikilink targets when the
-/// commitment originates from one of those sources; `None` for
-/// standalone commitments. The design doc notes that originating
-/// commitments are typically tracked inline (as project milestone
-/// dates or stewardship periodic commitments) rather than as separate
-/// files, so standalone is the dominant case.
+/// `project` and `stewardship` are bare origin-link slugs (matching
+/// `action.project` and `tracking.stewardship`), not wikilinks, when
+/// the commitment relates to one of those sources; `None` for
+/// standalone commitments. Originating commitments are typically
+/// tracked inline (as project milestone dates or stewardship periodic
+/// commitments) rather than as separate files, so standalone is the
+/// dominant case.
 ///
 /// `completed` is `Some(date)` for completed commitments, `None`
 /// while active. The two move together with `status`.
