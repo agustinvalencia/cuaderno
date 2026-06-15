@@ -163,6 +163,32 @@ fn create_commitment_normalises_blank_origin_links_to_null() {
 }
 
 #[test]
+fn create_commitment_drops_links_with_no_alphanumerics_to_null() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    // An input with no alphanumerics slugifies to the "untitled"
+    // sentinel; rather than write a phantom link to a non-existent
+    // "untitled" target, it's dropped to null.
+    let path = vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Renew passport",
+            ymd(2026, 6, 30),
+            Context::Personal,
+            Some("!!!"),
+            Some("---"),
+        )
+        .expect("create succeeds");
+
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert!(fm.project.is_none(), "symbol-only project is dropped");
+    assert!(
+        fm.stewardship.is_none(),
+        "symbol-only stewardship is dropped"
+    );
+}
+
+#[test]
 fn commitments_for_stewardship_returns_only_linked_commitments_sorted_by_due() {
     let (vault, _store) = vault_with_seeded_store(&[]);
 

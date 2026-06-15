@@ -111,9 +111,10 @@ impl Vault {
         let created = at.date();
         // Canonicalise the origin links to bare slugs (so `Health`
         // resolves to the `health` stewardship) and drop blank values.
-        // Slugifying constrains the charset to `[a-z0-9-]`, which the
-        // template then quotes — together that keeps an arbitrary input
-        // from injecting YAML or being read back as a non-string scalar.
+        // Slugifying reduces the value to alphanumerics joined by `-`,
+        // stripping every YAML metacharacter; the template then quotes
+        // it — together that keeps an arbitrary input from injecting
+        // YAML or being read back as a non-string scalar.
         let project = slug_link(project);
         let stewardship = slug_link(stewardship);
         let content = render_commitment_template(
@@ -459,10 +460,11 @@ fn render_commitment_template(
 }
 
 /// Render an optional origin-link slug as a YAML scalar: a quoted
-/// string when present, the bare literal `null` when absent. The slug
-/// is already constrained to `[a-z0-9-]` by [`slug_link`], so quoting
-/// can't break — and it stops slug-shaped values like `true` or `2024`
-/// from being read back as a bool or integer instead of a string.
+/// string when present, the bare literal `null` when absent. [`slug_link`]
+/// has already reduced the value to alphanumerics joined by `-` (no
+/// quotes or YAML metacharacters), so quoting can't break — and it stops
+/// slug-shaped values like `true` or `2024` from being read back as a
+/// bool or integer instead of a string.
 fn yaml_opt_slug(slug: Option<&str>) -> String {
     match slug {
         Some(s) => format!("\"{s}\""),
@@ -474,10 +476,14 @@ fn yaml_opt_slug(slug: Option<&str>) -> String {
 /// canonicalise the remainder to a bare slug. `None`/blank stay `None`
 /// so a stray `--stewardship ""` writes `null` rather than a bogus
 /// link. Trimming happens before [`slugify`] because `slugify` maps an
-/// all-whitespace input to `"untitled"` rather than the empty string.
+/// all-whitespace input to `"untitled"` rather than the empty string —
+/// and an input with no alphanumerics at all (e.g. `"!!!"`) hits that
+/// same `"untitled"` fallback, which we also drop to `None` rather than
+/// write a phantom link to a non-existent "untitled" target.
 fn slug_link(link: Option<&str>) -> Option<String> {
     let trimmed = link.map(str::trim).filter(|s| !s.is_empty())?;
-    Some(slugify(trimmed))
+    let slug = slugify(trimmed);
+    (slug != "untitled").then_some(slug)
 }
 
 /// Pull the heading text from the rendered body for the daily-log
