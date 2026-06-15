@@ -376,7 +376,10 @@ async fn create_commitment_persists_stewardship_origin_link() {
     let value = decode_json(&result);
     let path = value["path"].as_str().unwrap();
     let body = store.read_file(&vp(path)).unwrap();
-    assert!(body.contains("stewardship: health"), "frontmatter:\n{body}");
+    assert!(
+        body.contains("stewardship: \"health\""),
+        "frontmatter:\n{body}"
+    );
     assert!(body.contains("project: null"), "frontmatter:\n{body}");
 }
 

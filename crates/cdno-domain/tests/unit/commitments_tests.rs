@@ -92,16 +92,54 @@ fn create_commitment_persists_origin_links_as_bare_slugs() {
         .expect("create succeeds");
 
     let raw = store.read_file(&path).unwrap();
-    // Bare slugs, not wikilinks (see the storage-form decision in #199).
+    // Bare slugs written as quoted YAML scalars, not wikilinks (see the
+    // storage-form decision in #199).
     assert!(
-        raw.contains("project: surrogate-model"),
+        raw.contains("project: \"surrogate-model\""),
         "frontmatter:\n{raw}"
     );
-    assert!(raw.contains("stewardship: health"), "frontmatter:\n{raw}");
+    assert!(
+        raw.contains("stewardship: \"health\""),
+        "frontmatter:\n{raw}"
+    );
 
     let fm = read_commitment_frontmatter(&store, &path);
     assert_eq!(fm.project.as_deref(), Some("surrogate-model"));
     assert_eq!(fm.stewardship.as_deref(), Some("health"));
+}
+
+#[test]
+fn create_commitment_canonicalises_and_escapes_origin_links() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    // Mixed-case / spaced input is slugified to canonical form, and a
+    // YAML-hostile value (a bare colon would otherwise break the
+    // frontmatter) is neutralised by slugifying + quoting.
+    let path = vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Email ophthalmologist",
+            ymd(2026, 6, 15),
+            Context::Personal,
+            Some("Surrogate Model"),
+            Some("a: b"),
+        )
+        .expect("create succeeds");
+
+    // The file still parses as valid frontmatter despite the hostile
+    // input, and the links round-trip as canonical slugs.
+    let fm = read_commitment_frontmatter(&store, &path);
+    assert_eq!(fm.project.as_deref(), Some("surrogate-model"));
+    assert_eq!(fm.stewardship.as_deref(), Some("a-b"));
+
+    // The canonical slug is exactly what the backlink query matches on.
+    assert_eq!(
+        vault
+            .commitments_for_project("surrogate-model")
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -215,6 +253,37 @@ fn commitments_for_project_returns_only_project_linked_commitments() {
     assert_eq!(linked[0].1.project.as_deref(), Some("surrogate-model"));
     // The stewardship-only commitment is not a project match.
     assert!(vault.commitments_for_project("health").unwrap().is_empty());
+}
+
+#[test]
+fn commitments_for_stewardship_includes_completed_commitments() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_commitment(
+            dt(2026, 5, 2, 9, 0),
+            "Email ophthalmologist",
+            ymd(2026, 6, 15),
+            Context::Personal,
+            None,
+            Some("health"),
+        )
+        .unwrap();
+    // Completing the commitment moves it to _done/ and re-indexes it,
+    // still typed `commitment`. The backlink view is a relationship
+    // view, not a to-do list, so fulfilled commitments must still show.
+    vault
+        .complete_commitment(dt(2026, 6, 16, 9, 0), "email-ophthalmologist")
+        .unwrap();
+
+    let linked = vault.commitments_for_stewardship("health").unwrap();
+    assert_eq!(linked.len(), 1, "completed commitment still surfaces");
+    assert_eq!(linked[0].1.status, CommitmentStatus::Completed);
+    assert!(
+        linked[0].0.as_path().to_str().unwrap().contains("_done/"),
+        "path: {:?}",
+        linked[0].0
+    );
 }
 
 #[test]

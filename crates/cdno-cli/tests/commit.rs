@@ -71,7 +71,10 @@ fn commit_create_writes_origin_link_slugs_from_flags() {
 
     let raw = std::fs::read_to_string(dir.path().join("commitments/email-ophthalmologist.md"))
         .expect("commitment file exists");
-    assert!(raw.contains("stewardship: health"), "frontmatter:\n{raw}");
+    assert!(
+        raw.contains("stewardship: \"health\""),
+        "frontmatter:\n{raw}"
+    );
     assert!(raw.contains("project: null"), "frontmatter:\n{raw}");
 }
 

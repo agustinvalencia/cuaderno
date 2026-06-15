@@ -74,17 +74,15 @@ impl Vault {
     /// is the deadline; the commitments aggregation query (#32) reads
     /// it from the index.
     ///
-    /// `project` and `stewardship` are optional origin-link slugs. They
+    /// `project` and `stewardship` are optional origin links. They
     /// record which project or stewardship a standalone commitment
     /// relates to, so that side can list its related dated items via
     /// [`Vault::commitments_for_project`] /
-    /// [`Vault::commitments_for_stewardship`]. Both are bare slugs
-    /// (matching `action.project` and `tracking.stewardship`), not
-    /// wikilinks — frontmatter wikilinks aren't indexed, and the
-    /// backlink queries match on the slug directly. `None` for a purely
-    /// standalone commitment, which remains the dominant case per
-    /// design.md §5.9. The links are loose pointers: existence of the
-    /// target isn't validated here.
+    /// [`Vault::commitments_for_stewardship`]. The input is
+    /// canonicalised to a bare slug (so `Health` resolves to the
+    /// `health` stewardship); `None` or blank for a purely standalone
+    /// commitment, the dominant case per design.md §5.9. The links are
+    /// loose pointers — the target's existence isn't validated here.
     ///
     /// Errors only on slug collisions: if `commitments/<slug>.md`
     /// already exists, returns [`StoreError::AlreadyExists`].
@@ -111,12 +109,21 @@ impl Vault {
         }
 
         let created = at.date();
-        // Normalise blank links to absent so an empty `--stewardship ""`
-        // doesn't write a meaningless slug into the frontmatter.
-        let project = normalise_link(project);
-        let stewardship = normalise_link(stewardship);
-        let content =
-            render_commitment_template(title, due, created, context, project, stewardship);
+        // Canonicalise the origin links to bare slugs (so `Health`
+        // resolves to the `health` stewardship) and drop blank values.
+        // Slugifying constrains the charset to `[a-z0-9-]`, which the
+        // template then quotes — together that keeps an arbitrary input
+        // from injecting YAML or being read back as a non-string scalar.
+        let project = slug_link(project);
+        let stewardship = slug_link(stewardship);
+        let content = render_commitment_template(
+            title,
+            due,
+            created,
+            context,
+            project.as_deref(),
+            stewardship.as_deref(),
+        );
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 
         let log_entry = format!(
@@ -443,19 +450,34 @@ fn render_commitment_template(
         .replace("{{due}}", &due.format("%Y-%m-%d").to_string())
         .replace("{{created}}", &created.format("%Y-%m-%d").to_string())
         // `completed` is always `null` for a freshly-created commitment;
-        // it's stamped on completion. The origin links carry the slug
-        // when supplied, else `null` for a purely standalone commitment.
+        // it's stamped on completion. The origin links carry a quoted
+        // slug when supplied, else the bare literal `null`.
         .replace("{{completed}}", "null")
         .replace("{{context}}", context.as_str())
-        .replace("{{project}}", project.unwrap_or("null"))
-        .replace("{{stewardship}}", stewardship.unwrap_or("null"))
+        .replace("{{project}}", &yaml_opt_slug(project))
+        .replace("{{stewardship}}", &yaml_opt_slug(stewardship))
 }
 
-/// Trim an optional origin-link slug and drop it if blank. Keeps a
-/// stray `--stewardship ""` or whitespace-only value from being written
-/// as a bogus link target.
-fn normalise_link(link: Option<&str>) -> Option<&str> {
-    link.map(str::trim).filter(|s| !s.is_empty())
+/// Render an optional origin-link slug as a YAML scalar: a quoted
+/// string when present, the bare literal `null` when absent. The slug
+/// is already constrained to `[a-z0-9-]` by [`slug_link`], so quoting
+/// can't break — and it stops slug-shaped values like `true` or `2024`
+/// from being read back as a bool or integer instead of a string.
+fn yaml_opt_slug(slug: Option<&str>) -> String {
+    match slug {
+        Some(s) => format!("\"{s}\""),
+        None => "null".to_owned(),
+    }
+}
+
+/// Trim an optional origin-link value, drop it if blank, and
+/// canonicalise the remainder to a bare slug. `None`/blank stay `None`
+/// so a stray `--stewardship ""` writes `null` rather than a bogus
+/// link. Trimming happens before [`slugify`] because `slugify` maps an
+/// all-whitespace input to `"untitled"` rather than the empty string.
+fn slug_link(link: Option<&str>) -> Option<String> {
+    let trimmed = link.map(str::trim).filter(|s| !s.is_empty())?;
+    Some(slugify(trimmed))
 }
 
 /// Pull the heading text from the rendered body for the daily-log
