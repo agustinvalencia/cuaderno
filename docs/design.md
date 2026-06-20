@@ -1006,6 +1006,11 @@ cdno portfolio list      # Show all portfolios with note counts
                          # and last-updated dates
 cdno portfolio show sparse-vs-dense-ood
                          # List evidence notes in the portfolio
+cdno portfolio link sparse-vs-dense-ood \
+  --question sparse-vs-dense-ood
+                         # Backlink the question note's
+                         # ## Related Portfolios (retrofit; create
+                         # does this automatically when slugs match)
 ```
 
 ### Stewardships

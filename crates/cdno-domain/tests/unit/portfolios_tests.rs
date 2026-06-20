@@ -210,6 +210,119 @@ fn create_portfolio_without_matching_question_links_nothing() {
 }
 
 // ---------------------------------------------------------------------
+// link_portfolio_to_question (#200 retrofit verb)
+// ---------------------------------------------------------------------
+
+#[test]
+fn link_portfolio_to_question_backlinks_differing_slugs() {
+    // Retrofit: portfolio and question have unrelated slugs (the
+    // create-time 1:1 match never fired).
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Where does the budget go")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let returned = vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "where-does-the-budget-go")
+        .expect("link succeeds");
+
+    assert_eq!(returned, question_path);
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(
+        raw.contains("- [[portfolios/sparse-vs-dense-ood]]"),
+        "question note should backlink the portfolio:\n{raw}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_is_idempotent() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    // create already wrote the 1:1 backlink; linking again must not
+    // duplicate the bullet.
+    vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+    vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "sparse-vs-dense-ood")
+        .expect("re-link succeeds");
+
+    let raw = store.read_file(&question_path).unwrap();
+    let occurrences = raw.matches("- [[portfolios/sparse-vs-dense-ood]]").count();
+    assert_eq!(occurrences, 1, "backlink must appear exactly once:\n{raw}");
+}
+
+#[test]
+fn link_portfolio_to_question_accumulates_multiple_portfolios() {
+    // A question can collect more than one portfolio once the retrofit
+    // verb exists — the section grows, it doesn't get overwritten.
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Big open question")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "First angle", None)
+        .expect("portfolio one");
+    vault
+        .create_portfolio(at, "Second angle", None)
+        .expect("portfolio two");
+
+    vault
+        .link_portfolio_to_question("first-angle", "big-open-question")
+        .expect("link one");
+    vault
+        .link_portfolio_to_question("second-angle", "big-open-question")
+        .expect("link two");
+
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(raw.contains("- [[portfolios/first-angle]]"), "{raw}");
+    assert!(raw.contains("- [[portfolios/second-angle]]"), "{raw}");
+}
+
+#[test]
+fn link_portfolio_to_question_errors_on_missing_portfolio() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_question(dt(2026, 2, 1, 9, 0), QuestionDomain::Research, "A question")
+        .expect("create question");
+
+    let err = vault
+        .link_portfolio_to_question("ghost-portfolio", "a-question")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_errors_on_missing_question() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let err = vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "no-such-question")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
 // file_evidence
 // ---------------------------------------------------------------------
 

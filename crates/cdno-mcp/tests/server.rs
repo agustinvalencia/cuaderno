@@ -59,7 +59,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "read_daily_note",
         "read_weekly_note",
         "search_notes",
-        // Operations (15)
+        // Operations (16)
         "append_to_log",
         "file_to_portfolio",
         "update_project_state",
@@ -73,6 +73,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "upsert_weekly_section",
         "create_project",
         "create_portfolio",
+        "link_portfolio_to_question",
         "create_question",
         "create_stewardship",
         // Lifecycle (4)
@@ -83,7 +84,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 29);
+    assert_eq!(tools.len(), 30);
 }
 
 #[test]

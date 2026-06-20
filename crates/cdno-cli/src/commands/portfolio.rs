@@ -16,7 +16,7 @@ use chrono::NaiveDateTime;
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
-use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
+use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter, QuestionStatus};
 use cdno_domain::{PortfolioSummary, Vault};
 
 use cdno_core::path::VaultPath;
@@ -52,6 +52,20 @@ pub enum PortfolioCommands {
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
     },
+
+    /// Link an existing portfolio to an existing question, adding the
+    /// `[[portfolios/<slug>]]` backlink to the question's `## Related
+    /// Portfolios`. The retrofit path for portfolios created before
+    /// their question, or whose slug differs from it.
+    Link {
+        /// Portfolio slug (the `portfolios/<slug>/` folder name).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
+        portfolio: Option<String>,
+        /// Question slug, resolved across the `research` and `life`
+        /// domains.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
+        question: Option<String>,
+    },
 }
 
 pub fn run(
@@ -74,6 +88,10 @@ pub fn run(
             Ok(())
         }
         PortfolioCommands::Show { portfolio } => show(&vault, at, portfolio, interactive),
+        PortfolioCommands::Link {
+            portfolio,
+            question,
+        } => link_to_question(&vault, at, portfolio, question, interactive),
     }
 }
 
@@ -130,6 +148,36 @@ fn show(
     let summary = summaries.iter().find(|s| s.slug == slug);
 
     print!("{}", render_show(&slug, &fm, summary, &entries));
+    Ok(())
+}
+
+fn link_to_question(
+    vault: &Vault,
+    at: NaiveDateTime,
+    portfolio: Option<String>,
+    question: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    let portfolio = match portfolio {
+        Some(s) => s,
+        None if interactive => prompt::prompt_portfolio(vault, at.date())?,
+        None => return Err(prompt::missing_flag("portfolio")),
+    };
+    // Any status is a valid link target — a question stays worth
+    // collecting evidence against whether it's active, parked, or
+    // already answered.
+    let question = match question {
+        Some(s) => s,
+        None if interactive => {
+            prompt::prompt_question(vault, &QuestionStatus::ALL, "Question to link")?
+        }
+        None => return Err(prompt::missing_flag("question")),
+    };
+
+    vault
+        .link_portfolio_to_question(&portfolio, &question)
+        .with_context(|| format!("linking portfolio '{portfolio}' to question '{question}'"))?;
+    println!("Linked portfolio '{portfolio}' to question '{question}'");
     Ok(())
 }
 

@@ -59,6 +59,26 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Link an existing portfolio to an existing question, adding a `[[portfolios/<slug>]]` backlink to the question note's `## Related Portfolios` section. Both arguments are slugs (not free text). Use this to retrofit a portfolio created before its question, or when their slugs differ; `create_portfolio` already backlinks automatically when they match. Idempotent — re-linking never duplicates the bullet."
+    )]
+    pub async fn link_portfolio_to_question(
+        &self,
+        Parameters(input): Parameters<LinkPortfolioToQuestionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = self
+            .vault
+            .link_portfolio_to_question(&input.portfolio, &input.question)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!(
+                "Linked portfolio '{}' to question '{}' ({})",
+                input.portfolio, input.question, path
+            ),
+        ))
+    }
+
+    #[tool(
         description = "Create a research or life question note. `domain` is `research` or `life`."
     )]
     pub async fn create_question(

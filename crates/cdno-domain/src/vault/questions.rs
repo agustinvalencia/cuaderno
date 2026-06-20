@@ -188,8 +188,12 @@ impl Vault {
 
     /// Locate `slug` across both question domains, returning the
     /// resolved path and parsed frontmatter. Helper for
-    /// `set_question_status` and any future read-side ops.
-    fn resolve_question_by_slug(
+    /// `set_question_status`, `link_portfolio_to_question`, and any
+    /// future read-side ops. Errors with `Store(NotFound)` when the
+    /// slug exists in neither domain — callers that want a missing
+    /// slug to be a soft no-op use
+    /// [`find_question_path`](Self::find_question_path) instead.
+    pub(in crate::vault) fn resolve_question_by_slug(
         &self,
         slug: &str,
     ) -> Result<(VaultPath, QuestionFrontmatter), DomainError> {

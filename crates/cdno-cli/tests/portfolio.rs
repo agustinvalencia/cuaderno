@@ -108,6 +108,62 @@ fn portfolio_create_backlinks_existing_question_note() {
     );
 }
 
+#[test]
+fn portfolio_link_backlinks_a_retrofit_question() {
+    // A standalone portfolio created first, then a question with a
+    // different slug, linked after the fact via `portfolio link`.
+    let dir = vault();
+    seed_portfolio(dir.path()); // portfolios/sparse-vs-dense-ood
+    question::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 0),
+        QuestionCommands::Create {
+            domain: Some(QuestionDomain::Research),
+            text: Some("Where does the budget go".to_owned()),
+        },
+        true,
+    )
+    .expect("create question");
+
+    portfolio::run(
+        dir.path(),
+        moment(2026, 2, 2, 9, 0),
+        PortfolioCommands::Link {
+            portfolio: Some("sparse-vs-dense-ood".to_owned()),
+            question: Some("where-does-the-budget-go".to_owned()),
+        },
+        true,
+    )
+    .expect("link");
+
+    let question_note = dir
+        .path()
+        .join("questions/research/where-does-the-budget-go.md");
+    let raw = fs::read_to_string(&question_note).expect("question note exists");
+    assert!(
+        raw.contains("- [[portfolios/sparse-vs-dense-ood]]"),
+        "retrofit link should land in the question note:\n{raw}"
+    );
+}
+
+#[test]
+fn portfolio_link_errors_when_missing_question_in_non_interactive() {
+    let dir = vault();
+    seed_portfolio(dir.path());
+    let err = portfolio::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 0),
+        PortfolioCommands::Link {
+            portfolio: Some("sparse-vs-dense-ood".to_owned()),
+            question: None,
+        },
+        true,
+    )
+    .expect_err("missing --question should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--question"), "error message: {msg}");
+}
+
 // ---------------------------------------------------------------------
 // portfolio list
 // ---------------------------------------------------------------------
