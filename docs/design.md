@@ -1007,10 +1007,13 @@ cdno portfolio list      # Show all portfolios with note counts
 cdno portfolio show sparse-vs-dense-ood
                          # List evidence notes in the portfolio
 cdno portfolio link sparse-vs-dense-ood \
-  --question sparse-vs-dense-ood
-                         # Backlink the question note's
-                         # ## Related Portfolios (retrofit; create
-                         # does this automatically when slugs match)
+  --question model-fidelity-vs-cost
+                         # Retrofit: link a portfolio to a question
+                         # whose slug differs. Writes both ends —
+                         # the question's ## Related Portfolios and
+                         # the portfolio's ## Related Questions.
+                         # (create does this automatically when the
+                         # portfolio and question slugs match)
 ```
 
 ### Stewardships

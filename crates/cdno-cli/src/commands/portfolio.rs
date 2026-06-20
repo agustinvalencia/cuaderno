@@ -32,8 +32,9 @@ pub enum PortfolioCommands {
     Create {
         /// The unifying question the portfolio collects evidence
         /// against. If a question note already exists for the same
-        /// text, its `## Related Portfolios` section is backlinked to
-        /// this portfolio.
+        /// text, the two are linked both ways (the question's `##
+        /// Related Portfolios` and this portfolio's `## Related
+        /// Questions`).
         #[arg(long)]
         question: Option<String>,
         /// Bare wikilink target to a parent project (e.g.
@@ -53,10 +54,11 @@ pub enum PortfolioCommands {
         portfolio: Option<String>,
     },
 
-    /// Link an existing portfolio to an existing question, adding the
-    /// `[[portfolios/<slug>]]` backlink to the question's `## Related
-    /// Portfolios`. The retrofit path for portfolios created before
-    /// their question, or whose slug differs from it.
+    /// Link an existing portfolio to an existing question, writing
+    /// both ends: the question's `## Related Portfolios` and the
+    /// portfolio's `## Related Questions`. The retrofit path for
+    /// portfolios created before their question, or whose slug differs
+    /// from it.
     Link {
         /// Portfolio slug (the `portfolios/<slug>/` folder name).
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
@@ -158,26 +160,33 @@ fn link_to_question(
     question: Option<String>,
     interactive: bool,
 ) -> Result<()> {
-    let portfolio = match portfolio {
-        Some(s) => s,
-        None if interactive => prompt::prompt_portfolio(vault, at.date())?,
-        None => return Err(prompt::missing_flag("portfolio")),
-    };
+    // Same gather -> confirm -> execute shape as the other write verbs.
+    let mut prompted = false;
+    let portfolio =
+        prompt::gather_or_error(portfolio, "portfolio", interactive, &mut prompted, || {
+            prompt::prompt_portfolio(vault, at.date())
+        })?;
     // Any status is a valid link target — a question stays worth
     // collecting evidence against whether it's active, parked, or
     // already answered.
-    let question = match question {
-        Some(s) => s,
-        None if interactive => {
-            prompt::prompt_question(vault, &QuestionStatus::ALL, "Question to link")?
-        }
-        None => return Err(prompt::missing_flag("question")),
-    };
+    let question =
+        prompt::gather_or_error(question, "question", interactive, &mut prompted, || {
+            prompt::prompt_question(vault, &QuestionStatus::ALL, "Question to link")
+        })?;
 
-    vault
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to link portfolio '{portfolio}' to question '{question}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let path = vault
         .link_portfolio_to_question(&portfolio, &question)
         .with_context(|| format!("linking portfolio '{portfolio}' to question '{question}'"))?;
-    println!("Linked portfolio '{portfolio}' to question '{question}'");
+    println!("Linked portfolio '{portfolio}' to question '{question}' ({path})");
     Ok(())
 }
 
