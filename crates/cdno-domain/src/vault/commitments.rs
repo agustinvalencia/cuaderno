@@ -53,9 +53,8 @@ pub struct CommitmentEntry {
 pub enum CommitmentSource {
     /// A hard `## Milestones` deadline of the named project.
     ProjectMilestone(String),
-    /// A periodic commitment of the named stewardship (Phase 3 — no
-    /// stewardship notes exist yet, so this variant is currently
-    /// unproduced).
+    /// A periodic commitment of the named stewardship, parsed from its
+    /// `## Periodic Commitments` section.
     Stewardship(String),
     /// A standalone `commitments/<slug>.md` note.
     StandaloneCommitment,
