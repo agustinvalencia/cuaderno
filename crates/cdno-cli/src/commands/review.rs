@@ -56,43 +56,39 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
         .context("reading the weekly note")?;
 
     // No TTY: show the current note rather than prompting into the void.
+    // Reuse `cdno weekly`'s renderer so the two read paths match
+    // (frontmatter stripped, same no-note placeholder).
     if !prompt::is_interactive(no_interactive) {
-        if view.exists {
-            print!("{}", view.markdown);
-        } else {
-            println!(
-                "No weekly note yet for this week. Run `cdno review weekly` in a terminal to compose one."
-            );
-        }
+        print!("{}", crate::commands::weekly::render(&view, today));
         return Ok(());
     }
 
     println!("Weekly review. Leave a section blank to skip it.\n");
     if view.exists {
-        println!("Current note:\n{}\n", view.markdown.trim_end());
+        println!(
+            "Current note:\n{}",
+            crate::commands::weekly::render(&view, today).trim_end()
+        );
     }
 
-    let mut wrote_any = false;
+    let mut saved_path: Option<String> = None;
     for section in WEEKLY_SECTIONS {
         let entry = prompt::prompt_text(section.heading())?;
         if entry.trim().is_empty() {
             continue;
         }
         // `append: false` — compose/overwrite the section for this pass.
-        vault
+        // `upsert_weekly_section` returns the note path, so we don't need
+        // a second read to report where it landed.
+        let path = vault
             .upsert_weekly_section(today, section, &entry, false)
             .with_context(|| format!("writing the '{}' section", section.heading()))?;
-        wrote_any = true;
+        saved_path = Some(path.to_string());
     }
 
-    if wrote_any {
-        let path = vault
-            .read_weekly_note(today)
-            .map(|v| v.path.to_string())
-            .unwrap_or_default();
-        println!("\nWeekly review saved to {path}.");
-    } else {
-        println!("\nNothing entered \u{2014} weekly note unchanged.");
+    match saved_path {
+        Some(path) => println!("\nWeekly review saved to {path}."),
+        None => println!("\nNothing entered \u{2014} weekly note unchanged."),
     }
     Ok(())
 }
