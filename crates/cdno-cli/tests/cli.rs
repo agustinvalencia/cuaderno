@@ -81,6 +81,71 @@ fn lint_exits_nonzero_with_summary_on_stderr_when_issues_found() {
 }
 
 #[test]
+fn lint_warnings_are_non_fatal_by_default() {
+    // A note with only a broken wikilink (a warning) must not fail the
+    // command by default — clippy-style warn-don't-fail (#217).
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("note.md"),
+        "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[projects/ghost]].\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("non-fatal"));
+}
+
+#[test]
+fn lint_fails_on_errors_even_alongside_warnings() {
+    // A warning must never suppress an error failure: a vault with both
+    // an unknown-type note (error) and a broken-link note (warning)
+    // fails by default.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("bogus.md"),
+        "---\ntype: nonsense\n---\n# x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("note.md"),
+        "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[projects/ghost]].\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("1 error(s), 1 warning(s)"));
+}
+
+#[test]
+fn lint_strict_fails_on_warnings() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("note.md"),
+        "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[projects/ghost]].\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["lint", "--strict"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("0 error(s), 1 warning(s)"));
+}
+
+#[test]
 fn log_errors_clearly_when_run_outside_any_vault() {
     let dir = tempdir().unwrap();
 
