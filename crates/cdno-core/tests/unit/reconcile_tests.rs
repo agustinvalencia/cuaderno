@@ -155,6 +155,30 @@ fn reconcile_resolves_wikilinks_to_their_target_paths() {
 }
 
 #[test]
+fn reconcile_backlinks_a_relocated_note_via_last_segment_fallback() {
+    // #215 end-to-end: a daily references `[[actions/<slug>]]` while the
+    // note lives at `actions/_done/<year>/<slug>.md`. After reconcile,
+    // the archived note's backlinks include the daily — the last-segment
+    // fallback feeds the backlink graph, not only the lint.
+    let (store, index) = fixtures();
+    seed_note(&store, "actions/_done/2026/characterise.md", "action", "");
+    let daily = "---\ntype: daily\n---\n\nfollow-up on [[actions/characterise]]\n";
+    store
+        .write_file(&vp("journal/2026/daily/2026-05-02.md"), daily)
+        .unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+
+    let backlinks = index
+        .find_backlinks(&vp("actions/_done/2026/characterise.md"))
+        .unwrap();
+    assert!(
+        backlinks.contains(&vp("journal/2026/daily/2026-05-02.md")),
+        "the archived action should be backlinked from the daily: {backlinks:?}"
+    );
+}
+
+#[test]
 fn reconcile_marks_wikilink_unresolved_when_basename_is_ambiguous() {
     let (store, index) = fixtures();
     seed_note(&store, "a/foo.md", "daily", "");
