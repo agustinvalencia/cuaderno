@@ -975,18 +975,21 @@ fn open_vault_is_quiet_on_a_clean_vault() {
 // --json output mode (#210)
 // ---------------------------------------------------------------------
 
+/// Run `cdno <args>` in `dir`, assert success, and parse stdout as JSON
+/// — so a malformed-but-bracket-containing output can't pass.
+fn json_stdout(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
+    let out = cdno().current_dir(dir).args(args).assert().success();
+    let bytes = &out.get_output().stdout;
+    serde_json::from_slice(bytes).expect("stdout is valid JSON")
+}
+
 #[test]
 fn commitments_json_emits_an_array() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
-    // Empty vault -> empty JSON array, not the table header.
-    cdno()
-        .current_dir(dir.path())
-        .args(["commitments", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("[]"))
-        .stdout(predicate::str::contains("Commitments (next").not());
+    // Empty vault -> empty JSON array (not the table header).
+    let v = json_stdout(dir.path(), &["commitments", "--json"]);
+    assert_eq!(v, serde_json::json!([]));
 }
 
 #[test]
@@ -1006,26 +1009,30 @@ fn questions_json_emits_the_serialized_summaries() {
         .assert()
         .success();
 
-    cdno()
-        .current_dir(dir.path())
-        .args(["questions", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"slug\""))
-        .stdout(predicate::str::contains("\"domain\""))
-        .stdout(predicate::str::contains("research"));
+    let v = json_stdout(dir.path(), &["questions", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["domain"], "research");
+    assert!(arr[0]["slug"].is_string());
 }
 
 #[test]
 fn status_json_emits_an_object_with_context_keys() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
-    cdno()
-        .current_dir(dir.path())
-        .args(["status", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"projects\""))
-        .stdout(predicate::str::contains("\"commitments\""))
-        .stdout(predicate::str::contains("\"lapsed_habits\""));
+    let v = json_stdout(dir.path(), &["status", "--json"]);
+    for key in ["projects", "commitments", "lapsed_habits"] {
+        assert!(v[key].is_array(), "missing array key {key}: {v}");
+    }
+}
+
+#[test]
+fn orient_json_emits_the_orientation_context() {
+    // orient shares status's `orientation_context`, but pin its own
+    // wiring so a refactor can't silently break it.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(dir.path(), &["orient", "--json"]);
+    assert!(v["projects"].is_array(), "orient JSON shape: {v}");
+    assert!(v["commitments"].is_array(), "orient JSON shape: {v}");
 }

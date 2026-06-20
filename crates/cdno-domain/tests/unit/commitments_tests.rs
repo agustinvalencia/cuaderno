@@ -824,3 +824,41 @@ fn complete_commitment_not_found_lists_open_commitments_excluding_done() {
         "done commitment must be excluded, got: {msg}"
     );
 }
+
+// ---------------------------------------------------------------------
+// CommitmentSource JSON shape (#210 review)
+// ---------------------------------------------------------------------
+
+#[test]
+fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
+    use cdno_domain::{CommitmentEntry, CommitmentSource};
+    use chrono::NaiveDate;
+
+    let date = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+    let tuple = CommitmentEntry {
+        date,
+        title: "Ship v1".to_owned(),
+        source: CommitmentSource::ProjectMilestone("surrogate".to_owned()),
+        is_overdue: false,
+    };
+    let unit = CommitmentEntry {
+        date,
+        title: "A promise".to_owned(),
+        source: CommitmentSource::StandaloneCommitment,
+        is_overdue: false,
+    };
+
+    // Tuple variant: {"kind":"project_milestone","slug":"surrogate"}.
+    let tuple_json = serde_json::to_value(&tuple).unwrap();
+    assert_eq!(tuple_json["source"]["kind"], "project_milestone");
+    assert_eq!(tuple_json["source"]["slug"], "surrogate");
+
+    // Unit variant: {"kind":"standalone_commitment"} -- same `kind`
+    // tag, no `slug` (homogeneous, not a bare string).
+    let unit_json = serde_json::to_value(&unit).unwrap();
+    assert_eq!(unit_json["source"]["kind"], "standalone_commitment");
+    assert!(
+        unit_json["source"].get("slug").is_none(),
+        "unit variant carries no slug: {unit_json}"
+    );
+}
