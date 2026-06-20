@@ -13,8 +13,9 @@ use crate::bootstrap;
 /// threshold for CI gates that want zero dangling links. Mirrors
 /// `cargo clippy`'s warn-by-default / `-D warnings` split.
 ///
-/// Issues go to stdout (one per line, grep-friendly, severity-tagged);
-/// the failure summary lands on stderr through `anyhow`.
+/// Issues go to stdout (one per line, grep-friendly, severity-tagged).
+/// A failure summary lands on stderr through `anyhow`; a non-fatal
+/// warnings-only summary goes to stdout.
 pub fn run(root: &Path, strict: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let report = vault.lint_all_notes()?;
