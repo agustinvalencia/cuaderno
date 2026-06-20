@@ -118,3 +118,42 @@ fn open_creates_parent_directories() {
     let _index = SqliteIndex::open(&nested).unwrap();
     assert!(nested.exists(), "index file should exist after open");
 }
+
+#[test]
+fn open_self_heals_a_corrupt_index_file() {
+    // A truncated / garbage file at the index path is not a valid SQLite
+    // database. The index is a rebuildable cache, so `open` must discard
+    // it and lay down a fresh schema rather than erroring (#206).
+    let (_dir, path) = new_db_path();
+    std::fs::write(&path, b"this is definitely not a sqlite database").unwrap();
+
+    let index = SqliteIndex::open(&path).expect("open recovers from a corrupt file");
+    assert!(
+        index.check_integrity().unwrap(),
+        "recovered index is healthy"
+    );
+
+    let conn = Connection::open(&path).unwrap();
+    let version: u32 = conn
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(version, 2, "fresh schema applied after recovery");
+}
+
+#[test]
+fn remove_deletes_the_db_and_wal_sidecar() {
+    let (_dir, path) = new_db_path();
+    let _index = SqliteIndex::open(&path).unwrap();
+    // Simulate a WAL sidecar alongside the db.
+    let mut wal = path.clone().into_os_string();
+    wal.push("-wal");
+    let wal = std::path::PathBuf::from(wal);
+    std::fs::write(&wal, b"sidecar").unwrap();
+    assert!(path.exists());
+
+    SqliteIndex::remove(&path);
+    assert!(!path.exists(), "db file removed");
+    assert!(!wal.exists(), "wal sidecar removed");
+}
