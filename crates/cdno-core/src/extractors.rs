@@ -206,11 +206,13 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
 /// Resolution policy, in order:
 /// 1. Exact path match: `[[projects/foo]]` → `projects/foo.md` if
 ///    that path exists in `vault_paths`.
-/// 2. Basename match: `[[foo]]` → `*/foo.md` if exactly one path in
-///    the vault has the stem `foo`.
-/// 3. Otherwise `resolved_path` is `None` and the link is recorded
-///    as broken — `cdno lint` can surface it once the lint surface
-///    grows broken-wikilink checks.
+/// 2. Last-segment match: the target's final path segment against note
+///    stems — `[[foo]]` or `[[actions/foo]]` → `*/foo.md` if exactly
+///    one path has the stem `foo`. This resolves a link to a note that
+///    relocated within its tree (e.g. an action archived to
+///    `actions/_done/<year>/`); a unique match is required (#215).
+/// 3. Otherwise `resolved_path` is `None` and the link is recorded as
+///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,
     vault_paths: &HashSet<VaultPath>,
@@ -235,14 +237,30 @@ fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPa
         return Some(vp);
     }
 
-    // 2. Basename match: collect every path whose `.md` stem equals
-    // `target`. A unique match wins; zero or multiple matches mean
-    // the link stays unresolved.
+    // 2. Last-segment match: resolve by the note's filename stem
+    // against the target's final path segment. For a bare target
+    // (`[[foo]]`) the segment is the whole thing; for a qualified one
+    // (`[[actions/foo]]`) it's `foo`. This lets a link survive a note
+    // relocating *within its tree* without rewriting every reference:
+    // `[[actions/<slug>]]` still resolves after the note is archived to
+    // `actions/_done/<year>/<slug>.md` (#215), and likewise for parked
+    // projects and completed commitments.
+    //
+    // A unique stem match wins; zero or multiple matches leave the link
+    // unresolved. This keeps resolution *sound* — a stem collision never
+    // resolves to the wrong note, it resolves to neither (`None`). The
+    // cost is availability, not correctness: when two notes share a stem
+    // (slugs aren't globally unique — see `vault::slug`), a legitimately
+    // relocated note's backlinks degrade to unresolved rather than
+    // misdirecting. Still strictly better than the pervasive dangling it
+    // fixes; a slug-uniqueness pass would shrink the collision window
+    // further.
+    let needle = target.rsplit('/').next().unwrap_or(target);
     let mut matches = vault_paths.iter().filter(|p| {
         p.as_path()
             .file_stem()
             .and_then(|s| s.to_str())
-            .is_some_and(|stem| stem == target)
+            .is_some_and(|stem| stem == needle)
     });
     let first = matches.next()?;
     if matches.next().is_some() {
