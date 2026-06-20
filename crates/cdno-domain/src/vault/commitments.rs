@@ -53,9 +53,8 @@ pub struct CommitmentEntry {
 pub enum CommitmentSource {
     /// A hard `## Milestones` deadline of the named project.
     ProjectMilestone(String),
-    /// A periodic commitment of the named stewardship (Phase 3 — no
-    /// stewardship notes exist yet, so this variant is currently
-    /// unproduced).
+    /// A periodic commitment of the named stewardship, parsed from its
+    /// `## Periodic Commitments` section.
     Stewardship(String),
     /// A standalone `commitments/<slug>.md` note.
     StandaloneCommitment,
@@ -251,8 +250,8 @@ impl Vault {
     /// Four sources (design §5.9 / §5.11):
     /// 1. Hard project milestones, read from the `milestones` index
     ///    table (#109) — completed and soft milestones are skipped.
-    /// 2. Stewardship periodic commitments — absent until Phase 3, so
-    ///    currently contributes nothing.
+    /// 2. Stewardship periodic commitments, parsed from each
+    ///    stewardship's `## Periodic Commitments` section.
     /// 3. Standalone active commitment notes.
     /// 4. Active action notes with a self-imposed `due:` and **no**
     ///    `milestone:`. A milestone-pinned action is *not* duplicated
