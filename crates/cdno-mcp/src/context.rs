@@ -14,10 +14,10 @@ use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 use cdno_domain::note_type::NoteType;
 
 use crate::dto::{
-    CommitmentEntryDto, DailyNoteViewDto, LintReportDto, MonthlyContextDto, OrientationContextDto,
-    PortfolioDetailDto, ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto,
-    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, WeeklyContextDto,
-    WeeklyNoteViewDto,
+    CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
+    OrientationContextDto, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
+    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
+    StewardshipTrackingDto, WeeklyContextDto, WeeklyNoteViewDto,
 };
 
 use crate::input::*;
@@ -174,6 +174,18 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let report = self.vault.lint_all_notes().map_err(into_mcp_error)?;
         json_result(LintReportDto::from(report))
+    }
+
+    #[tool(
+        description = "List uncategorised captures under `inbox/` awaiting triage (each: `slug` + `text`), oldest first. The read half of draining the inbox: route an item into a task/note with the usual create tool (e.g. `add_action`), then call `discard_inbox_item` with its slug to clear it."
+    )]
+    pub async fn triage_inbox(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let items = self.vault.list_inbox().map_err(into_mcp_error)?;
+        let dtos: Vec<InboxItemDto> = items.into_iter().map(Into::into).collect();
+        json_result(dtos)
     }
 
     #[tool(

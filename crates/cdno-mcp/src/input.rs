@@ -272,6 +272,14 @@ pub struct ResolveWaitingOnInput {
     pub query: String,
 }
 
+/// Input for `discard_inbox_item` (GH #208) — clear a triaged capture.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscardInboxItemInput {
+    /// Inbox item slug (the `<YYYY-MM-DD>-<slug>` filename stem from
+    /// `triage_inbox`).
+    pub slug: String,
+}
+
 /// Input for `capture` (GH #204) — drop a raw line into the inbox.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CaptureInput {

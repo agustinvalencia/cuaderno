@@ -58,6 +58,24 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Discard a triaged inbox capture by `slug` (from `triage_inbox`): deletes the note and logs the discard. Use once its content has been routed elsewhere (e.g. via `add_action`), or to drop it outright."
+    )]
+    pub async fn discard_inbox_item(
+        &self,
+        Parameters(input): Parameters<DiscardInboxItemInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .discard_inbox_item(at, &input.slug)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Discarded {}", path),
+        ))
+    }
+
+    #[tool(
         description = "Add a milestone to an active project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`. `hard: true` records a hard deadline that the commitments aggregation surfaces; omit it (or `false`) for a soft target. The section is auto-created if missing."
     )]
     pub async fn add_milestone(

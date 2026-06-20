@@ -200,3 +200,94 @@ fn capture_upserts_the_index_so_lint_can_see_the_note() {
     // (lint iterates the index, not the filesystem).
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
+
+// ---------------------------------------------------------------------
+// list_inbox / discard_inbox_item (triage, #208)
+// ---------------------------------------------------------------------
+
+fn dt(year: i32, month: u32, day: u32) -> NaiveDateTime {
+    NaiveDate::from_ymd_opt(year, month, day)
+        .unwrap()
+        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap())
+}
+
+#[test]
+fn list_inbox_returns_captures_oldest_first() {
+    let (vault, _store) = make_vault();
+    vault
+        .capture_to_inbox(dt(2026, 4, 26), "second thing")
+        .unwrap();
+    vault
+        .capture_to_inbox(dt(2026, 4, 25), "first thing")
+        .unwrap();
+
+    let items = vault.list_inbox().expect("list_inbox");
+    assert_eq!(items.len(), 2);
+    // The filename's date prefix sorts chronologically.
+    assert_eq!(items[0].text, "first thing");
+    assert!(items[0].slug.starts_with("2026-04-25-"));
+    assert_eq!(items[1].text, "second thing");
+}
+
+#[test]
+fn discard_inbox_item_removes_the_note() {
+    let (vault, store) = make_vault();
+    let path = vault
+        .capture_to_inbox(moment(), "ephemeral thought")
+        .unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    vault
+        .discard_inbox_item(moment(), &slug)
+        .expect("discard succeeds");
+
+    assert!(!store.exists(&path).unwrap(), "inbox note file deleted");
+    assert!(
+        vault.list_inbox().unwrap().is_empty(),
+        "discarded item no longer listed"
+    );
+}
+
+#[test]
+fn discard_inbox_item_preserves_the_text_in_the_daily_log() {
+    // The note is hard-deleted, so the daily log is the recovery record:
+    // it must carry both the discard marker and the captured text.
+    let (vault, store) = make_vault();
+    let path = vault
+        .capture_to_inbox(moment(), "remember the milk")
+        .unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+
+    // moment() is 2026-04-26.
+    let daily = store
+        .read_file(&VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap())
+        .expect("daily note written");
+    assert!(daily.contains("discarded"), "daily:\n{daily}");
+    assert!(daily.contains("remember the milk"), "daily:\n{daily}");
+}
+
+#[test]
+fn discard_inbox_item_errors_on_missing_slug() {
+    let (vault, _store) = make_vault();
+    let err = vault
+        .discard_inbox_item(moment(), "2026-01-01-nope")
+        .unwrap_err();
+    assert!(
+        matches!(err, cdno_domain::error::DomainError::Store(_)),
+        "got {err:?}"
+    );
+}

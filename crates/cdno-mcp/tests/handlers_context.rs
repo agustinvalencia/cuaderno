@@ -966,3 +966,22 @@ async fn lint_is_clean_on_an_empty_vault() {
     assert!(v["clean"].as_bool().unwrap());
     assert_eq!(v["issues"].as_array().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn triage_inbox_lists_pending_captures() {
+    let server = server_with(|vault| {
+        vault
+            .capture_to_inbox(moment(2026, 4, 26, 9, 0), "buy milk")
+            .unwrap();
+    });
+
+    let result = server
+        .triage_inbox(Parameters(EmptyInput {}))
+        .await
+        .expect("triage_inbox");
+    let v = decode_json(&result);
+    let arr = v.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["text"].as_str().unwrap(), "buy milk");
+    assert!(arr[0]["slug"].as_str().unwrap().starts_with("2026-04-26-"));
+}
