@@ -255,6 +255,32 @@ fn discard_inbox_item_removes_the_note() {
 }
 
 #[test]
+fn discard_inbox_item_preserves_the_text_in_the_daily_log() {
+    // The note is hard-deleted, so the daily log is the recovery record:
+    // it must carry both the discard marker and the captured text.
+    let (vault, store) = make_vault();
+    let path = vault
+        .capture_to_inbox(moment(), "remember the milk")
+        .unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+
+    // moment() is 2026-04-26.
+    let daily = store
+        .read_file(&VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap())
+        .expect("daily note written");
+    assert!(daily.contains("discarded"), "daily:\n{daily}");
+    assert!(daily.contains("remember the milk"), "daily:\n{daily}");
+}
+
+#[test]
 fn discard_inbox_item_errors_on_missing_slug() {
     let (vault, _store) = make_vault();
     let err = vault

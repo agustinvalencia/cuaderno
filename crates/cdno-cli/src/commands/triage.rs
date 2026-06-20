@@ -13,10 +13,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
-use inquire::Select;
+use inquire::{InquireError, Select};
 
 use crate::bootstrap;
 use crate::prompt;
+use cdno_domain::{InboxItem, Vault};
 
 pub fn run(root: &Path, at: NaiveDateTime, no_interactive: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
@@ -38,29 +39,50 @@ pub fn run(root: &Path, at: NaiveDateTime, no_interactive: bool) -> Result<()> {
 
     for item in items {
         println!("\n{}", item.text);
-        let choice = Select::new("Triage", vec!["keep as action", "discard", "skip"]).prompt()?;
+        let choice = match Select::new("Triage", vec!["keep as action", "discard", "skip"]).prompt()
+        {
+            Ok(c) => c,
+            // Esc / Ctrl-C ends the triage session cleanly rather than
+            // erroring out mid-drain.
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                println!("Triage stopped.");
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        };
 
-        match choice {
-            "keep as action" => {
-                let project = prompt::prompt_project(&vault)?;
-                let energy = prompt::prompt_energy()?;
-                vault
-                    .add_action(at, &project, &item.text, energy)
-                    .with_context(|| format!("adding action to '{project}'"))?;
-                vault
-                    .discard_inbox_item(at, &item.slug)
-                    .context("clearing the capture")?;
-                println!("Kept as an action on '{project}'; capture cleared.");
-            }
-            "discard" => {
-                vault
-                    .discard_inbox_item(at, &item.slug)
-                    .context("discarding the capture")?;
-                println!("Discarded.");
-            }
-            _ => println!("Skipped."),
+        // A per-item failure (or a cancelled sub-prompt) shouldn't abort
+        // the whole drain — report it and move to the next capture.
+        let outcome = match choice {
+            "keep as action" => keep_as_action(&vault, at, &item),
+            "discard" => vault
+                .discard_inbox_item(at, &item.slug)
+                .map(|_| "Discarded.".to_owned())
+                .context("discarding the capture"),
+            _ => Ok("Skipped.".to_owned()),
+        };
+        match outcome {
+            Ok(msg) => println!("{msg}"),
+            Err(e) => eprintln!("Could not process `{}`: {e:#}", item.slug),
         }
     }
 
     Ok(())
+}
+
+/// Promote a capture to a project action, then clear it. Returns the
+/// success line to print. `add_action` runs before `discard` so a
+/// failure can't lose the capture.
+fn keep_as_action(vault: &Vault, at: NaiveDateTime, item: &InboxItem) -> Result<String> {
+    let project = prompt::prompt_project(vault)?;
+    let energy = prompt::prompt_energy()?;
+    vault
+        .add_action(at, &project, &item.text, energy)
+        .with_context(|| format!("adding action to '{project}'"))?;
+    vault
+        .discard_inbox_item(at, &item.slug)
+        .context("clearing the capture")?;
+    Ok(format!(
+        "Kept as an action on '{project}'; capture cleared."
+    ))
 }

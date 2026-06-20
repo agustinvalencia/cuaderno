@@ -89,6 +89,13 @@ impl Vault {
     /// destination with the usual verb (`add_action`, …) and then
     /// discard the capture.
     ///
+    /// This is a deliberate **hard delete** (no `inbox/_done/` archive):
+    /// inbox items are fleeting captures, not completed work like
+    /// actions or commitments that earn a `_done` record. The captured
+    /// text is still preserved in the daily-log line, so a discard is
+    /// recoverable from the append-only daily even though the note
+    /// itself is gone — no unrecoverable data loss.
+    ///
     /// Errors with [`StoreError::NotFound`] when no inbox note matches.
     pub fn discard_inbox_item(
         &self,
@@ -100,16 +107,24 @@ impl Vault {
             return Err(DomainError::Store(StoreError::NotFound(path.to_string())));
         }
 
+        // Read the captured text first so the discard is recoverable
+        // from the daily log after the note is deleted. Collapse
+        // whitespace so a multi-line capture stays a single log line.
+        let raw = self.store.read_file(&path)?;
+        let (_fm, body) = Frontmatter::parse(&raw)?;
+        let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         tx.delete_file(path.clone());
         tx.remove_note(path.clone());
         // Plain text, not a wikilink: the note is being deleted, so a
         // `[[inbox/<slug>]]` would immediately dangle.
-        self.stage_daily_log(
-            at,
-            &format!("triaged inbox item `{slug}` -- discarded"),
-            &mut tx,
-        )?;
+        let log_entry = if text.is_empty() {
+            format!("triaged inbox item `{slug}` -- discarded")
+        } else {
+            format!("triaged inbox item `{slug}` -- discarded: {text}")
+        };
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
         Ok(path)
     }
