@@ -118,3 +118,73 @@ fn open_creates_parent_directories() {
     let _index = SqliteIndex::open(&nested).unwrap();
     assert!(nested.exists(), "index file should exist after open");
 }
+
+#[test]
+fn open_self_heals_a_corrupt_index_file() {
+    // A truncated / garbage file at the index path is not a valid SQLite
+    // database. The index is a rebuildable cache, so `open` must discard
+    // it and lay down a fresh schema rather than erroring (#206).
+    let (_dir, path) = new_db_path();
+    std::fs::write(&path, b"this is definitely not a sqlite database").unwrap();
+
+    let index = SqliteIndex::open(&path).expect("open recovers from a corrupt file");
+    assert!(
+        index.check_integrity().unwrap(),
+        "recovered index is healthy"
+    );
+
+    let conn = Connection::open(&path).unwrap();
+    let version: u32 = conn
+        .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(version, 2, "fresh schema applied after recovery");
+}
+
+#[test]
+fn reopen_preserves_a_healthy_populated_index() {
+    // A healthy existing index must take the Ok branch on open, never the
+    // corruption self-heal -- so its rows survive a reopen and aren't
+    // clobbered (#206).
+    let (_dir, path) = new_db_path();
+    {
+        let index = SqliteIndex::open(&path).unwrap();
+        index
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES ('p.md', 'daily', 'h', 0, 0, '{}', 0)",
+                    [],
+                )
+            })
+            .unwrap();
+    }
+
+    let index = SqliteIndex::open(&path).unwrap();
+    let count: u32 = index
+        .with_connection(|c| c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(count, 1, "healthy index must not be clobbered on reopen");
+}
+
+#[test]
+fn remove_deletes_the_db_and_sidecars() {
+    let (_dir, path) = new_db_path();
+    let _index = SqliteIndex::open(&path).unwrap();
+    // Simulate WAL + SHM sidecars alongside the db.
+    let sidecar = |suffix: &str| {
+        let mut p = path.clone().into_os_string();
+        p.push(suffix);
+        std::path::PathBuf::from(p)
+    };
+    let wal = sidecar("-wal");
+    let shm = sidecar("-shm");
+    std::fs::write(&wal, b"wal").unwrap();
+    std::fs::write(&shm, b"shm").unwrap();
+    assert!(path.exists());
+
+    SqliteIndex::remove(&path);
+    assert!(!path.exists(), "db file removed");
+    assert!(!wal.exists(), "wal sidecar removed");
+    assert!(!shm.exists(), "shm sidecar removed");
+}

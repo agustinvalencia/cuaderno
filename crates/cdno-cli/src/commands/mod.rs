@@ -11,6 +11,7 @@ pub mod portfolio;
 pub mod project;
 pub mod question;
 pub mod questions;
+pub mod reindex;
 pub mod search;
 pub mod status;
 pub mod stewardship;

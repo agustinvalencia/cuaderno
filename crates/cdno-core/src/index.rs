@@ -75,6 +75,25 @@ impl SqliteIndex {
             })?;
         }
 
+        match Self::open_connection(path) {
+            Ok(index) => Ok(index),
+            // The index is a cache (markdown is the source of truth), so
+            // a corrupt file is safe to discard and rebuild (#206). Only
+            // an *existing* file can be corrupt — a fresh-create failure
+            // is a real environment problem, not a recoverable cache.
+            // The caller's reconciliation repopulates the empty index.
+            Err(err) if path.exists() && is_recoverable_corruption(&err) => {
+                remove_index_files(path);
+                Self::open_connection(path)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Open + configure + migrate a connection at `path`. The fallible
+    /// core of [`open`](Self::open), split out so `open` can retry it on
+    /// a fresh file after discarding a corrupt one.
+    fn open_connection(path: &Path) -> Result<Self, IndexError> {
         let conn = Connection::open(path)?;
         configure_connection(&conn)?;
         apply_pending_migrations(&conn)?;
@@ -82,6 +101,15 @@ impl SqliteIndex {
         Ok(Self {
             conn: Mutex::new(conn),
         })
+    }
+
+    /// Delete the index file and its WAL/SHM sidecars. The index is a
+    /// rebuildable cache, so this is the recovery primitive behind both
+    /// the corruption self-heal in [`open`](Self::open) and the explicit
+    /// `cdno reindex` command — the next `open` + reconcile rebuilds it
+    /// from the markdown source of truth.
+    pub fn remove(path: impl AsRef<Path>) {
+        remove_index_files(path.as_ref());
     }
 
     /// Run `PRAGMA quick_check` — the cheap subset of `integrity_check`
@@ -110,6 +138,36 @@ impl SqliteIndex {
     {
         let conn = self.conn.lock().expect("poisoned mutex");
         f(&conn).map_err(IndexError::from)
+    }
+}
+
+/// True for the SQLite error codes meaning "this file isn't a usable
+/// database" — a truncated or corrupt index. The index is a rebuildable
+/// cache, so these are recovered by dropping the file and reconciling
+/// rather than surfaced to the user.
+fn is_recoverable_corruption(err: &IndexError) -> bool {
+    matches!(
+        err,
+        IndexError::Sqlite(rusqlite::Error::SqliteFailure(e, _))
+            if matches!(
+                e.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            )
+    )
+}
+
+/// Remove the SQLite index file and its `-wal` / `-shm` sidecars,
+/// ignoring not-found. Used to drop a corrupt cache before rebuilding.
+fn remove_index_files(path: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let target = if suffix.is_empty() {
+            path.to_path_buf()
+        } else {
+            let mut name = path.as_os_str().to_owned();
+            name.push(suffix);
+            std::path::PathBuf::from(name)
+        };
+        let _ = fs::remove_file(target);
     }
 }
 

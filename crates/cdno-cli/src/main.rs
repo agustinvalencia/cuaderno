@@ -69,6 +69,10 @@ enum Commands {
     /// Validate every indexed note and report frontmatter problems.
     Lint,
 
+    /// Rebuild the SQLite index from scratch off the markdown source of
+    /// truth. The recovery path for a corrupt or stale index.
+    Reindex,
+
     /// Capture a quick note into `inbox/` with a slug-based filename.
     Capture {
         /// The note text. Quote if it contains spaces.
@@ -273,6 +277,10 @@ fn main() -> Result<()> {
         Commands::Lint => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::lint::run(&root)
+        }
+        Commands::Reindex => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::reindex::run(&root)
         }
         Commands::Capture { text } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

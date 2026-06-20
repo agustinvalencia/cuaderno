@@ -805,6 +805,62 @@ fn open_vault_reports_the_count_of_unindexable_notes() {
 }
 
 #[test]
+fn reindex_rebuilds_the_index_from_markdown() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    // A valid note on disk that reconciliation will index.
+    std::fs::write(
+        dir.path().join("zettel.md"),
+        "---\ntype: zettel\ntitle: A note\n---\n# A note\n",
+    )
+    .unwrap();
+
+    // `--vault` pins the target so the destructive rebuild can't touch
+    // an ambient `CUADERNO_VAULT_PATH` vault. `init` seeds no indexable
+    // notes, so the lone zettel is the whole count -- assert it exactly,
+    // proving the rebuild actually indexed it (not just that it ran).
+    cdno()
+        .args([
+            "--vault".as_ref(),
+            dir.path().as_os_str(),
+            "reindex".as_ref(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Reindexed 1 note(s)"));
+}
+
+#[test]
+fn reindex_errors_outside_a_vault() {
+    let dir = tempdir().unwrap();
+    cdno()
+        .current_dir(dir.path())
+        .env_remove("CUADERNO_VAULT_PATH")
+        .arg("reindex")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not inside a Cuaderno vault"));
+}
+
+#[test]
+fn corrupt_index_self_heals_on_next_command() {
+    // A truncated index db must not break the CLI: opening the vault
+    // discards the corrupt cache and rebuilds it (#206).
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(dir.path().join(".cuaderno/index.db"), b"corrupt garbage").unwrap();
+
+    cdno()
+        .args([
+            "--vault".as_ref(),
+            dir.path().as_os_str(),
+            "commitments".as_ref(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn open_vault_is_quiet_on_a_clean_vault() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
