@@ -62,7 +62,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "list_projects",
         "get_commitments",
         "lint",
-        // Operations (17)
+        // Operations (21)
         "append_to_log",
         "capture",
         "file_to_portfolio",
@@ -70,6 +70,10 @@ fn advertised_catalogue_matches_expected_surface() {
         "add_action",
         "promote_action",
         "complete_action",
+        "add_milestone",
+        "complete_milestone",
+        "add_waiting_on",
+        "resolve_waiting_on",
         "create_commitment",
         "complete_commitment",
         "create_tracking_entry",
@@ -88,7 +92,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 34);
+    assert_eq!(tools.len(), 38);
 }
 
 #[test]

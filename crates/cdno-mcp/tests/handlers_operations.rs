@@ -18,12 +18,13 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput, CaptureInput,
-    CompleteCommitmentInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
+    ActionQueryInput, AddActionInput, AddMilestoneInput, AddPeriodicCommitmentInput,
+    AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
+    CompleteMilestoneInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
-    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
-    UpsertWeeklySectionInput,
+    ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
+    UpsertDailySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -1106,6 +1107,114 @@ async fn file_to_portfolio_attaches_a_non_markdown_artefact() {
         store.exists(&vp(&format!("{stem}/figure.png"))).unwrap(),
         "artefact imported beside the stub"
     );
+}
+
+// ---------------------------------------------------------------------
+// milestone + waiting-on MCP parity (#213)
+// ---------------------------------------------------------------------
+
+fn server_with_project() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with(|vault, _s| {
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0).date(),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    })
+}
+
+#[tokio::test]
+async fn add_milestone_appends_a_hard_deadline() {
+    let (server, store) = server_with_project();
+
+    let result = server
+        .add_milestone(Parameters(AddMilestoneInput {
+            project: "surrogate-model".to_owned(),
+            title: "Ship v1".to_owned(),
+            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            hard: true,
+        }))
+        .await
+        .expect("add_milestone");
+    let value = decode_json(&result);
+    assert_eq!(
+        value["path"].as_str().unwrap(),
+        "projects/surrogate-model.md"
+    );
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    // Pin the full open-bullet form, not just the loose substrings.
+    assert!(body.contains("- [ ] Ship v1"), "{body}");
+    assert!(body.contains("hard: 2026-07-01"), "{body}");
+}
+
+#[tokio::test]
+async fn complete_milestone_ticks_the_bullet() {
+    let (server, store) = server_with_project();
+    server
+        .add_milestone(Parameters(AddMilestoneInput {
+            project: "surrogate-model".to_owned(),
+            title: "Ship v1".to_owned(),
+            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            hard: false,
+        }))
+        .await
+        .expect("add_milestone");
+
+    server
+        .complete_milestone(Parameters(CompleteMilestoneInput {
+            project: "surrogate-model".to_owned(),
+            query: "ship".to_owned(),
+        }))
+        .await
+        .expect("complete_milestone");
+
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(body.contains("- [x] Ship v1"), "{body}");
+}
+
+#[tokio::test]
+async fn add_then_resolve_waiting_on_round_trips() {
+    let (server, store) = server_with_project();
+
+    server
+        .add_waiting_on(Parameters(AddWaitingOnInput {
+            project: "surrogate-model".to_owned(),
+            description: "Compute allocation".to_owned(),
+        }))
+        .await
+        .expect("add_waiting_on");
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(body.contains("- Compute allocation"), "{body}");
+
+    server
+        .resolve_waiting_on(Parameters(ResolveWaitingOnInput {
+            project: "surrogate-model".to_owned(),
+            query: "compute".to_owned(),
+        }))
+        .await
+        .expect("resolve_waiting_on");
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(!body.contains("- Compute allocation"), "{body}");
+    // Removing the last item restores the placeholder.
+    assert!(body.contains("(nothing yet)"), "{body}");
+}
+
+#[tokio::test]
+async fn add_milestone_errors_on_unknown_project() {
+    let (server, _store) = server_with(|_v, _s| ());
+    let err = server
+        .add_milestone(Parameters(AddMilestoneInput {
+            project: "ghost".to_owned(),
+            title: "X".to_owned(),
+            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            hard: false,
+        }))
+        .await
+        .expect_err("unknown project should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
 
 // ---------------------------------------------------------------------

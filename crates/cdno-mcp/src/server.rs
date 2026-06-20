@@ -2,13 +2,18 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 29 tools are wired through to the domain — the 16
+//! Status: all 38 tools are wired through to the domain — the 16
 //! design §11 tools, the two daily-note tools (GH #158), the two
 //! weekly-note tools (`read_weekly_note`, `upsert_weekly_section`), the
 //! four structural-creation tools (GH #162), the four lifecycle tools
 //! (`park_project`, `activate_project`, `set_question_status`,
-//! `add_periodic_commitment`, GH #166), and `search_notes` (#172).
-//! Handlers are split by group
+//! `add_periodic_commitment`, GH #166), `search_notes` (#172),
+//! `link_portfolio_to_question` (#200), the four read-parity tools
+//! (`list_projects`, `get_commitments`, `lint`, `capture`, GH #204),
+//! and the four milestone/waiting-on tools (`add_milestone`,
+//! `complete_milestone`, `add_waiting_on`, `resolve_waiting_on`,
+//! GH #213). The authoritative catalogue is the `tests/server.rs`
+//! sorted-set assertion. Handlers are split by group
 //! across sibling modules — `context.rs`, `operations.rs`,
 //! `creation.rs`, `lifecycle.rs` — each a `#[tool_router]` merged into
 //! the dispatch table in `new()`.

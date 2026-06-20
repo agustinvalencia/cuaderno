@@ -229,6 +229,49 @@ pub struct GetCommitmentsInput {
     pub lookahead_weeks: Option<u32>,
 }
 
+/// Input for `add_milestone` (GH #213).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddMilestoneInput {
+    /// Active project slug.
+    pub project: String,
+    pub title: String,
+    /// ISO `YYYY-MM-DD`.
+    pub target_date: chrono::NaiveDate,
+    /// `true` records a *hard* deadline, which the commitments
+    /// aggregation surfaces; omitted/`false` is a soft target.
+    #[serde(default)]
+    pub hard: bool,
+}
+
+/// Input for `complete_milestone` (GH #213). `query` mirrors the
+/// substring-match field of [`ActionQueryInput`].
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompleteMilestoneInput {
+    /// Active project slug.
+    pub project: String,
+    /// Case-insensitive substring of the open milestone's title.
+    pub query: String,
+}
+
+/// Input for `add_waiting_on` (GH #213).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddWaitingOnInput {
+    /// Active project slug.
+    pub project: String,
+    /// The blocker description (informational; no checkbox).
+    pub description: String,
+}
+
+/// Input for `resolve_waiting_on` (GH #213). `query` mirrors the
+/// substring-match field of [`ActionQueryInput`].
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResolveWaitingOnInput {
+    /// Active project slug.
+    pub project: String,
+    /// Case-insensitive substring of the waiting-on item to remove.
+    pub query: String,
+}
+
 /// Input for `capture` (GH #204) — drop a raw line into the inbox.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CaptureInput {
