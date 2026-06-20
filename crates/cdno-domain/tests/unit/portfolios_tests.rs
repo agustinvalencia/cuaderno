@@ -12,7 +12,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::PortfolioSummary;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
+use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter, QuestionDomain};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -135,6 +135,77 @@ fn create_portfolio_errors_on_slug_collision() {
             DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
         ),
         "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// create_portfolio: question backlink (#200)
+// ---------------------------------------------------------------------
+
+#[test]
+fn create_portfolio_backlinks_matching_question() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    // The question note's `## Related Portfolios` now carries the
+    // backlink, derived from the shared slug.
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(
+        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        "question note should backlink the portfolio:\n{raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_backlinks_question_in_life_domain() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    // The slug resolves across both domains — a life-domain question
+    // is found just like a research one.
+    let question_path = vault
+        .create_question(at, QuestionDomain::Life, "Where to settle long term")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "Where to settle long term", None)
+        .expect("create portfolio");
+
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(
+        raw.contains("- [[portfolios/where-to-settle-long-term]]"),
+        "life-domain question should backlink the portfolio:\n{raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_without_matching_question_links_nothing() {
+    // No question note exists for this slug: the portfolio is created
+    // standalone and no `questions/` note is written.
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    assert_eq!(path, vp("portfolios/sparse-vs-dense-ood/_index.md"));
+    assert!(
+        !store
+            .exists(&vp("questions/research/sparse-vs-dense-ood.md"))
+            .unwrap(),
+        "no question note should be created"
+    );
+    assert!(
+        !store
+            .exists(&vp("questions/life/sparse-vs-dense-ood.md"))
+            .unwrap(),
+        "no question note should be created"
     );
 }
 

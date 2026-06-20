@@ -31,7 +31,9 @@ pub enum PortfolioCommands {
     /// derived from the question.
     Create {
         /// The unifying question the portfolio collects evidence
-        /// against.
+        /// against. If a question note already exists for the same
+        /// text, its `## Related Portfolios` section is backlinked to
+        /// this portfolio.
         #[arg(long)]
         question: Option<String>,
         /// Bare wikilink target to a parent project (e.g.

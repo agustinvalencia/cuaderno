@@ -6,7 +6,9 @@ use std::fs;
 use std::path::Path;
 
 use cdno_cli::commands::portfolio::{self, PortfolioCommands};
+use cdno_cli::commands::question::{self, QuestionCommands};
 use cdno_cli::commands::{file, init};
+use cdno_domain::frontmatter::QuestionDomain;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use tempfile::TempDir;
 
@@ -78,6 +80,32 @@ fn portfolio_create_errors_when_missing_question_in_non_interactive() {
     .expect_err("missing --question should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("--question"), "error message: {msg}");
+}
+
+#[test]
+fn portfolio_create_backlinks_existing_question_note() {
+    // The issue #200 repro: create a question, then a portfolio for
+    // the same text, end to end through the CLI commands.
+    let dir = vault();
+
+    question::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 0),
+        QuestionCommands::Create {
+            domain: Some(QuestionDomain::Research),
+            text: Some("Sparse vs dense OOD".to_owned()),
+        },
+        true,
+    )
+    .expect("create question");
+    seed_portfolio(dir.path());
+
+    let question_note = dir.path().join("questions/research/sparse-vs-dense-ood.md");
+    let raw = fs::read_to_string(&question_note).expect("question note exists");
+    assert!(
+        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        "question note should backlink the portfolio:\n{raw}"
+    );
 }
 
 // ---------------------------------------------------------------------

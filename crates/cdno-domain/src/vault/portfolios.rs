@@ -14,7 +14,9 @@ use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
@@ -46,6 +48,10 @@ pub struct PortfolioSummary {
 const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
 const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
 
+/// Heading in a question note that lists the portfolios collecting
+/// evidence against it. `create_portfolio` appends the backlink here.
+const RELATED_PORTFOLIOS_SECTION: &str = "Related Portfolios";
+
 impl Vault {
     /// Create a new portfolio at `portfolios/<slug>/_index.md` from
     /// the portfolio template. The slug is derived from `question`;
@@ -56,10 +62,20 @@ impl Vault {
     /// wraps it in `[[…]]` for the frontmatter. Same convention as
     /// `create_project`'s `core_question`.
     ///
+    /// When a question note shares the portfolio's slug, the same
+    /// commit appends a `[[portfolios/<slug>]]` backlink to that
+    /// note's `## Related Portfolios` section, so the question →
+    /// portfolio link is bidirectional (#200). A portfolio whose
+    /// question has no note (a standalone capture) commits unchanged.
+    ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — question is whitespace-only.
     /// - [`StoreError::AlreadyExists`] — a portfolio with the same
     ///   slug already exists.
+    /// - [`DomainError::AmbiguousSlug`] — the slug exists as a
+    ///   question in *both* domains (a hand-edited vault; normally
+    ///   unreachable since `create_question` rejects cross-domain
+    ///   dupes).
     pub fn create_portfolio(
         &self,
         at: NaiveDateTime,
@@ -84,9 +100,52 @@ impl Vault {
 
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+        self.stage_question_backlink(&slug, &mut tx)?;
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// Stage the question → portfolio backlink onto `tx` when a
+    /// question note shares `slug`. Best-effort: no matching question
+    /// (standalone portfolio) stages nothing. The slug doubles as both
+    /// the portfolio folder name and the question filename stem — they
+    /// derive from the same `slugify(question)`, so a 1:1 match is the
+    /// expected case.
+    ///
+    /// The append mirrors `add_action`: normalise to one bullet per
+    /// line and a trailing blank line so the next heading stays
+    /// cleanly separated. `ensure_section` covers a question note that
+    /// drifted from the template and lost the heading.
+    fn stage_question_backlink(
+        &self,
+        slug: &str,
+        tx: &mut VaultTransaction,
+    ) -> Result<(), DomainError> {
+        let Some(question_path) = self.find_question_path(slug)? else {
+            return Ok(());
+        };
+
+        let raw = self.store.read_file(&question_path)?;
+        let mut doc = MarkdownDocument::parse(raw)?;
+        let bullet = format!("- [[portfolios/{slug}]]");
+
+        doc.ensure_section(RELATED_PORTFOLIOS_SECTION)?;
+        let existing = doc.section(RELATED_PORTFOLIOS_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(RELATED_PORTFOLIOS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry =
+            build_index_entry_for(&question_path, &new_content, NoteType::Question.as_str())?;
+
+        tx.write_file(question_path, new_content);
+        tx.upsert_note(entry);
+        Ok(())
     }
 
     /// File an evidence note inside `portfolios/<portfolio>/`. The
