@@ -1036,3 +1036,20 @@ fn orient_json_emits_the_orientation_context() {
     assert!(v["projects"].is_array(), "orient JSON shape: {v}");
     assert!(v["commitments"].is_array(), "orient JSON shape: {v}");
 }
+
+// ---------------------------------------------------------------------
+// review weekly (#209)
+// ---------------------------------------------------------------------
+
+#[test]
+fn review_weekly_non_interactive_reports_no_note() {
+    // Piped stdout -> non-interactive: it reads rather than prompts.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["review", "weekly"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No weekly note yet"));
+}
