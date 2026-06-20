@@ -16,7 +16,7 @@ use super::{CommitmentEntry, ProjectSummary, Vault};
 const ORIENTATION_LOOKAHEAD_DAYS: i64 = 2;
 
 /// The composed snapshot for the daily orient flow.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct OrientationContext {
     /// Commitments due within 48h, plus anything overdue in the last
     /// 30 days, date-sorted.
@@ -32,7 +32,7 @@ pub struct OrientationContext {
 /// (design §5.7 — e.g. "Swimming 1x/week — lapsed since March").
 /// Produced only once stewardships exist (Phase 3); the field shape is
 /// fixed now so the orient surface and its CLI don't churn later.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct LapsedHabit {
     /// Slug of the owning stewardship.
     pub stewardship: String,

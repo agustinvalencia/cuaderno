@@ -14,8 +14,16 @@ use crate::bootstrap;
 use crate::commands::orient::project_next;
 
 /// Print a quick status snapshot for the vault at `root` as of `today`.
-pub fn run(root: &Path, today: NaiveDate) -> Result<()> {
-    print!("{}", build_status(root, today)?);
+pub fn run(root: &Path, today: NaiveDate, json: bool) -> Result<()> {
+    if json {
+        let (vault, _report) = bootstrap::open_vault(root)?;
+        let ctx = vault
+            .orientation_context(today)
+            .context("building orientation context")?;
+        println!("{}", serde_json::to_string_pretty(&ctx)?);
+    } else {
+        print!("{}", build_status(root, today)?);
+    }
     Ok(())
 }
 

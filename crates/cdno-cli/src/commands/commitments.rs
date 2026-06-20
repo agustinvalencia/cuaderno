@@ -19,8 +19,17 @@ use crate::commands::orient::commitment_cells;
 /// Render the commitments timeline for the vault at `root` as of
 /// `today`, looking `weeks` weeks ahead (plus the standing overdue
 /// look-back).
-pub fn run(root: &Path, today: NaiveDate, weeks: u32) -> Result<()> {
-    print!("{}", build_commitments(root, today, weeks)?);
+pub fn run(root: &Path, today: NaiveDate, weeks: u32, json: bool) -> Result<()> {
+    if json {
+        let (vault, _report) = bootstrap::open_vault(root)?;
+        let lookahead_days = i64::from(weeks) * 7;
+        let entries = vault
+            .commitments(today, lookahead_days)
+            .context("aggregating commitments")?;
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        print!("{}", build_commitments(root, today, weeks)?);
+    }
     Ok(())
 }
 

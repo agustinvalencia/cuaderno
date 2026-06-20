@@ -23,7 +23,7 @@ use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
 /// has no content. `top_action` is the first open `- [ ]` bullet in
 /// `## Next Actions` (closed bullets and blanks skipped); `None`
 /// when nothing is open.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ProjectSummary {
     pub slug: String,
     pub status: ProjectStatus,
@@ -34,7 +34,7 @@ pub struct ProjectSummary {
 /// One next-action line, with its energy bucket parsed when the
 /// `(deep)` / `(medium)` / `(light)` suffix is present. `energy`
 /// is `None` for hand-edited bullets without a suffix.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TopAction {
     pub text: String,
     pub energy: Option<EnergyLevel>,

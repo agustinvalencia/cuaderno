@@ -22,7 +22,15 @@ use cdno_domain::{
 use crate::bootstrap;
 
 /// Render the daily orientation for the vault at `root` as of `today`.
-pub fn run(root: &Path, today: NaiveDate, energy: Option<EnergyLevel>) -> Result<()> {
+pub fn run(root: &Path, today: NaiveDate, energy: Option<EnergyLevel>, json: bool) -> Result<()> {
+    if json {
+        let (vault, _report) = bootstrap::open_vault(root)?;
+        let ctx = vault
+            .orientation_context(today)
+            .context("building orientation context")?;
+        println!("{}", serde_json::to_string_pretty(&ctx)?);
+        return Ok(());
+    }
     print!("{}", build_orientation(root, today, energy)?);
     Ok(())
 }

@@ -191,6 +191,7 @@ dependencies = [
  "comfy-table",
  "inquire",
  "predicates",
+ "serde_json",
  "tempfile",
 ]
 

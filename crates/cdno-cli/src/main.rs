@@ -43,6 +43,12 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
     vault: Option<PathBuf>,
 
+    /// Emit machine-readable JSON instead of the formatted table.
+    /// Supported on the read verbs (`commitments`, `questions`,
+    /// `status`, `orient`); ignored by write/other commands.
+    #[arg(long, global = true)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -312,11 +318,11 @@ fn main() -> Result<()> {
         }
         Commands::Orient { energy } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::orient::run(&root, Local::now().date_naive(), energy)
+            commands::orient::run(&root, Local::now().date_naive(), energy, cli.json)
         }
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::status::run(&root, Local::now().date_naive())
+            commands::status::run(&root, Local::now().date_naive(), cli.json)
         }
         Commands::Weekly { date } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
@@ -372,7 +378,7 @@ fn main() -> Result<()> {
         }
         Commands::Questions => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::questions::run(&root)
+            commands::questions::run(&root, cli.json)
         }
         Commands::Stewardship { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
@@ -411,7 +417,7 @@ fn main() -> Result<()> {
         }
         Commands::Commitments { weeks } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::commitments::run(&root, Local::now().date_naive(), weeks)
+            commands::commitments::run(&root, Local::now().date_naive(), weeks, cli.json)
         }
         Commands::Search {
             query,

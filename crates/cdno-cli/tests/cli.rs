@@ -970,3 +970,62 @@ fn open_vault_is_quiet_on_a_clean_vault() {
         .success()
         .stderr(predicate::str::contains("could not be indexed").not());
 }
+
+// ---------------------------------------------------------------------
+// --json output mode (#210)
+// ---------------------------------------------------------------------
+
+#[test]
+fn commitments_json_emits_an_array() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    // Empty vault -> empty JSON array, not the table header.
+    cdno()
+        .current_dir(dir.path())
+        .args(["commitments", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[]"))
+        .stdout(predicate::str::contains("Commitments (next").not());
+}
+
+#[test]
+fn questions_json_emits_the_serialized_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "question",
+            "create",
+            "--domain",
+            "research",
+            "--text",
+            "Does X beat Y?",
+        ])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["questions", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"slug\""))
+        .stdout(predicate::str::contains("\"domain\""))
+        .stdout(predicate::str::contains("research"));
+}
+
+#[test]
+fn status_json_emits_an_object_with_context_keys() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["status", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"projects\""))
+        .stdout(predicate::str::contains("\"commitments\""))
+        .stdout(predicate::str::contains("\"lapsed_habits\""));
+}
