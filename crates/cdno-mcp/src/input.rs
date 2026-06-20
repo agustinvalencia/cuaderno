@@ -239,16 +239,18 @@ pub struct AddMilestoneInput {
     pub target_date: chrono::NaiveDate,
     /// `true` records a *hard* deadline, which the commitments
     /// aggregation surfaces; omitted/`false` is a soft target.
-    pub hard: Option<bool>,
+    #[serde(default)]
+    pub hard: bool,
 }
 
-/// Input for `complete_milestone` (GH #213).
+/// Input for `complete_milestone` (GH #213). `query` mirrors the
+/// substring-match field of [`ActionQueryInput`].
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompleteMilestoneInput {
     /// Active project slug.
     pub project: String,
     /// Case-insensitive substring of the open milestone's title.
-    pub milestone: String,
+    pub query: String,
 }
 
 /// Input for `add_waiting_on` (GH #213).
@@ -260,13 +262,14 @@ pub struct AddWaitingOnInput {
     pub description: String,
 }
 
-/// Input for `resolve_waiting_on` (GH #213).
+/// Input for `resolve_waiting_on` (GH #213). `query` mirrors the
+/// substring-match field of [`ActionQueryInput`].
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ResolveWaitingOnInput {
     /// Active project slug.
     pub project: String,
     /// Case-insensitive substring of the waiting-on item to remove.
-    pub item: String,
+    pub query: String,
 }
 
 /// Input for `capture` (GH #204) — drop a raw line into the inbox.

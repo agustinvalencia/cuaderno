@@ -72,7 +72,7 @@ impl CuadernoServer {
                 &input.project,
                 &input.title,
                 input.target_date,
-                input.hard.unwrap_or(false),
+                input.hard,
             )
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
@@ -82,7 +82,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `milestone` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped."
+        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped."
     )]
     pub async fn complete_milestone(
         &self,
@@ -91,7 +91,7 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let path = self
             .vault
-            .complete_milestone(at, &input.project, &input.milestone)
+            .complete_milestone(at, &input.project, &input.query)
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -100,7 +100,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Record a blocker in an active project's `## Waiting On`. `description` is informational (no checkbox) -- e.g. `Compute allocation -- requested 500 GPU-hours`. The section is auto-created and its `(nothing yet)` placeholder replaced."
+        description = "Record a blocker in an active project's `## Waiting On`. `description` is informational (no checkbox) -- e.g. `Vendor quote -- awaiting reply`. The section is auto-created and its `(nothing yet)` placeholder replaced."
     )]
     pub async fn add_waiting_on(
         &self,
@@ -118,7 +118,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Remove a resolved blocker from an active project's `## Waiting On`. `item` is a case-insensitive substring of the waiting-on line; if it was the last one, the `(nothing yet)` placeholder is restored."
+        description = "Remove a resolved blocker from an active project's `## Waiting On`. `query` is a case-insensitive substring of the waiting-on line; if it was the last one, the `(nothing yet)` placeholder is restored."
     )]
     pub async fn resolve_waiting_on(
         &self,
@@ -127,7 +127,7 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let path = self
             .vault
-            .resolve_waiting_on(at, &input.project, &input.item)
+            .resolve_waiting_on(at, &input.project, &input.query)
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),

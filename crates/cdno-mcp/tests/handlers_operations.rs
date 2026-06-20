@@ -1135,7 +1135,7 @@ async fn add_milestone_appends_a_hard_deadline() {
             project: "surrogate-model".to_owned(),
             title: "Ship v1".to_owned(),
             target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
-            hard: Some(true),
+            hard: true,
         }))
         .await
         .expect("add_milestone");
@@ -1145,7 +1145,8 @@ async fn add_milestone_appends_a_hard_deadline() {
         "projects/surrogate-model.md"
     );
     let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
-    assert!(body.contains("Ship v1"), "{body}");
+    // Pin the full open-bullet form, not just the loose substrings.
+    assert!(body.contains("- [ ] Ship v1"), "{body}");
     assert!(body.contains("hard: 2026-07-01"), "{body}");
 }
 
@@ -1157,7 +1158,7 @@ async fn complete_milestone_ticks_the_bullet() {
             project: "surrogate-model".to_owned(),
             title: "Ship v1".to_owned(),
             target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
-            hard: None,
+            hard: false,
         }))
         .await
         .expect("add_milestone");
@@ -1165,7 +1166,7 @@ async fn complete_milestone_ticks_the_bullet() {
     server
         .complete_milestone(Parameters(CompleteMilestoneInput {
             project: "surrogate-model".to_owned(),
-            milestone: "ship".to_owned(),
+            query: "ship".to_owned(),
         }))
         .await
         .expect("complete_milestone");
@@ -1191,12 +1192,14 @@ async fn add_then_resolve_waiting_on_round_trips() {
     server
         .resolve_waiting_on(Parameters(ResolveWaitingOnInput {
             project: "surrogate-model".to_owned(),
-            item: "compute".to_owned(),
+            query: "compute".to_owned(),
         }))
         .await
         .expect("resolve_waiting_on");
     let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
     assert!(!body.contains("- Compute allocation"), "{body}");
+    // Removing the last item restores the placeholder.
+    assert!(body.contains("(nothing yet)"), "{body}");
 }
 
 #[tokio::test]
@@ -1207,7 +1210,7 @@ async fn add_milestone_errors_on_unknown_project() {
             project: "ghost".to_owned(),
             title: "X".to_owned(),
             target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
-            hard: None,
+            hard: false,
         }))
         .await
         .expect_err("unknown project should error");
