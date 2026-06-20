@@ -12,6 +12,7 @@ pub mod project;
 pub mod question;
 pub mod questions;
 pub mod reindex;
+pub mod review;
 pub mod search;
 pub mod status;
 pub mod stewardship;

@@ -1036,3 +1036,53 @@ fn orient_json_emits_the_orientation_context() {
     assert!(v["projects"].is_array(), "orient JSON shape: {v}");
     assert!(v["commitments"].is_array(), "orient JSON shape: {v}");
 }
+
+// ---------------------------------------------------------------------
+// review weekly (#209)
+// ---------------------------------------------------------------------
+
+#[test]
+fn review_weekly_non_interactive_reports_no_note() {
+    // Piped stdout -> non-interactive: it reads rather than prompts,
+    // reusing `cdno weekly`'s placeholder.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["review", "weekly"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No weekly note for"));
+}
+
+#[test]
+fn review_weekly_non_interactive_prints_the_current_weeks_note() {
+    use chrono::{Datelike, Local};
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    // `review weekly` defaults to today's ISO week; seed that note.
+    let iso = Local::now().date_naive().iso_week();
+    let rel = format!(
+        "journal/{}/weekly/{}-W{:02}.md",
+        iso.year(),
+        iso.year(),
+        iso.week()
+    );
+    let path = dir.path().join(&rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        "---\ntype: weekly\n---\n\n# Week\n\n## Wins\nshipped the parser\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["review", "weekly"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("shipped the parser"))
+        // frontmatter is stripped by the shared weekly renderer
+        .stdout(predicate::str::contains("type: weekly").not());
+}

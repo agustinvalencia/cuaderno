@@ -17,6 +17,7 @@ use cdno_cli::commands::commit::CommitCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::commands::question::QuestionCommands;
+use cdno_cli::commands::review::ReviewCommands;
 use cdno_cli::commands::stewardship::StewardshipCommands;
 use cdno_cli::completions;
 use cdno_cli::{bootstrap, commands};
@@ -114,6 +115,14 @@ enum Commands {
 
     /// Quick snapshot: active projects and their top next actions.
     Status,
+
+    /// Guided review rituals. `review weekly` walks the weekly note's
+    /// sections (Wins, Challenges, One Improvement, Next Week's Focus)
+    /// and composes each interactively.
+    Review {
+        #[command(subcommand)]
+        subcommand: ReviewCommands,
+    },
 
     /// Show the weekly review/plan note: Wins, Challenges, One
     /// Improvement, and Next Week's Focus. Defaults to this ISO week.
@@ -323,6 +332,15 @@ fn main() -> Result<()> {
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::status::run(&root, Local::now().date_naive(), cli.json)
+        }
+        Commands::Review { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::review::run(
+                &root,
+                Local::now().date_naive(),
+                subcommand,
+                cli.no_interactive,
+            )
         }
         Commands::Weekly { date } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
