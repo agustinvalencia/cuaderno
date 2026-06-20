@@ -58,6 +58,84 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Add a milestone to an active project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`. `hard: true` records a hard deadline that the commitments aggregation surfaces; omit it (or `false`) for a soft target. The section is auto-created if missing."
+    )]
+    pub async fn add_milestone(
+        &self,
+        Parameters(input): Parameters<AddMilestoneInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .add_milestone(
+                at,
+                &input.project,
+                &input.title,
+                input.target_date,
+                input.hard.unwrap_or(false),
+            )
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Added milestone to {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `milestone` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped."
+    )]
+    pub async fn complete_milestone(
+        &self,
+        Parameters(input): Parameters<CompleteMilestoneInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .complete_milestone(at, &input.project, &input.milestone)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Completed milestone on {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Record a blocker in an active project's `## Waiting On`. `description` is informational (no checkbox) -- e.g. `Compute allocation -- requested 500 GPU-hours`. The section is auto-created and its `(nothing yet)` placeholder replaced."
+    )]
+    pub async fn add_waiting_on(
+        &self,
+        Parameters(input): Parameters<AddWaitingOnInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .add_waiting_on(at, &input.project, &input.description)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Added waiting-on to {}", path),
+        ))
+    }
+
+    #[tool(
+        description = "Remove a resolved blocker from an active project's `## Waiting On`. `item` is a case-insensitive substring of the waiting-on line; if it was the last one, the `(nothing yet)` placeholder is restored."
+    )]
+    pub async fn resolve_waiting_on(
+        &self,
+        Parameters(input): Parameters<ResolveWaitingOnInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .resolve_waiting_on(at, &input.project, &input.item)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Resolved waiting-on on {}", path),
+        ))
+    }
+
+    #[tool(
         description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact."
     )]
     pub async fn file_to_portfolio(

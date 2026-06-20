@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        34,
-        "expected the full catalogue: 30 prior + the #204 read/parity tools (list_projects, get_commitments, lint, capture), got {}",
+        38,
+        "expected the full catalogue: 34 prior + the #213 milestone/waiting tools (add_milestone, complete_milestone, add_waiting_on, resolve_waiting_on), got {}",
         tools.len()
     );
 }
