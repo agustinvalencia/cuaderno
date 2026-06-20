@@ -76,7 +76,8 @@ fn lint_exits_nonzero_with_summary_on_stderr_when_issues_found() {
         .arg("lint")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("1 lint issue"));
+        .stdout(predicate::str::contains("[error]"))
+        .stderr(predicate::str::contains("1 error(s)"));
 }
 
 #[test]

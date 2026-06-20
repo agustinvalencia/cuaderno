@@ -219,6 +219,23 @@ pub struct CreatePortfolioInput {
     pub project: Option<String>,
 }
 
+/// Input for `get_commitments` (GH #204). `lookahead_weeks` mirrors
+/// the CLI `cdno commitments --weeks N`; omitted defaults to 2.
+/// Overdue commitments are always included regardless of the window.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetCommitmentsInput {
+    /// Forward window in weeks; omitted defaults to 2. Overdue
+    /// commitments are returned regardless of this window.
+    pub lookahead_weeks: Option<u32>,
+}
+
+/// Input for `capture` (GH #204) — drop a raw line into the inbox.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CaptureInput {
+    /// The thought/idea/todo to capture verbatim.
+    pub text: String,
+}
+
 /// Input for `link_portfolio_to_question` (GH #200) — retrofit an
 /// existing portfolio onto an existing question's `## Related
 /// Portfolios` backlinks. Both are slugs, not free text.

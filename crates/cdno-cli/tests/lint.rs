@@ -27,7 +27,7 @@ fn lint_returns_err_when_a_note_has_an_unknown_type() {
 
     let err = lint::run(dir.path()).expect_err("lint should fail");
     let msg = format!("{err}");
-    assert!(msg.contains("1 lint issue"), "unexpected error: {msg}");
+    assert!(msg.contains("1 error(s)"), "unexpected error: {msg}");
 }
 
 #[test]

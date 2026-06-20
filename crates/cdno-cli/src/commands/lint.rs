@@ -8,8 +8,8 @@ use crate::bootstrap;
 ///
 /// Exits non-zero (via the returned `Err`) when any issues are found,
 /// so the command composes with shell scripts and CI gates.
-/// Issues go to stdout (one per line, grep-friendly); the error
-/// summary lands on stderr through `anyhow`.
+/// Issues go to stdout (one per line, grep-friendly, severity-tagged);
+/// the error summary lands on stderr through `anyhow`.
 pub fn run(root: &Path) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let report = vault.lint_all_notes()?;
@@ -20,7 +20,17 @@ pub fn run(root: &Path) -> Result<()> {
     }
 
     for issue in &report.issues {
-        println!("{}: {}", issue.path, issue.message);
+        println!(
+            "[{}] {}: {}",
+            issue.severity.as_str(),
+            issue.path,
+            issue.message
+        );
     }
-    bail!("found {} lint issue(s)", report.issues.len());
+
+    bail!(
+        "found {} error(s), {} warning(s)",
+        report.error_count(),
+        report.warning_count()
+    );
 }

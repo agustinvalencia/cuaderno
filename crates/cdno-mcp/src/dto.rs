@@ -505,6 +505,65 @@ impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDt
     }
 }
 
+/// One row in the `list_projects` output: the project's slug paired
+/// with its typed frontmatter. Mirrors the `slug + frontmatter` shape
+/// of [`ProjectContextDto`] so a client can render either uniformly.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectListEntryDto {
+    pub slug: String,
+    pub frontmatter: ProjectFrontmatterDto,
+}
+
+/// The `list_projects` payload: active and parked projects plus the
+/// slot budget, so a client can show "3 of 5 active" without a second
+/// call.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectListDto {
+    pub active: Vec<ProjectListEntryDto>,
+    pub parked: Vec<ProjectListEntryDto>,
+    pub slots: ProjectSlotsDto,
+}
+
+/// Wire-format mirror of a single [`cdno_domain::LintIssue`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LintIssueDto {
+    pub path: String,
+    /// `"error"` or `"warning"`.
+    pub severity: String,
+    pub message: String,
+}
+
+impl From<cdno_domain::LintIssue> for LintIssueDto {
+    fn from(issue: cdno_domain::LintIssue) -> Self {
+        Self {
+            path: issue.path.to_string(),
+            severity: issue.severity.as_str().to_owned(),
+            message: issue.message,
+        }
+    }
+}
+
+/// Wire-format mirror of [`cdno_domain::LintReport`], with the
+/// error/warning split precomputed so a client doesn't re-tally.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LintReportDto {
+    pub clean: bool,
+    pub error_count: usize,
+    pub warning_count: usize,
+    pub issues: Vec<LintIssueDto>,
+}
+
+impl From<cdno_domain::LintReport> for LintReportDto {
+    fn from(report: cdno_domain::LintReport) -> Self {
+        Self {
+            clean: report.is_clean(),
+            error_count: report.error_count(),
+            warning_count: report.warning_count(),
+            issues: report.issues.into_iter().map(LintIssueDto::from).collect(),
+        }
+    }
+}
+
 /// Wire-format mirror of [`cdno_domain::ProjectBacklinks`]. Carries
 /// the raw paths grouped by source note type. Same body-wikilinks-only
 /// scope limitation as the domain query (see its doc comment).

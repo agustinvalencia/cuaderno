@@ -163,6 +163,19 @@ fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime 
         .and_time(NaiveTime::from_hms_opt(hour, minute, 0).unwrap())
 }
 
+/// The append-only-after-completion issues only. Completing an action
+/// archives its note to `actions/_done/<year>/` while the add-time
+/// daily-log entry still references `[[actions/<slug>]]` — a dangling
+/// link the broken-wikilink check (correctly) reports but which is
+/// orthogonal to what these tests exercise. Filter to keep them focused.
+fn append_only_issues(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("append-only") || i.message.contains("truncated"))
+        .collect()
+}
+
 /// Like `vault_with_notes` but also returns the backing store so a test
 /// can mutate the archived file after the fact.
 fn vault_with_notes_and_store(
@@ -207,9 +220,9 @@ fn append_only_lint_silent_on_unchanged_archived_note() {
 
     let report = vault.lint_all_notes().expect("lint succeeds");
     assert!(
-        report.issues.is_empty(),
+        append_only_issues(&report).is_empty(),
         "unchanged archived note must be silent: {:?}",
-        report.issues
+        append_only_issues(&report)
     );
 }
 
@@ -228,9 +241,9 @@ fn append_only_lint_silent_when_only_appending_lines() {
 
     let report = vault.lint_all_notes().expect("lint succeeds");
     assert!(
-        report.issues.is_empty(),
+        append_only_issues(&report).is_empty(),
         "pure-append should be silent: {:?}",
-        report.issues
+        append_only_issues(&report)
     );
 }
 
@@ -253,12 +266,13 @@ fn append_only_lint_flags_size_changing_prefix_edit() {
     store.write_file(&done, &modified).unwrap();
 
     let report = vault.lint_all_notes().expect("lint succeeds");
-    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
-    assert_eq!(report.issues[0].path, done);
+    let issues = append_only_issues(&report);
+    assert_eq!(issues.len(), 1, "report: {:?}", issues);
+    assert_eq!(issues[0].path, done);
     assert!(
-        report.issues[0].message.contains("truncated"),
+        issues[0].message.contains("truncated"),
         "message: {}",
-        report.issues[0].message
+        issues[0].message
     );
 }
 
@@ -287,12 +301,13 @@ fn append_only_lint_flags_same_length_prefix_edit() {
     store.write_file(&done, &modified).unwrap();
 
     let report = vault.lint_all_notes().expect("lint succeeds");
-    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
-    assert_eq!(report.issues[0].path, done);
+    let issues = append_only_issues(&report);
+    assert_eq!(issues.len(), 1, "report: {:?}", issues);
+    assert_eq!(issues[0].path, done);
     assert!(
-        report.issues[0].message.contains("append-only"),
+        issues[0].message.contains("append-only"),
         "message: {}",
-        report.issues[0].message
+        issues[0].message
     );
 }
 
@@ -388,4 +403,195 @@ fn lint_ignores_plain_evidence_without_kind() {
     let report = vault.lint_all_notes().expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+// ---------------------------------------------------------------------
+// Broken-wikilink detection (#205). A body link that resolves to no
+// note is a Warning, not an Error: the note parses fine. This is the
+// check that would have caught the #200 dangling backlink.
+// ---------------------------------------------------------------------
+
+use cdno_domain::LintSeverity;
+
+const DAILY_LINKING: &str =
+    "---\ntype: daily\ntitle: Day\n---\n# Day\n\nSee {{link}} for details.\n";
+const PROJECT_FOO: &str =
+    "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n# Foo\n";
+
+fn broken_link_issues(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("broken wikilink"))
+        .collect()
+}
+
+#[test]
+fn lint_flags_a_broken_wikilink_as_a_warning() {
+    let body = DAILY_LINKING.replace("{{link}}", "[[projects/ghost]]");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-05-01.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let broken = broken_link_issues(&report);
+    assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(broken[0].severity, LintSeverity::Warning);
+    assert!(
+        broken[0].message.contains("[[projects/ghost]]"),
+        "message: {}",
+        broken[0].message
+    );
+}
+
+#[test]
+fn lint_passes_a_resolvable_wikilink() {
+    // The link target exists, so it resolves and lint stays quiet.
+    let body = DAILY_LINKING.replace("{{link}}", "[[projects/foo]]");
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &body),
+            ("projects/foo.md", PROJECT_FOO),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        broken_link_issues(&report).is_empty(),
+        "issues: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_flags_a_folder_note_link_missing_its_index_stem() {
+    // The #200 regression in miniature: a portfolio note lives at
+    // `portfolios/<slug>/_index.md`, so `[[portfolios/<slug>]]` dangles
+    // while `[[portfolios/<slug>/_index]]` resolves.
+    let portfolio =
+        "---\ntype: portfolio\nquestion: \"Q\"\ncreated: 2026-04-01\nproject: null\n---\n# Q\n";
+    let dangling = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo]]");
+    let resolving = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo/_index]]");
+
+    let vault_bad = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &dangling),
+            ("portfolios/demo/_index.md", portfolio),
+        ],
+        VaultConfig::default(),
+    );
+    assert_eq!(
+        broken_link_issues(&vault_bad.lint_all_notes().unwrap()).len(),
+        1,
+        "bare folder link should dangle"
+    );
+
+    let vault_good = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-05-01.md", &resolving),
+            ("portfolios/demo/_index.md", portfolio),
+        ],
+        VaultConfig::default(),
+    );
+    assert!(
+        broken_link_issues(&vault_good.lint_all_notes().unwrap()).is_empty(),
+        "the /_index form should resolve"
+    );
+}
+
+#[test]
+fn lint_ignores_a_dangling_frontmatter_link() {
+    // `core_question` is a frontmatter wikilink; broken-link scanning is
+    // body-only (matching the reconciler's link graph), so a dangling
+    // one is not flagged.
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: \"[[questions/ghost]]\"\n---\n# Foo\n";
+    let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        broken_link_issues(&report).is_empty(),
+        "frontmatter links are out of scope: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_counts_errors_and_warnings_separately() {
+    // One unknown-type note (error) and one note with two broken body
+    // links (two warnings) -- pins the error/warning split arithmetic.
+    let vault = vault_with_notes(
+        &[
+            ("bogus.md", "---\ntype: nonsense\n---\n# x\n"),
+            (
+                "journal/2026/daily/2026-05-01.md",
+                "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[a/ghost]] and [[b/ghost]].\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.error_count(), 1, "issues: {:?}", report.issues);
+    assert_eq!(report.warning_count(), 2, "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_reports_a_corrupt_indexed_note_as_error_without_aborting() {
+    // A note valid at index time but corrupt on disk now (a stale index
+    // row the reconciler's mtime fast-path didn't refresh). Lint must
+    // report it as an error and keep going -- aborting would hide every
+    // other issue, the opposite of what lint is for.
+    let (vault, store) = vault_with_notes_and_store(
+        &[
+            ("a.md", "---\ntype: daily\ntitle: A\n---\n# A\n"),
+            ("b.md", "---\ntype: daily\ntitle: B\n---\n# B\n"),
+        ],
+        VaultConfig::default(),
+    );
+    // Corrupt `a` after indexing: unterminated YAML flow sequence.
+    store
+        .write_file(&vp("a.md"), "---\nfoo: [1, 2\n---\n# A\n")
+        .unwrap();
+
+    let report = vault
+        .lint_all_notes()
+        .expect("lint must not abort on a corrupt note");
+    let a_issues: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.path == vp("a.md"))
+        .collect();
+    assert_eq!(a_issues.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        a_issues[0].message.contains("malformed frontmatter"),
+        "message: {}",
+        a_issues[0].message
+    );
+    // `b` was still reached (the run continued past the corrupt note).
+    assert!(report.issues.iter().all(|i| i.path != vp("b.md")));
+}
+
+#[test]
+fn lint_flags_the_dangling_action_reference_after_archival() {
+    // Pins the #215 premise: completing an action archives its note to
+    // `actions/_done/<year>/`, but the add-time daily-log entry still
+    // says `[[actions/<slug>]]`, which now dangles. If a future resolver
+    // change makes that link resolve, this test goes red -- the signal
+    // to close #215 and update the expectation here.
+    let (vault, _store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    archive_a_fresh_action(&vault);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        broken_link_issues(&report)
+            .iter()
+            .any(|i| i.message.contains("[[actions/characterise]]")),
+        "expected the archived-action daily-log reference to dangle: {:?}",
+        report.issues
+    );
 }
