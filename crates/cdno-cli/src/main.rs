@@ -85,6 +85,11 @@ enum Commands {
         text: String,
     },
 
+    /// Triage uncategorised `inbox/` captures: for each, keep it as a
+    /// project action, discard it, or skip. Non-interactive runs just
+    /// list what's pending.
+    Triage,
+
     /// Manage project maps: create, update state, add/complete actions
     /// and milestones, park/activate, and list/show.
     Project {
@@ -291,6 +296,10 @@ fn main() -> Result<()> {
         Commands::Capture { text } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::capture::run(&root, Local::now().naive_local(), &text)
+        }
+        Commands::Triage => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::triage::run(&root, Local::now().naive_local(), cli.no_interactive)
         }
         Commands::Project { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

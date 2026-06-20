@@ -251,6 +251,39 @@ fn capture_creates_an_inbox_file_when_run_from_inside_a_vault() {
     );
 }
 
+#[test]
+fn triage_lists_pending_inbox_items_when_not_a_tty() {
+    // assert_cmd pipes stdout, so `is_interactive` is false and triage
+    // takes the listing path without prompting (#208).
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["capture", "buy milk"])
+        .assert()
+        .success();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("triage")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1 inbox item(s) pending"))
+        .stdout(predicate::str::contains("buy milk"));
+}
+
+#[test]
+fn triage_reports_an_empty_inbox() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .arg("triage")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Inbox empty"));
+}
+
 // ---------------------------------------------------------------------
 // project subcommands
 // ---------------------------------------------------------------------

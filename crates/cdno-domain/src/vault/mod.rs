@@ -48,6 +48,7 @@ mod stewardships;
 mod tracking;
 mod weekly;
 
+pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,

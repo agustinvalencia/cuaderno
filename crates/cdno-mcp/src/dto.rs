@@ -707,6 +707,25 @@ impl From<cdno_domain::WeeklyNoteView> for WeeklyNoteViewDto {
 // Write-op result
 // ---------------------------------------------------------------------
 
+/// Wire-format mirror of [`cdno_domain::InboxItem`] — one uncategorised
+/// capture awaiting triage.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct InboxItemDto {
+    /// Filename stem; the handle to pass to `discard_inbox_item`.
+    pub slug: String,
+    /// The captured text.
+    pub text: String,
+}
+
+impl From<cdno_domain::InboxItem> for InboxItemDto {
+    fn from(item: cdno_domain::InboxItem) -> Self {
+        Self {
+            slug: item.slug,
+            text: item.text,
+        }
+    }
+}
+
 /// Uniform output shape for every operation tool — carries the
 /// vault-relative path of the file the op touched (the new evidence
 /// note, the updated project map, the appended-to daily, …) plus a

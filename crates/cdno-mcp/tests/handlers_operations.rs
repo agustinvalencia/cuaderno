@@ -21,9 +21,9 @@ use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AddMilestoneInput, AddPeriodicCommitmentInput,
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
     CompleteMilestoneInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
-    CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
-    LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
-    ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
+    CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, DiscardInboxItemInput,
+    FileToPortfolioInput, LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput,
+    ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
     UpsertDailySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -1237,4 +1237,26 @@ async fn capture_writes_a_note_under_inbox() {
 
     let body = store.read_file(&vp(path)).unwrap();
     assert!(body.contains("buy more index cards"), "body:\n{body}");
+}
+
+#[tokio::test]
+async fn discard_inbox_item_removes_the_capture() {
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .capture_to_inbox(moment(2026, 4, 26, 9, 0), "ephemeral")
+            .unwrap();
+    });
+    assert!(store.exists(&vp("inbox/2026-04-26-ephemeral.md")).unwrap());
+
+    server
+        .discard_inbox_item(Parameters(DiscardInboxItemInput {
+            slug: "2026-04-26-ephemeral".to_owned(),
+        }))
+        .await
+        .expect("discard_inbox_item");
+
+    assert!(
+        !store.exists(&vp("inbox/2026-04-26-ephemeral.md")).unwrap(),
+        "the inbox note is deleted"
+    );
 }
