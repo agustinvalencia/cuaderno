@@ -761,3 +761,39 @@ fn search_rejects_a_non_iso_date() {
         .failure()
         .stderr(predicate::str::contains("YYYY-MM-DD"));
 }
+
+#[test]
+fn open_vault_surfaces_reconciliation_errors_on_stderr() {
+    // A note that fails to index (malformed frontmatter) is otherwise
+    // invisible; opening the vault for any command must warn about it
+    // on stderr (#207). `commitments` is a read-only command that
+    // succeeds despite the corrupt note.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("broken.md"),
+        "---\ntype: [unterminated\n---\n# Broken\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("commitments")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("could not be indexed"))
+        .stderr(predicate::str::contains("broken.md"));
+}
+
+#[test]
+fn open_vault_is_quiet_on_a_clean_vault() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("commitments")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("could not be indexed").not());
+}
