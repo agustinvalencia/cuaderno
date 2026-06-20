@@ -81,6 +81,45 @@ fn lint_exits_nonzero_with_summary_on_stderr_when_issues_found() {
 }
 
 #[test]
+fn lint_warnings_are_non_fatal_by_default() {
+    // A note with only a broken wikilink (a warning) must not fail the
+    // command by default — clippy-style warn-don't-fail (#217).
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("note.md"),
+        "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[projects/ghost]].\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("lint")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[warning]"))
+        .stdout(predicate::str::contains("non-fatal"));
+}
+
+#[test]
+fn lint_strict_fails_on_warnings() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(
+        dir.path().join("note.md"),
+        "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[projects/ghost]].\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["lint", "--strict"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("0 error(s), 1 warning(s)"));
+}
+
+#[test]
 fn log_errors_clearly_when_run_outside_any_vault() {
     let dir = tempdir().unwrap();
 

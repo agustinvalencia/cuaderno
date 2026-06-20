@@ -12,7 +12,7 @@ fn lint_succeeds_silently_on_a_freshly_inited_vault() {
 
     // Post-#87 the index is empty after init (templates under
     // `.cuaderno/` are excluded from the scan), so lint finds nothing.
-    lint::run(dir.path()).expect("lint should succeed on empty vault");
+    lint::run(dir.path(), false).expect("lint should succeed on empty vault");
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn lint_returns_err_when_a_note_has_an_unknown_type() {
     )
     .unwrap();
 
-    let err = lint::run(dir.path()).expect_err("lint should fail");
+    let err = lint::run(dir.path(), false).expect_err("lint should fail");
     let msg = format!("{err}");
     assert!(msg.contains("1 error(s)"), "unexpected error: {msg}");
 }
@@ -34,7 +34,7 @@ fn lint_returns_err_when_a_note_has_an_unknown_type() {
 fn lint_errors_when_target_is_not_a_vault() {
     let dir = tempdir().unwrap();
 
-    let err = lint::run(dir.path()).expect_err("lint without vault must fail");
+    let err = lint::run(dir.path(), false).expect_err("lint without vault must fail");
     let msg = format!("{err}");
     assert!(msg.contains("no Cuaderno vault"), "unexpected error: {msg}");
 }

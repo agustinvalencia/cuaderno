@@ -67,7 +67,13 @@ enum Commands {
     },
 
     /// Validate every indexed note and report frontmatter problems.
-    Lint,
+    /// Errors fail the command; warnings (e.g. broken wikilinks) are
+    /// non-fatal unless `--strict` is given.
+    Lint {
+        /// Treat warnings as failures too (exit non-zero on any issue).
+        #[arg(long)]
+        strict: bool,
+    },
 
     /// Rebuild the SQLite index from scratch off the markdown source of
     /// truth. The recovery path for a corrupt or stale index.
@@ -274,9 +280,9 @@ fn main() -> Result<()> {
             };
             commands::log::run(&root, at, &message)
         }
-        Commands::Lint => {
+        Commands::Lint { strict } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::lint::run(&root)
+            commands::lint::run(&root, strict)
         }
         Commands::Reindex => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
