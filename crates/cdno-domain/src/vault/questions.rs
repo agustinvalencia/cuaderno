@@ -188,8 +188,12 @@ impl Vault {
 
     /// Locate `slug` across both question domains, returning the
     /// resolved path and parsed frontmatter. Helper for
-    /// `set_question_status` and any future read-side ops.
-    fn resolve_question_by_slug(
+    /// `set_question_status`, `link_portfolio_to_question`, and any
+    /// future read-side ops. Errors with `Store(NotFound)` when the
+    /// slug exists in neither domain — callers that want a missing
+    /// slug to be a soft no-op use
+    /// [`find_question_path`](Self::find_question_path) instead.
+    pub(in crate::vault) fn resolve_question_by_slug(
         &self,
         slug: &str,
     ) -> Result<(VaultPath, QuestionFrontmatter), DomainError> {
@@ -213,6 +217,34 @@ impl Vault {
                 self.available_questions_hint()
             )))
         })
+    }
+
+    /// Locate the note for `slug` across both question domains
+    /// *without* requiring it to exist. Returns the path when exactly
+    /// one domain holds it, `None` when neither does, and
+    /// `AmbiguousSlug` when both do (defensive — `create_question`
+    /// prevents cross-domain dupes, but a hand-edited vault could).
+    ///
+    /// Unlike [`resolve_question_by_slug`](Self::resolve_question_by_slug),
+    /// a missing slug is `Ok(None)` rather than a `NotFound` error:
+    /// `create_portfolio` backlinks into a question only when one
+    /// exists, leaving standalone portfolios untouched (#200).
+    pub(in crate::vault) fn find_question_path(
+        &self,
+        slug: &str,
+    ) -> Result<Option<VaultPath>, DomainError> {
+        let mut found: Option<VaultPath> = None;
+        for d in QuestionDomain::ALL {
+            let path = question_path(d, slug)?;
+            if !self.store.exists(&path)? {
+                continue;
+            }
+            if found.is_some() {
+                return Err(DomainError::AmbiguousSlug(slug.to_owned()));
+            }
+            found = Some(path);
+        }
+        Ok(found)
     }
 
     /// " — available questions: …" suffix for a question slug not-found,

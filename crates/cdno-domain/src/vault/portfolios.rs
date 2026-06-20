@@ -14,7 +14,9 @@ use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
@@ -46,6 +48,16 @@ pub struct PortfolioSummary {
 const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
 const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
 
+/// Heading in a question note that lists the portfolios collecting
+/// evidence against it. `create_portfolio` appends the backlink here.
+const RELATED_PORTFOLIOS_SECTION: &str = "Related Portfolios";
+
+/// Heading in a portfolio `_index.md` that lists the question(s) it
+/// collects evidence against. The reciprocal of
+/// [`RELATED_PORTFOLIOS_SECTION`] — both ends of the link are written
+/// together so the navigation works in either direction (#200).
+const RELATED_QUESTIONS_SECTION: &str = "Related Questions";
+
 impl Vault {
     /// Create a new portfolio at `portfolios/<slug>/_index.md` from
     /// the portfolio template. The slug is derived from `question`;
@@ -56,10 +68,24 @@ impl Vault {
     /// wraps it in `[[…]]` for the frontmatter. Same convention as
     /// `create_project`'s `core_question`.
     ///
+    /// When a question note shares the portfolio's slug, the same
+    /// commit links the two **both ways** (#200): the new portfolio's
+    /// `## Related Questions` section gains a
+    /// `[[questions/<domain>/<slug>]]` bullet, and the question note's
+    /// `## Related Portfolios` gains a `[[portfolios/<slug>/_index]]`
+    /// bullet (the `/_index` stem is what the wikilink resolver
+    /// matches, since the portfolio note is the folder's `_index.md`).
+    /// A portfolio whose question has no note (a standalone capture)
+    /// gets neither and commits unchanged.
+    ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — question is whitespace-only.
     /// - [`StoreError::AlreadyExists`] — a portfolio with the same
     ///   slug already exists.
+    /// - [`DomainError::AmbiguousSlug`] — the slug exists as a
+    ///   question in *both* domains (a hand-edited vault; normally
+    ///   unreachable since `create_question` rejects cross-domain
+    ///   dupes).
     pub fn create_portfolio(
         &self,
         at: NaiveDateTime,
@@ -79,14 +105,128 @@ impl Vault {
             )));
         }
 
-        let content = render_portfolio_template(question, at.date(), project);
-        let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
+        let mut content = render_portfolio_template(question, at.date(), project);
 
+        // Bidirectional link when a question note shares the slug. The
+        // portfolio side is written into the fresh template (cheaper
+        // than a read-modify-write of a file we're creating); the
+        // question side is staged onto the same tx so both ends land
+        // atomically — or neither does.
+        if let Some(question_path) = self.find_question_path(&slug)? {
+            let mut doc = MarkdownDocument::parse(content)?;
+            append_wikilink_to_section(
+                &mut doc,
+                RELATED_QUESTIONS_SECTION,
+                &note_wikilink_target(&question_path),
+            )?;
+            content = doc.render().to_owned();
+            self.stage_backlink_into_note(
+                &question_path,
+                RELATED_PORTFOLIOS_SECTION,
+                &note_wikilink_target(&path),
+                NoteType::Question.as_str(),
+                &mut tx,
+            )?;
+        }
+
+        let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// Link an *existing* portfolio to an *existing* question — the
+    /// retrofit counterpart to the linking `create_portfolio` does
+    /// automatically (#200). Reach for it when the portfolio predates
+    /// the question, or when the two slugs differ (so the create-time
+    /// 1:1 match never fired). Writes **both** ends in one commit: the
+    /// question note's `## Related Portfolios` gains
+    /// `[[portfolios/<portfolio>/_index]]`, and the portfolio's `##
+    /// Related Questions` gains `[[questions/<domain>/<slug>]]`.
+    ///
+    /// Returns the resolved question-note path. Idempotent on each
+    /// end — a bullet already present is left untouched and the call
+    /// still succeeds, so a question accumulates portfolios (and a
+    /// portfolio accumulates questions) without duplicates.
+    ///
+    /// Errors:
+    /// - [`StoreError::NotFound`] — no portfolio `_index.md` for
+    ///   `portfolio`, or no question note for `question` (the message
+    ///   lists the available slugs so the caller can self-correct).
+    /// - [`DomainError::AmbiguousSlug`] — the question slug exists in
+    ///   both domains (a hand-edited vault).
+    pub fn link_portfolio_to_question(
+        &self,
+        portfolio: &str,
+        question: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+
+        let portfolio_index = VaultPath::new(format!(
+            "{}/{portfolio}/_index.md",
+            cdno_core::paths::PORTFOLIOS
+        ))?;
+        if !self.store.exists(&portfolio_index)? {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{portfolio_index}{}",
+                self.available_portfolios_hint()
+            ))));
+        }
+
+        let (question_path, _fm) = self.resolve_question_by_slug(question)?;
+        // Stage both ends; either side already linked is a no-op. The
+        // commit is unconditional — when nothing changed it's a harmless
+        // empty commit rather than a special case to branch on.
+        self.stage_backlink_into_note(
+            &question_path,
+            RELATED_PORTFOLIOS_SECTION,
+            &note_wikilink_target(&portfolio_index),
+            NoteType::Question.as_str(),
+            &mut tx,
+        )?;
+        self.stage_backlink_into_note(
+            &portfolio_index,
+            RELATED_QUESTIONS_SECTION,
+            &note_wikilink_target(&question_path),
+            NoteType::Portfolio.as_str(),
+            &mut tx,
+        )?;
+        tx.commit()?;
+        Ok(question_path)
+    }
+
+    /// Read the note at `note_path`, append a `[[<target>]]` bullet
+    /// under `## <heading>`, and stage the rewrite onto `tx`. Returns
+    /// `true` when the bullet was added, `false` when an identical
+    /// wikilink was already present (idempotent — re-linking never
+    /// duplicates). `note_type` re-stamps the index row.
+    ///
+    /// The shared write behind both directions of the portfolio ↔
+    /// question link: the question side passes the `Related Portfolios`
+    /// heading and a `portfolios/<slug>` target, the portfolio side the
+    /// `Related Questions` heading and a `questions/<domain>/<slug>`
+    /// target.
+    fn stage_backlink_into_note(
+        &self,
+        note_path: &VaultPath,
+        heading: &str,
+        target: &str,
+        note_type: &str,
+        tx: &mut VaultTransaction,
+    ) -> Result<bool, DomainError> {
+        let raw = self.store.read_file(note_path)?;
+        let mut doc = MarkdownDocument::parse(raw)?;
+        if !append_wikilink_to_section(&mut doc, heading, target)? {
+            return Ok(false); // already linked — don't duplicate the bullet
+        }
+
+        let new_content = doc.render().to_owned();
+        let entry = build_index_entry_for(note_path, &new_content, note_type)?;
+        tx.write_file(note_path.clone(), new_content);
+        tx.upsert_note(entry);
+        Ok(true)
     }
 
     /// File an evidence note inside `portfolios/<portfolio>/`. The
@@ -386,6 +526,49 @@ impl Vault {
         });
         Ok(out)
     }
+}
+
+/// The bare wikilink target for a note path: the vault-relative path
+/// with the `.md` extension dropped (e.g.
+/// `questions/research/foo.md` → `questions/research/foo`), so it
+/// renders as `[[questions/research/foo]]`.
+fn note_wikilink_target(path: &VaultPath) -> String {
+    let s = path.to_string();
+    s.strip_suffix(".md").unwrap_or(&s).to_owned()
+}
+
+/// Append a `- [[<target>]]` bullet under `## <heading>` in `doc`,
+/// returning `true` when the doc changed and `false` when a line
+/// already contains the `[[<target>]]` wikilink (idempotent). The
+/// closing `]]` in the match guards against a slug that is a prefix of
+/// another (`foo` vs `foo-bar`); the `contains` rather than exact-line
+/// match also tolerates a hand-annotated bullet
+/// (`- [[…]] (primary angle)`).
+///
+/// Normalisation mirrors `add_action`: one bullet per line and a
+/// trailing blank line so the next heading stays cleanly separated.
+/// `ensure_section` recreates the heading for a note that drifted from
+/// its template and lost it.
+fn append_wikilink_to_section(
+    doc: &mut MarkdownDocument,
+    heading: &str,
+    target: &str,
+) -> Result<bool, DomainError> {
+    let bullet = format!("- [[{target}]]");
+    let marker = format!("[[{target}]]");
+
+    doc.ensure_section(heading)?;
+    let existing = doc.section(heading)?.trim_end();
+    if existing.lines().any(|line| line.contains(&marker)) {
+        return Ok(false);
+    }
+    let new_section = if existing.is_empty() {
+        format!("{bullet}\n\n")
+    } else {
+        format!("{existing}\n{bullet}\n\n")
+    };
+    doc.replace_section(heading, &new_section)?;
+    Ok(true)
 }
 
 /// Extract the slug from `portfolios/<slug>/_index.md`. Returns an

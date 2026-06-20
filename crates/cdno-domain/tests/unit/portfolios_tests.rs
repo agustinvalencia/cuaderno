@@ -12,7 +12,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::PortfolioSummary;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
+use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter, QuestionDomain};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -134,6 +134,373 @@ fn create_portfolio_errors_on_slug_collision() {
             err,
             DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
         ),
+        "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// create_portfolio: question backlink (#200)
+// ---------------------------------------------------------------------
+
+#[test]
+fn create_portfolio_links_matching_question_both_ways() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    let portfolio_path = vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    // Question side: `## Related Portfolios` carries the backlink.
+    let question_raw = store.read_file(&question_path).unwrap();
+    assert!(
+        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "question note should backlink the portfolio:\n{question_raw}"
+    );
+    // Portfolio side: `## Related Questions` carries the full-path
+    // wikilink to the question note.
+    let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    assert!(
+        portfolio_raw
+            .contains("## Related Questions\n- [[questions/research/sparse-vs-dense-ood]]"),
+        "portfolio should link back to the question:\n{portfolio_raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_backlinks_resolve_through_the_wikilink_resolver() {
+    // Guard against the dangling-link regression: a portfolio note
+    // lives at `portfolios/<slug>/_index.md`, so a bare
+    // `[[portfolios/<slug>]]` resolves to nothing (basename is
+    // `_index`). Both written bullets must resolve to the real notes.
+    use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+    use std::collections::HashSet;
+
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    let portfolio_path = vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let vault_paths: HashSet<VaultPath> = [question_path.clone(), portfolio_path.clone()]
+        .into_iter()
+        .collect();
+
+    // Question -> portfolio resolves to the portfolio's `_index.md`.
+    let question_raw = store.read_file(&question_path).unwrap();
+    let to_portfolio = resolve_wikilinks(extract_wikilinks(&question_raw), &vault_paths);
+    let portfolio_link = to_portfolio
+        .iter()
+        .find(|l| l.target_raw.starts_with("portfolios/"))
+        .expect("question note carries a portfolio wikilink");
+    assert_eq!(
+        portfolio_link.resolved_path.as_ref(),
+        Some(&portfolio_path),
+        "portfolio backlink must resolve, not dangle: {portfolio_link:?}"
+    );
+
+    // Portfolio -> question resolves to the flat question note.
+    let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    let to_question = resolve_wikilinks(extract_wikilinks(&portfolio_raw), &vault_paths);
+    let question_link = to_question
+        .iter()
+        .find(|l| l.target_raw.starts_with("questions/"))
+        .expect("portfolio carries a question wikilink");
+    assert_eq!(
+        question_link.resolved_path.as_ref(),
+        Some(&question_path),
+        "question link must resolve: {question_link:?}"
+    );
+}
+
+#[test]
+fn create_portfolio_errors_on_ambiguous_question_slug() {
+    // A hand-edited vault with the same slug under both domains: the
+    // create-time lookup can't pick one, so it refuses rather than
+    // backlinking an arbitrary half.
+    let q = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Sparse vs dense OOD\n\n## Related Portfolios\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("questions/research/sparse-vs-dense-ood.md", q),
+        (
+            "questions/life/sparse-vs-dense-ood.md",
+            &q.replace("domain: research", "domain: life"),
+        ),
+    ]);
+
+    let err = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::AmbiguousSlug(_)), "got {err:?}");
+    // The portfolio must not have been written — the ambiguity aborts
+    // the whole transaction.
+    assert!(
+        !_store
+            .exists(&vp("portfolios/sparse-vs-dense-ood/_index.md"))
+            .unwrap(),
+        "ambiguous link should roll back the portfolio create"
+    );
+}
+
+#[test]
+fn create_portfolio_backlinks_into_drifted_question_note() {
+    // A question note that drifted from the template and lost its
+    // `## Related Portfolios` heading: `ensure_section` recreates it
+    // rather than failing the create.
+    let drifted = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Sparse vs dense OOD\n\n## Current Thinking\n(Pending.)\n";
+    let (vault, store) =
+        vault_with_seeded_store(&[("questions/research/sparse-vs-dense-ood.md", drifted)]);
+
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let raw = store
+        .read_file(&vp("questions/research/sparse-vs-dense-ood.md"))
+        .unwrap();
+    assert!(
+        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "missing section should be recreated with the backlink:\n{raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_backlinks_question_in_life_domain() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    // The slug resolves across both domains — a life-domain question
+    // is found just like a research one.
+    let question_path = vault
+        .create_question(at, QuestionDomain::Life, "Where to settle long term")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "Where to settle long term", None)
+        .expect("create portfolio");
+
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(
+        raw.contains("- [[portfolios/where-to-settle-long-term/_index]]"),
+        "life-domain question should backlink the portfolio:\n{raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_without_matching_question_links_nothing() {
+    // No question note exists for this slug: the portfolio is created
+    // standalone and no `questions/` note is written.
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    let path = vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    assert_eq!(path, vp("portfolios/sparse-vs-dense-ood/_index.md"));
+    assert!(
+        !store
+            .exists(&vp("questions/research/sparse-vs-dense-ood.md"))
+            .unwrap(),
+        "no question note should be created"
+    );
+    assert!(
+        !store
+            .exists(&vp("questions/life/sparse-vs-dense-ood.md"))
+            .unwrap(),
+        "no question note should be created"
+    );
+}
+
+// ---------------------------------------------------------------------
+// link_portfolio_to_question (#200 retrofit verb)
+// ---------------------------------------------------------------------
+
+#[test]
+fn link_portfolio_to_question_backlinks_differing_slugs() {
+    // Retrofit: portfolio and question have unrelated slugs (the
+    // create-time 1:1 match never fired).
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Where does the budget go")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let returned = vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "where-does-the-budget-go")
+        .expect("link succeeds");
+
+    assert_eq!(returned, question_path);
+    // Question side.
+    let question_raw = store.read_file(&question_path).unwrap();
+    assert!(
+        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "question note should backlink the portfolio:\n{question_raw}"
+    );
+    // Portfolio side — the retrofit writes both ends.
+    let portfolio_raw = store
+        .read_file(&vp("portfolios/sparse-vs-dense-ood/_index.md"))
+        .unwrap();
+    assert!(
+        portfolio_raw
+            .contains("## Related Questions\n- [[questions/research/where-does-the-budget-go]]"),
+        "portfolio should link to the question:\n{portfolio_raw}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_errors_on_ambiguous_question() {
+    // Question slug present under both domains (hand-edited vault):
+    // resolution is ambiguous, so the link refuses.
+    let q = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Ambiguous\n\n## Related Portfolios\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        ("questions/research/ambiguous.md", q),
+        (
+            "questions/life/ambiguous.md",
+            &q.replace("domain: research", "domain: life"),
+        ),
+    ]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let err = vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "ambiguous")
+        .unwrap_err();
+    assert!(matches!(err, DomainError::AmbiguousSlug(_)), "got {err:?}");
+}
+
+#[test]
+fn link_accumulates_multiple_questions_on_one_portfolio() {
+    // The portfolio side grows too: one portfolio collecting evidence
+    // against several questions lists all of them.
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    vault
+        .create_question(at, QuestionDomain::Research, "First question")
+        .expect("question one");
+    vault
+        .create_question(at, QuestionDomain::Life, "Second question")
+        .expect("question two");
+    let portfolio_path = vault
+        .create_portfolio(at, "Cross-cutting evidence", None)
+        .expect("create portfolio");
+
+    vault
+        .link_portfolio_to_question("cross-cutting-evidence", "first-question")
+        .expect("link one");
+    vault
+        .link_portfolio_to_question("cross-cutting-evidence", "second-question")
+        .expect("link two");
+
+    let raw = store.read_file(&portfolio_path).unwrap();
+    assert!(
+        raw.contains("- [[questions/research/first-question]]"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("- [[questions/life/second-question]]"),
+        "{raw}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_is_idempotent() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    // create already wrote the 1:1 backlink; linking again must not
+    // duplicate the bullet.
+    vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+    vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "sparse-vs-dense-ood")
+        .expect("re-link succeeds");
+
+    let raw = store.read_file(&question_path).unwrap();
+    let occurrences = raw
+        .matches("- [[portfolios/sparse-vs-dense-ood/_index]]")
+        .count();
+    assert_eq!(occurrences, 1, "backlink must appear exactly once:\n{raw}");
+    // Re-linking a no-op must not accrete blank lines in the section.
+    assert!(
+        !raw.contains("\n\n\n"),
+        "no blank-line accretion on re-link:\n{raw}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_accumulates_multiple_portfolios() {
+    // A question can collect more than one portfolio once the retrofit
+    // verb exists — the section grows, it doesn't get overwritten.
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Big open question")
+        .expect("create question");
+    vault
+        .create_portfolio(at, "First angle", None)
+        .expect("portfolio one");
+    vault
+        .create_portfolio(at, "Second angle", None)
+        .expect("portfolio two");
+
+    vault
+        .link_portfolio_to_question("first-angle", "big-open-question")
+        .expect("link one");
+    vault
+        .link_portfolio_to_question("second-angle", "big-open-question")
+        .expect("link two");
+
+    let raw = store.read_file(&question_path).unwrap();
+    assert!(raw.contains("- [[portfolios/first-angle/_index]]"), "{raw}");
+    assert!(
+        raw.contains("- [[portfolios/second-angle/_index]]"),
+        "{raw}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_errors_on_missing_portfolio() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_question(dt(2026, 2, 1, 9, 0), QuestionDomain::Research, "A question")
+        .expect("create question");
+
+    let err = vault
+        .link_portfolio_to_question("ghost-portfolio", "a-question")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_question_errors_on_missing_question() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let err = vault
+        .link_portfolio_to_question("sparse-vs-dense-ood", "no-such-question")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
         "got {err:?}"
     );
 }

@@ -219,6 +219,19 @@ pub struct CreatePortfolioInput {
     pub project: Option<String>,
 }
 
+/// Input for `link_portfolio_to_question` (GH #200) — retrofit an
+/// existing portfolio onto an existing question's `## Related
+/// Portfolios` backlinks. Both are slugs, not free text.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LinkPortfolioToQuestionInput {
+    /// Slug of the existing portfolio (the `portfolios/<slug>/` folder
+    /// name).
+    pub portfolio: String,
+    /// Slug of the existing question note, resolved across both the
+    /// `research` and `life` domains.
+    pub question: String,
+}
+
 /// Input for `create_question` (GH #162).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateQuestionInput {

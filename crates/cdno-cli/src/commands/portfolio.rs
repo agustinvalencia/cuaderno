@@ -16,7 +16,7 @@ use chrono::NaiveDateTime;
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
-use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter};
+use cdno_domain::frontmatter::{EvidenceFrontmatter, PortfolioFrontmatter, QuestionStatus};
 use cdno_domain::{PortfolioSummary, Vault};
 
 use cdno_core::path::VaultPath;
@@ -31,7 +31,10 @@ pub enum PortfolioCommands {
     /// derived from the question.
     Create {
         /// The unifying question the portfolio collects evidence
-        /// against.
+        /// against. If a question note already exists for the same
+        /// text, the two are linked both ways (the question's `##
+        /// Related Portfolios` and this portfolio's `## Related
+        /// Questions`).
         #[arg(long)]
         question: Option<String>,
         /// Bare wikilink target to a parent project (e.g.
@@ -49,6 +52,21 @@ pub enum PortfolioCommands {
         /// Portfolio slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
+    },
+
+    /// Link an existing portfolio to an existing question, writing
+    /// both ends: the question's `## Related Portfolios` and the
+    /// portfolio's `## Related Questions`. The retrofit path for
+    /// portfolios created before their question, or whose slug differs
+    /// from it.
+    Link {
+        /// Portfolio slug (the `portfolios/<slug>/` folder name).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
+        portfolio: Option<String>,
+        /// Question slug, resolved across the `research` and `life`
+        /// domains.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
+        question: Option<String>,
     },
 }
 
@@ -72,6 +90,10 @@ pub fn run(
             Ok(())
         }
         PortfolioCommands::Show { portfolio } => show(&vault, at, portfolio, interactive),
+        PortfolioCommands::Link {
+            portfolio,
+            question,
+        } => link_to_question(&vault, at, portfolio, question, interactive),
     }
 }
 
@@ -128,6 +150,43 @@ fn show(
     let summary = summaries.iter().find(|s| s.slug == slug);
 
     print!("{}", render_show(&slug, &fm, summary, &entries));
+    Ok(())
+}
+
+fn link_to_question(
+    vault: &Vault,
+    at: NaiveDateTime,
+    portfolio: Option<String>,
+    question: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    // Same gather -> confirm -> execute shape as the other write verbs.
+    let mut prompted = false;
+    let portfolio =
+        prompt::gather_or_error(portfolio, "portfolio", interactive, &mut prompted, || {
+            prompt::prompt_portfolio(vault, at.date())
+        })?;
+    // Any status is a valid link target — a question stays worth
+    // collecting evidence against whether it's active, parked, or
+    // already answered.
+    let question =
+        prompt::gather_or_error(question, "question", interactive, &mut prompted, || {
+            prompt::prompt_question(vault, &QuestionStatus::ALL, "Question to link")
+        })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to link portfolio '{portfolio}' to question '{question}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let path = vault
+        .link_portfolio_to_question(&portfolio, &question)
+        .with_context(|| format!("linking portfolio '{portfolio}' to question '{question}'"))?;
+    println!("Linked portfolio '{portfolio}' to question '{question}' ({path})");
     Ok(())
 }
 

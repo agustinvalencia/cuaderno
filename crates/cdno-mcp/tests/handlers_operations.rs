@@ -21,8 +21,9 @@ use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput,
     CompleteCommitmentInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
-    ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput, SetQuestionStatusInput,
-    UpdateProjectStateInput, UpsertDailySectionInput, UpsertWeeklySectionInput,
+    LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
+    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -151,6 +152,73 @@ async fn file_to_portfolio_errors_on_missing_portfolio() {
         }))
         .await
         .expect_err("missing portfolio should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+}
+
+// ---------------------------------------------------------------------
+// link_portfolio_to_question (#200 retrofit verb)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn link_portfolio_to_question_backlinks_the_question_note() {
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_question(
+                moment(2026, 2, 1, 9, 0),
+                QuestionDomain::Research,
+                "Where does the budget go",
+            )
+            .unwrap();
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+            .unwrap();
+    });
+
+    let result = server
+        .link_portfolio_to_question(Parameters(LinkPortfolioToQuestionInput {
+            portfolio: "sparse-vs-dense-ood".to_owned(),
+            question: "where-does-the-budget-go".to_owned(),
+        }))
+        .await
+        .expect("link_portfolio_to_question");
+
+    let value = decode_json(&result);
+    assert_eq!(
+        value["path"].as_str().unwrap(),
+        "questions/research/where-does-the-budget-go.md"
+    );
+    let question_body = store
+        .read_file(&vp("questions/research/where-does-the-budget-go.md"))
+        .unwrap();
+    assert!(
+        question_body
+            .contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "question note should backlink the portfolio:\n{question_body}"
+    );
+    let portfolio_body = store
+        .read_file(&vp("portfolios/sparse-vs-dense-ood/_index.md"))
+        .unwrap();
+    assert!(
+        portfolio_body
+            .contains("## Related Questions\n- [[questions/research/where-does-the-budget-go]]"),
+        "portfolio should link to the question:\n{portfolio_body}"
+    );
+}
+
+#[tokio::test]
+async fn link_portfolio_to_question_errors_on_missing_question() {
+    let (server, _store) = server_with(|vault, _s| {
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+            .unwrap();
+    });
+    let err = server
+        .link_portfolio_to_question(Parameters(LinkPortfolioToQuestionInput {
+            portfolio: "sparse-vs-dense-ood".to_owned(),
+            question: "no-such-question".to_owned(),
+        }))
+        .await
+        .expect_err("missing question should error");
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
 
