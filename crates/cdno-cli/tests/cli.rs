@@ -816,7 +816,9 @@ fn reindex_rebuilds_the_index_from_markdown() {
     .unwrap();
 
     // `--vault` pins the target so the destructive rebuild can't touch
-    // an ambient `CUADERNO_VAULT_PATH` vault.
+    // an ambient `CUADERNO_VAULT_PATH` vault. `init` seeds no indexable
+    // notes, so the lone zettel is the whole count -- assert it exactly,
+    // proving the rebuild actually indexed it (not just that it ran).
     cdno()
         .args([
             "--vault".as_ref(),
@@ -825,8 +827,7 @@ fn reindex_rebuilds_the_index_from_markdown() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Reindexed"))
-        .stdout(predicate::str::contains("note(s)"));
+        .stdout(predicate::str::contains("Reindexed 1 note(s)"));
 }
 
 #[test]

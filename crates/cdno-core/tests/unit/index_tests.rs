@@ -143,17 +143,48 @@ fn open_self_heals_a_corrupt_index_file() {
 }
 
 #[test]
-fn remove_deletes_the_db_and_wal_sidecar() {
+fn reopen_preserves_a_healthy_populated_index() {
+    // A healthy existing index must take the Ok branch on open, never the
+    // corruption self-heal -- so its rows survive a reopen and aren't
+    // clobbered (#206).
+    let (_dir, path) = new_db_path();
+    {
+        let index = SqliteIndex::open(&path).unwrap();
+        index
+            .with_connection(|c| {
+                c.execute(
+                    "INSERT INTO notes (path, note_type, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) VALUES ('p.md', 'daily', 'h', 0, 0, '{}', 0)",
+                    [],
+                )
+            })
+            .unwrap();
+    }
+
+    let index = SqliteIndex::open(&path).unwrap();
+    let count: u32 = index
+        .with_connection(|c| c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)))
+        .unwrap();
+    assert_eq!(count, 1, "healthy index must not be clobbered on reopen");
+}
+
+#[test]
+fn remove_deletes_the_db_and_sidecars() {
     let (_dir, path) = new_db_path();
     let _index = SqliteIndex::open(&path).unwrap();
-    // Simulate a WAL sidecar alongside the db.
-    let mut wal = path.clone().into_os_string();
-    wal.push("-wal");
-    let wal = std::path::PathBuf::from(wal);
-    std::fs::write(&wal, b"sidecar").unwrap();
+    // Simulate WAL + SHM sidecars alongside the db.
+    let sidecar = |suffix: &str| {
+        let mut p = path.clone().into_os_string();
+        p.push(suffix);
+        std::path::PathBuf::from(p)
+    };
+    let wal = sidecar("-wal");
+    let shm = sidecar("-shm");
+    std::fs::write(&wal, b"wal").unwrap();
+    std::fs::write(&shm, b"shm").unwrap();
     assert!(path.exists());
 
     SqliteIndex::remove(&path);
     assert!(!path.exists(), "db file removed");
     assert!(!wal.exists(), "wal sidecar removed");
+    assert!(!shm.exists(), "shm sidecar removed");
 }

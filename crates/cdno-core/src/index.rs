@@ -141,9 +141,6 @@ impl SqliteIndex {
     }
 }
 
-/// Apply the PRAGMAs required by the schema contract on every new
-/// connection. Most of these are per-connection (not persisted in the
-/// file) and must be re-set on each open.
 /// True for the SQLite error codes meaning "this file isn't a usable
 /// database" — a truncated or corrupt index. The index is a rebuildable
 /// cache, so these are recovered by dropping the file and reconciling
@@ -174,6 +171,9 @@ fn remove_index_files(path: &Path) {
     }
 }
 
+/// Apply the PRAGMAs required by the schema contract on every new
+/// connection. Most of these are per-connection (not persisted in the
+/// file) and must be re-set on each open.
 fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
     // Cascade deletes on foreign keys. Without this the ON DELETE
     // CASCADE clauses in the schema are silently ignored.
