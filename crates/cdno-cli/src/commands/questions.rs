@@ -15,12 +15,16 @@ use cdno_domain::frontmatter::QuestionDomain;
 
 use crate::bootstrap;
 
-pub fn run(root: &Path) -> Result<()> {
+pub fn run(root: &Path, json: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let active = vault
         .active_questions()
         .context("listing active questions")?;
-    print!("{}", render(&active));
+    if json {
+        println!("{}", serde_json::to_string_pretty(&active)?);
+    } else {
+        print!("{}", render(&active));
+    }
     Ok(())
 }
 

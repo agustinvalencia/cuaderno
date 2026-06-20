@@ -23,8 +23,10 @@ inquire.workspace = true
 comfy-table.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true
+serde_json.workspace = true

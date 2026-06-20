@@ -38,7 +38,7 @@ const OVERDUE_LOOKBACK_DAYS: i64 = 30;
 /// One dated commitment in the aggregated view produced by
 /// [`Vault::commitments`]. The `source` records where it came from so
 /// callers (orient, the commitments CLI) can group or label entries.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CommitmentEntry {
     pub date: NaiveDate,
     pub title: String,
@@ -49,7 +49,12 @@ pub struct CommitmentEntry {
 
 /// Origin of an aggregated commitment. The string payloads carry the
 /// owning project / stewardship slug for context.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// Adjacently-tagged so the CLI `--json` shape is homogeneous
+// (`{"kind":"project_milestone","slug":"..."}`) rather than serde's
+// heterogeneous default (a bare string for the unit variant), matching
+// the MCP `CommitmentSourceDto`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", content = "slug", rename_all = "snake_case")]
 pub enum CommitmentSource {
     /// A hard `## Milestones` deadline of the named project.
     ProjectMilestone(String),

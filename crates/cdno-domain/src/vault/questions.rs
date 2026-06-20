@@ -34,7 +34,7 @@ use super::slug::slugify;
 /// lookups), the domain (for grouping), the status (for badging and
 /// filtering by the CLI pickers), the question text (extracted from
 /// the body H1), and the most recent update date.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct QuestionSummary {
     pub slug: String,
     pub domain: QuestionDomain,
