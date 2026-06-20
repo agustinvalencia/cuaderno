@@ -18,6 +18,20 @@ impl LintReport {
     pub fn is_clean(&self) -> bool {
         self.issues.is_empty()
     }
+
+    /// Count of `Error`-severity issues. Single source of truth for the
+    /// error/warning split so the CLI summary and the MCP DTO agree.
+    pub fn error_count(&self) -> usize {
+        self.issues
+            .iter()
+            .filter(|i| i.severity == LintSeverity::Error)
+            .count()
+    }
+
+    /// Count of `Warning`-severity issues.
+    pub fn warning_count(&self) -> usize {
+        self.issues.len() - self.error_count()
+    }
 }
 
 /// How serious a lint issue is.

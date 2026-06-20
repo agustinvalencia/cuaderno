@@ -555,16 +555,10 @@ pub struct LintReportDto {
 
 impl From<cdno_domain::LintReport> for LintReportDto {
     fn from(report: cdno_domain::LintReport) -> Self {
-        let error_count = report
-            .issues
-            .iter()
-            .filter(|i| i.severity == cdno_domain::LintSeverity::Error)
-            .count();
-        let warning_count = report.issues.len() - error_count;
         Self {
             clean: report.is_clean(),
-            error_count,
-            warning_count,
+            error_count: report.error_count(),
+            warning_count: report.warning_count(),
             issues: report.issues.into_iter().map(LintIssueDto::from).collect(),
         }
     }

@@ -132,8 +132,9 @@ impl Vault {
                 ));
             }
 
-            // Broken-wikilink check (#205). Body-scanned to match the
-            // reconciler's link graph, and resolved against the
+            // Broken-wikilink check (#205). Body-scanned (frontmatter
+            // links like `project:`/`origin:` are out of scope, matching
+            // the reconciler's link graph) and resolved against the
             // *current* path set rather than the index's stored
             // resolution -- which goes stale when a link target is
             // deleted without the linking note changing (the
@@ -142,8 +143,33 @@ impl Vault {
             // nowhere. This is the check that would have caught the
             // #200 dangling backlink (`[[portfolios/<slug>]]` instead
             // of `[[portfolios/<slug>/_index]]`).
-            let content = self.store.read_file(&path)?;
-            let (_fm, body) = Frontmatter::parse(&content)?;
+            //
+            // Read/parse failures here are reported as an Error against
+            // this note and skipped, never propagated: a note that's
+            // indexed but corrupt on disk (a stale index row the
+            // reconciler couldn't refresh) is exactly what lint exists
+            // to surface -- aborting the whole run would instead hide
+            // every other issue.
+            let content = match self.store.read_file(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    issues.push(LintIssue::error(
+                        path.clone(),
+                        format!("could not read note: {e}"),
+                    ));
+                    continue;
+                }
+            };
+            let body = match Frontmatter::parse(&content) {
+                Ok((_fm, body)) => body,
+                Err(e) => {
+                    issues.push(LintIssue::error(
+                        path.clone(),
+                        format!("malformed frontmatter: {e}"),
+                    ));
+                    continue;
+                }
+            };
             for link in resolve_wikilinks(extract_wikilinks(body), &path_set) {
                 if link.resolved_path.is_none() {
                     issues.push(LintIssue::warning(

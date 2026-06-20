@@ -500,3 +500,98 @@ fn lint_flags_a_folder_note_link_missing_its_index_stem() {
         "the /_index form should resolve"
     );
 }
+
+#[test]
+fn lint_ignores_a_dangling_frontmatter_link() {
+    // `core_question` is a frontmatter wikilink; broken-link scanning is
+    // body-only (matching the reconciler's link graph), so a dangling
+    // one is not flagged.
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: \"[[questions/ghost]]\"\n---\n# Foo\n";
+    let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        broken_link_issues(&report).is_empty(),
+        "frontmatter links are out of scope: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_counts_errors_and_warnings_separately() {
+    // One unknown-type note (error) and one note with two broken body
+    // links (two warnings) -- pins the error/warning split arithmetic.
+    let vault = vault_with_notes(
+        &[
+            ("bogus.md", "---\ntype: nonsense\n---\n# x\n"),
+            (
+                "journal/2026/daily/2026-05-01.md",
+                "---\ntype: daily\ntitle: D\n---\n# D\n\nSee [[a/ghost]] and [[b/ghost]].\n",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.error_count(), 1, "issues: {:?}", report.issues);
+    assert_eq!(report.warning_count(), 2, "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_reports_a_corrupt_indexed_note_as_error_without_aborting() {
+    // A note valid at index time but corrupt on disk now (a stale index
+    // row the reconciler's mtime fast-path didn't refresh). Lint must
+    // report it as an error and keep going -- aborting would hide every
+    // other issue, the opposite of what lint is for.
+    let (vault, store) = vault_with_notes_and_store(
+        &[
+            ("a.md", "---\ntype: daily\ntitle: A\n---\n# A\n"),
+            ("b.md", "---\ntype: daily\ntitle: B\n---\n# B\n"),
+        ],
+        VaultConfig::default(),
+    );
+    // Corrupt `a` after indexing: unterminated YAML flow sequence.
+    store
+        .write_file(&vp("a.md"), "---\nfoo: [1, 2\n---\n# A\n")
+        .unwrap();
+
+    let report = vault
+        .lint_all_notes()
+        .expect("lint must not abort on a corrupt note");
+    let a_issues: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.path == vp("a.md"))
+        .collect();
+    assert_eq!(a_issues.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        a_issues[0].message.contains("malformed frontmatter"),
+        "message: {}",
+        a_issues[0].message
+    );
+    // `b` was still reached (the run continued past the corrupt note).
+    assert!(report.issues.iter().all(|i| i.path != vp("b.md")));
+}
+
+#[test]
+fn lint_flags_the_dangling_action_reference_after_archival() {
+    // Pins the #215 premise: completing an action archives its note to
+    // `actions/_done/<year>/`, but the add-time daily-log entry still
+    // says `[[actions/<slug>]]`, which now dangles. If a future resolver
+    // change makes that link resolve, this test goes red -- the signal
+    // to close #215 and update the expectation here.
+    let (vault, _store) = vault_with_notes_and_store(
+        &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
+        VaultConfig::default(),
+    );
+    archive_a_fresh_action(&vault);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        broken_link_issues(&report)
+            .iter()
+            .any(|i| i.message.contains("[[actions/characterise]]")),
+        "expected the archived-action daily-log reference to dangle: {:?}",
+        report.issues
+    );
+}

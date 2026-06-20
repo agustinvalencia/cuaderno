@@ -224,6 +224,8 @@ pub struct CreatePortfolioInput {
 /// Overdue commitments are always included regardless of the window.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetCommitmentsInput {
+    /// Forward window in weeks; omitted defaults to 2. Overdue
+    /// commitments are returned regardless of this window.
     pub lookahead_weeks: Option<u32>,
 }
 

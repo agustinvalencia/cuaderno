@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
-use cdno_domain::LintSeverity;
 
 use crate::bootstrap;
 
@@ -29,11 +28,9 @@ pub fn run(root: &Path) -> Result<()> {
         );
     }
 
-    let errors = report
-        .issues
-        .iter()
-        .filter(|i| i.severity == LintSeverity::Error)
-        .count();
-    let warnings = report.issues.len() - errors;
-    bail!("found {errors} error(s), {warnings} warning(s)");
+    bail!(
+        "found {} error(s), {} warning(s)",
+        report.error_count(),
+        report.warning_count()
+    );
 }
