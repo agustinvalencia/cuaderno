@@ -72,7 +72,9 @@ impl Vault {
     /// commit links the two **both ways** (#200): the new portfolio's
     /// `## Related Questions` section gains a
     /// `[[questions/<domain>/<slug>]]` bullet, and the question note's
-    /// `## Related Portfolios` gains a `[[portfolios/<slug>]]` bullet.
+    /// `## Related Portfolios` gains a `[[portfolios/<slug>/_index]]`
+    /// bullet (the `/_index` stem is what the wikilink resolver
+    /// matches, since the portfolio note is the folder's `_index.md`).
     /// A portfolio whose question has no note (a standalone capture)
     /// gets neither and commits unchanged.
     ///
@@ -121,7 +123,7 @@ impl Vault {
             self.stage_backlink_into_note(
                 &question_path,
                 RELATED_PORTFOLIOS_SECTION,
-                &format!("portfolios/{slug}"),
+                &note_wikilink_target(&path),
                 NoteType::Question.as_str(),
                 &mut tx,
             )?;
@@ -141,8 +143,8 @@ impl Vault {
     /// the question, or when the two slugs differ (so the create-time
     /// 1:1 match never fired). Writes **both** ends in one commit: the
     /// question note's `## Related Portfolios` gains
-    /// `[[portfolios/<portfolio>]]`, and the portfolio's `## Related
-    /// Questions` gains `[[questions/<domain>/<slug>]]`.
+    /// `[[portfolios/<portfolio>/_index]]`, and the portfolio's `##
+    /// Related Questions` gains `[[questions/<domain>/<slug>]]`.
     ///
     /// Returns the resolved question-note path. Idempotent on each
     /// end — a bullet already present is left untouched and the call
@@ -180,7 +182,7 @@ impl Vault {
         self.stage_backlink_into_note(
             &question_path,
             RELATED_PORTFOLIOS_SECTION,
-            &format!("portfolios/{portfolio}"),
+            &note_wikilink_target(&portfolio_index),
             NoteType::Question.as_str(),
             &mut tx,
         )?;

@@ -59,7 +59,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Link an existing portfolio to an existing question, writing both ends in one commit: the question note's `## Related Portfolios` gains `[[portfolios/<slug>]]` and the portfolio's `## Related Questions` gains `[[questions/<domain>/<slug>]]`. Both arguments are slugs (not free text). Use this to retrofit a portfolio created before its question, or when their slugs differ; `create_portfolio` already links automatically when they match. Idempotent on each end — re-linking never duplicates a bullet."
+        description = "Link an existing portfolio to an existing question, writing both ends in one commit: the question note's `## Related Portfolios` gains `[[portfolios/<slug>/_index]]` and the portfolio's `## Related Questions` gains `[[questions/<domain>/<slug>]]`. Both arguments are slugs (not free text). Use this to retrofit a portfolio created before its question, or when their slugs differ; `create_portfolio` already links automatically when they match. Idempotent on each end — re-linking never duplicates a bullet."
     )]
     pub async fn link_portfolio_to_question(
         &self,

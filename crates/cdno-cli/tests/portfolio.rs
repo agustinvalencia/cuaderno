@@ -103,7 +103,7 @@ fn portfolio_create_backlinks_existing_question_note() {
     let question_note = dir.path().join("questions/research/sparse-vs-dense-ood.md");
     let raw = fs::read_to_string(&question_note).expect("question note exists");
     assert!(
-        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "question note should backlink the portfolio:\n{raw}"
     );
 }
@@ -141,7 +141,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
         .join("questions/research/where-does-the-budget-go.md");
     let question_raw = fs::read_to_string(&question_note).expect("question note exists");
     assert!(
-        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "retrofit link should land in the question note:\n{question_raw}"
     );
     // Both ends are written.

@@ -191,7 +191,8 @@ async fn link_portfolio_to_question_backlinks_the_question_note() {
         .read_file(&vp("questions/research/where-does-the-budget-go.md"))
         .unwrap();
     assert!(
-        question_body.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        question_body
+            .contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "question note should backlink the portfolio:\n{question_body}"
     );
     let portfolio_body = store

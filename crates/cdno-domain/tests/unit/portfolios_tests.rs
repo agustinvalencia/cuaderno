@@ -157,7 +157,7 @@ fn create_portfolio_links_matching_question_both_ways() {
     // Question side: `## Related Portfolios` carries the backlink.
     let question_raw = store.read_file(&question_path).unwrap();
     assert!(
-        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "question note should backlink the portfolio:\n{question_raw}"
     );
     // Portfolio side: `## Related Questions` carries the full-path
@@ -167,6 +167,55 @@ fn create_portfolio_links_matching_question_both_ways() {
         portfolio_raw
             .contains("## Related Questions\n- [[questions/research/sparse-vs-dense-ood]]"),
         "portfolio should link back to the question:\n{portfolio_raw}"
+    );
+}
+
+#[test]
+fn create_portfolio_backlinks_resolve_through_the_wikilink_resolver() {
+    // Guard against the dangling-link regression: a portfolio note
+    // lives at `portfolios/<slug>/_index.md`, so a bare
+    // `[[portfolios/<slug>]]` resolves to nothing (basename is
+    // `_index`). Both written bullets must resolve to the real notes.
+    use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+    use std::collections::HashSet;
+
+    let (vault, store) = vault_with_seeded_store(&[]);
+    let at = dt(2026, 2, 1, 9, 0);
+    let question_path = vault
+        .create_question(at, QuestionDomain::Research, "Sparse vs dense OOD")
+        .expect("create question");
+    let portfolio_path = vault
+        .create_portfolio(at, "Sparse vs dense OOD", None)
+        .expect("create portfolio");
+
+    let vault_paths: HashSet<VaultPath> = [question_path.clone(), portfolio_path.clone()]
+        .into_iter()
+        .collect();
+
+    // Question -> portfolio resolves to the portfolio's `_index.md`.
+    let question_raw = store.read_file(&question_path).unwrap();
+    let to_portfolio = resolve_wikilinks(extract_wikilinks(&question_raw), &vault_paths);
+    let portfolio_link = to_portfolio
+        .iter()
+        .find(|l| l.target_raw.starts_with("portfolios/"))
+        .expect("question note carries a portfolio wikilink");
+    assert_eq!(
+        portfolio_link.resolved_path.as_ref(),
+        Some(&portfolio_path),
+        "portfolio backlink must resolve, not dangle: {portfolio_link:?}"
+    );
+
+    // Portfolio -> question resolves to the flat question note.
+    let portfolio_raw = store.read_file(&portfolio_path).unwrap();
+    let to_question = resolve_wikilinks(extract_wikilinks(&portfolio_raw), &vault_paths);
+    let question_link = to_question
+        .iter()
+        .find(|l| l.target_raw.starts_with("questions/"))
+        .expect("portfolio carries a question wikilink");
+    assert_eq!(
+        question_link.resolved_path.as_ref(),
+        Some(&question_path),
+        "question link must resolve: {question_link:?}"
     );
 }
 
@@ -215,7 +264,7 @@ fn create_portfolio_backlinks_into_drifted_question_note() {
         .read_file(&vp("questions/research/sparse-vs-dense-ood.md"))
         .unwrap();
     assert!(
-        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "missing section should be recreated with the backlink:\n{raw}"
     );
 }
@@ -236,7 +285,7 @@ fn create_portfolio_backlinks_question_in_life_domain() {
 
     let raw = store.read_file(&question_path).unwrap();
     assert!(
-        raw.contains("- [[portfolios/where-to-settle-long-term]]"),
+        raw.contains("- [[portfolios/where-to-settle-long-term/_index]]"),
         "life-domain question should backlink the portfolio:\n{raw}"
     );
 }
@@ -292,7 +341,7 @@ fn link_portfolio_to_question_backlinks_differing_slugs() {
     // Question side.
     let question_raw = store.read_file(&question_path).unwrap();
     assert!(
-        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood]]"),
+        question_raw.contains("## Related Portfolios\n- [[portfolios/sparse-vs-dense-ood/_index]]"),
         "question note should backlink the portfolio:\n{question_raw}"
     );
     // Portfolio side — the retrofit writes both ends.
@@ -381,7 +430,9 @@ fn link_portfolio_to_question_is_idempotent() {
         .expect("re-link succeeds");
 
     let raw = store.read_file(&question_path).unwrap();
-    let occurrences = raw.matches("- [[portfolios/sparse-vs-dense-ood]]").count();
+    let occurrences = raw
+        .matches("- [[portfolios/sparse-vs-dense-ood/_index]]")
+        .count();
     assert_eq!(occurrences, 1, "backlink must appear exactly once:\n{raw}");
     // Re-linking a no-op must not accrete blank lines in the section.
     assert!(
@@ -415,8 +466,11 @@ fn link_portfolio_to_question_accumulates_multiple_portfolios() {
         .expect("link two");
 
     let raw = store.read_file(&question_path).unwrap();
-    assert!(raw.contains("- [[portfolios/first-angle]]"), "{raw}");
-    assert!(raw.contains("- [[portfolios/second-angle]]"), "{raw}");
+    assert!(raw.contains("- [[portfolios/first-angle/_index]]"), "{raw}");
+    assert!(
+        raw.contains("- [[portfolios/second-angle/_index]]"),
+        "{raw}"
+    );
 }
 
 #[test]
