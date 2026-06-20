@@ -163,11 +163,11 @@ fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime 
         .and_time(NaiveTime::from_hms_opt(hour, minute, 0).unwrap())
 }
 
-/// The append-only-after-completion issues only. Completing an action
-/// archives its note to `actions/_done/<year>/` while the add-time
-/// daily-log entry still references `[[actions/<slug>]]` — a dangling
-/// link the broken-wikilink check (correctly) reports but which is
-/// orthogonal to what these tests exercise. Filter to keep them focused.
+/// The append-only-after-completion issues only — filter the report to
+/// keep these tests focused on the append-only check, independent of any
+/// other lint severity. (Since #215 the archived-action daily reference
+/// resolves, so it no longer adds broken-wikilink noise; the filter is
+/// belt-and-suspenders.)
 fn append_only_issues(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
     report
         .issues
@@ -574,12 +574,11 @@ fn lint_reports_a_corrupt_indexed_note_as_error_without_aborting() {
 }
 
 #[test]
-fn lint_flags_the_dangling_action_reference_after_archival() {
-    // Pins the #215 premise: completing an action archives its note to
-    // `actions/_done/<year>/`, but the add-time daily-log entry still
-    // says `[[actions/<slug>]]`, which now dangles. If a future resolver
-    // change makes that link resolve, this test goes red -- the signal
-    // to close #215 and update the expectation here.
+fn lint_does_not_flag_an_archived_action_reference() {
+    // #215 resolved: completing an action archives its note to
+    // `actions/_done/<year>/`, and the add-time daily-log entry's
+    // `[[actions/<slug>]]` now resolves there via the resolver's
+    // last-segment fallback -- so it is no longer reported as broken.
     let (vault, _store) = vault_with_notes_and_store(
         &[("projects/foo.md", ACTIVE_PROJECT_FOR_ARCHIVE)],
         VaultConfig::default(),
@@ -588,10 +587,10 @@ fn lint_flags_the_dangling_action_reference_after_archival() {
 
     let report = vault.lint_all_notes().expect("lint succeeds");
     assert!(
-        broken_link_issues(&report)
+        !broken_link_issues(&report)
             .iter()
             .any(|i| i.message.contains("[[actions/characterise]]")),
-        "expected the archived-action daily-log reference to dangle: {:?}",
+        "the archived-action reference should resolve, not dangle: {:?}",
         report.issues
     );
 }

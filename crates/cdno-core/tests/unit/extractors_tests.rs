@@ -276,6 +276,56 @@ fn resolve_returns_none_when_no_match_at_all() {
 }
 
 #[test]
+fn resolve_qualified_target_falls_back_to_a_relocated_note() {
+    // #215: a `[[actions/<slug>]]` reference still resolves after the
+    // note is archived to `actions/_done/<year>/<slug>.md` — the
+    // last-segment fallback matches the stem.
+    let vault = paths(&["actions/_done/2026/characterise.md", "projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "actions/characterise".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("actions/_done/2026/characterise.md"))
+    );
+}
+
+#[test]
+fn resolve_qualified_target_is_none_when_last_segment_is_ambiguous() {
+    // The uniqueness guard still holds for the fallback: two notes with
+    // the same stem leave the link unresolved.
+    let vault = paths(&["a/foo.md", "b/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "actions/foo".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert!(got[0].resolved_path.is_none(), "got: {:?}", got[0]);
+}
+
+#[test]
+fn resolve_prefers_exact_path_over_last_segment_fallback() {
+    // An active note and an archived one share a slug; an
+    // `[[actions/foo]]` link must resolve to the active note (exact
+    // path), not the relocated copy.
+    let vault = paths(&["actions/foo.md", "actions/_done/2026/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "actions/foo".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("actions/foo.md")));
+}
+
+#[test]
 fn resolve_preserves_label_through_resolution() {
     let vault = paths(&["notes/foo.md"]);
     let got = resolve_wikilinks(

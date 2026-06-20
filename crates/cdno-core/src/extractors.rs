@@ -235,14 +235,26 @@ fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPa
         return Some(vp);
     }
 
-    // 2. Basename match: collect every path whose `.md` stem equals
-    // `target`. A unique match wins; zero or multiple matches mean
-    // the link stays unresolved.
+    // 2. Last-segment match: resolve by the note's filename stem
+    // against the target's final path segment. For a bare target
+    // (`[[foo]]`) the segment is the whole thing; for a qualified one
+    // (`[[actions/foo]]`) it's `foo`. This lets a link survive a note
+    // relocating *within its tree* without rewriting every reference:
+    // `[[actions/<slug>]]` still resolves after the note is archived to
+    // `actions/_done/<year>/<slug>.md` (#215), and likewise for parked
+    // projects and completed commitments.
+    //
+    // A unique stem match wins; zero or multiple matches leave the link
+    // unresolved. The uniqueness requirement bounds the one false
+    // resolution this admits — a qualified target whose directory is
+    // wrong but whose slug uniquely names a note elsewhere — which is
+    // rare next to the pervasive dangling it fixes.
+    let needle = target.rsplit('/').next().unwrap_or(target);
     let mut matches = vault_paths.iter().filter(|p| {
         p.as_path()
             .file_stem()
             .and_then(|s| s.to_str())
-            .is_some_and(|stem| stem == target)
+            .is_some_and(|stem| stem == needle)
     });
     let first = matches.next()?;
     if matches.next().is_some() {
