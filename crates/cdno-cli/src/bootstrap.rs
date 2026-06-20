@@ -86,5 +86,23 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
             .with_context(|| format!("opening {}", root.join(paths::INDEX_DB).display()))?,
     );
 
-    Vault::new(store, index, config).context("constructing vault and reconciling index")
+    let (vault, report) =
+        Vault::new(store, index, config).context("constructing vault and reconciling index")?;
+
+    // Surface per-file reconciliation errors (#207). A note that fails
+    // to parse is dropped from the index and otherwise invisible -- every
+    // command opens the vault through here, so warning once at the
+    // boundary catches a corrupt note on the next invocation. Clean
+    // vaults stay silent.
+    if !report.errors.is_empty() {
+        eprintln!(
+            "warning: {} note(s) could not be indexed during reconciliation:",
+            report.errors.len()
+        );
+        for issue in &report.errors {
+            eprintln!("  {}: {}", issue.path, issue.reason);
+        }
+    }
+
+    Ok((vault, report))
 }
