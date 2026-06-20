@@ -786,6 +786,25 @@ fn open_vault_surfaces_reconciliation_errors_on_stderr() {
 }
 
 #[test]
+fn open_vault_reports_the_count_of_unindexable_notes() {
+    // Two corrupt notes pin the `N note(s)` count line and exercise the
+    // loop with more than one entry.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    std::fs::write(dir.path().join("a.md"), "---\ntype: [bad\n---\n# A\n").unwrap();
+    std::fs::write(dir.path().join("b.md"), "---\ntype: [bad\n---\n# B\n").unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .arg("commitments")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("2 note(s) could not be indexed"))
+        .stderr(predicate::str::contains("a.md"))
+        .stderr(predicate::str::contains("b.md"));
+}
+
+#[test]
 fn open_vault_is_quiet_on_a_clean_vault() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
