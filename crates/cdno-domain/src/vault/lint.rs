@@ -5,6 +5,8 @@ use std::path::Component;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
 
@@ -26,14 +28,23 @@ impl Vault {
     /// - the entry's `type` field parses as a known [`NoteType`];
     /// - every field listed in the type's `[schemas.<type>]
     ///   extra_required` config section is present in the
-    ///   frontmatter.
+    ///   frontmatter;
+    /// - append-only-after-completion on archived action notes;
+    /// - attachment stub / artefact-folder pairing;
+    /// - broken wikilinks: body links that resolve to no note
+    ///   (a `Warning`, not an `Error` -- the note is structurally fine).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
     pub fn lint_all_notes(&self) -> Result<LintReport, DomainError> {
         let mut issues: Vec<LintIssue> = Vec::new();
 
-        for path in self.index.list_all_paths()? {
+        // The full note-path set, used to resolve wikilinks below.
+        // Built once and shared across every note's link check.
+        let paths = self.index.list_all_paths()?;
+        let path_set: HashSet<VaultPath> = paths.iter().cloned().collect();
+
+        for path in paths {
             // A concurrent writer could remove a note between the
             // listing and the lookup. Treat that as "nothing to lint
             // here" rather than a hard error — the next pass will see
@@ -49,10 +60,10 @@ impl Vault {
             // `extra_required` — the report would just compound a
             // problem the user already needs to fix.
             if NoteType::from_str(&entry.note_type).is_err() {
-                issues.push(LintIssue {
+                issues.push(LintIssue::error(
                     path,
-                    message: format!("unknown note type: `{}`", entry.note_type),
-                });
+                    format!("unknown note type: `{}`", entry.note_type),
+                ));
                 continue;
             }
 
@@ -63,13 +74,13 @@ impl Vault {
                     .and_then(|obj| obj.get(required))
                     .is_some_and(|v| !v.is_null());
                 if !present {
-                    issues.push(LintIssue {
-                        path: path.clone(),
-                        message: format!(
+                    issues.push(LintIssue::error(
+                        path.clone(),
+                        format!(
                             "missing required field `{required}` for note type `{}`",
                             entry.note_type
                         ),
-                    });
+                    ));
                 }
             }
 
@@ -83,10 +94,7 @@ impl Vault {
                 && let Some(snap) = self.index.find_archival_snapshot(&path)?
                 && let Some(msg) = check_append_only(&self.store, &path, &snap)?
             {
-                issues.push(LintIssue {
-                    path: path.clone(),
-                    message: msg,
-                });
+                issues.push(LintIssue::error(path.clone(), msg));
             }
 
             // Attachment stub ↔ artefact-folder pairing, forward
@@ -115,13 +123,37 @@ impl Vault {
                     .map(|c| c.is_empty())
                     .unwrap_or(false)
             {
-                issues.push(LintIssue {
-                    path: path.clone(),
-                    message: format!(
+                issues.push(LintIssue::error(
+                    path.clone(),
+                    format!(
                         "attachment evidence links artefacts in `{folder}` but that \
                          folder is missing or empty"
                     ),
-                });
+                ));
+            }
+
+            // Broken-wikilink check (#205). Body-scanned to match the
+            // reconciler's link graph, and resolved against the
+            // *current* path set rather than the index's stored
+            // resolution -- which goes stale when a link target is
+            // deleted without the linking note changing (the
+            // reconciler's mtime fast-path skips it). A dangling link
+            // is a Warning: the note parses, a link just points
+            // nowhere. This is the check that would have caught the
+            // #200 dangling backlink (`[[portfolios/<slug>]]` instead
+            // of `[[portfolios/<slug>/_index]]`).
+            let content = self.store.read_file(&path)?;
+            let (_fm, body) = Frontmatter::parse(&content)?;
+            for link in resolve_wikilinks(extract_wikilinks(body), &path_set) {
+                if link.resolved_path.is_none() {
+                    issues.push(LintIssue::warning(
+                        path.clone(),
+                        format!(
+                            "broken wikilink `[[{}]]` resolves to no note",
+                            link.target_raw
+                        ),
+                    ));
+                }
             }
         }
 
@@ -190,13 +222,11 @@ fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>,
             continue;
         };
         if !store.exists(&stub).unwrap_or(false) {
-            issues.push(LintIssue {
-                message: format!(
-                    "artefact folder `{folder}` has no evidence stub `{stub}` \
-                     — orphaned attachment or stray non-markdown file"
-                ),
-                path: folder,
-            });
+            let message = format!(
+                "artefact folder `{folder}` has no evidence stub `{stub}` \
+                 -- orphaned attachment or stray non-markdown file"
+            );
+            issues.push(LintIssue::error(folder, message));
         }
     }
     Ok(issues)

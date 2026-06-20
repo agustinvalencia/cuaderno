@@ -40,6 +40,24 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Capture a raw line into the inbox for later triage -- zero-friction quick capture, the counterpart to `append_to_log` for thoughts that aren't a dated log entry. The text is stored verbatim under `inbox/`; routing it into a task/note happens later."
+    )]
+    pub async fn capture(
+        &self,
+        Parameters(input): Parameters<CaptureInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .vault
+            .capture_to_inbox(at, &input.text)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Captured to {}", path),
+        ))
+    }
+
+    #[tool(
         description = "File evidence into the named portfolio. `origin` is a bare wikilink target (e.g. `projects/foo`); the server wraps it. Resolve a real slug in `origin` (e.g. a project via `get_orientation`) rather than guessing — `origin` is not validated, so a wrong slug silently writes a dangling link instead of erroring. By default writes a markdown evidence note with `content` as the body. To file a non-markdown artefact (PDF, image, video, …), set `attach` to its server-side path: the file is copied into the portfolio and a linked stub is scaffolded, and `content` becomes the stub's abstract — write a descriptive one, since it's the only thing search and other agents see of the artefact."
     )]
     pub async fn file_to_portfolio(

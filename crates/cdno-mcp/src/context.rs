@@ -8,14 +8,16 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
+use cdno_core::path::VaultPath;
 use cdno_domain::SearchFilters;
-use cdno_domain::frontmatter::QuestionDomain;
+use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 use cdno_domain::note_type::NoteType;
 
 use crate::dto::{
-    DailyNoteViewDto, MonthlyContextDto, OrientationContextDto, PortfolioDetailDto,
-    ProjectContextDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
-    StewardshipTrackingDto, WeeklyContextDto, WeeklyNoteViewDto,
+    CommitmentEntryDto, DailyNoteViewDto, LintReportDto, MonthlyContextDto, OrientationContextDto,
+    PortfolioDetailDto, ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto,
+    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, WeeklyContextDto,
+    WeeklyNoteViewDto,
 };
 
 use crate::input::*;
@@ -122,6 +124,56 @@ impl CuadernoServer {
                 cap,
             },
         })
+    }
+
+    #[tool(
+        description = "List the vault's projects: active and parked, each with its slug and typed frontmatter, plus the slot budget (active count vs the configured cap). The lightweight enumeration tool -- use it to discover project slugs without pulling a full `get_monthly_context` or per-project `get_project_context`."
+    )]
+    pub async fn list_projects(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let active = self.vault.active_projects().map_err(into_mcp_error)?;
+        let parked = self.vault.parked_projects().map_err(into_mcp_error)?;
+        let cap = self.vault.config().vault.max_active_projects;
+        let slots = ProjectSlotsDto {
+            active: active.len(),
+            cap,
+        };
+        json_result(ProjectListDto {
+            active: active.into_iter().map(project_list_entry).collect(),
+            parked: parked.into_iter().map(project_list_entry).collect(),
+            slots,
+        })
+    }
+
+    #[tool(
+        description = "The four-source aggregated commitments timeline: project milestones with hard deadlines, stewardship periodic commitments, standalone commitment notes, and action notes with a self-imposed due date. `lookahead_weeks` (default 2) sets the forward window; overdue commitments are always included. Mirrors `cdno commitments --weeks N`."
+    )]
+    pub async fn get_commitments(
+        &self,
+        Parameters(input): Parameters<GetCommitmentsInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
+        let weeks = input.lookahead_weeks.unwrap_or(2);
+        let lookahead_days = i64::from(weeks) * 7;
+        let entries = self
+            .vault
+            .commitments(today, lookahead_days)
+            .map_err(into_mcp_error)?;
+        let dtos: Vec<CommitmentEntryDto> = entries.into_iter().map(Into::into).collect();
+        json_result(dtos)
+    }
+
+    #[tool(
+        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), and broken wikilinks (`warning`). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
+    )]
+    pub async fn lint(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let report = self.vault.lint_all_notes().map_err(into_mcp_error)?;
+        json_result(LintReportDto::from(report))
     }
 
     #[tool(
@@ -298,5 +350,21 @@ impl CuadernoServer {
             .map_err(into_mcp_error)?;
         let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
         json_result(dtos)
+    }
+}
+
+/// Build a `list_projects` row from a domain `(path, frontmatter)`
+/// pair: the slug is the file stem (`projects/<slug>.md` for active,
+/// `projects/_parked/<slug>.md` for parked).
+fn project_list_entry((path, fm): (VaultPath, ProjectFrontmatter)) -> ProjectListEntryDto {
+    let slug = path
+        .as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    ProjectListEntryDto {
+        slug,
+        frontmatter: fm.into(),
     }
 }

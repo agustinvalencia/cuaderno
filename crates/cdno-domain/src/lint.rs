@@ -20,14 +20,54 @@ impl LintReport {
     }
 }
 
-/// A single problem found at a given note path.
+/// How serious a lint issue is.
 ///
-/// Severity is intentionally absent for now — every issue we currently
-/// emit is a hard validation failure (unknown note type, required
-/// field missing). When the lint surface grows warnings (e.g. broken
-/// wikilinks once #84 lands), add a `LintSeverity` enum here.
+/// `Error` is a hard validation failure that downstream code can trip
+/// over (unknown note type, missing required field, a frozen archived
+/// note that was edited). `Warning` is a non-fatal problem worth
+/// surfacing but not structurally breaking — a dangling wikilink is
+/// the canonical case: the note parses fine, a link just points
+/// nowhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LintSeverity {
+    #[default]
+    Error,
+    Warning,
+}
+
+impl LintSeverity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LintSeverity::Error => "error",
+            LintSeverity::Warning => "warning",
+        }
+    }
+}
+
+/// A single problem found at a given note path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintIssue {
     pub path: VaultPath,
+    pub severity: LintSeverity,
     pub message: String,
+}
+
+impl LintIssue {
+    /// A hard validation failure.
+    pub fn error(path: VaultPath, message: impl Into<String>) -> Self {
+        Self {
+            path,
+            severity: LintSeverity::Error,
+            message: message.into(),
+        }
+    }
+
+    /// A non-fatal problem (e.g. a dangling wikilink).
+    pub fn warning(path: VaultPath, message: impl Into<String>) -> Self {
+        Self {
+            path,
+            severity: LintSeverity::Warning,
+            message: message.into(),
+        }
+    }
 }

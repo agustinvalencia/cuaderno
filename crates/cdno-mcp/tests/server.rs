@@ -48,7 +48,7 @@ fn advertised_catalogue_matches_expected_surface() {
     // at the missing or extra tool cleanly. The 16 design §11 tools,
     // the two daily-note tools (GH #158), and the two weekly-note tools.
     let mut expected = vec![
-        // Context (10)
+        // Context (13)
         "get_orientation",
         "get_weekly_context",
         "get_monthly_context",
@@ -59,8 +59,12 @@ fn advertised_catalogue_matches_expected_surface() {
         "read_daily_note",
         "read_weekly_note",
         "search_notes",
-        // Operations (16)
+        "list_projects",
+        "get_commitments",
+        "lint",
+        // Operations (17)
         "append_to_log",
+        "capture",
         "file_to_portfolio",
         "update_project_state",
         "add_action",
@@ -84,7 +88,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 30);
+    assert_eq!(tools.len(), 34);
 }
 
 #[test]

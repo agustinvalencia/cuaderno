@@ -18,7 +18,7 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain};
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput,
+    ActionQueryInput, AddActionInput, AddPeriodicCommitmentInput, AppendToLogInput, CaptureInput,
     CompleteCommitmentInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, FileToPortfolioInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
@@ -1106,4 +1106,26 @@ async fn file_to_portfolio_attaches_a_non_markdown_artefact() {
         store.exists(&vp(&format!("{stem}/figure.png"))).unwrap(),
         "artefact imported beside the stub"
     );
+}
+
+// ---------------------------------------------------------------------
+// capture (#204)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn capture_writes_a_note_under_inbox() {
+    let (server, store) = server_with(|_v, _s| ());
+
+    let result = server
+        .capture(Parameters(CaptureInput {
+            text: "buy more index cards".to_owned(),
+        }))
+        .await
+        .expect("capture");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.starts_with("inbox/"), "path: {path}");
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("buy more index cards"), "body:\n{body}");
 }

@@ -11,7 +11,7 @@ pub mod recurrence;
 pub mod vault;
 
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
-pub use lint::{LintIssue, LintReport};
+pub use lint::{LintIssue, LintReport, LintSeverity};
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, DailyNoteView, DailySection, LapsedHabit, OrientationContext, PortfolioSummary,

@@ -20,12 +20,14 @@ use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
+use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    EmptyInput, GetActiveQuestionsInput, GetOrientationInput, PortfolioSlugInput, SearchNotesInput,
+    EmptyInput, GetActiveQuestionsInput, GetCommitmentsInput, GetOrientationInput,
+    PortfolioSlugInput, SearchNotesInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -49,6 +51,21 @@ fn server_with<F: FnOnce(&Vault)>(seed: F) -> CuadernoServer {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
     seed(&vault);
+    CuadernoServer::new(Arc::new(vault))
+}
+
+/// Build a server from raw seeded `(path, body)` notes — for tests
+/// that need on-disk content (e.g. a note carrying a broken wikilink)
+/// rather than domain-method-created state.
+fn server_with_notes(notes: &[(&str, &str)]) -> CuadernoServer {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in notes {
+        store
+            .write_file(&VaultPath::new(path).unwrap(), body)
+            .unwrap();
+    }
+    let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
     CuadernoServer::new(Arc::new(vault))
 }
 
@@ -850,4 +867,102 @@ async fn search_notes_blank_query_returns_no_results() {
         .unwrap();
     let value = decode_json(&result);
     assert!(value.as_array().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// list_projects / get_commitments / lint (#204)
+// ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn list_projects_splits_active_and_parked_with_slots() {
+    let server = server_with(|v| {
+        v.create_project(
+            moment(2026, 5, 1, 9, 0).date(),
+            "Alpha",
+            Context::Work,
+            None,
+        )
+        .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0).date(), "Beta", Context::Work, None)
+            .unwrap();
+        v.park_project(moment(2026, 5, 2, 9, 0), "beta").unwrap();
+    });
+
+    let result = server
+        .list_projects(Parameters(EmptyInput {}))
+        .await
+        .expect("list_projects");
+    let v = decode_json(&result);
+
+    assert_eq!(v["slots"]["active"].as_u64().unwrap(), 1);
+    assert_eq!(v["slots"]["cap"].as_u64().unwrap(), 5);
+    let active = v["active"].as_array().unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0]["slug"].as_str().unwrap(), "alpha");
+    assert_eq!(
+        active[0]["frontmatter"]["status"].as_str().unwrap(),
+        "active"
+    );
+    let parked = v["parked"].as_array().unwrap();
+    assert_eq!(parked.len(), 1);
+    assert_eq!(parked[0]["slug"].as_str().unwrap(), "beta");
+}
+
+#[tokio::test]
+async fn get_commitments_aggregates_a_standalone_commitment_due_soon() {
+    // The handler uses `Local::now()` for `today` and the aggregation
+    // only spans `[today - 30d, today + lookahead]`, so seed relative
+    // to today rather than a fixed date.
+    let today = chrono::Local::now().date_naive();
+    let due = today + chrono::Duration::days(3);
+    let at = today.and_hms_opt(9, 0, 0).unwrap();
+    let server = server_with(move |v| {
+        v.create_commitment(at, "Submit the report", due, Context::Work, None, None)
+            .unwrap();
+    });
+
+    let result = server
+        .get_commitments(Parameters(GetCommitmentsInput {
+            lookahead_weeks: Some(2),
+        }))
+        .await
+        .expect("get_commitments");
+    let v = decode_json(&result);
+    let arr = v.as_array().unwrap();
+    let entry = arr
+        .iter()
+        .find(|c| c["title"].as_str() == Some("Submit the report"))
+        .expect("the standalone commitment is aggregated");
+    assert!(!entry["is_overdue"].as_bool().unwrap());
+}
+
+#[tokio::test]
+async fn lint_reports_a_broken_wikilink_as_a_warning() {
+    let server = server_with_notes(&[(
+        "journal/2026/daily/2026-05-01.md",
+        "---\ntype: daily\ntitle: Day\n---\n# Day\n\nSee [[projects/ghost]] for details.\n",
+    )]);
+
+    let result = server.lint(Parameters(EmptyInput {})).await.expect("lint");
+    let v = decode_json(&result);
+
+    assert!(!v["clean"].as_bool().unwrap());
+    assert_eq!(v["error_count"].as_u64().unwrap(), 0);
+    assert_eq!(v["warning_count"].as_u64().unwrap(), 1);
+    assert_eq!(v["issues"][0]["severity"].as_str().unwrap(), "warning");
+    assert!(
+        v["issues"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("[[projects/ghost]]")
+    );
+}
+
+#[tokio::test]
+async fn lint_is_clean_on_an_empty_vault() {
+    let server = empty_server();
+    let result = server.lint(Parameters(EmptyInput {})).await.expect("lint");
+    let v = decode_json(&result);
+    assert!(v["clean"].as_bool().unwrap());
+    assert_eq!(v["issues"].as_array().unwrap().len(), 0);
 }
