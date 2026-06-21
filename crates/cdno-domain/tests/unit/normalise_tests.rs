@@ -192,3 +192,29 @@ fn fresh_inbox_scaffold_matches_canonical_frontmatter_order() {
         "inbox scaffold drifted from NoteType::Inbox::frontmatter_order:\n{content}"
     );
 }
+
+#[test]
+fn normalise_follows_a_custom_templates_field_order() {
+    // PR B payoff: the canonical order is derived from the *effective*
+    // template, so a custom template that orders fields differently is
+    // honoured rather than reordered to the built-in order.
+    // This custom project template puts `status` before `context` (the
+    // built-in is the reverse).
+    let custom = "---\ntype: project\nstatus: {{status}}\ncontext: {{context}}\ncreated: {{created}}\n---\n# {{title}}\n";
+    let scrambled = "---\ncontext: work\ntype: project\ncreated: 2026-04-01\nstatus: active\n---\n# Foo\n\n## Current State\n";
+    let (vault, store) = vault_with_notes(&[
+        (".cuaderno/templates/project.md", custom),
+        ("projects/foo.md", scrambled),
+    ]);
+
+    let report = vault.normalise_notes(false).expect("normalise");
+    assert_eq!(report.changed, vec![vp("projects/foo.md")]);
+
+    let out = store.read_file(&vp("projects/foo.md")).unwrap();
+    // Canonical order now follows the CUSTOM template, not the built-in.
+    assert_eq!(
+        frontmatter_keys(&out),
+        vec!["type", "status", "context", "created"],
+        "normalise should follow the custom template order:\n{out}"
+    );
+}

@@ -13,6 +13,7 @@
 
 use std::str::FromStr;
 
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 
 use super::Vault;
@@ -77,7 +78,22 @@ impl Vault {
                 }
             };
 
-            let Some(new_raw) = reorder_frontmatter(&raw, note_type.frontmatter_order()) else {
+            // Canonical order comes from the *effective* template (custom
+            // override if present, else built-in), so `normalise` respects
+            // a custom template's field order rather than a hardcoded one.
+            // Tracking's order is variant-specific, keyed by the note's
+            // `activity`.
+            let variant = if note_type == NoteType::Tracking {
+                Frontmatter::parse(&raw)
+                    .ok()
+                    .and_then(|(fm, _)| fm.optional_field::<String>("activity").ok().flatten())
+            } else {
+                None
+            };
+            let template = self.resolve_template_content(note_type.as_str(), variant.as_deref())?;
+            let order = frontmatter_key_order(&template);
+
+            let Some(new_raw) = reorder_frontmatter(&raw, &order) else {
                 continue; // no frontmatter, or already canonical
             };
             report.changed.push(path.clone());
@@ -104,7 +120,7 @@ impl Vault {
 /// Returns `Some(new_raw)` when the order actually changed, and `None`
 /// when the note has no frontmatter or is already canonical, so callers
 /// skip the write and the pass stays idempotent.
-pub(in crate::vault) fn reorder_frontmatter(raw: &str, order: &[&str]) -> Option<String> {
+pub(in crate::vault) fn reorder_frontmatter(raw: &str, order: &[String]) -> Option<String> {
     let opening = "---\n";
     if !raw.starts_with(opening) {
         return None;
@@ -150,7 +166,7 @@ pub(in crate::vault) fn reorder_frontmatter(raw: &str, order: &[&str]) -> Option
     // Known keys, in canonical order.
     for key in order {
         for (group, used) in groups.iter().zip(used.iter_mut()) {
-            if !*used && group.0 == Some(*key) {
+            if !*used && group.0 == Some(key.as_str()) {
                 new_yaml.push_str(&group.1);
                 *used = true;
             }
@@ -172,6 +188,25 @@ pub(in crate::vault) fn reorder_frontmatter(raw: &str, order: &[&str]) -> Option
     result.push_str(&new_yaml);
     result.push_str(&raw[yaml_end..]); // closing `---` delimiter onward
     Some(result)
+}
+
+/// The top-level frontmatter keys of `raw`, in document order. Used to
+/// derive a template's canonical key order (an empty vec when there's no
+/// frontmatter block — the reorderer then treats every key as unknown
+/// and leaves the note untouched).
+fn frontmatter_key_order(raw: &str) -> Vec<String> {
+    let opening = "---\n";
+    if !raw.starts_with(opening) {
+        return Vec::new();
+    }
+    let after_open = opening.len();
+    let Some(rel) = raw[after_open..].find("\n---") else {
+        return Vec::new();
+    };
+    let yaml = &raw[after_open..after_open + rel + 1];
+    yaml.split_inclusive('\n')
+        .filter_map(|line| top_level_key(line).map(str::to_owned))
+        .collect()
 }
 
 /// The top-level YAML key a line declares, or `None` when the line is a

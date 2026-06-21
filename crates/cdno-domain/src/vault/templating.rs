@@ -78,6 +78,22 @@ impl Vault {
         Ok(engine.render(&template, ctx, &HashMap::new()).content)
     }
 
+    /// The resolved (effective) template content for `note_type` (+
+    /// optional `variant`) — the custom `.cuaderno/templates/` override
+    /// if present, else the built-in default. Used by the normaliser to
+    /// derive the canonical frontmatter order from whatever template a
+    /// note is actually created from.
+    pub(in crate::vault) fn resolve_template_content(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+    ) -> Result<String, DomainError> {
+        Ok(self
+            .template_engine()
+            .load_template(note_type, variant)?
+            .content)
+    }
+
     /// A template engine whose custom-template loader reads
     /// `.cuaderno/templates/` through this vault's store.
     fn template_engine(&self) -> TemplateEngine {

@@ -28,7 +28,6 @@ use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 
-use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::log::daily_note_path;
@@ -151,10 +150,11 @@ impl Vault {
         } else {
             doc.replace_section(heading, &body)?;
         }
-        // A newly created planning section is appended at the end of
-        // the note, which would push the running history below it;
-        // pin `## Logs` back to the bottom (#232).
-        doc.move_section_to_end(DAILY_LOGS_SECTION)?;
+        // A newly created planning section is appended at the end of the
+        // note, which would push the trailing section below it; pin that
+        // section (the daily template's last one — `## Logs` by default)
+        // back to the bottom (#232, #212).
+        doc.move_section_to_end(&self.daily_anchor_section()?)?;
         let new_content = doc.render().to_owned();
 
         let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;

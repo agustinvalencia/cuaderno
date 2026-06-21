@@ -816,6 +816,8 @@ experiment_id = "Experiment identifier?"
 Templates live at `.cuaderno/templates/`. Each is a markdown file with `{{variable}}` placeholders. The tool ships with built-in defaults for every note type. If a custom template exists for a given type, it takes precedence. You can customise one template without defining all of them.
 
 > **Status (#212).** Custom overrides resolve and render for every note type — project, action, question, stewardship, portfolio, evidence, commitment, tracking, and the daily/weekly/inbox notes (whose scaffolds are now template files too). They render against the built-in variable set each operation supplies; a custom template that references a *new* variable not provided by the domain (e.g. a vault-level `{{author}}` from `[variables]`) leaves it as a literal `{{author}}` until config variables are wired (#238). A custom **daily** template must keep a `## Logs` section — that's where `cdno log` appends entries (a daily template without it errors on the first log write rather than misplacing the entry).
+>
+> Enforcement reads from the *effective* template, not a hardcoded list, so customisation and enforcement agree: `cdno normalise` derives each note's canonical frontmatter order from its resolved template (a custom template that reorders or adds fields is honoured), and the daily "keep-last" section (#232) is the daily template's last heading (`## Logs` by default, or whatever a custom template ends with).
 
 Example custom evidence template (`.cuaderno/templates/evidence.md`):
 
