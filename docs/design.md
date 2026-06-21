@@ -815,6 +815,8 @@ experiment_id = "Experiment identifier?"
 
 Templates live at `.cuaderno/templates/`. Each is a markdown file with `{{variable}}` placeholders. The tool ships with built-in defaults for every note type. If a custom template exists for a given type, it takes precedence. You can customise one template without defining all of them.
 
+> **Status (#212).** Custom overrides resolve and render for the eight file-template note types (project, action, question, stewardship, portfolio, evidence, commitment, tracking). They render against the built-in variable set each operation supplies; a custom template that references a *new* variable not provided by the domain (e.g. a vault-level `{{author}}` from `[variables]`) leaves it as a literal `{{author}}` until config variables are wired (#238). The daily/weekly/inbox notes still use built-in scaffolds pending their template-file conversion.
+
 Example custom evidence template (`.cuaderno/templates/evidence.md`):
 
 ```markdown

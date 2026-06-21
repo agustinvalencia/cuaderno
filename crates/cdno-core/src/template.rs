@@ -47,6 +47,9 @@ impl VariableContext {
         self.contextual.insert(key.into(), value.into());
     }
 
+    // Tiers 3–4 (vault-level + prompted) are resolved by `resolve` but
+    // not yet populated by any creation path; they're wired to config
+    // `[variables]` / `[variables.prompt]` in #238.
     pub fn set_vault_level(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.vault_level.insert(key.into(), value.into());
     }
@@ -55,7 +58,7 @@ impl VariableContext {
         self.prompted.insert(key.into(), value.into());
     }
 
-    /// Populate tier 3 variables from a VaultConfig.
+    /// Populate tier 3 variables from a VaultConfig (wired in #238).
     pub fn load_from_config(&mut self, config: &VaultConfig) {
         for (key, value) in &config.variables.static_vars {
             self.vault_level.insert(key.clone(), value.clone());
@@ -100,6 +103,10 @@ impl TemplateEngine {
     ///
     /// `defaults` maps type name → built-in template content, provided
     /// by the domain layer via `include_str!`.
+    ///
+    /// In-tree this filesystem constructor is exercised only by this
+    /// crate's tests; the domain resolves custom templates through a
+    /// `VaultStore` via [`with_loader`](Self::with_loader).
     pub fn new(vault_root: Option<&Path>, defaults: HashMap<String, &'static str>) -> Self {
         let root = vault_root.map(|p| p.to_path_buf());
         let loader: CustomTemplateLoader = Box::new(move |filename: &str| {
