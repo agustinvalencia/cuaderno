@@ -26,6 +26,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::frontmatter::{Context, StewardshipFrontmatter, TrackingFrontmatter};
@@ -35,8 +36,6 @@ use crate::recurrence::Recurrence;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
-
-const STEWARDSHIP_TEMPLATE: &str = include_str!("../../templates/stewardship.md");
 
 /// Heading of the section that holds periodic commitment lines on a
 /// stewardship dashboard (design §5.6).
@@ -113,7 +112,7 @@ impl Vault {
             )));
         }
 
-        let content = render_stewardship_template(name, context);
+        let content = self.render_stewardship(name, context)?;
         write_stewardship(self, &slug, &flat_path, &content)
     }
 
@@ -140,8 +139,17 @@ impl Vault {
             )));
         }
 
-        let content = render_stewardship_template(name, context);
+        let content = self.render_stewardship(name, context)?;
         write_stewardship(self, &slug, &expanded_path, &content)
+    }
+
+    /// Render the stewardship template (custom or built-in): `{{name}}`
+    /// carried to the H1 verbatim, `{{context}}` the life context.
+    fn render_stewardship(&self, name: &str, context: Context) -> Result<String, DomainError> {
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("name", name);
+        ctx.set_contextual("context", context.as_str());
+        self.scaffold("stewardship", None, &ctx)
     }
 
     /// Append a periodic commitment to the stewardship's `## Periodic
@@ -424,12 +432,4 @@ fn write_stewardship(
     tx.upsert_note(entry);
     tx.commit()?;
     Ok(path.clone())
-}
-
-/// Render the built-in stewardship template with the name (carried
-/// to the H1 verbatim) and the life context.
-fn render_stewardship_template(name: &str, context: Context) -> String {
-    STEWARDSHIP_TEMPLATE
-        .replace("{{name}}", name)
-        .replace("{{context}}", context.as_str())
 }

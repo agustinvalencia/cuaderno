@@ -47,6 +47,9 @@ impl VariableContext {
         self.contextual.insert(key.into(), value.into());
     }
 
+    // Tiers 3–4 (vault-level + prompted) are resolved by `resolve` but
+    // not yet populated by any creation path; they're wired to config
+    // `[variables]` / `[variables.prompt]` in #238.
     pub fn set_vault_level(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.vault_level.insert(key.into(), value.into());
     }
@@ -55,7 +58,7 @@ impl VariableContext {
         self.prompted.insert(key.into(), value.into());
     }
 
-    /// Populate tier 3 variables from a VaultConfig.
+    /// Populate tier 3 variables from a VaultConfig (wired in #238).
     pub fn load_from_config(&mut self, config: &VaultConfig) {
         for (key, value) in &config.variables.static_vars {
             self.vault_level.insert(key.clone(), value.clone());
@@ -73,6 +76,15 @@ impl VariableContext {
     }
 }
 
+/// Loads the raw content of a custom template by filename (e.g.
+/// `"project.md"` or `"tracking-gym.md"`), returning `None` when the
+/// vault has no such custom template. Injected so the engine doesn't
+/// hard-code an I/O backend: the fs constructor reads
+/// `.cuaderno/templates/`, while the domain backs it with a `VaultStore`
+/// (so custom templates resolve through the same abstraction as every
+/// other vault file, and work under `MemoryVaultStore` in tests).
+pub type CustomTemplateLoader = Box<dyn Fn(&str) -> Result<Option<String>, TemplateError>>;
+
 /// Template engine: loads templates, resolves variables, renders output.
 ///
 /// Template selection priority:
@@ -80,22 +92,49 @@ impl VariableContext {
 /// 2. Type-level custom template (e.g. `templates/project.md`)
 /// 3. Built-in default from the fallback map
 pub struct TemplateEngine {
-    vault_root: Option<Box<Path>>,
+    loader: CustomTemplateLoader,
     defaults: HashMap<String, &'static str>,
 }
 
 impl TemplateEngine {
-    /// Create a new engine.
+    /// Create an engine that reads custom templates from
+    /// `.cuaderno/templates/` on the filesystem under `vault_root`
+    /// (`None` disables custom templates — built-in defaults only).
     ///
-    /// - `vault_root`: path to the vault, used to find custom templates
-    ///   in `.cuaderno/templates/`. Pass `None` for test contexts.
-    /// - `defaults`: map of type name → built-in template content,
-    ///   provided by the domain layer via `include_str!`.
+    /// `defaults` maps type name → built-in template content, provided
+    /// by the domain layer via `include_str!`.
+    ///
+    /// In-tree this filesystem constructor is exercised only by this
+    /// crate's tests; the domain resolves custom templates through a
+    /// `VaultStore` via [`with_loader`](Self::with_loader).
     pub fn new(vault_root: Option<&Path>, defaults: HashMap<String, &'static str>) -> Self {
-        Self {
-            vault_root: vault_root.map(|p| p.into()),
-            defaults,
-        }
+        let root = vault_root.map(|p| p.to_path_buf());
+        let loader: CustomTemplateLoader = Box::new(move |filename: &str| {
+            let Some(root) = &root else {
+                return Ok(None);
+            };
+            let path = root.join(crate::paths::TEMPLATES_DIR).join(filename);
+            if !path.exists() {
+                return Ok(None);
+            }
+            std::fs::read_to_string(&path)
+                .map(Some)
+                .map_err(|source| TemplateError::Read {
+                    path: path.clone(),
+                    source,
+                })
+        });
+        Self { loader, defaults }
+    }
+
+    /// Create an engine with a caller-supplied custom-template loader —
+    /// used by the domain to resolve `.cuaderno/templates/` through a
+    /// `VaultStore` rather than the filesystem.
+    pub fn with_loader(
+        loader: CustomTemplateLoader,
+        defaults: HashMap<String, &'static str>,
+    ) -> Self {
+        Self { loader, defaults }
     }
 
     /// Load a template for the given type and optional variant.
@@ -107,16 +146,16 @@ impl TemplateEngine {
         note_type: &str,
         variant: Option<&str>,
     ) -> Result<Template, TemplateError> {
-        // 1. Try activity-specific custom template
+        // 1. Custom variant-specific template (e.g. `tracking-gym.md`)
         if let Some(variant) = variant
-            && let Some(template) = self.load_custom(note_type, Some(variant))?
+            && let Some(content) = (self.loader)(&format!("{note_type}-{variant}.md"))?
         {
-            return Ok(template);
+            return Ok(Template { content });
         }
 
-        // 2. Try type-level custom template
-        if let Some(template) = self.load_custom(note_type, None)? {
-            return Ok(template);
+        // 2. Custom type-level template (e.g. `project.md`)
+        if let Some(content) = (self.loader)(&format!("{note_type}.md"))? {
+            return Ok(Template { content });
         }
 
         // 3. Fall back to built-in default
@@ -190,35 +229,5 @@ impl TemplateEngine {
             content: result,
             unresolved_prompts,
         }
-    }
-
-    /// Try to load a custom template from `.cuaderno/templates/`.
-    fn load_custom(
-        &self,
-        note_type: &str,
-        variant: Option<&str>,
-    ) -> Result<Option<Template>, TemplateError> {
-        let vault_root = match &self.vault_root {
-            Some(root) => root,
-            None => return Ok(None),
-        };
-
-        let filename = match variant {
-            Some(v) => format!("{note_type}-{v}.md"),
-            None => format!("{note_type}.md"),
-        };
-
-        let path = vault_root.join(crate::paths::TEMPLATES_DIR).join(&filename);
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let content = std::fs::read_to_string(&path).map_err(|source| TemplateError::Read {
-            path: path.clone(),
-            source,
-        })?;
-
-        Ok(Some(Template { content }))
     }
 }

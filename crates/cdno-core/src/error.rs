@@ -123,6 +123,12 @@ pub enum TemplateError {
         path: PathBuf,
         source: std::io::Error,
     },
+
+    /// A custom-template loader (e.g. one backed by a `VaultStore`)
+    /// failed. Carries a rendered message rather than a typed source so
+    /// the engine stays independent of any particular I/O backend.
+    #[error("failed to load custom template {name}: {message}")]
+    Load { name: String, message: String },
 }
 
 /// Errors from [`VaultTransaction::commit`](crate::transaction::VaultTransaction::commit).

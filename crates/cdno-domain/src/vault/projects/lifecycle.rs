@@ -10,6 +10,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
@@ -19,12 +20,6 @@ use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
 use super::{project_slug_from_path, rewrite_field_in_frontmatter};
-
-/// Built-in project map template. Custom templates from
-/// `.cuaderno/templates/project.md` will override this once the
-/// TemplateEngine integration lands; for now `create_project` does
-/// straight `{{var}}` substitution against this string.
-const PROJECT_TEMPLATE: &str = include_str!("../../../templates/project.md");
 
 impl Vault {
     /// Return every active project: pairs of `(path, frontmatter)`
@@ -128,7 +123,17 @@ impl Vault {
             parked_path
         };
 
-        let content = render_project_template(today, title, context, status, core_question);
+        let core_question_yaml = match core_question {
+            Some(target) => format!("\"[[{target}]]\""),
+            None => "null".to_owned(),
+        };
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("title", title);
+        ctx.set_contextual("context", context.as_str());
+        ctx.set_contextual("status", status.as_str());
+        ctx.set_contextual("created", today.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("core_question", core_question_yaml);
+        let content = self.scaffold("project", None, &ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
         tx.write_file(path.clone(), content);
@@ -268,29 +273,4 @@ impl Vault {
 
         Ok(active_path)
     }
-}
-
-/// Render the built-in project template by substituting `{{title}}`,
-/// `{{context}}`, `{{status}}`, `{{created}}`, and `{{core_question}}`.
-/// `None` for `core_question` substitutes `null`; `Some(target)`
-/// substitutes `"[[target]]"` (quoted to keep YAML from parsing the
-/// brackets as a flow sequence).
-fn render_project_template(
-    today: NaiveDate,
-    title: &str,
-    context: Context,
-    status: ProjectStatus,
-    core_question: Option<&str>,
-) -> String {
-    let core_question_yaml = match core_question {
-        Some(target) => format!("\"[[{target}]]\""),
-        None => "null".to_owned(),
-    };
-
-    PROJECT_TEMPLATE
-        .replace("{{title}}", title)
-        .replace("{{context}}", context.as_str())
-        .replace("{{status}}", status.as_str())
-        .replace("{{created}}", &today.format("%Y-%m-%d").to_string())
-        .replace("{{core_question}}", &core_question_yaml)
 }
