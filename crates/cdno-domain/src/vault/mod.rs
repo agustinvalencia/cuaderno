@@ -48,6 +48,11 @@ mod stewardships;
 mod tracking;
 mod weekly;
 
+/// The level-2 heading of a daily note's running history. Shared across
+/// the modules that read it (`context`), write it (`log`), and keep it
+/// pinned to the bottom (`daily`) so the heading text lives in one place.
+pub(in crate::vault) const DAILY_LOGS_SECTION: &str = "Logs";
+
 pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{

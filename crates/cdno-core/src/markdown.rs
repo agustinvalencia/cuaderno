@@ -156,17 +156,22 @@ impl MarkdownDocument {
     /// Move the named level-2 section to the end of the body, so it
     /// stays last regardless of the order sections were created in.
     ///
-    /// A normalisation helper, not an assertion: if the heading is
-    /// absent (or ambiguous), or the section is already last (nothing
-    /// but whitespace follows it), this is a no-op — so it's safe and
-    /// idempotent to call on every write. The daily note uses it to
-    /// keep `## Logs` (the running history) pinned to the bottom even
-    /// when a planning section like `## Meeting` is created after the
-    /// first log line.
+    /// A normalisation helper, not an assertion: this is a no-op when
+    /// the heading is absent (benign — nothing to pin), when it's
+    /// ambiguous (two same-named headings — left alone rather than
+    /// guessing), or when the section is already last (nothing but
+    /// whitespace follows it). So it's safe and idempotent to call on
+    /// every write. The daily note uses it to keep `## Logs` (the
+    /// running history) pinned to the bottom even when a planning
+    /// section like `## Meeting` is created after the first log line.
     ///
     /// The section's content is moved verbatim; only the surrounding
     /// blank lines are normalised (one blank line before, a single
-    /// trailing newline).
+    /// trailing newline). Note this pins the section to the *body* end
+    /// without regard to heading level: it's intended for the daily
+    /// note's flat `##` layout, where there's a single top-level `#`
+    /// heading. A second top-level heading after the target would
+    /// capture the moved section — not a case the daily writers hit.
     pub fn move_section_to_end(&mut self, heading: &str) -> Result<(), ManipulationError> {
         let idx = match self.find_unique_heading(heading) {
             Ok(i) => i,
@@ -182,10 +187,11 @@ impl MarkdownDocument {
             return Ok(());
         }
 
-        // Cut the `## <heading>\n<body>` block out and re-append it at
-        // the tail. Removing `[start..end]` leaves the blank line that
-        // preceded the heading sitting before the *following* section,
-        // which is the correct separator there.
+        // Cut the `## <heading>\n<body>` block (including the blank line
+        // that trailed it, up to the next heading) and re-append it at
+        // the tail. The blank line that *preceded* the heading stays in
+        // place, becoming the separator for whatever section now follows
+        // the cut.
         let section_text = self.raw[start..end].trim_end().to_owned();
         self.raw.replace_range(start..end, "");
         let trimmed_len = self.raw.trim_end().len();

@@ -19,11 +19,7 @@ use crate::error::DomainError;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 
-/// The heading used for the log subsection in a daily note.
-///
-/// `pub(in crate::vault)` so the daily section writer (`daily.rs`) can
-/// pin this same heading to the bottom of the note (#232).
-pub(in crate::vault) const DAILY_LOGS_SECTION: &str = "Logs";
+use super::DAILY_LOGS_SECTION;
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.

@@ -406,3 +406,53 @@ fn move_section_to_end_is_a_noop_when_section_absent() {
     doc.move_section_to_end("Logs").unwrap();
     assert_eq!(doc.render(), before, "absent section: nothing to move");
 }
+
+#[test]
+fn move_section_to_end_carries_nested_subheadings_and_body_verbatim() {
+    // The moved level-2 section owns its nested level-3 subsection;
+    // moving it must carry the `###` heading and the exact body text
+    // along, not just the `##` line. Multi-byte UTF-8 in the body
+    // guards the byte-range splice against off-by-one truncation.
+    let src = "\
+---
+type: daily
+---
+# Día
+
+## Logs
+- **09:00**: café ☕ — started
+
+### Detail
+nested — résumé
+
+## Meeting
+notes from the meeting
+";
+    let mut doc = MarkdownDocument::parse(src).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let out = doc.render();
+
+    let meeting = out.find("## Meeting").expect("Meeting present");
+    let logs = out.find("## Logs").expect("Logs present");
+    assert!(
+        meeting < logs,
+        "Logs (with its subheading) moved last:\n{out}"
+    );
+    // The nested `### Detail` travelled with its parent section, in order.
+    let nested = out.find("### Detail").expect("nested heading kept");
+    assert!(logs < nested, "### Detail stays under ## Logs:\n{out}");
+    // Bodies preserved verbatim, multi-byte intact.
+    assert!(
+        out.contains("- **09:00**: café ☕ — started"),
+        "log body verbatim:\n{out}"
+    );
+    assert!(
+        out.contains("nested — résumé"),
+        "nested body verbatim:\n{out}"
+    );
+    assert!(
+        out.contains("notes from the meeting"),
+        "meeting body kept:\n{out}"
+    );
+    assert_eq!(out.matches("## Logs").count(), 1, "heading not duplicated");
+}

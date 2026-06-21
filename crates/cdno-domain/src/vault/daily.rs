@@ -28,9 +28,10 @@ use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 
+use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::log::{DAILY_LOGS_SECTION, daily_note_path, scaffold_daily_note_base};
+use super::log::{daily_note_path, scaffold_daily_note_base};
 
 /// A daily note's content, returned by [`Vault::read_daily_note`].
 ///
@@ -121,9 +122,10 @@ impl Vault {
     /// exist, then `ensure_section` followed by either `replace_section`
     /// (`append: false` — the planning sections, idempotent overwrite)
     /// or `append_to_section` (`append: true` — live meeting notes that
-    /// accrue). The `## Logs` history is never touched: `ensure_section`
-    /// only ever *adds* a heading, and the write targets `section`'s
-    /// heading alone.
+    /// accrue). The `## Logs` history content is never clobbered — the
+    /// write targets `section`'s heading alone — and `move_section_to_end`
+    /// then pins `## Logs` back to the bottom so a planning section
+    /// created mid-day can't strand the history above it (#232).
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
