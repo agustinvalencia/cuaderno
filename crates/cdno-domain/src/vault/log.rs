@@ -20,7 +20,10 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 
 /// The heading used for the log subsection in a daily note.
-const DAILY_LOGS_SECTION: &str = "Logs";
+///
+/// `pub(in crate::vault)` so the daily section writer (`daily.rs`) can
+/// pin this same heading to the bottom of the note (#232).
+pub(in crate::vault) const DAILY_LOGS_SECTION: &str = "Logs";
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.
@@ -67,6 +70,9 @@ impl Vault {
             let current = self.store.read_file(&path)?;
             let mut doc = MarkdownDocument::parse(current)?;
             doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
+            // Keep the running history pinned to the bottom — and
+            // self-heal a note where it had already drifted up (#232).
+            doc.move_section_to_end(DAILY_LOGS_SECTION)?;
             doc.render().to_owned()
         } else {
             // Fresh daily note: compose the scaffold with the first

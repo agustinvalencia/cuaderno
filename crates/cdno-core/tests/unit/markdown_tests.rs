@@ -333,3 +333,76 @@ fn multiple_operations_compose() {
     assert!(n.contains("- [ ] call Bob"));
     assert!(!n.contains("- [ ] call Alice"));
 }
+
+// ---------------------------------------------------------------------
+// move_section_to_end (#232 — keep `## Logs` last)
+// ---------------------------------------------------------------------
+
+const DRIFTED_DAILY: &str = "\
+---
+type: daily
+---
+# Monday
+
+## Logs
+- **09:00**: started
+- **10:00**: standup
+
+## Meeting
+notes from the meeting
+";
+
+#[test]
+fn move_section_to_end_moves_a_mid_note_section_below_later_ones() {
+    let mut doc = MarkdownDocument::parse(DRIFTED_DAILY).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let out = doc.render();
+
+    let meeting = out.find("## Meeting").expect("Meeting present");
+    let logs = out.find("## Logs").expect("Logs present");
+    assert!(meeting < logs, "Logs should now be last:\n{out}");
+    // Content of both sections preserved verbatim.
+    assert!(
+        out.contains("- **10:00**: standup"),
+        "log content kept:\n{out}"
+    );
+    assert!(
+        out.contains("notes from the meeting"),
+        "meeting kept:\n{out}"
+    );
+    // Heading appears exactly once (not duplicated by the move).
+    assert_eq!(out.matches("## Logs").count(), 1);
+}
+
+#[test]
+fn move_section_to_end_is_a_noop_when_already_last() {
+    let src = "---\ntype: daily\n---\n# Mon\n\n## Meeting\nm\n\n## Logs\n- x\n";
+    let mut doc = MarkdownDocument::parse(src).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(
+        doc.render(),
+        src,
+        "an already-last section is left byte-identical"
+    );
+}
+
+#[test]
+fn move_section_to_end_is_idempotent() {
+    let mut doc = MarkdownDocument::parse(DRIFTED_DAILY).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let once = doc.render().to_owned();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(
+        doc.render(),
+        once,
+        "moving an already-last section changes nothing"
+    );
+}
+
+#[test]
+fn move_section_to_end_is_a_noop_when_section_absent() {
+    let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
+    let before = doc.render().to_owned();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(doc.render(), before, "absent section: nothing to move");
+}

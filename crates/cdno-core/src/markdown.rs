@@ -153,6 +153,52 @@ impl MarkdownDocument {
         Ok(())
     }
 
+    /// Move the named level-2 section to the end of the body, so it
+    /// stays last regardless of the order sections were created in.
+    ///
+    /// A normalisation helper, not an assertion: if the heading is
+    /// absent (or ambiguous), or the section is already last (nothing
+    /// but whitespace follows it), this is a no-op — so it's safe and
+    /// idempotent to call on every write. The daily note uses it to
+    /// keep `## Logs` (the running history) pinned to the bottom even
+    /// when a planning section like `## Meeting` is created after the
+    /// first log line.
+    ///
+    /// The section's content is moved verbatim; only the surrounding
+    /// blank lines are normalised (one blank line before, a single
+    /// trailing newline).
+    pub fn move_section_to_end(&mut self, heading: &str) -> Result<(), ManipulationError> {
+        let idx = match self.find_unique_heading(heading) {
+            Ok(i) => i,
+            Err(_) => return Ok(()),
+        };
+        let span = &self.headings[idx];
+        let start = span.heading_range.start + self.body_offset;
+        let end = span.content_range.end + self.body_offset;
+
+        // Already last — only whitespace after it. No-op keeps the
+        // call idempotent and avoids needless rewrites.
+        if self.raw[end..].trim().is_empty() {
+            return Ok(());
+        }
+
+        // Cut the `## <heading>\n<body>` block out and re-append it at
+        // the tail. Removing `[start..end]` leaves the blank line that
+        // preceded the heading sitting before the *following* section,
+        // which is the correct separator there.
+        let section_text = self.raw[start..end].trim_end().to_owned();
+        self.raw.replace_range(start..end, "");
+        let trimmed_len = self.raw.trim_end().len();
+        self.raw.truncate(trimmed_len);
+        if !self.raw.is_empty() {
+            self.raw.push_str("\n\n");
+        }
+        self.raw.push_str(&section_text);
+        self.raw.push('\n');
+        self.rescan();
+        Ok(())
+    }
+
     fn find_unique_heading(&self, heading: &str) -> Result<usize, ManipulationError> {
         let matches: Vec<usize> = self
             .headings

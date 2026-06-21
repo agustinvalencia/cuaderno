@@ -30,7 +30,7 @@ use crate::error::DomainError;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::log::{daily_note_path, scaffold_daily_note_base};
+use super::log::{DAILY_LOGS_SECTION, daily_note_path, scaffold_daily_note_base};
 
 /// A daily note's content, returned by [`Vault::read_daily_note`].
 ///
@@ -149,6 +149,10 @@ impl Vault {
         } else {
             doc.replace_section(heading, &body)?;
         }
+        // A newly created planning section is appended at the end of
+        // the note, which would push the running history below it;
+        // pin `## Logs` back to the bottom (#232).
+        doc.move_section_to_end(DAILY_LOGS_SECTION)?;
         let new_content = doc.render().to_owned();
 
         let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
