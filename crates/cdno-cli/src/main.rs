@@ -86,10 +86,11 @@ enum Commands {
     /// truth. The recovery path for a corrupt or stale index.
     Reindex,
 
-    /// Reorder note frontmatter into the canonical per-type key order.
-    /// Notes cdno creates are already canonical; this fixes hand-authored
-    /// or migrated ones. `--check` reports without writing (non-zero exit
-    /// if any are out of order).
+    /// Reorder note frontmatter into the canonical key order of each
+    /// note's template (a custom `.cuaderno/templates/` override if
+    /// present, else the built-in). Notes cdno creates are already
+    /// canonical; this fixes hand-authored or migrated ones. `--check`
+    /// reports without writing (non-zero exit if any are out of order).
     Normalise {
         /// Report out-of-order notes without rewriting them.
         #[arg(long)]

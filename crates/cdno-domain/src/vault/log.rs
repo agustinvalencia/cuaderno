@@ -131,6 +131,10 @@ impl Vault {
     /// template that's `## Logs`; a custom `.cuaderno/templates/daily.md`
     /// can designate a different trailing section (#212). Falls back to
     /// `Logs` if the template has no `##` heading.
+    ///
+    /// Uses a simple line scan, so a `## ` inside a fenced code block in
+    /// a custom template would be mistaken for a heading — fine for the
+    /// plain section-list templates this is meant for.
     pub(in crate::vault) fn daily_anchor_section(&self) -> Result<String, DomainError> {
         let template = self.resolve_template_content("daily", None)?;
         Ok(template

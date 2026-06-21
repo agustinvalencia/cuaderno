@@ -218,3 +218,51 @@ fn normalise_follows_a_custom_templates_field_order() {
         "normalise should follow the custom template order:\n{out}"
     );
 }
+
+#[test]
+fn normalise_tracking_uses_the_variant_template_order() {
+    // A tracking note's order is derived from its *variant* template,
+    // keyed by `activity`: a gym note follows tracking-gym's order
+    // (which includes duration_min/routine), not the generic order.
+    let scrambled = "---\ndate: 2026-04-26\ntype: tracking\nactivity: gym\nroutine: null\nstewardship: health\nduration_min: null\n---\n# Gym\n";
+    let p = "stewardships/health/tracking/2026-04-26-gym.md";
+    let (vault, store) = vault_with_notes(&[(p, scrambled)]);
+
+    let report = vault.normalise_notes(false).expect("normalise");
+    assert_eq!(report.changed, vec![vp(p)]);
+
+    let out = store.read_file(&vp(p)).unwrap();
+    assert_eq!(
+        frontmatter_keys(&out),
+        vec![
+            "type",
+            "stewardship",
+            "activity",
+            "date",
+            "duration_min",
+            "routine"
+        ],
+        "gym note should follow the tracking-gym template order:\n{out}"
+    );
+}
+
+#[test]
+fn normalise_places_a_custom_template_field_in_template_position() {
+    // A custom template can ADD a field; normalise orders it where the
+    // template puts it (mid-order), not appended as an unknown key.
+    let custom = "---\ntype: project\ncontext: {{context}}\nauthor: {{author}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n";
+    let note = "---\nstatus: active\nauthor: A. Researcher\ntype: project\ncreated: 2026-04-01\ncontext: work\n---\n# Foo\n\n## Current State\n";
+    let (vault, store) = vault_with_notes(&[
+        (".cuaderno/templates/project.md", custom),
+        ("projects/foo.md", note),
+    ]);
+
+    vault.normalise_notes(false).expect("normalise");
+
+    let out = store.read_file(&vp("projects/foo.md")).unwrap();
+    assert_eq!(
+        frontmatter_keys(&out),
+        vec!["type", "context", "author", "status", "created"],
+        "the added `author` field should land in template position:\n{out}"
+    );
+}
