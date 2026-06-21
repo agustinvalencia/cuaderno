@@ -6,6 +6,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-06-21
+
+Note structure & custom templates: notes keep a consistent shape, and the long-promised custom-template system (design §9) is finally wired so `.cuaderno/templates/` overrides take effect. No new MCP tools; one new CLI command (`cdno normalise`). Tool count unchanged (40).
+
+### Added
+
+- **Custom templates are live** (#212) — note creation now resolves through the template engine, so a custom `.cuaderno/templates/<type>.md` overrides the built-in default for every note type (project, action, question, stewardship, portfolio, evidence, commitment, tracking + variants, and daily/weekly/inbox). Custom templates are read through the `VaultStore` (same abstraction as every other vault file). They render against the built-in variable set each operation supplies; a custom template referencing a *new* variable (e.g. a vault-level `{{author}}`) leaves it literal until config variables land (#238).
+- **`cdno normalise [--check]`** (#233) — reorder a note's frontmatter into canonical key order, derived from its *effective* template (custom override or built-in). Line-based and value-preserving (quoting, `null`s, unknown keys, multi-line values all survive); idempotent. `--check` reports out-of-order notes and exits non-zero without writing (CI / pre-commit). Notes cdno creates are already canonical, so a clean vault is a no-op.
+- **Frontmatter canonical order** (#233) — `NoteType::frontmatter_order` defines the per-type key order (`type` first), pinned to the templates and code scaffolds by tests so they can't drift.
+
+### Changed
+
+- **The daily `## Logs` section stays at the bottom** (#232) — new sections (a mid-day `## Meeting`, etc.) no longer push the running history up; `## Logs` is pinned last and a note where it had drifted is self-healed on the next write. The "keep-last" anchor is the daily template's final section, so a custom daily template can pin a different trailing section (#212).
+- **Daily/weekly/inbox notes are template-driven** (#212) — their in-code scaffolds became template files (`templates/{daily,weekly,inbox}.md`), so they're customisable too. The first daily-log write now inserts into `## Logs` via the section manipulator rather than appending raw text.
+- **Enforcement follows the effective template** (#212) — `cdno normalise`'s key order and the daily Logs anchor both derive from whatever template a note is created from, so customisation and enforcement agree instead of the enforcement fighting a custom layout. Output is unchanged on a vault with no custom templates.
+
+### Notes
+
+- Follow-ups filed: config `[variables]` + interactive `[variables.prompt]` (#238), surface frontmatter-order drift as a lint rule (#236).
+
 ## [0.1.14] - 2026-06-21
 
 Pre-UI hardening release: the largest tool-surface jump yet (29 → 40 MCP tools) plus integrity, lint, and read-surface work that closes the gaps found auditing the CLI / domain / MCP layers before starting the Tauri UI. Adds MCP read parity (the CLI's daily-driver reads are now callable over MCP), milestone / waiting-on write tools, a broken-wikilink lint, an inbox-triage loop, a guided weekly-review ritual, `--json` output, and index self-healing.
