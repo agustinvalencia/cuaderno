@@ -14,8 +14,8 @@ pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, OrientationContext,
-    PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionSummary,
-    SearchFilters, SearchResultEntry, StewardshipSummary, StewardshipVariant, TopAction,
-    TrackingEntry, Vault, WeeklyNoteView, WeeklySection,
+    DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, NormaliseReport,
+    OrientationContext, PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary,
+    QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary, StewardshipVariant,
+    TopAction, TrackingEntry, Vault, WeeklyNoteView, WeeklySection,
 };

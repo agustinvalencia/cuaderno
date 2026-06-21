@@ -1086,3 +1086,53 @@ fn review_weekly_non_interactive_prints_the_current_weeks_note() {
         // frontmatter is stripped by the shared weekly renderer
         .stdout(predicate::str::contains("type: weekly").not());
 }
+
+// ---------------------------------------------------------------------
+// normalise (#233)
+// ---------------------------------------------------------------------
+
+#[test]
+fn normalise_check_flags_then_normalise_reorders_frontmatter() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    // A project note with scrambled frontmatter.
+    let p = dir.path().join("projects/foo.md");
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(
+        &p,
+        "---\nstatus: active\ntype: project\ncontext: work\ncreated: 2026-04-01\n---\n# Foo\n\n## Current State\n",
+    )
+    .unwrap();
+
+    // --check reports it and exits non-zero, writing nothing.
+    cdno()
+        .current_dir(dir.path())
+        .args(["normalise", "--check"])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("projects/foo.md"));
+
+    // The default pass rewrites it.
+    cdno()
+        .current_dir(dir.path())
+        .args(["normalise"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Normalised frontmatter in 1"));
+
+    let out = std::fs::read_to_string(&p).unwrap();
+    assert!(
+        out.starts_with(
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---"
+        ),
+        "canonical order expected, got:\n{out}"
+    );
+
+    // Now canonical: --check passes (exit 0).
+    cdno()
+        .current_dir(dir.path())
+        .args(["normalise", "--check"])
+        .assert()
+        .success();
+}

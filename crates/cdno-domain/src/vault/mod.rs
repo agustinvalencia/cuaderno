@@ -37,6 +37,7 @@ mod daily;
 mod index_entry;
 mod lint;
 mod log;
+mod normalise;
 mod orient;
 mod portfolios;
 mod projects;
@@ -59,6 +60,7 @@ pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
 };
 pub use daily::{DailyNoteView, DailySection};
+pub use normalise::NormaliseReport;
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};

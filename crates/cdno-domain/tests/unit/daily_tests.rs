@@ -239,3 +239,16 @@ fn logging_self_heals_a_daily_with_drifted_logs() {
     assert!(content.contains("new entry"), "new log line kept");
     assert!(content.contains("- **08:00**: earlier"), "prior log kept");
 }
+
+#[test]
+fn fresh_daily_note_frontmatter_is_type_first() {
+    // #233: the daily scaffold leads with `type:`, matching every other
+    // note type's canonical order.
+    let (vault, store) = make_vault();
+    let path = vault.log_to_daily_note(moment(), "x").expect("log");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.starts_with("---\ntype: daily\n"),
+        "type must come first:\n{content}"
+    );
+}

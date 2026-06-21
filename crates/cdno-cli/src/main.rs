@@ -86,6 +86,16 @@ enum Commands {
     /// truth. The recovery path for a corrupt or stale index.
     Reindex,
 
+    /// Reorder note frontmatter into the canonical per-type key order.
+    /// Notes cdno creates are already canonical; this fixes hand-authored
+    /// or migrated ones. `--check` reports without writing (non-zero exit
+    /// if any are out of order).
+    Normalise {
+        /// Report out-of-order notes without rewriting them.
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Capture a quick note into `inbox/` with a slug-based filename.
     Capture {
         /// The note text. Quote if it contains spaces.
@@ -307,6 +317,10 @@ fn main() -> Result<()> {
         Commands::Reindex => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::reindex::run(&root)
+        }
+        Commands::Normalise { check } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::normalise::run(&root, check)
         }
         Commands::Capture { text } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

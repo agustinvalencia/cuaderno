@@ -52,6 +52,59 @@ impl NoteType {
             NoteType::Inbox => "inbox",
         }
     }
+
+    /// The canonical frontmatter key order for this note type, with
+    /// `type` first. This mirrors the field order in each type's
+    /// creation template (`crates/cdno-domain/templates/`, plus the
+    /// daily/weekly scaffolds) — the templates are the source of truth,
+    /// and a test pins each template's key order to this list so they
+    /// can't drift. The frontmatter normaliser (#233) reorders a note's
+    /// known keys into this order; keys not listed here (hand-added,
+    /// type-specific extras) keep their relative order after the known
+    /// ones.
+    pub fn frontmatter_order(self) -> &'static [&'static str] {
+        match self {
+            NoteType::Daily => &["type", "date"],
+            NoteType::Weekly => &["type", "week", "date_start", "date_end"],
+            NoteType::Project => &["type", "context", "status", "created", "core_question"],
+            NoteType::Action => &[
+                "type",
+                "status",
+                "project",
+                "energy",
+                "milestone",
+                "due",
+                "created",
+                "completed",
+                "blocker",
+                "criteria",
+                "tags",
+            ],
+            NoteType::Portfolio => &["type", "question", "created", "project"],
+            NoteType::Evidence => &["type", "created", "source", "portfolio", "origin"],
+            NoteType::Stewardship => &["type", "context"],
+            NoteType::Tracking => &[
+                "type",
+                "stewardship",
+                "activity",
+                "date",
+                "duration_min",
+                "routine",
+            ],
+            NoteType::Question => &["type", "domain", "status", "created", "updated"],
+            NoteType::Commitment => &[
+                "type",
+                "status",
+                "due",
+                "created",
+                "completed",
+                "context",
+                "project",
+                "stewardship",
+            ],
+            NoteType::Inbox => &["type", "created"],
+        }
+    }
 }
 
 impl fmt::Display for NoteType {
