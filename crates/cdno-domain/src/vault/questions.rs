@@ -18,6 +18,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::frontmatter::{QuestionDomain, QuestionFrontmatter, QuestionStatus};
@@ -44,8 +45,6 @@ pub struct QuestionSummary {
     pub question_text: String,
     pub updated: NaiveDate,
 }
-
-const QUESTION_TEMPLATE: &str = include_str!("../../templates/question.md");
 
 impl Vault {
     /// Create a new question at `questions/<domain>/<slug>.md` from
@@ -86,7 +85,13 @@ impl Vault {
         }
 
         let path = question_path(domain, &slug)?;
-        let content = render_question_template(text, domain, at.date());
+        let date = at.date().format("%Y-%m-%d").to_string();
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("domain", domain.as_str());
+        ctx.set_contextual("created", date.as_str());
+        ctx.set_contextual("updated", date.as_str());
+        ctx.set_contextual("question", text);
+        let content = self.scaffold("question", None, &ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Question.as_str())?;
 
         tx.write_file(path.clone(), content);
@@ -280,16 +285,6 @@ fn question_slug_from_path(path: &VaultPath) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_owned()
-}
-
-/// Render the built-in question template with every field stamped.
-fn render_question_template(text: &str, domain: QuestionDomain, today: NaiveDate) -> String {
-    let date = today.format("%Y-%m-%d").to_string();
-    QUESTION_TEMPLATE
-        .replace("{{domain}}", domain.as_str())
-        .replace("{{created}}", &date)
-        .replace("{{updated}}", &date)
-        .replace("{{question}}", text)
 }
 
 /// Build the daily-log entry recording a question status change.

@@ -16,6 +16,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
@@ -44,9 +45,6 @@ pub struct PortfolioSummary {
     /// mostly catches typos).
     pub staleness_days: Option<i64>,
 }
-
-const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
-const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
 
 /// Heading in a question note that lists the portfolios collecting
 /// evidence against it. `create_portfolio` appends the backlink here.
@@ -105,7 +103,7 @@ impl Vault {
             )));
         }
 
-        let mut content = render_portfolio_template(question, at.date(), project);
+        let mut content = self.render_portfolio(question, at.date(), project)?;
 
         // Bidirectional link when a question note shares the slug. The
         // portfolio side is written into the fresh template (cheaper
@@ -294,7 +292,7 @@ impl Vault {
             )));
         }
 
-        let body = render_evidence_template(created, source, portfolio, origin, content);
+        let body = self.render_evidence(created, source, portfolio, origin, content)?;
         let entry = build_index_entry_for(&path, &body, NoteType::Evidence.as_str())?;
 
         tx.write_file(path.clone(), body);
@@ -583,36 +581,46 @@ fn portfolio_slug_from_path(path: &VaultPath) -> String {
         .to_owned()
 }
 
-/// Render the built-in portfolio `_index.md` template with every
-/// field stamped. `project` becomes a quoted wikilink when present
-/// (YAML requires the quotes around `[[…]]` to keep it from parsing
-/// as a flow sequence) and `null` when absent.
-fn render_portfolio_template(question: &str, created: NaiveDate, project: Option<&str>) -> String {
-    let project_field = match project {
-        Some(target) => format!("\"[[{target}]]\""),
-        None => "null".to_owned(),
-    };
-    PORTFOLIO_TEMPLATE
-        .replace("{{question}}", question)
-        .replace("{{created}}", &created.format("%Y-%m-%d").to_string())
-        .replace("{{project}}", &project_field)
-}
+impl Vault {
+    /// Render the portfolio `_index.md` template (custom or built-in).
+    /// `project` becomes a quoted wikilink when present (YAML requires
+    /// the quotes around `[[…]]` to keep it from parsing as a flow
+    /// sequence) and `null` when absent.
+    fn render_portfolio(
+        &self,
+        question: &str,
+        created: NaiveDate,
+        project: Option<&str>,
+    ) -> Result<String, DomainError> {
+        let project_field = match project {
+            Some(target) => format!("\"[[{target}]]\""),
+            None => "null".to_owned(),
+        };
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("question", question);
+        ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("project", project_field);
+        self.scaffold("portfolio", None, &ctx)
+    }
 
-/// Render the built-in evidence template. `origin` arrives bare and
-/// is wrapped in `[[…]]` before substitution.
-fn render_evidence_template(
-    created: NaiveDate,
-    source: &str,
-    portfolio: &str,
-    origin: &str,
-    content: &str,
-) -> String {
-    EVIDENCE_TEMPLATE
-        .replace("{{created}}", &created.format("%Y-%m-%d").to_string())
-        .replace("{{source}}", source)
-        .replace("{{portfolio}}", portfolio)
-        .replace("{{origin}}", &format!("[[{origin}]]"))
-        .replace("{{content}}", content.trim_end())
+    /// Render the evidence template (custom or built-in). `origin`
+    /// arrives bare and is wrapped in `[[…]]` before substitution.
+    fn render_evidence(
+        &self,
+        created: NaiveDate,
+        source: &str,
+        portfolio: &str,
+        origin: &str,
+        content: &str,
+    ) -> Result<String, DomainError> {
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("source", source);
+        ctx.set_contextual("portfolio", portfolio);
+        ctx.set_contextual("origin", format!("[[{origin}]]"));
+        ctx.set_contextual("content", content.trim_end());
+        self.scaffold("evidence", None, &ctx)
+    }
 }
 
 /// Classify an attachment by file extension into the `kind` field an

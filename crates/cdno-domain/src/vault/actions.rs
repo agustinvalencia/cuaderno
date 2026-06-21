@@ -14,6 +14,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
@@ -24,8 +25,6 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::{NEXT_ACTIONS_SECTION, rewrite_field_in_frontmatter};
 use super::slug::slugify;
-
-const ACTION_TEMPLATE: &str = include_str!("../../templates/action.md");
 
 impl Vault {
     /// Build a new action note at `actions/<slug>.md` and stage its
@@ -65,15 +64,27 @@ impl Vault {
             )));
         }
 
-        let content = render_action_template(ActionTemplateArgs {
-            title,
-            slug: &slug,
-            project,
-            energy,
-            milestone,
-            due,
-            created: at.date(),
-        });
+        let milestone_yaml = match milestone {
+            Some(m) => format!("\"{m}\""),
+            None => "null".to_owned(),
+        };
+        let due_yaml = due
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "null".to_owned());
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("status", ActionStatus::Active.as_str());
+        ctx.set_contextual("project", project);
+        ctx.set_contextual("energy", energy.as_str());
+        ctx.set_contextual("milestone", milestone_yaml);
+        ctx.set_contextual("due", due_yaml);
+        ctx.set_contextual("created", at.date().format("%Y-%m-%d").to_string());
+        ctx.set_contextual("completed", "null");
+        ctx.set_contextual("blocker", "null");
+        ctx.set_contextual("criteria", "null");
+        ctx.set_contextual("tags", "[]");
+        ctx.set_contextual("title", title);
+        ctx.set_contextual("slug", slug.as_str());
+        let content = self.scaffold("action", None, &ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Action.as_str())?;
 
         tx.write_file(path.clone(), content);
@@ -218,48 +229,6 @@ impl Vault {
         VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::ACTIONS))
             .map_err(DomainError::from)
     }
-}
-
-/// Arguments for [`render_action_template`]. Grouped into a struct to
-/// keep the renderer's signature readable and the call site explicit.
-struct ActionTemplateArgs<'a> {
-    title: &'a str,
-    slug: &'a str,
-    project: &'a str,
-    energy: EnergyLevel,
-    milestone: Option<&'a str>,
-    due: Option<NaiveDate>,
-    created: NaiveDate,
-}
-
-/// Render the built-in action template with every field stamped. A
-/// fresh note is always `active` with no `completed`, `blocker`, or
-/// `criteria`. A milestone wikilink is quoted because the unquoted
-/// `[[...]]` would parse as a YAML flow sequence; absent optionals
-/// render as `null`, and an empty tag list as `[]`.
-fn render_action_template(args: ActionTemplateArgs<'_>) -> String {
-    let milestone = match args.milestone {
-        Some(m) => format!("\"{m}\""),
-        None => "null".to_owned(),
-    };
-    let due = args
-        .due
-        .map(|d| d.format("%Y-%m-%d").to_string())
-        .unwrap_or_else(|| "null".to_owned());
-
-    ACTION_TEMPLATE
-        .replace("{{status}}", ActionStatus::Active.as_str())
-        .replace("{{project}}", args.project)
-        .replace("{{energy}}", args.energy.as_str())
-        .replace("{{milestone}}", &milestone)
-        .replace("{{due}}", &due)
-        .replace("{{created}}", &args.created.format("%Y-%m-%d").to_string())
-        .replace("{{completed}}", "null")
-        .replace("{{blocker}}", "null")
-        .replace("{{criteria}}", "null")
-        .replace("{{tags}}", "[]")
-        .replace("{{title}}", args.title)
-        .replace("{{slug}}", args.slug)
 }
 
 /// The slug is the file stem of the note path. `create_action_note`

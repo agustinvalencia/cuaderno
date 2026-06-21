@@ -18,6 +18,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -26,11 +27,6 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
 use super::stewardships::StewardshipVariant;
-
-const TRACKING_GYM_TEMPLATE: &str = include_str!("../../templates/tracking/gym.md");
-const TRACKING_BODY_TEMPLATE: &str = include_str!("../../templates/tracking/body.md");
-const TRACKING_SWIM_TEMPLATE: &str = include_str!("../../templates/tracking/swim.md");
-const TRACKING_GENERIC_TEMPLATE: &str = include_str!("../../templates/tracking/generic.md");
 
 impl Vault {
     /// File a tracking note under an expanded stewardship.
@@ -105,7 +101,7 @@ impl Vault {
             )));
         }
 
-        let body = render_tracking_template(stewardship, &activity_slug, date, routine, content);
+        let body = self.render_tracking(stewardship, &activity_slug, date, routine, content)?;
         let entry = build_index_entry_for(&path, &body, NoteType::Tracking.as_str())?;
 
         tx.write_file(path.clone(), body);
@@ -116,48 +112,40 @@ impl Vault {
     }
 }
 
-/// Pick the right template for `activity_slug` and substitute every
-/// field. The slug routes to a built-in (gym/body/swim) when it
-/// matches one exactly; everything else hits the generic template.
-///
-/// `routine` (already validated and trimmed by the caller) wraps as
-/// `[[stewardships/<stewardship>/routines/<routine>]]` when present
-/// and replaces the template's `routine: null` field. Templates
-/// without that field (body, generic) silently ignore the routine —
-/// it doesn't appear anywhere to substitute.
-fn render_tracking_template(
-    stewardship: &str,
-    activity_slug: &str,
-    date: NaiveDate,
-    routine: Option<&str>,
-    content: &str,
-) -> String {
-    let date_short = date.format("%Y-%m-%d").to_string();
-    let date_long = format!(
-        "{day} {month} {year}",
-        day = date.day(),
-        month = date.format("%B"),
-        year = date.year(),
-    );
-    let template = match activity_slug {
-        "gym" => TRACKING_GYM_TEMPLATE,
-        "body" => TRACKING_BODY_TEMPLATE,
-        "swim" => TRACKING_SWIM_TEMPLATE,
-        _ => TRACKING_GENERIC_TEMPLATE,
-    };
-    let rendered = template
-        .replace("{{stewardship}}", stewardship)
-        .replace("{{activity}}", activity_slug)
-        .replace("{{activity_title}}", &title_case(activity_slug))
-        .replace("{{date}}", &date_short)
-        .replace("{{date_long}}", &date_long)
-        .replace("{{content}}", content.trim_end());
-    match routine {
-        Some(slug) => rendered.replace(
-            "routine: null",
-            &format!("routine: \"[[stewardships/{stewardship}/routines/{slug}]]\""),
-        ),
-        None => rendered,
+impl Vault {
+    /// Render the tracking template for `activity_slug` (custom or
+    /// built-in). The engine resolves `tracking-<activity>` for the
+    /// known activities (gym/body/swim) and falls back to the generic
+    /// `tracking` template otherwise. `routine` becomes a quoted
+    /// routine wikilink when present, else `null`; only templates with a
+    /// `routine:` field (gym) consume it.
+    fn render_tracking(
+        &self,
+        stewardship: &str,
+        activity_slug: &str,
+        date: NaiveDate,
+        routine: Option<&str>,
+        content: &str,
+    ) -> Result<String, DomainError> {
+        let date_long = format!(
+            "{day} {month} {year}",
+            day = date.day(),
+            month = date.format("%B"),
+            year = date.year(),
+        );
+        let routine_yaml = match routine {
+            Some(slug) => format!("\"[[stewardships/{stewardship}/routines/{slug}]]\""),
+            None => "null".to_owned(),
+        };
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("stewardship", stewardship);
+        ctx.set_contextual("activity", activity_slug);
+        ctx.set_contextual("activity_title", title_case(activity_slug));
+        ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("date_long", date_long);
+        ctx.set_contextual("content", content.trim_end());
+        ctx.set_contextual("routine", routine_yaml);
+        self.scaffold("tracking", Some(activity_slug), &ctx)
     }
 }
 

@@ -15,6 +15,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::frontmatter::{
@@ -27,8 +28,6 @@ use super::index_entry::build_index_entry_for;
 use super::projects::rewrite_field_in_frontmatter;
 use super::slug::slugify;
 use super::stewardships::{PERIODIC_COMMITMENTS_SECTION, stewardship_slug_from_path};
-
-const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
 
 /// Fixed look-back window for surfacing overdue commitments. Anything
 /// missed more than this many days ago drops out of the view rather
@@ -121,14 +120,18 @@ impl Vault {
         // YAML or being read back as a non-string scalar.
         let project = slug_link(project);
         let stewardship = slug_link(stewardship);
-        let content = render_commitment_template(
-            title,
-            due,
-            created,
-            context,
-            project.as_deref(),
-            stewardship.as_deref(),
-        );
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("title", title);
+        ctx.set_contextual("status", CommitmentStatus::Active.as_str());
+        ctx.set_contextual("due", due.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
+        // `completed` is always `null` at birth (stamped on completion);
+        // origin links carry a quoted slug when supplied, else `null`.
+        ctx.set_contextual("completed", "null");
+        ctx.set_contextual("context", context.as_str());
+        ctx.set_contextual("project", yaml_opt_slug(project.as_deref()));
+        ctx.set_contextual("stewardship", yaml_opt_slug(stewardship.as_deref()));
+        let content = self.scaffold("commitment", None, &ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 
         let log_entry = format!(
@@ -437,30 +440,6 @@ fn slug_of(path: &VaultPath) -> String {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_owned()
-}
-
-/// Render the built-in commitment template with all fields stamped.
-/// The template is the wire format — see `templates/commitment.md`.
-fn render_commitment_template(
-    title: &str,
-    due: NaiveDate,
-    created: NaiveDate,
-    context: Context,
-    project: Option<&str>,
-    stewardship: Option<&str>,
-) -> String {
-    COMMITMENT_TEMPLATE
-        .replace("{{title}}", title)
-        .replace("{{status}}", CommitmentStatus::Active.as_str())
-        .replace("{{due}}", &due.format("%Y-%m-%d").to_string())
-        .replace("{{created}}", &created.format("%Y-%m-%d").to_string())
-        // `completed` is always `null` for a freshly-created commitment;
-        // it's stamped on completion. The origin links carry a quoted
-        // slug when supplied, else the bare literal `null`.
-        .replace("{{completed}}", "null")
-        .replace("{{context}}", context.as_str())
-        .replace("{{project}}", &yaml_opt_slug(project))
-        .replace("{{stewardship}}", &yaml_opt_slug(stewardship))
 }
 
 /// Render an optional origin-link slug as a YAML scalar: a quoted

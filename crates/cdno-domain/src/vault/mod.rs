@@ -46,6 +46,7 @@ mod search;
 mod slug;
 mod slug_hint;
 mod stewardships;
+mod templating;
 mod tracking;
 mod weekly;
 

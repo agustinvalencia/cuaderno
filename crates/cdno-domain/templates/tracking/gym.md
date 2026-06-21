@@ -4,7 +4,7 @@ stewardship: {{stewardship}}
 activity: gym
 date: {{date}}
 duration_min: null
-routine: null
+routine: {{routine}}
 ---
 
 # Gym — {{date_long}}
