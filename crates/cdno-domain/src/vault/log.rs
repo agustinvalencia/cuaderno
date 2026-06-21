@@ -59,25 +59,23 @@ impl Vault {
         let path = daily_note_path(at.date())?;
         let line = format_log_line(at.time(), entry);
 
-        let new_content = if self.store.exists(&path)? {
-            // File exists: parse, append into the Logs section, re-render.
-            // Going through `MarkdownDocument` means a missing Logs
-            // section surfaces as `ManipulationError::SectionNotFound`
-            // rather than silently appending in the wrong place.
-            let current = self.store.read_file(&path)?;
-            let mut doc = MarkdownDocument::parse(current)?;
-            doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
-            // Keep the running history pinned to the bottom — and
-            // self-heal a note where it had already drifted up (#232).
-            doc.move_section_to_end(DAILY_LOGS_SECTION)?;
-            doc.render().to_owned()
+        // One path for both fresh and existing notes: get the base
+        // (scaffold a new one, or read the existing file), then insert
+        // the line *into* the `## Logs` section rather than at the end of
+        // the text. This keeps the line in Logs even when a custom daily
+        // template has content after it, and surfaces a Logs-less
+        // template as `SectionNotFound` rather than misplacing the entry.
+        let base = if self.store.exists(&path)? {
+            self.store.read_file(&path)?
         } else {
-            // Fresh daily note: compose the scaffold with the first
-            // log line already inside `## Logs`.
-            let mut note = self.scaffold_daily_base(at.date())?;
-            note.push_str(&line);
-            note
+            self.scaffold_daily_base(at.date())?
         };
+        let mut doc = MarkdownDocument::parse(base)?;
+        doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
+        // Keep the running history pinned to the bottom — and self-heal a
+        // note where it had already drifted up (#232).
+        doc.move_section_to_end(DAILY_LOGS_SECTION)?;
+        let new_content = doc.render().to_owned();
 
         // Rebuild the index row from the new content so the committed
         // transaction leaves file + index in sync.

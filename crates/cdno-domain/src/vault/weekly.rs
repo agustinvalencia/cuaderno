@@ -181,6 +181,10 @@ impl Vault {
         let monday = date - Duration::days(i64::from(date.weekday().num_days_from_monday()));
         let sunday = monday + Duration::days(6);
         let mut ctx = VariableContext::new();
+        // Two vars for the same number, intentionally: the frontmatter
+        // `week:` wants the padded ISO form `YYYY-Www`, the `# Week N`
+        // heading wants the bare number. Templates are pure substitution
+        // (no logic), so the padding can't be expressed in-template.
         ctx.set_contextual("week", format!("{}-W{:02}", iso.year(), iso.week()));
         ctx.set_contextual("week_num", iso.week().to_string());
         ctx.set_contextual("year", iso.year().to_string());
