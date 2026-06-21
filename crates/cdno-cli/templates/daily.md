@@ -1,6 +1,6 @@
 ---
-date: {{date}}
 type: daily
+date: {{date}}
 ---
 
 # {{weekday}}

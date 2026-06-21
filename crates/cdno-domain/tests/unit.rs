@@ -7,6 +7,7 @@ mod unit {
     mod daily_tests;
     mod frontmatter_tests;
     mod lint_tests;
+    mod normalise_tests;
     mod note_type_tests;
     mod orient_tests;
     mod portfolios_tests;

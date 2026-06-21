@@ -113,7 +113,7 @@ fn format_log_line(time: NaiveTime, entry: &str) -> String {
 /// note when a planning section is written before any log line exists.
 pub(in crate::vault) fn scaffold_daily_note_base(date: NaiveDate) -> String {
     format!(
-        "---\ndate: {date}\ntype: daily\n---\n\n# {heading}\n\n## {section}\n",
+        "---\ntype: daily\ndate: {date}\n---\n\n# {heading}\n\n## {section}\n",
         date = date.format("%Y-%m-%d"),
         heading = date.format("%A, %-d %B %Y"),
         section = DAILY_LOGS_SECTION,

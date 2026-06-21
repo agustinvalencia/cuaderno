@@ -1058,7 +1058,9 @@ cdno questions           # Show active questions grouped by domain
 ```bash
 cdno reindex             # Rebuild SQLite index from vault files
 cdno lint                # Validate all notes against schemas
-cdno lint --fix          # Auto-fix what can be fixed
+cdno lint --strict       # Treat warnings (e.g. broken wikilinks) as failures too
+cdno normalise           # Reorder note frontmatter to canonical per-type order
+cdno normalise --check   # Report out-of-order notes (non-zero exit), write nothing
 ```
 
 ### CLI ergonomics: interactive prompts and confirmation
