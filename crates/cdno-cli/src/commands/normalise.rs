@@ -22,6 +22,12 @@ pub fn run(root: &Path, check: bool) -> Result<()> {
     for (path, err) in &report.errors {
         eprintln!("  could not read {path}: {err}");
     }
+    if report.skipped > 0 {
+        eprintln!(
+            "  skipped {} note(s) with an unknown type (run `cdno lint`)",
+            report.skipped
+        );
+    }
 
     if report.changed.is_empty() {
         println!(

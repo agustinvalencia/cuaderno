@@ -25,6 +25,9 @@ use crate::note_type::NoteType;
 pub struct NormaliseReport {
     /// Notes examined (indexed notes with a known type).
     pub checked: usize,
+    /// Notes skipped because their `type` isn't a known variant — lint
+    /// reports those; the normaliser can't pick an order for them.
+    pub skipped: usize,
     /// Notes whose frontmatter was reordered (or would be, in a dry run).
     pub changed: Vec<VaultPath>,
     /// Notes that couldn't be read, recorded rather than aborting.
@@ -43,6 +46,11 @@ impl Vault {
     pub fn normalise_notes(&self, dry_run: bool) -> Result<NormaliseReport, DomainError> {
         let paths = self.index.list_all_paths()?;
         let mut report = NormaliseReport::default();
+        // One transaction for the whole pass: the rewrites commit
+        // all-or-nothing and hold the write lock once. Fine at the vault
+        // sizes cdno targets; if a vault ever grew large enough that the
+        // single lock-hold or transaction size mattered, this is the
+        // line to switch to per-note commits.
         let mut tx = if dry_run {
             None
         } else {
@@ -56,7 +64,8 @@ impl Vault {
                 continue;
             };
             let Ok(note_type) = NoteType::from_str(&entry.note_type) else {
-                continue; // unknown type: lint's job, not the normaliser's
+                report.skipped += 1; // unknown type: lint's job, not ours
+                continue;
             };
             report.checked += 1;
 
@@ -101,8 +110,12 @@ pub(in crate::vault) fn reorder_frontmatter(raw: &str, order: &[&str]) -> Option
         return None;
     }
     let after_open = opening.len();
-    // Closing `\n---`; `+1` keeps the trailing newline of the last
-    // frontmatter line inside the yaml slice.
+    // Locate the close with the same naive `\n---` scan as
+    // `rewrite_field_in_frontmatter`. It's looser than core's own-line
+    // `split_at_closing_delim`, but every note reaching here was already
+    // parsed by the index (so serde_yaml accepted its frontmatter),
+    // which rules out the inputs where the two would disagree. `+1`
+    // keeps the trailing newline of the last frontmatter line in `yaml`.
     let yaml_end = after_open + raw[after_open..].find("\n---")? + 1;
     let yaml = &raw[after_open..yaml_end];
 

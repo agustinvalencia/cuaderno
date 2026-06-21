@@ -54,14 +54,15 @@ impl NoteType {
     }
 
     /// The canonical frontmatter key order for this note type, with
-    /// `type` first. This mirrors the field order in each type's
-    /// creation template (`crates/cdno-domain/templates/`, plus the
-    /// daily/weekly scaffolds) — the templates are the source of truth,
-    /// and a test pins each template's key order to this list so they
-    /// can't drift. The frontmatter normaliser (#233) reorders a note's
-    /// known keys into this order; keys not listed here (hand-added,
-    /// type-specific extras) keep their relative order after the known
-    /// ones.
+    /// `type` first. This mirrors the field order each type's creation
+    /// produces — the file templates in `crates/cdno-domain/templates/`
+    /// and the in-code scaffolds for daily/weekly/inbox. Tests pin both
+    /// to this list so they can't drift: a file-sync test for the
+    /// single-file templates, and behavioural "fresh scaffold matches
+    /// frontmatter_order" tests for the code-scaffolded types. The
+    /// frontmatter normaliser (#233) reorders a note's known keys into
+    /// this order; keys not listed here (hand-added, type-specific
+    /// extras) keep their relative order after the known ones.
     pub fn frontmatter_order(self) -> &'static [&'static str] {
         match self {
             NoteType::Daily => &["type", "date"],

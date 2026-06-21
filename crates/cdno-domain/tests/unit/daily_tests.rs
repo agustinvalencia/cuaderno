@@ -241,14 +241,29 @@ fn logging_self_heals_a_daily_with_drifted_logs() {
 }
 
 #[test]
-fn fresh_daily_note_frontmatter_is_type_first() {
-    // #233: the daily scaffold leads with `type:`, matching every other
-    // note type's canonical order.
+fn fresh_daily_scaffold_matches_canonical_frontmatter_order() {
+    // #233: the daily scaffold lives in code (`log.rs`), not a template
+    // file, so the template-sync test can't pin it. Assert the note the
+    // scaffold actually produces matches `NoteType::Daily.frontmatter_order`
+    // exactly, so the two can't silently drift.
+    use cdno_domain::note_type::NoteType;
+
     let (vault, store) = make_vault();
     let path = vault.log_to_daily_note(moment(), "x").expect("log");
     let content = store.read_file(&path).unwrap();
-    assert!(
-        content.starts_with("---\ntype: daily\n"),
-        "type must come first:\n{content}"
+
+    let keys: Vec<&str> = content
+        .split("---")
+        .nth(1)
+        .expect("frontmatter block")
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with(char::is_whitespace) && l.contains(':'))
+        .map(|l| l.split(':').next().unwrap().trim())
+        .collect();
+
+    assert_eq!(
+        keys,
+        NoteType::Daily.frontmatter_order(),
+        "daily scaffold drifted from NoteType::Daily::frontmatter_order:\n{content}"
     );
 }

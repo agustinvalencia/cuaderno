@@ -150,3 +150,45 @@ fn canonical_frontmatter_order_matches_the_templates() {
         );
     }
 }
+
+#[test]
+fn fresh_weekly_scaffold_matches_canonical_frontmatter_order() {
+    // The weekly scaffold lives in code (`weekly.rs`), not a template
+    // file — pin the note it produces to `NoteType::Weekly`'s order.
+    use cdno_domain::WeeklySection;
+    use chrono::NaiveDate;
+
+    let (vault, store) = vault_with_notes(&[]);
+    let date = NaiveDate::from_ymd_opt(2026, 4, 26).unwrap();
+    let path = vault
+        .upsert_weekly_section(date, WeeklySection::Wins, "shipped", false)
+        .expect("create weekly note");
+    let content = store.read_file(&path).unwrap();
+
+    assert_eq!(
+        frontmatter_keys(&content),
+        NoteType::Weekly.frontmatter_order(),
+        "weekly scaffold drifted from NoteType::Weekly::frontmatter_order:\n{content}"
+    );
+}
+
+#[test]
+fn fresh_inbox_scaffold_matches_canonical_frontmatter_order() {
+    // The inbox capture scaffold lives in code (`capture.rs`).
+    use chrono::{NaiveDate, NaiveTime};
+
+    let (vault, store) = vault_with_notes(&[]);
+    let at = NaiveDate::from_ymd_opt(2026, 4, 26)
+        .unwrap()
+        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    let path = vault
+        .capture_to_inbox(at, "a fleeting thought")
+        .expect("capture");
+    let content = store.read_file(&path).unwrap();
+
+    assert_eq!(
+        frontmatter_keys(&content),
+        NoteType::Inbox.frontmatter_order(),
+        "inbox scaffold drifted from NoteType::Inbox::frontmatter_order:\n{content}"
+    );
+}
