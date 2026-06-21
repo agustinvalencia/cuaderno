@@ -144,3 +144,66 @@ fn created_notes_have_no_unsubstituted_placeholders() {
         );
     }
 }
+
+#[test]
+fn daily_creation_uses_a_custom_template_override() {
+    // daily/weekly/inbox are now template-driven too (#212 PR A2): a
+    // custom `.cuaderno/templates/daily.md` is honoured when the daily
+    // note is first created. It must keep a `## Logs` section — the log
+    // line is appended there.
+    let custom = "---\ntype: daily\ndate: {{date}}\n---\n\n# {{heading}}\n\nCUSTOM DAILY PREAMBLE\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("CUSTOM DAILY PREAMBLE"),
+        "custom daily used:\n{content}"
+    );
+    assert!(
+        content.contains("first entry"),
+        "log line appended into ## Logs:\n{content}"
+    );
+}
+
+#[test]
+fn weekly_creation_uses_a_custom_template_override() {
+    use cdno_domain::WeeklySection;
+    let custom = "---\ntype: weekly\nweek: {{week}}\ndate_start: {{date_start}}\ndate_end: {{date_end}}\n---\n\n# Week {{week_num}}, {{year}}\n\nCUSTOM WEEKLY PREAMBLE\n\n## Wins\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/weekly.md", custom)]);
+
+    let path = vault
+        .upsert_weekly_section(today(), WeeklySection::Wins, "shipped the engine", false)
+        .expect("weekly");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("CUSTOM WEEKLY PREAMBLE"),
+        "custom weekly used:\n{content}"
+    );
+    assert!(
+        content.contains("shipped the engine"),
+        "section written:\n{content}"
+    );
+}
+
+#[test]
+fn inbox_creation_uses_a_custom_template_override() {
+    // A custom inbox template adds a frontmatter field the built-in lacks.
+    let custom = "---\ntype: inbox\ncreated: {{created}}\nsource: quick-capture\n---\n\n{{body}}\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/inbox.md", custom)]);
+
+    let path = vault
+        .capture_to_inbox(today().and_hms_opt(9, 0, 0).unwrap(), "a fleeting thought")
+        .expect("capture");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("source: quick-capture"),
+        "custom inbox used:\n{content}"
+    );
+    assert!(content.contains("a fleeting thought"), "body:\n{content}");
+}

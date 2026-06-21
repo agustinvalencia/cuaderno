@@ -6,6 +6,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -51,7 +52,7 @@ impl Vault {
         text: &str,
     ) -> Result<VaultPath, DomainError> {
         let path = self.next_inbox_path(at.date(), text)?;
-        let content = scaffold_inbox_note(at, text);
+        let content = self.scaffold_inbox(at, text)?;
 
         let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
         let mut tx = self.transaction()?;
@@ -166,11 +167,13 @@ fn inbox_slug_from_path(path: &VaultPath) -> String {
         .to_owned()
 }
 
-/// Render the canonical inbox note for `at` carrying `text`.
-fn scaffold_inbox_note(at: NaiveDateTime, text: &str) -> String {
-    format!(
-        "---\ntype: inbox\ncreated: {created}\n---\n\n{body}\n",
-        created = at.format("%Y-%m-%dT%H:%M:%S"),
-        body = text.trim(),
-    )
+impl Vault {
+    /// Render the canonical inbox note for `at` carrying `text`, through
+    /// the template engine (#212).
+    fn scaffold_inbox(&self, at: NaiveDateTime, text: &str) -> Result<String, DomainError> {
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("created", at.format("%Y-%m-%dT%H:%M:%S").to_string());
+        ctx.set_contextual("body", text.trim());
+        self.scaffold("inbox", None, &ctx)
+    }
 }

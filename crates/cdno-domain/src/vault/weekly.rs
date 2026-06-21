@@ -26,6 +26,7 @@ use chrono::{Datelike, Duration, NaiveDate};
 
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 
 use crate::error::DomainError;
 
@@ -139,7 +140,7 @@ impl Vault {
         let base = if self.store.exists(&path)? {
             self.store.read_file(&path)?
         } else {
-            scaffold_weekly_note_base(week_of)
+            self.scaffold_weekly_base(week_of)?
         };
 
         let mut doc = MarkdownDocument::parse(base)?;
@@ -166,34 +167,29 @@ pub(in crate::vault) fn weekly_note_path(date: NaiveDate) -> Result<VaultPath, D
     Ok(VaultPath::new(cdno_core::paths::weekly_note_relpath(date))?)
 }
 
-/// Scaffold a fresh weekly note per design §5.2: ISO-week frontmatter
-/// (`week`, `date_start` = Monday, `date_end` = Sunday), a `# Week N,
-/// YYYY` heading, and the four empty review sections. Keyed off the ISO
-/// week, so any `date` within the week produces the same scaffold.
-pub(in crate::vault) fn scaffold_weekly_note_base(date: NaiveDate) -> String {
-    let iso = date.iso_week();
-    let monday = date - Duration::days(i64::from(date.weekday().num_days_from_monday()));
-    let sunday = monday + Duration::days(6);
-    format!(
-        "---\n\
-         type: weekly\n\
-         week: {year}-W{week:02}\n\
-         date_start: {start}\n\
-         date_end: {end}\n\
-         ---\n\
-         \n\
-         # Week {week}, {year}\n\
-         \n\
-         ## Wins\n\
-         \n\
-         ## Challenges\n\
-         \n\
-         ## One Improvement\n\
-         \n\
-         ## Next Week's Focus\n",
-        year = iso.year(),
-        week = iso.week(),
-        start = monday.format("%Y-%m-%d"),
-        end = sunday.format("%Y-%m-%d"),
-    )
+impl Vault {
+    /// Scaffold a fresh weekly note per design §5.2: ISO-week frontmatter
+    /// (`week`, `date_start` = Monday, `date_end` = Sunday), a `# Week N,
+    /// YYYY` heading, and the four empty review sections. Keyed off the
+    /// ISO week, so any `date` within the week produces the same note.
+    /// Rendered through the template engine (#212).
+    pub(in crate::vault) fn scaffold_weekly_base(
+        &self,
+        date: NaiveDate,
+    ) -> Result<String, DomainError> {
+        let iso = date.iso_week();
+        let monday = date - Duration::days(i64::from(date.weekday().num_days_from_monday()));
+        let sunday = monday + Duration::days(6);
+        let mut ctx = VariableContext::new();
+        // Two vars for the same number, intentionally: the frontmatter
+        // `week:` wants the padded ISO form `YYYY-Www`, the `# Week N`
+        // heading wants the bare number. Templates are pure substitution
+        // (no logic), so the padding can't be expressed in-template.
+        ctx.set_contextual("week", format!("{}-W{:02}", iso.year(), iso.week()));
+        ctx.set_contextual("week_num", iso.week().to_string());
+        ctx.set_contextual("year", iso.year().to_string());
+        ctx.set_contextual("date_start", monday.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("date_end", sunday.format("%Y-%m-%d").to_string());
+        self.scaffold("weekly", None, &ctx)
+    }
 }

@@ -267,3 +267,18 @@ fn fresh_daily_scaffold_matches_canonical_frontmatter_order() {
         "daily scaffold drifted from NoteType::Daily::frontmatter_order:\n{content}"
     );
 }
+
+#[test]
+fn fresh_daily_note_heading_is_the_full_date() {
+    // #212 PR A2: the daily template's `# {{heading}}` is the full date
+    // (`%A, %-d %B %Y`), not just the weekday. Pin it (no test covered
+    // the heading line before).
+    let (vault, store) = make_vault();
+    let path = vault.log_to_daily_note(moment(), "x").expect("log");
+    let content = store.read_file(&path).unwrap();
+    let expected = format!("# {}", moment().date().format("%A, %-d %B %Y"));
+    assert!(
+        content.contains(&expected),
+        "expected heading {expected:?}:\n{content}"
+    );
+}

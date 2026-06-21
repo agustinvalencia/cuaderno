@@ -12,6 +12,22 @@ use tempfile::tempdir;
 
 const EMBEDDED_DAILY: &str = include_str!("../templates/daily.md");
 
+/// The `cdno-domain` built-in daily template — the fallback used when no
+/// custom one exists.
+const DOMAIN_DAILY: &str = include_str!("../../cdno-domain/templates/daily.md");
+
+#[test]
+fn init_daily_seed_matches_the_domain_builtin_template() {
+    // `cdno init` seeds `daily.md` into `.cuaderno/templates/`, where it
+    // becomes an active custom override (daily is template-driven, #212).
+    // If it drifted from the built-in default, an init'd vault would
+    // render dailies differently from a non-init'd one. Pin them equal.
+    assert_eq!(
+        EMBEDDED_DAILY, DOMAIN_DAILY,
+        "the init daily seed must stay byte-identical to the cdno-domain built-in daily template"
+    );
+}
+
 #[test]
 fn run_creates_full_directory_tree_with_current_year_partitions() {
     let dir = tempdir().unwrap();

@@ -31,7 +31,7 @@ use crate::error::DomainError;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::log::{daily_note_path, scaffold_daily_note_base};
+use super::log::daily_note_path;
 
 /// A daily note's content, returned by [`Vault::read_daily_note`].
 ///
@@ -141,7 +141,7 @@ impl Vault {
         let base = if self.store.exists(&path)? {
             self.store.read_file(&path)?
         } else {
-            scaffold_daily_note_base(date)
+            self.scaffold_daily_base(date)?
         };
 
         let mut doc = MarkdownDocument::parse(base)?;

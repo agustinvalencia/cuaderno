@@ -34,6 +34,9 @@ const TRACKING_GENERIC_TEMPLATE: &str = include_str!("../../templates/tracking/g
 const TRACKING_GYM_TEMPLATE: &str = include_str!("../../templates/tracking/gym.md");
 const TRACKING_BODY_TEMPLATE: &str = include_str!("../../templates/tracking/body.md");
 const TRACKING_SWIM_TEMPLATE: &str = include_str!("../../templates/tracking/swim.md");
+const DAILY_TEMPLATE: &str = include_str!("../../templates/daily.md");
+const WEEKLY_TEMPLATE: &str = include_str!("../../templates/weekly.md");
+const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
 
 /// Built-in default templates, keyed as the engine expects: `<type>` for
 /// the type-level default and `<type>-<variant>` for a variant default
@@ -51,6 +54,9 @@ fn builtin_defaults() -> HashMap<String, &'static str> {
         ("tracking-gym".to_owned(), TRACKING_GYM_TEMPLATE),
         ("tracking-body".to_owned(), TRACKING_BODY_TEMPLATE),
         ("tracking-swim".to_owned(), TRACKING_SWIM_TEMPLATE),
+        ("daily".to_owned(), DAILY_TEMPLATE),
+        ("weekly".to_owned(), WEEKLY_TEMPLATE),
+        ("inbox".to_owned(), INBOX_TEMPLATE),
     ])
 }
 
