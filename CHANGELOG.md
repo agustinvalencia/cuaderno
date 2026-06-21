@@ -6,6 +6,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-06-21
+
+Pre-UI hardening release: the largest tool-surface jump yet (29 → 40 MCP tools) plus integrity, lint, and read-surface work that closes the gaps found auditing the CLI / domain / MCP layers before starting the Tauri UI. Adds MCP read parity (the CLI's daily-driver reads are now callable over MCP), milestone / waiting-on write tools, a broken-wikilink lint, an inbox-triage loop, a guided weekly-review ritual, `--json` output, and index self-healing.
+
+### Added
+
+- **MCP read-parity tools** (#204) — `list_projects`, `get_commitments`, `lint`, and `capture`, so an assistant can reach the same daily-driver reads the CLI exposes without shelling out (29 → 34).
+- **Milestone & waiting-on MCP tools** (#213) — `add_milestone`, `complete_milestone`, `add_waiting_on`, `resolve_waiting_on` (→ 38), completing MCP parity for the project-board write verbs.
+- **Inbox triage** (#208) — `cdno triage` drains uncategorised `inbox/` captures (keep-as-action / discard / skip; non-interactive runs list what's pending), plus `triage_inbox` and `discard_inbox_item` MCP tools (→ 40). Discard is a deliberate hard delete but preserves the captured text in the daily log, so it stays recoverable.
+- **Question ↔ portfolio backlinks** (#200) — `create_portfolio` writes bidirectional links to a `core_question`, the `link_portfolio_to_question` MCP tool and `cdno portfolio link` retrofit existing portfolios, and links resolve to the folder note's `_index`.
+- **Broken-wikilink lint + severities** (#205) — `LintReport` gains `LintSeverity` (`Error` / `Warning`); a body-only broken-wikilink check reports dangling links as warnings without aborting on a single unreadable note.
+- **`cdno reindex`** (#206) — rebuilds the SQLite index from the markdown source of truth; the recovery path for a corrupt or stale index. `SqliteIndex::open` also self-heals a corruption-shaped error on an existing index by rebuilding once.
+- **`cdno review weekly`** (#209) — the guided weekly-review ritual: walks the four weekly-note sections (Wins, Challenges, One Improvement, Next Week's Focus) and composes each interactively over the existing `upsert_weekly_section` seam. Non-interactive runs print the current note. (`review monthly` tracked in #228.)
+- **`--json` output** (#210) — a global `--json` flag emits machine-readable JSON on the daily-driver read verbs (`commitments`, `questions`, `status`, `orient`) for scripts and skills. `CommitmentSource` serialises as a homogeneous `{kind, slug}` shape matching the MCP DTO.
+- **`cdno lint --strict`** (#217) — warnings are non-fatal by default; `--strict` exits non-zero on any issue (errors always fail).
+
+### Changed
+
+- **Wikilink resolver: last-segment fallback** (#215) — a `[[actions/<slug>]]` reference now resolves after the note relocates within its tree (archived to `actions/_done/<year>/`, parked, or completed), via a unique last-path-segment stem match. Keeps resolution sound (a stem collision degrades to unresolved, never the wrong note) and removes the pervasive broken-wikilink noise that #205 surfaced.
+- **Surface reconciliation errors** (#207) — `open_vault` now prints startup-reconciliation errors to stderr instead of swallowing them, so a note that fails to index is visible rather than silently missing.
+
+### Fixed
+
+- **Commitments "4 sources" doc drift** (#214) — aligned the docs with the actual four-source aggregation (project milestones, stewardship periodic commitments, standalone commitments, and action `due:` dates).
+
+### Notes
+
+- MCP tool count: 29 → 40 (#200 +1, #204 +4, #213 +4, #208 +2).
+- `cdno lint --fix` (#211) was assessed and deferred: no current lint category is safely auto-fixable, so it would be a no-op today. Follow-ups filed for deferred scope: monthly note type + `review monthly` (#228), `--json` for list / show / search (#227), slug uniqueness (#225), `inquire::Editor` for review prose (#230).
+
 ## [0.1.13] - 2026-06-15
 
 Minor release: commitments can now record where they came from. `create_commitment` persists the optional `project` / `stewardship` origin links it previously dropped, and a project or stewardship can list the dated commitments that point at it. No new tools or commands; tool count unchanged (29).
