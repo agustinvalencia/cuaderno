@@ -207,3 +207,30 @@ fn inbox_creation_uses_a_custom_template_override() {
     );
     assert!(content.contains("a fleeting thought"), "body:\n{content}");
 }
+
+#[test]
+fn daily_anchor_follows_a_custom_templates_last_section() {
+    // PR B: the "keep last" anchor is the daily template's last section,
+    // not a hardcoded `## Logs`. A custom daily template ending in
+    // `## Reflection` keeps Reflection last even after a planning section
+    // is added later.
+    use cdno_domain::DailySection;
+    let custom =
+        "---\ntype: daily\ndate: {{date}}\n---\n\n# {{heading}}\n\n## Logs\n\n## Reflection\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+
+    let path = vault.log_to_daily_note(at, "did stuff").expect("log");
+    vault
+        .upsert_daily_section(today(), DailySection::Meeting, "sync notes", false)
+        .expect("upsert");
+
+    let content = store.read_file(&path).unwrap();
+    let reflection = content.find("## Reflection").expect("Reflection present");
+    let meeting = content.find("## Meeting").expect("Meeting present");
+    let logs = content.find("## Logs").expect("Logs present");
+    assert!(
+        reflection > meeting && reflection > logs,
+        "the custom template's last section (Reflection) should stay last:\n{content}"
+    );
+}

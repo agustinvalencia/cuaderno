@@ -72,9 +72,11 @@ impl Vault {
         };
         let mut doc = MarkdownDocument::parse(base)?;
         doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
-        // Keep the running history pinned to the bottom — and self-heal a
-        // note where it had already drifted up (#232).
-        doc.move_section_to_end(DAILY_LOGS_SECTION)?;
+        // Keep the trailing section pinned to the bottom — and self-heal a
+        // note where it had drifted up (#232). The anchor is the daily
+        // template's last section, so a custom template can pin something
+        // other than `## Logs` last (#212).
+        doc.move_section_to_end(&self.daily_anchor_section()?)?;
         let new_content = doc.render().to_owned();
 
         // Rebuild the index row from the new content so the committed
@@ -122,5 +124,24 @@ impl Vault {
         ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
         ctx.set_contextual("heading", date.format("%A, %-d %B %Y").to_string());
         self.scaffold("daily", None, &ctx)
+    }
+
+    /// The section kept pinned at the bottom of a daily note: the last
+    /// level-2 heading of the effective daily template. For the built-in
+    /// template that's `## Logs`; a custom `.cuaderno/templates/daily.md`
+    /// can designate a different trailing section (#212). Falls back to
+    /// `Logs` if the template has no `##` heading.
+    ///
+    /// Uses a simple line scan, so a `## ` inside a fenced code block in
+    /// a custom template would be mistaken for a heading — fine for the
+    /// plain section-list templates this is meant for.
+    pub(in crate::vault) fn daily_anchor_section(&self) -> Result<String, DomainError> {
+        let template = self.resolve_template_content("daily", None)?;
+        Ok(template
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix("## "))
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_else(|| DAILY_LOGS_SECTION.to_owned()))
     }
 }

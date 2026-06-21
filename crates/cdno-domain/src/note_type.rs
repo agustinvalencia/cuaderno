@@ -53,16 +53,22 @@ impl NoteType {
         }
     }
 
-    /// The canonical frontmatter key order for this note type, with
-    /// `type` first. This mirrors the field order each type's creation
-    /// produces — the file templates in `crates/cdno-domain/templates/`
-    /// and the in-code scaffolds for daily/weekly/inbox. Tests pin both
-    /// to this list so they can't drift: a file-sync test for the
-    /// single-file templates, and behavioural "fresh scaffold matches
-    /// frontmatter_order" tests for the code-scaffolded types. The
-    /// frontmatter normaliser (#233) reorders a note's known keys into
-    /// this order; keys not listed here (hand-added, type-specific
-    /// extras) keep their relative order after the known ones.
+    /// The canonical *built-in* frontmatter key order for this note type,
+    /// with `type` first. This mirrors the field order each type's
+    /// creation produces — the file templates in
+    /// `crates/cdno-domain/templates/` and the in-code scaffolds for
+    /// daily/weekly/inbox. Tests pin both to this list so they can't
+    /// drift: a file-sync test for the single-file templates, and
+    /// behavioural "fresh scaffold matches frontmatter_order" tests for
+    /// the code-scaffolded types.
+    ///
+    /// Since #212 the normaliser does *not* read this directly — it
+    /// derives a note's canonical order from the note's *effective*
+    /// template (a custom `.cuaderno/templates/` override, else the
+    /// built-in). On a vault with no custom templates the effective
+    /// template is the built-in, whose order equals this list (per the
+    /// sync test), so the two agree; this remains the built-in reference
+    /// and the drift guard for the code-based scaffolds.
     pub fn frontmatter_order(self) -> &'static [&'static str] {
         match self {
             NoteType::Daily => &["type", "date"],
