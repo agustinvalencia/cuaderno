@@ -12,6 +12,7 @@ use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
@@ -73,7 +74,9 @@ impl Vault {
         } else {
             // Fresh daily note: compose the scaffold with the first
             // log line already inside `## Logs`.
-            scaffold_daily_note(at.date(), &line)
+            let mut note = self.scaffold_daily_base(at.date())?;
+            note.push_str(&line);
+            note
         };
 
         // Rebuild the index row from the new content so the committed
@@ -104,26 +107,22 @@ fn format_log_line(time: NaiveTime, entry: &str) -> String {
     format!("- **{:02}:{:02}**: {}\n", time.hour(), time.minute(), entry,)
 }
 
-/// Base scaffold for a brand-new daily note: valid frontmatter
-/// (`type: daily`, satisfying the reconciliation contract), the date
-/// heading, and an empty `## Logs` section as a stable home for the
-/// first log line.
-///
-/// `pub(in crate::vault)` so `upsert_daily_section` can seed a fresh
-/// note when a planning section is written before any log line exists.
-pub(in crate::vault) fn scaffold_daily_note_base(date: NaiveDate) -> String {
-    format!(
-        "---\ntype: daily\ndate: {date}\n---\n\n# {heading}\n\n## {section}\n",
-        date = date.format("%Y-%m-%d"),
-        heading = date.format("%A, %-d %B %Y"),
-        section = DAILY_LOGS_SECTION,
-    )
-}
-
-/// Minimal scaffold for a brand-new daily note, pre-populated with the
-/// first log line inside `## Logs`.
-fn scaffold_daily_note(date: NaiveDate, first_log_line: &str) -> String {
-    let mut note = scaffold_daily_note_base(date);
-    note.push_str(first_log_line);
-    note
+impl Vault {
+    /// Base scaffold for a brand-new daily note: valid frontmatter
+    /// (`type: daily`), the date heading, and an empty `## Logs` section
+    /// as a stable home for the first log line. Rendered through the
+    /// template engine (#212), so a custom `.cuaderno/templates/daily.md`
+    /// takes effect.
+    ///
+    /// `pub(in crate::vault)` so `upsert_daily_section` can seed a fresh
+    /// note when a planning section is written before any log line exists.
+    pub(in crate::vault) fn scaffold_daily_base(
+        &self,
+        date: NaiveDate,
+    ) -> Result<String, DomainError> {
+        let mut ctx = VariableContext::new();
+        ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
+        ctx.set_contextual("heading", date.format("%A, %-d %B %Y").to_string());
+        self.scaffold("daily", None, &ctx)
+    }
 }

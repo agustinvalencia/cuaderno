@@ -144,3 +144,27 @@ fn created_notes_have_no_unsubstituted_placeholders() {
         );
     }
 }
+
+#[test]
+fn daily_creation_uses_a_custom_template_override() {
+    // daily/weekly/inbox are now template-driven too (#212 PR A2): a
+    // custom `.cuaderno/templates/daily.md` is honoured when the daily
+    // note is first created. It must keep a `## Logs` section — the log
+    // line is appended there.
+    let custom = "---\ntype: daily\ndate: {{date}}\n---\n\n# {{heading}}\n\nCUSTOM DAILY PREAMBLE\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("CUSTOM DAILY PREAMBLE"),
+        "custom daily used:\n{content}"
+    );
+    assert!(
+        content.contains("first entry"),
+        "log line appended into ## Logs:\n{content}"
+    );
+}
