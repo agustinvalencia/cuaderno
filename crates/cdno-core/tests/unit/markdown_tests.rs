@@ -333,3 +333,126 @@ fn multiple_operations_compose() {
     assert!(n.contains("- [ ] call Bob"));
     assert!(!n.contains("- [ ] call Alice"));
 }
+
+// ---------------------------------------------------------------------
+// move_section_to_end (#232 — keep `## Logs` last)
+// ---------------------------------------------------------------------
+
+const DRIFTED_DAILY: &str = "\
+---
+type: daily
+---
+# Monday
+
+## Logs
+- **09:00**: started
+- **10:00**: standup
+
+## Meeting
+notes from the meeting
+";
+
+#[test]
+fn move_section_to_end_moves_a_mid_note_section_below_later_ones() {
+    let mut doc = MarkdownDocument::parse(DRIFTED_DAILY).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let out = doc.render();
+
+    let meeting = out.find("## Meeting").expect("Meeting present");
+    let logs = out.find("## Logs").expect("Logs present");
+    assert!(meeting < logs, "Logs should now be last:\n{out}");
+    // Content of both sections preserved verbatim.
+    assert!(
+        out.contains("- **10:00**: standup"),
+        "log content kept:\n{out}"
+    );
+    assert!(
+        out.contains("notes from the meeting"),
+        "meeting kept:\n{out}"
+    );
+    // Heading appears exactly once (not duplicated by the move).
+    assert_eq!(out.matches("## Logs").count(), 1);
+}
+
+#[test]
+fn move_section_to_end_is_a_noop_when_already_last() {
+    let src = "---\ntype: daily\n---\n# Mon\n\n## Meeting\nm\n\n## Logs\n- x\n";
+    let mut doc = MarkdownDocument::parse(src).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(
+        doc.render(),
+        src,
+        "an already-last section is left byte-identical"
+    );
+}
+
+#[test]
+fn move_section_to_end_is_idempotent() {
+    let mut doc = MarkdownDocument::parse(DRIFTED_DAILY).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let once = doc.render().to_owned();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(
+        doc.render(),
+        once,
+        "moving an already-last section changes nothing"
+    );
+}
+
+#[test]
+fn move_section_to_end_is_a_noop_when_section_absent() {
+    let mut doc = MarkdownDocument::parse(SIMPLE_DOC).unwrap();
+    let before = doc.render().to_owned();
+    doc.move_section_to_end("Logs").unwrap();
+    assert_eq!(doc.render(), before, "absent section: nothing to move");
+}
+
+#[test]
+fn move_section_to_end_carries_nested_subheadings_and_body_verbatim() {
+    // The moved level-2 section owns its nested level-3 subsection;
+    // moving it must carry the `###` heading and the exact body text
+    // along, not just the `##` line. Multi-byte UTF-8 in the body
+    // guards the byte-range splice against off-by-one truncation.
+    let src = "\
+---
+type: daily
+---
+# Día
+
+## Logs
+- **09:00**: café ☕ — started
+
+### Detail
+nested — résumé
+
+## Meeting
+notes from the meeting
+";
+    let mut doc = MarkdownDocument::parse(src).unwrap();
+    doc.move_section_to_end("Logs").unwrap();
+    let out = doc.render();
+
+    let meeting = out.find("## Meeting").expect("Meeting present");
+    let logs = out.find("## Logs").expect("Logs present");
+    assert!(
+        meeting < logs,
+        "Logs (with its subheading) moved last:\n{out}"
+    );
+    // The nested `### Detail` travelled with its parent section, in order.
+    let nested = out.find("### Detail").expect("nested heading kept");
+    assert!(logs < nested, "### Detail stays under ## Logs:\n{out}");
+    // Bodies preserved verbatim, multi-byte intact.
+    assert!(
+        out.contains("- **09:00**: café ☕ — started"),
+        "log body verbatim:\n{out}"
+    );
+    assert!(
+        out.contains("nested — résumé"),
+        "nested body verbatim:\n{out}"
+    );
+    assert!(
+        out.contains("notes from the meeting"),
+        "meeting body kept:\n{out}"
+    );
+    assert_eq!(out.matches("## Logs").count(), 1, "heading not duplicated");
+}

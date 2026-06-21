@@ -38,6 +38,7 @@ use crate::frontmatter::{
 };
 use crate::note_type::NoteType;
 
+use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::ProjectSummary;
 
@@ -107,8 +108,6 @@ pub struct TrackingEntry {
     /// 200 chars so the output stays bounded.
     pub body_excerpt: String,
 }
-
-const DAILY_LOGS_SECTION: &str = "Logs";
 
 impl Vault {
     // -----------------------------------------------------------------

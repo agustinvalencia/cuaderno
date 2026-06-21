@@ -19,8 +19,7 @@ use crate::error::DomainError;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 
-/// The heading used for the log subsection in a daily note.
-const DAILY_LOGS_SECTION: &str = "Logs";
+use super::DAILY_LOGS_SECTION;
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.
@@ -67,6 +66,9 @@ impl Vault {
             let current = self.store.read_file(&path)?;
             let mut doc = MarkdownDocument::parse(current)?;
             doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
+            // Keep the running history pinned to the bottom — and
+            // self-heal a note where it had already drifted up (#232).
+            doc.move_section_to_end(DAILY_LOGS_SECTION)?;
             doc.render().to_owned()
         } else {
             // Fresh daily note: compose the scaffold with the first

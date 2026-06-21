@@ -193,3 +193,49 @@ fn daily_section_rejects_history_and_unknown_sections() {
     let err = DailySection::from_str("whatever").unwrap_err();
     assert!(err.contains("standup"), "error names the allowlist: {err}");
 }
+
+// --- #232: `## Logs` stays last ---------------------------------------
+
+#[test]
+fn upsert_daily_section_keeps_logs_last() {
+    // Log first (creates the note with `## Logs`), then add a planning
+    // section. Without the fix `ensure_section` appends `## Meeting`
+    // after `## Logs`; the invariant pins Logs back to the bottom.
+    let (vault, store) = make_vault();
+    vault
+        .log_to_daily_note(moment(), "morning log")
+        .expect("log creates the note");
+
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Meeting, "sync notes", false)
+        .expect("upsert succeeds");
+
+    let content = store.read_file(&path).unwrap();
+    let meeting = content.find("## Meeting").expect("Meeting present");
+    let logs = content.find("## Logs").expect("Logs present");
+    assert!(
+        meeting < logs,
+        "Logs must stay last after a planning section is added:\n{content}"
+    );
+}
+
+#[test]
+fn logging_self_heals_a_daily_with_drifted_logs() {
+    // A daily where `## Logs` already sits above a later `## Meeting`
+    // (the pre-fix state). The next log write should repair it.
+    let (vault, store) = make_vault();
+    let drifted = "---\ndate: 2026-04-26\ntype: daily\n---\n\n# Monday\n\n## Logs\n- **08:00**: earlier\n\n## Meeting\nnotes\n";
+    let path = cdno_core::path::VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    store.write_file(&path, drifted).unwrap();
+
+    vault
+        .log_to_daily_note(moment(), "new entry")
+        .expect("log into the drifted note");
+
+    let content = store.read_file(&path).unwrap();
+    let meeting = content.find("## Meeting").expect("Meeting present");
+    let logs = content.find("## Logs").expect("Logs present");
+    assert!(meeting < logs, "log write should pin Logs last:\n{content}");
+    assert!(content.contains("new entry"), "new log line kept");
+    assert!(content.contains("- **08:00**: earlier"), "prior log kept");
+}

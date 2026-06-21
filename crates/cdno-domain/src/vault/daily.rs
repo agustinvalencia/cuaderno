@@ -28,6 +28,7 @@ use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 
+use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::log::{daily_note_path, scaffold_daily_note_base};
@@ -121,9 +122,10 @@ impl Vault {
     /// exist, then `ensure_section` followed by either `replace_section`
     /// (`append: false` — the planning sections, idempotent overwrite)
     /// or `append_to_section` (`append: true` — live meeting notes that
-    /// accrue). The `## Logs` history is never touched: `ensure_section`
-    /// only ever *adds* a heading, and the write targets `section`'s
-    /// heading alone.
+    /// accrue). The `## Logs` history content is never clobbered — the
+    /// write targets `section`'s heading alone — and `move_section_to_end`
+    /// then pins `## Logs` back to the bottom so a planning section
+    /// created mid-day can't strand the history above it (#232).
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
@@ -149,6 +151,10 @@ impl Vault {
         } else {
             doc.replace_section(heading, &body)?;
         }
+        // A newly created planning section is appended at the end of
+        // the note, which would push the running history below it;
+        // pin `## Logs` back to the bottom (#232).
+        doc.move_section_to_end(DAILY_LOGS_SECTION)?;
         let new_content = doc.render().to_owned();
 
         let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
