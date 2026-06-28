@@ -1107,3 +1107,152 @@ fn file_attachment_escapes_angle_brackets_in_the_filename_link() {
     // so it doesn't terminate the destination early.
     assert!(raw.contains("a\\>b.pdf>)"), "escaped link dest:\n{raw}");
 }
+
+// ---------------------------------------------------------------------
+// portfolio <-> project links
+// ---------------------------------------------------------------------
+
+const PROJECT_NOTE: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate Model\n\n## Current State\nGoing.\n\n## Next Actions\n\n## Waiting On\n(nothing yet)\n\n## Milestones\n\n## Links\n- Portfolio: (none yet)\n";
+
+#[test]
+fn create_portfolio_backfills_the_project_links_section() {
+    let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+
+    vault
+        .create_portfolio(
+            dt(2026, 4, 26, 9, 0),
+            "Surrogate accuracy",
+            Some("projects/surrogate-model"),
+        )
+        .expect("create_portfolio");
+
+    let project = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        project.contains("- Portfolio: [[portfolios/surrogate-accuracy/_index]]"),
+        "project ## Links should list the portfolio:\n{project}"
+    );
+    assert!(
+        !project.contains("(none yet)"),
+        "the placeholder should be replaced:\n{project}"
+    );
+    // The portfolio still records the up direction in its frontmatter.
+    let portfolio = store
+        .read_file(&vp("portfolios/surrogate-accuracy/_index.md"))
+        .unwrap();
+    assert!(
+        portfolio.contains("project: \"[[projects/surrogate-model]]\""),
+        "portfolio frontmatter:\n{portfolio}"
+    );
+}
+
+#[test]
+fn create_portfolio_skips_backfill_when_project_note_is_absent() {
+    // A project target that doesn't resolve to a note must not fail the
+    // create — the portfolio is still made and its frontmatter link set.
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    let path = vault
+        .create_portfolio(
+            dt(2026, 4, 26, 9, 0),
+            "Orphan inquiry",
+            Some("projects/does-not-exist"),
+        )
+        .expect("create_portfolio succeeds without the project note");
+
+    assert!(store.read_file(&path).is_ok());
+    assert!(
+        store.read_file(&vp("projects/does-not-exist.md")).is_err(),
+        "no phantom project note should be created"
+    );
+}
+
+#[test]
+fn link_portfolio_to_project_sets_frontmatter_and_backfills_links() {
+    // A portfolio created without a project, linked after the fact.
+    let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+    vault
+        .create_portfolio(dt(2026, 4, 26, 9, 0), "Late link", None)
+        .expect("create_portfolio");
+
+    vault
+        .link_portfolio_to_project("late-link", "projects/surrogate-model")
+        .expect("link_portfolio_to_project");
+
+    let portfolio = store
+        .read_file(&vp("portfolios/late-link/_index.md"))
+        .unwrap();
+    assert!(
+        portfolio.contains("project: \"[[projects/surrogate-model]]\""),
+        "portfolio frontmatter set:\n{portfolio}"
+    );
+    let project = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        project.contains("- Portfolio: [[portfolios/late-link/_index]]"),
+        "project ## Links backfilled:\n{project}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_project_is_idempotent() {
+    let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+    vault
+        .create_portfolio(
+            dt(2026, 4, 26, 9, 0),
+            "Repeat link",
+            Some("projects/surrogate-model"),
+        )
+        .expect("create_portfolio");
+    // Re-link the same pair: no duplicate bullet, no error.
+    vault
+        .link_portfolio_to_project("repeat-link", "projects/surrogate-model")
+        .expect("re-link");
+
+    let project = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert_eq!(
+        project.matches("[[portfolios/repeat-link/_index]]").count(),
+        1,
+        "exactly one bullet after create + re-link:\n{project}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_project_errors_on_missing_portfolio() {
+    let (vault, _store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+    let err = vault
+        .link_portfolio_to_project("no-such-portfolio", "projects/surrogate-model")
+        .expect_err("missing portfolio must error");
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_project_errors_on_missing_project() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 4, 26, 9, 0), "Has portfolio", None)
+        .expect("create_portfolio");
+    let err = vault
+        .link_portfolio_to_project("has-portfolio", "projects/ghost")
+        .expect_err("missing project must error");
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn link_portfolio_to_project_rejects_a_bracketed_target() {
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_portfolio(dt(2026, 4, 26, 9, 0), "Bracket test", None)
+        .expect("create_portfolio");
+    let err = vault
+        .link_portfolio_to_project("bracket-test", "[[projects/x]]")
+        .expect_err("bracketed target must error");
+    assert!(
+        matches!(err, DomainError::MalformedWikilink { .. }),
+        "got {err:?}"
+    );
+}

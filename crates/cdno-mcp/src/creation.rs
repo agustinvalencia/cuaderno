@@ -41,7 +41,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project slug — resolve a real slug (e.g. via `get_orientation`) rather than inventing one; an unknown slug is written as a dangling link, not rejected. If a research/life question note already exists for the same `question` text, the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question (pass the question's text verbatim so the slugs match). Use `link_portfolio_to_question` to wire them when the slugs differ or the portfolio already exists."
+        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project — pass the bare wikilink target (e.g. `projects/surrogate-model`); resolve a real one (e.g. via `get_orientation`) rather than inventing it. When that project note exists, its `## Links` is backfilled with the portfolio in the same commit (and the portfolio's `project:` frontmatter is set either way); an unknown target sets the frontmatter only, not rejected. If a research/life question note already exists for the same `question` text, the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question (pass the question's text verbatim so the slugs match). Use `link_portfolio_to_question` / `link_portfolio_to_project` to wire them when the slugs differ or the portfolio already exists."
     )]
     pub async fn create_portfolio(
         &self,
@@ -74,6 +74,26 @@ impl CuadernoServer {
             format!(
                 "Linked portfolio '{}' to question '{}' ({})",
                 input.portfolio, input.question, path
+            ),
+        ))
+    }
+
+    #[tool(
+        description = "Link an existing portfolio to an existing project, writing both directions in one commit: the portfolio's `project:` frontmatter is set to `[[<project>]]` and the project map's `## Links` gains `[[portfolios/<slug>/_index]]` (replacing the `(none yet)` placeholder on the first link). `portfolio` is a slug; `project` is the bare wikilink target (e.g. `projects/surrogate-model`, no `[[ ]]`). Both must already exist. Use this to retrofit a portfolio created before its project, created without one, or whose `## Links` predates the auto-backfill; `create_portfolio` already backfills when a project is given. Idempotent — re-linking never duplicates the bullet."
+    )]
+    pub async fn link_portfolio_to_project(
+        &self,
+        Parameters(input): Parameters<LinkPortfolioToProjectInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let path = self
+            .vault
+            .link_portfolio_to_project(&input.portfolio, &input.project)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!(
+                "Linked portfolio '{}' to project '{}' ({})",
+                input.portfolio, input.project, path
             ),
         ))
     }

@@ -22,9 +22,10 @@ use cdno_mcp::server::{
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
     CompleteMilestoneInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, DiscardInboxItemInput,
-    FileToPortfolioInput, LinkPortfolioToQuestionInput, ProjectSlugInput, ReadDailyNoteInput,
-    ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
-    UpsertDailySectionInput, UpsertWeeklySectionInput,
+    FileToPortfolioInput, LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput,
+    ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
+    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -220,6 +221,59 @@ async fn link_portfolio_to_question_errors_on_missing_question() {
         }))
         .await
         .expect_err("missing question should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+}
+
+#[tokio::test]
+async fn link_portfolio_to_project_backfills_the_project_map() {
+    let (server, store) = server_with(|vault, _s| {
+        seed_active_project(vault); // projects/surrogate-model.md
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+            .unwrap();
+    });
+
+    let result = server
+        .link_portfolio_to_project(Parameters(LinkPortfolioToProjectInput {
+            portfolio: "sparse-vs-dense-ood".to_owned(),
+            project: "projects/surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("link_portfolio_to_project");
+
+    let value = decode_json(&result);
+    assert_eq!(
+        value["path"].as_str().unwrap(),
+        "projects/surrogate-model.md"
+    );
+    let project_body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        project_body.contains("- Portfolio: [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "project ## Links should list the portfolio:\n{project_body}"
+    );
+    let portfolio_body = store
+        .read_file(&vp("portfolios/sparse-vs-dense-ood/_index.md"))
+        .unwrap();
+    assert!(
+        portfolio_body.contains("project: \"[[projects/surrogate-model]]\""),
+        "portfolio frontmatter should record the project:\n{portfolio_body}"
+    );
+}
+
+#[tokio::test]
+async fn link_portfolio_to_project_errors_on_missing_project() {
+    let (server, _store) = server_with(|vault, _s| {
+        vault
+            .create_portfolio(moment(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+            .unwrap();
+    });
+    let err = server
+        .link_portfolio_to_project(Parameters(LinkPortfolioToProjectInput {
+            portfolio: "sparse-vs-dense-ood".to_owned(),
+            project: "projects/ghost".to_owned(),
+        }))
+        .await
+        .expect_err("missing project should error");
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
 

@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        40,
-        "expected the full catalogue: 38 prior + the #208 triage tools (triage_inbox, discard_inbox_item), got {}",
+        41,
+        "expected the full catalogue: 40 prior + link_portfolio_to_project (portfolio->project linking), got {}",
         tools.len()
     );
 }

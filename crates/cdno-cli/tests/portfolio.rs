@@ -131,6 +131,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
         PortfolioCommands::Link {
             portfolio: Some("sparse-vs-dense-ood".to_owned()),
             question: Some("where-does-the-budget-go".to_owned()),
+            project: None,
         },
         true,
     )
@@ -164,12 +165,70 @@ fn portfolio_link_errors_when_missing_question_in_non_interactive() {
         PortfolioCommands::Link {
             portfolio: Some("sparse-vs-dense-ood".to_owned()),
             question: None,
+            project: None,
         },
         true,
     )
-    .expect_err("missing --question should error");
+    .expect_err("missing both --question and --project should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("--question"), "error message: {msg}");
+}
+
+#[test]
+fn portfolio_link_to_project_backfills_the_project_map() {
+    // A standalone portfolio linked to an existing project via
+    // `portfolio link --project`.
+    let dir = vault();
+    seed_portfolio(dir.path()); // portfolios/sparse-vs-dense-ood
+    let project = dir.path().join("projects/surrogate-model.md");
+    fs::create_dir_all(project.parent().unwrap()).unwrap();
+    fs::write(
+        &project,
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate Model\n\n## Current State\nGoing.\n\n## Links\n- Portfolio: (none yet)\n",
+    )
+    .unwrap();
+
+    portfolio::run(
+        dir.path(),
+        moment(2026, 2, 2, 9, 0),
+        PortfolioCommands::Link {
+            portfolio: Some("sparse-vs-dense-ood".to_owned()),
+            question: None,
+            project: Some("projects/surrogate-model".to_owned()),
+        },
+        true,
+    )
+    .expect("link to project");
+
+    let project_raw = fs::read_to_string(&project).expect("project note exists");
+    assert!(
+        project_raw.contains("- Portfolio: [[portfolios/sparse-vs-dense-ood/_index]]"),
+        "project ## Links should list the portfolio:\n{project_raw}"
+    );
+    let portfolio_raw =
+        fs::read_to_string(dir.path().join("portfolios/sparse-vs-dense-ood/_index.md")).unwrap();
+    assert!(
+        portfolio_raw.contains("project: \"[[projects/surrogate-model]]\""),
+        "portfolio frontmatter should record the project:\n{portfolio_raw}"
+    );
+}
+
+#[test]
+fn portfolio_link_errors_when_both_question_and_project_given() {
+    let dir = vault();
+    seed_portfolio(dir.path());
+    let err = portfolio::run(
+        dir.path(),
+        moment(2026, 2, 1, 9, 0),
+        PortfolioCommands::Link {
+            portfolio: Some("sparse-vs-dense-ood".to_owned()),
+            question: Some("q".to_owned()),
+            project: Some("projects/p".to_owned()),
+        },
+        true,
+    )
+    .expect_err("both targets should error");
+    assert!(format!("{err:#}").contains("only one"), "error: {err:#}");
 }
 
 // ---------------------------------------------------------------------

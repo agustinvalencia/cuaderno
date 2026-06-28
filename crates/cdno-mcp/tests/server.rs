@@ -84,6 +84,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "create_project",
         "create_portfolio",
         "link_portfolio_to_question",
+        "link_portfolio_to_project",
         "create_question",
         "create_stewardship",
         // Lifecycle (4)
@@ -94,7 +95,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 40);
+    assert_eq!(tools.len(), 41);
 }
 
 #[test]

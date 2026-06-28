@@ -300,6 +300,19 @@ pub struct LinkPortfolioToQuestionInput {
     pub question: String,
 }
 
+/// Input for `link_portfolio_to_project` — retrofit an existing
+/// portfolio onto an existing project: sets the portfolio's `project:`
+/// frontmatter and appends it to the project map's `## Links`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LinkPortfolioToProjectInput {
+    /// Slug of the existing portfolio (the `portfolios/<slug>/` folder
+    /// name).
+    pub portfolio: String,
+    /// Bare wikilink target to the existing project note, e.g.
+    /// `projects/surrogate-model` (no `[[ ]]`).
+    pub project: String,
+}
+
 /// Input for `create_question` (GH #162).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateQuestionInput {
