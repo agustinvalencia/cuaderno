@@ -14,6 +14,13 @@ pub enum ConfigError {
         path: PathBuf,
         source: toml::de::Error,
     },
+
+    /// A pattern in the config `ignore` list failed to compile. Carries
+    /// a rendered message (globset's own, which names the offending
+    /// glob) rather than the foreign error type, so `globset` stays an
+    /// implementation detail of this crate.
+    #[error("invalid ignore glob: {0}")]
+    InvalidGlob(String),
 }
 
 /// Errors from VaultPath construction and validation.

@@ -29,6 +29,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # Markdown parsing
 pulldown-cmark = { version = "0.12", default-features = false }
 
+# Glob matching for the config `ignore` list. Compiles a set of
+# gitignore-style patterns into one matcher; kept behind cdno-core's
+# `IgnoreSet` newtype so the dependency never leaks into other crates.
+globset = "0.4"
+
 # SQLite index. The "bundled" feature ships its own libsqlite3 so
 # builds don't depend on the system library; upgrade path to the
 # r2d2-sqlite pool lives alongside, commented for future use.

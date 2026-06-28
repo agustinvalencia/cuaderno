@@ -95,7 +95,11 @@ impl Vault {
         index: Arc<dyn VaultIndex>,
         config: VaultConfig,
     ) -> Result<(Self, ReconciliationReport), DomainError> {
-        let report = reconcile(&store, &index)?;
+        // Compile the config `ignore` globs once and hand the matcher to
+        // reconciliation. A malformed pattern surfaces here, at vault
+        // open, rather than silently skipping the rule.
+        let ignore = config.ignore_set()?;
+        let report = reconcile(&store, &index, &ignore)?;
         Ok((
             Self {
                 store,

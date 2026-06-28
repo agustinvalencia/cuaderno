@@ -4,7 +4,8 @@
 //! every `Vault::new` (and can be re-run on demand). The algorithm is
 //! simple:
 //!
-//! 1. Walk every `.md` file in the vault.
+//! 1. Walk every `.md` file in the vault, minus any matching the
+//!    config `ignore` globs (passed in as a compiled [`IgnoreSet`]).
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -21,6 +22,7 @@ use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::config::IgnoreSet;
 use crate::error::IndexError;
 use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
@@ -45,6 +47,12 @@ pub struct ReconciliationReport {
     /// Index rows that had no corresponding filesystem file and were
     /// dropped (cascades facets).
     pub removed: usize,
+    /// Markdown files excluded from this pass by the config `ignore`
+    /// globs (#242). Surfaced so an over-broad pattern (a stray `**`)
+    /// that drops notes from search/lint/backlinks is observable rather
+    /// than a silent retrieval blackout — the files themselves are never
+    /// touched, and clearing the glob then reindexing restores every row.
+    pub ignored: usize,
     /// Notes present in the `notes` table but absent from the FTS index
     /// that were backfilled this pass. Non-zero on the first reconcile
     /// after the FTS migration (or after the index is dropped), when the
@@ -73,6 +81,7 @@ pub struct ReconciliationIssue {
 pub fn reconcile(
     store: &Arc<dyn VaultStore>,
     index: &Arc<dyn VaultIndex>,
+    ignore: &IgnoreSet,
 ) -> Result<ReconciliationReport, IndexError> {
     let mut report = ReconciliationReport::default();
 
@@ -82,7 +91,7 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    let fs_md_paths: Vec<VaultPath> = all_fs_paths
+    let candidate_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
         // `.cuaderno/` is the vault's meta directory — config,
@@ -91,6 +100,22 @@ pub fn reconcile(
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
         .collect();
+    // Config `ignore` globs (#242): user-declared non-vault docs (e.g.
+    // CLAUDE.md, README.md) that live in the vault dir but aren't notes.
+    // Excluding them here is the single enforcement point — a path absent
+    // from the index is also absent from lint (index-driven) and search.
+    // A file that was indexed before becoming ignored falls out via
+    // Phase 2's orphan removal, since it's no longer in `fs_set`.
+    //
+    // Partition rather than filter so the excluded count is reported: an
+    // over-broad pattern silently evicting notes from retrieval is the
+    // feature's sharpest footgun, so the number must be observable. The
+    // files are never touched; clearing the glob and reindexing restores
+    // every row.
+    let (ignored_paths, fs_md_paths): (Vec<VaultPath>, Vec<VaultPath>) = candidate_md_paths
+        .into_iter()
+        .partition(|p| ignore.is_match(p.as_path()));
+    report.ignored = ignored_paths.len();
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 
     // Phase 1: walk the filesystem, ensure every `.md` is correctly

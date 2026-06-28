@@ -47,6 +47,26 @@ fn new_vault_on_empty_store_produces_empty_report() {
 }
 
 #[test]
+fn new_vault_rejects_a_malformed_ignore_glob() {
+    // A bad pattern surfaces at vault-open as DomainError::Config, not a
+    // panic or a silently-skipped rule — exercising the real
+    // config.ignore_set()? wiring in Vault::new, not just IgnoreSet in
+    // isolation.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let config = VaultConfig {
+        ignore: vec!["a[".to_string()],
+        ..Default::default()
+    };
+    // `Vault` isn't Debug, so match rather than expect_err.
+    match Vault::new(store, index, config) {
+        Err(cdno_domain::error::DomainError::Config(_)) => {}
+        Err(other) => panic!("expected DomainError::Config, got: {other:?}"),
+        Ok(_) => panic!("expected malformed glob to fail Vault::new"),
+    }
+}
+
+#[test]
 fn log_to_daily_note_creates_missing_file_with_logs_section() {
     let (vault, store, _index) = make_vault();
 

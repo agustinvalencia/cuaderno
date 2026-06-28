@@ -8,6 +8,19 @@
 name = "My Vault"
 max_active_projects = 5
 
+# ignore — glob patterns for files to keep out of the index (and so out
+# of reconciliation, search, and lint). Matched against each file's
+# vault-relative path: `*` stays within one path segment, `**` spans
+# segments, and a bare name is anchored to the vault root (use
+# `**/name.md` to match at any depth). Patterns are additive only — `!`
+# negation is not supported. Empty by default; markdown is the source of
+# truth, so nothing is dropped unless you list it. Meant for repo
+# scaffolding that isn't a note — ignoring a real note hides it from
+# search/lint/backlinks. Exclusion never deletes: the file stays on disk
+# and returns once you remove the pattern and `cdno reindex`.
+#
+# ignore = ["CLAUDE.md", "README.md"]
+
 # [schemas.<note-type>] — extend the built-in schema with vault-specific
 # required frontmatter fields. One section per note type.
 #

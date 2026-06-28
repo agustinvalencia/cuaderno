@@ -1,5 +1,5 @@
 use cdno_core::error::{
-    IndexError, ManipulationError, ParseError, PathError, StoreError, TemplateError,
+    ConfigError, IndexError, ManipulationError, ParseError, PathError, StoreError, TemplateError,
     TransactionError, ValidationError,
 };
 
@@ -105,4 +105,7 @@ pub enum DomainError {
 
     #[error(transparent)]
     Template(#[from] TemplateError),
+
+    #[error(transparent)]
+    Config(#[from] ConfigError),
 }

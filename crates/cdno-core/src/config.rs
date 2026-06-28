@@ -1,3 +1,4 @@
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -13,6 +14,26 @@ pub struct VaultConfig {
     pub schemas: HashMap<String, SchemaExtension>,
     #[serde(default)]
     pub variables: Variables,
+    /// Glob patterns for files to exclude from the index (and therefore
+    /// from reconciliation, search, and lint). Matched against each
+    /// file's vault-relative path: `*` matches within one path segment,
+    /// `**` matches across segments, and a bare name like `CLAUDE.md` is
+    /// anchored to the vault root — use `**/CLAUDE.md` to match at any
+    /// depth. Patterns are additive only; `!`-negation / re-inclusion is
+    /// not supported, and a leading `/` does not anchor (paths are
+    /// already root-relative).
+    ///
+    /// Empty by default: nothing is ignored unless explicitly listed,
+    /// since markdown is the source of truth and silently dropping a note
+    /// would be data loss to retrieval. Intended for fencing off repo
+    /// scaffolding that lives in the vault dir but isn't a note —
+    /// `CLAUDE.md`, `README.md`. Ignoring a *real* note is supported but
+    /// discouraged: it disappears from search, lint, backlinks, and the
+    /// active-project count, with no per-file warning. Exclusion never
+    /// deletes anything — the file stays on disk and reappears the moment
+    /// the pattern is removed and the vault is reindexed.
+    #[serde(default)]
+    pub ignore: Vec<String>,
 }
 
 /// The `[vault]` section — basic vault metadata.
@@ -102,5 +123,60 @@ impl VaultConfig {
     /// Returns the prompt message for a prompted variable, if defined.
     pub fn prompt_for_variable(&self, name: &str) -> Option<&str> {
         self.variables.prompt.get(name).map(String::as_str)
+    }
+
+    /// Compile the `ignore` glob list into a matcher. Returns an error
+    /// if any pattern is malformed — surfaced at vault-open time rather
+    /// than silently ignoring an unparseable rule.
+    pub fn ignore_set(&self) -> Result<IgnoreSet, ConfigError> {
+        IgnoreSet::compile(&self.ignore)
+    }
+}
+
+/// A compiled set of `ignore` globs, matched against vault-relative
+/// paths during reconciliation. Wraps `globset` so that dependency
+/// stays an implementation detail of this crate — callers construct an
+/// `IgnoreSet` and never name `GlobSet` themselves.
+#[derive(Debug, Clone)]
+pub struct IgnoreSet {
+    set: GlobSet,
+}
+
+impl IgnoreSet {
+    /// An ignore set that matches nothing — the default when a vault
+    /// configures no `ignore` patterns, and what tests use to assert
+    /// the unchanged-by-default behaviour.
+    pub fn empty() -> Self {
+        Self {
+            set: GlobSet::empty(),
+        }
+    }
+
+    /// Compile a list of glob patterns into a matcher over vault-relative
+    /// paths. `literal_separator(true)` gives gitignore-ish semantics:
+    /// `*` and `?` stay within a single path segment and `**` is the
+    /// explicit recursive operator. globset's default lets `*` cross `/`,
+    /// which would make `ignore = ["*.md"]` silently swallow every note
+    /// in the vault — data loss to retrieval, the very thing the empty
+    /// default guards against. A malformed pattern is rendered to a
+    /// message so the foreign error type doesn't leak past this crate.
+    pub fn compile(patterns: &[String]) -> Result<Self, ConfigError> {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in patterns {
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| ConfigError::InvalidGlob(e.to_string()))?;
+            builder.add(glob);
+        }
+        let set = builder
+            .build()
+            .map_err(|e| ConfigError::InvalidGlob(e.to_string()))?;
+        Ok(Self { set })
+    }
+
+    /// Whether `path` (vault-relative) matches any ignore glob.
+    pub fn is_match(&self, path: &Path) -> bool {
+        self.set.is_match(path)
     }
 }

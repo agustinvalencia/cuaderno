@@ -32,6 +32,29 @@ fn lint_returns_empty_report_for_empty_vault() {
 }
 
 #[test]
+fn lint_skips_an_ignored_file() {
+    // A note that lint would otherwise flag (unknown type, see
+    // `lint_flags_a_note_with_an_unknown_type` for the un-ignored
+    // counterpart). With its path in `ignore` it never enters the index,
+    // so lint never sees it — proving the config `ignore` exclusion
+    // reaches lint, not just the reconciler.
+    let body = "---\ntype: bogus\ntitle: Mystery\n---\n# Body\n";
+    let config = VaultConfig {
+        ignore: vec!["scratch.md".to_string()],
+        ..Default::default()
+    };
+    let vault = vault_with_notes(&[("scratch.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(
+        report.is_clean(),
+        "an ignored file must not be linted: {:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn lint_passes_for_a_valid_note_with_a_known_type() {
     let body = "---\ntype: daily\ntitle: A clean note\n---\n# Body\n";
     let vault = vault_with_notes(&[("note.md", body)], VaultConfig::default());
