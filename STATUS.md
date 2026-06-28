@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.17 (2026-06-28). The CLI is daily-usable end-to-end and the MCP server is production-ready (40 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.17 is a small hardening release: `cdno lint` now warns on frontmatter-order drift — keys not in the canonical per-type order (the order `cdno normalise` would apply), a `Warning` that `cdno lint --strict` / CI can gate on (#236). It follows v0.1.16 (config `ignore` globs #242, daily `{{weekday}}` variable #244, weekly `This Week's Goal` rename #245). No new MCP tools (40); no CLI surface changes. See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
+**Current release**: 0.1.18 (2026-06-28). The CLI is daily-usable end-to-end and the MCP server is production-ready (40 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.18 is a weekly-review ergonomics + speedup release: `cdno review weekly`'s prose sections (Wins, Challenges) now open in `$EDITOR` pre-seeded with their current content for in-place editing (#230), and `cdno lint` / `cdno normalise` resolve each note type's effective template once per pass instead of per note (#248, internal — no behaviour change). It follows v0.1.17 (frontmatter-order lint #236) and v0.1.16 (config `ignore` globs #242, daily `{{weekday}}` #244, weekly `This Week's Goal` rename #245). No new MCP tools (40); no new CLI commands. See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
 
 ## Phase summary
 
