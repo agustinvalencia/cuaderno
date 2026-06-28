@@ -623,6 +623,37 @@ async fn upsert_weekly_section_writes_a_review_section() {
 }
 
 #[tokio::test]
+async fn upsert_weekly_section_accepts_the_deprecated_next_weeks_focus_alias() {
+    // Back-compat at the real caller boundary: a pre-rename caller passing
+    // the old section name must land content under the new
+    // `## This Week's Goal` heading and must NOT create a stray
+    // `## Next Week's Focus`. The `from_str` unit test alone doesn't prove
+    // the heading routing through the MCP operation.
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .upsert_weekly_section(Parameters(UpsertWeeklySectionInput {
+            section: "Next Week's Focus".to_owned(),
+            content: "Book the vacation.".to_owned(),
+            date: Some(week_day()),
+            append: false,
+        }))
+        .await
+        .expect("upsert via deprecated alias");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(
+        body.contains("## This Week's Goal\nBook the vacation."),
+        "alias should route to the renamed heading:\n{body}"
+    );
+    assert!(
+        !body.contains("## Next Week's Focus"),
+        "alias must not write the old heading:\n{body}"
+    );
+}
+
+#[tokio::test]
 async fn upsert_weekly_section_rejects_an_unknown_section() {
     let (server, _store) = server_with(|_v, _s| {});
 

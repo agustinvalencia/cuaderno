@@ -49,9 +49,18 @@ fn weekly_section_parses_case_and_punctuation_insensitively() {
         WeeklySection::ThisWeeksGoal
     );
     // The former name is kept as a deprecated alias; it resolves to the
-    // renamed section so pre-rename callers don't hard-fail.
+    // renamed section so pre-rename callers don't hard-fail — including
+    // the hyphen/underscore-normalised forms.
     assert_eq!(
         WeeklySection::from_str("Next Week's Focus").unwrap(),
+        WeeklySection::ThisWeeksGoal
+    );
+    assert_eq!(
+        WeeklySection::from_str("next-weeks-focus").unwrap(),
+        WeeklySection::ThisWeeksGoal
+    );
+    assert_eq!(
+        WeeklySection::from_str("next_weeks_focus").unwrap(),
         WeeklySection::ThisWeeksGoal
     );
 }
@@ -111,6 +120,45 @@ fn upsert_scaffolds_the_note_with_iso_week_frontmatter_and_four_sections() {
     assert!(raw.contains("## Challenges"), "{raw}");
     assert!(raw.contains("## One Improvement"), "{raw}");
     assert!(raw.contains("## This Week's Goal"), "{raw}");
+    // ...in canonical ritual order (the goal anchors the bottom).
+    let wins = raw.find("## Wins").unwrap();
+    let challenges = raw.find("## Challenges").unwrap();
+    let improvement = raw.find("## One Improvement").unwrap();
+    let goal = raw.find("## This Week's Goal").unwrap();
+    assert!(
+        wins < challenges && challenges < improvement && improvement < goal,
+        "sections out of order:\n{raw}"
+    );
+}
+
+#[test]
+fn carry_forward_goal_lands_in_the_following_weeks_note() {
+    // The review ritual writes the retrospective into the ending week's
+    // note and the forward goal into NEXT week's note (today + 7 days,
+    // the same step `cdno review weekly` takes). Prove the two land in
+    // distinct, correctly-placed ISO-week notes — the separation the
+    // carry-forward depends on.
+    let (vault, _store) = make_vault();
+    let next_week = midweek() + chrono::Duration::days(7); // 2026-W18 -> W19
+
+    let retro = vault
+        .upsert_weekly_section(midweek(), WeeklySection::Wins, "- shipped it", false)
+        .unwrap();
+    let goal = vault
+        .upsert_weekly_section(
+            next_week,
+            WeeklySection::ThisWeeksGoal,
+            "book vacation",
+            false,
+        )
+        .unwrap();
+
+    assert!(retro.to_string().ends_with("2026-W18.md"), "retro: {retro}");
+    assert!(goal.to_string().ends_with("2026-W19.md"), "goal: {goal}");
+    assert_ne!(
+        retro, goal,
+        "retrospective and forward goal must be different notes"
+    );
 }
 
 #[test]

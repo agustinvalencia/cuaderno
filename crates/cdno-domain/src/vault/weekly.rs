@@ -91,8 +91,8 @@ impl FromStr for WeeklySection {
             "challenges" => Ok(WeeklySection::Challenges),
             "one improvement" => Ok(WeeklySection::OneImprovement),
             "this weeks goal" => Ok(WeeklySection::ThisWeeksGoal),
-            // Deprecated alias from before the rename (#…); maps to the
-            // same section so existing automation keeps working.
+            // Deprecated alias from before the rename; maps to the same
+            // section so existing automation keeps working.
             "next weeks focus" => Ok(WeeklySection::ThisWeeksGoal),
             other => Err(format!(
                 "unknown weekly section '{other}' (expected one of: \
