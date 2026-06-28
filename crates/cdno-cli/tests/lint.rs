@@ -31,6 +31,27 @@ fn lint_returns_err_when_a_note_has_an_unknown_type() {
 }
 
 #[test]
+fn lint_warns_on_frontmatter_order_drift_and_strict_makes_it_fatal() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    // Canonical daily order is `type` then `date`; this note reverses
+    // them, so it drifts. (Frontmatter is valid, so it's a warning.)
+    let daily = dir.path().join("journal/2026/daily/2026-04-19.md");
+    fs::create_dir_all(daily.parent().unwrap()).unwrap();
+    fs::write(&daily, "---\ndate: 2026-04-19\ntype: daily\n---\n# Note\n").unwrap();
+
+    // Non-strict: a warning is non-fatal, so lint still succeeds.
+    lint::run(dir.path(), false).expect("order drift is non-fatal without --strict");
+
+    // --strict: the warning becomes a failure.
+    let err = lint::run(dir.path(), true).expect_err("strict lint should fail on the drift");
+    assert!(
+        format!("{err}").contains("1 warning(s)"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn lint_errors_when_target_is_not_a_vault() {
     let dir = tempdir().unwrap();
 

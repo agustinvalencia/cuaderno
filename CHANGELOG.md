@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **Lint rule: frontmatter-order drift** (#236) — `cdno lint` now warns when a note's frontmatter keys aren't in the canonical per-type order (the same order `cdno normalise` would apply, derived from the effective template). It's a `Warning` — the note is valid, just untidy — so `cdno lint --strict` / CI catches drift without a separate command, and `cdno normalise` fixes it. Surfaced over MCP for free through the existing `lint` tool; `normalise` itself stays CLI-only for now.
+
 ## [0.1.16] - 2026-06-28
 
 Backlog-hardening plus a template fix: a config `ignore` glob list, the daily `{{weekday}}` variable, and the weekly note's anchor-section rename. No new MCP tools (40); `cdno reindex` gains an excluded-files count line.
