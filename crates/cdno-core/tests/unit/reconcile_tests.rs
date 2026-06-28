@@ -1049,6 +1049,16 @@ fn newly_ignored_file_is_removed_from_index_as_orphan() {
     let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
     assert_eq!(report.removed, 1);
     assert!(index.find_by_path(&vp("README.md")).unwrap().is_none());
+    // Phase 2's remove_note cascades to the FTS row too, so the ignored
+    // note also leaves the search index — the guarantee that backs
+    // "absent from search". (The cascade happens in Phase 2, not the
+    // Phase-3 FTS-heal, so report.fts_removed stays 0 here.)
+    assert!(
+        !index
+            .fts_indexed_paths()
+            .unwrap()
+            .contains(&vp("README.md"))
+    );
     assert!(
         index
             .find_by_path(&vp("projects/cuaderno.md"))
@@ -1066,6 +1076,7 @@ fn ignore_glob_matches_nested_paths_with_doublestar() {
     let ignore = IgnoreSet::compile(&["**/*.draft.md".to_string()]).unwrap();
     let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
     assert_eq!(report.scanned, 1);
+    assert!(report.errors.is_empty());
     assert!(
         index
             .find_by_path(&vp("inbox/scratch.draft.md"))
@@ -1078,6 +1089,81 @@ fn ignore_glob_matches_nested_paths_with_doublestar() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn ignore_literal_is_root_anchored_and_does_not_cross_segments() {
+    // A bare-name pattern matches only at the vault root, and (with
+    // literal_separator) `*` does not cross `/`. This pins the
+    // gitignore-ish semantics the docs promise: `*.md` must NOT swallow
+    // nested notes, and `CLAUDE.md` must NOT match `projects/CLAUDE.md`.
+    let (store, index) = fixtures();
+    seed_note(&store, "CLAUDE-notes.md", "zettel", "");
+    seed_note(&store, "projects/CLAUDE-notes.md", "project", "");
+    seed_note(&store, "inbox/scratch.md", "zettel", "");
+
+    // `CLAUDE-notes.md` (root-anchored) + `*.md` (single segment only).
+    let ignore = IgnoreSet::compile(&["CLAUDE-notes.md".to_string(), "*.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+
+    // Both root-level files dropped; both nested ones survive — `*.md`
+    // and the bare name stayed at the root.
+    assert!(
+        index
+            .find_by_path(&vp("CLAUDE-notes.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        index
+            .find_by_path(&vp("projects/CLAUDE-notes.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        index
+            .find_by_path(&vp("inbox/scratch.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(report.scanned, 2);
+}
+
+#[test]
+fn ignore_applies_every_pattern_in_the_set() {
+    // The whole point of a GlobSet is multiple patterns; confirm each
+    // one is live, not just the first.
+    let (store, index) = fixtures();
+    seed_note(&store, "CLAUDE.md", "zettel", "");
+    seed_note(&store, "README.md", "zettel", "");
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+
+    let ignore = IgnoreSet::compile(&["CLAUDE.md".to_string(), "README.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert_eq!(report.scanned, 1);
+    assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
+    assert!(index.find_by_path(&vp("README.md")).unwrap().is_none());
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn ignore_pattern_matching_nothing_leaves_the_vault_intact() {
+    // A pattern that matches no file must not perturb the index — guards
+    // against an over-broad matcher silently dropping notes.
+    let (store, index) = fixtures();
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+    seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
+
+    let ignore = IgnoreSet::compile(&["nonexistent/**".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert_eq!(report.scanned, 2);
+    assert_eq!(report.added, 2);
+    assert!(report.errors.is_empty());
 }
 
 #[test]

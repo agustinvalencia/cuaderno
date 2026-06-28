@@ -39,8 +39,51 @@ fn vault_with(notes: &[(&str, String)]) -> Vault {
     vault
 }
 
+/// Same as [`vault_with`] but with a caller-supplied config — used to
+/// exercise the `ignore` list's effect on search.
+fn vault_with_config(notes: &[(&str, String)], config: VaultConfig) -> Vault {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, content) in notes {
+        store.write_file(&vp(path), content).unwrap();
+    }
+    let (vault, _report) = Vault::new(store, index, config).expect("Vault::new");
+    vault
+}
+
 fn date(y: i32, m: u32, d: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
+
+#[test]
+fn search_does_not_surface_an_ignored_note() {
+    // Two notes share a unique term; one path is in `ignore`. Search
+    // must return only the un-ignored note — proving the config `ignore`
+    // exclusion reaches search (its FTS row was never indexed), not just
+    // the reconciler.
+    let config = VaultConfig {
+        ignore: vec!["inbox/secret.md".to_string()],
+        ..Default::default()
+    };
+    let vault = vault_with_config(
+        &[
+            (
+                "inbox/secret.md",
+                note("inbox", "Secret", "zentangle marginalia"),
+            ),
+            (
+                "inbox/public.md",
+                note("inbox", "Public", "zentangle marginalia"),
+            ),
+        ],
+        config,
+    );
+
+    let hits = vault
+        .search("zentangle", &SearchFilters::default(), 10)
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, vp("inbox/public.md"));
 }
 
 #[test]

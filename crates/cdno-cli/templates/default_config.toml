@@ -10,9 +10,11 @@ max_active_projects = 5
 
 # ignore — glob patterns for files to keep out of the index (and so out
 # of reconciliation, search, and lint). Matched against each file's
-# vault-relative path, gitignore-style `**`. Empty by default; markdown
-# is the source of truth, so nothing is dropped unless you list it.
-# Typical use is fencing off repo scaffolding that isn't a note.
+# vault-relative path: `*` stays within one path segment, `**` spans
+# segments, and a bare name is anchored to the vault root (use
+# `**/name.md` to match at any depth). Empty by default; markdown is the
+# source of truth, so nothing is dropped unless you list it. Typical use
+# is fencing off repo scaffolding that isn't a note.
 #
 # ignore = ["CLAUDE.md", "README.md"]
 

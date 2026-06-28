@@ -1,4 +1,4 @@
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -16,11 +16,14 @@ pub struct VaultConfig {
     pub variables: Variables,
     /// Glob patterns for files to exclude from the index (and therefore
     /// from reconciliation, search, and lint). Matched against each
-    /// file's vault-relative path. Empty by default: nothing is ignored
-    /// unless explicitly listed, since markdown is the source of truth
-    /// and silently dropping a note would be data loss to retrieval.
-    /// Typical use is fencing off repo scaffolding that lives in the
-    /// vault dir but isn't a note — `CLAUDE.md`, `README.md`.
+    /// file's vault-relative path: `*` matches within one path segment,
+    /// `**` matches across segments, and a bare name like `CLAUDE.md` is
+    /// anchored to the vault root — use `**/CLAUDE.md` to match at any
+    /// depth. Empty by default: nothing is ignored unless explicitly
+    /// listed, since markdown is the source of truth and silently
+    /// dropping a note would be data loss to retrieval. Typical use is
+    /// fencing off repo scaffolding that lives in the vault dir but isn't
+    /// a note — `CLAUDE.md`, `README.md`.
     #[serde(default)]
     pub ignore: Vec<String>,
 }
@@ -141,16 +144,27 @@ impl IgnoreSet {
         }
     }
 
-    /// Compile a list of glob patterns. Gitignore-style `**` semantics;
-    /// each pattern is matched against a file's vault-relative path.
+    /// Compile a list of glob patterns into a matcher over vault-relative
+    /// paths. `literal_separator(true)` gives gitignore-ish semantics:
+    /// `*` and `?` stay within a single path segment and `**` is the
+    /// explicit recursive operator. globset's default lets `*` cross `/`,
+    /// which would make `ignore = ["*.md"]` silently swallow every note
+    /// in the vault — data loss to retrieval, the very thing the empty
+    /// default guards against. A malformed pattern is rendered to a
+    /// message so the foreign error type doesn't leak past this crate.
     pub fn compile(patterns: &[String]) -> Result<Self, ConfigError> {
         let mut builder = GlobSetBuilder::new();
         for pattern in patterns {
-            builder.add(Glob::new(pattern)?);
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| ConfigError::InvalidGlob(e.to_string()))?;
+            builder.add(glob);
         }
-        Ok(Self {
-            set: builder.build()?,
-        })
+        let set = builder
+            .build()
+            .map_err(|e| ConfigError::InvalidGlob(e.to_string()))?;
+        Ok(Self { set })
     }
 
     /// Whether `path` (vault-relative) matches any ignore glob.

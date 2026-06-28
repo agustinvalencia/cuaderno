@@ -93,7 +93,7 @@ pub fn reconcile(
         // not notes; indexing them would mean e.g. the dumped daily
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
-        // Config `ignore` globs (#config-ignore-glob): user-declared
+        // Config `ignore` globs (#242): user-declared
         // non-vault docs (e.g. CLAUDE.md, README.md) that live in the
         // vault dir but aren't notes. Excluding them here is the single
         // enforcement point — a path absent from the index is also
