@@ -11,6 +11,7 @@
 //! templates define the order); this is for hand-authored or migrated
 //! notes, so it shouldn't churn diffs unless asked.
 
+use std::collections::HashMap;
 use std::str::FromStr;
 
 use cdno_core::frontmatter::Frontmatter;
@@ -58,6 +59,9 @@ impl Vault {
             Some(self.transaction()?)
         };
 
+        // Memoise canonical order per (type, variant) for this pass (#248).
+        let mut order_cache: HashMap<(NoteType, Option<String>), Vec<String>> = HashMap::new();
+
         for path in paths {
             // A concurrent writer could drop the note between listing
             // and lookup; treat that as nothing-to-do.
@@ -78,7 +82,7 @@ impl Vault {
                 }
             };
 
-            let order = self.canonical_frontmatter_order(note_type, &raw)?;
+            let order = self.canonical_frontmatter_order(note_type, &raw, &mut order_cache)?;
 
             let Some(new_raw) = reorder_frontmatter(&raw, &order) else {
                 continue; // no frontmatter, or already canonical
@@ -107,10 +111,20 @@ impl Vault {
     ///
     /// Shared by `normalise_notes` (which reorders to this) and the lint
     /// frontmatter-order rule (#236, which flags deviation from it).
+    ///
+    /// `cache` memoises the resolved order per `(type, variant)` for the
+    /// duration of one pass (#248): templates only change between
+    /// processes, so resolving the effective template — which rebuilds a
+    /// `TemplateEngine` and stats/reads the custom template — once per
+    /// distinct key rather than once per note avoids O(notes) redundant
+    /// filesystem work on a large vault. Only successful resolutions are
+    /// cached; the rare resolution error (an unreadable custom template)
+    /// keeps its existing per-note behaviour.
     pub(in crate::vault) fn canonical_frontmatter_order(
         &self,
         note_type: NoteType,
         raw: &str,
+        cache: &mut HashMap<(NoteType, Option<String>), Vec<String>>,
     ) -> Result<Vec<String>, DomainError> {
         let variant = if note_type == NoteType::Tracking {
             Frontmatter::parse(raw)
@@ -119,8 +133,14 @@ impl Vault {
         } else {
             None
         };
-        let template = self.resolve_template_content(note_type.as_str(), variant.as_deref())?;
-        Ok(frontmatter_key_order(&template))
+        let key = (note_type, variant);
+        if let Some(order) = cache.get(&key) {
+            return Ok(order.clone());
+        }
+        let template = self.resolve_template_content(note_type.as_str(), key.1.as_deref())?;
+        let order = frontmatter_key_order(&template);
+        cache.insert(key, order.clone());
+        Ok(order)
     }
 }
 

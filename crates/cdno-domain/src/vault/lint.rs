@@ -1,6 +1,6 @@
 //! `Vault::lint_all_notes`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Component;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -45,6 +45,11 @@ impl Vault {
         // Built once and shared across every note's link check.
         let paths = self.index.list_all_paths()?;
         let path_set: HashSet<VaultPath> = paths.iter().cloned().collect();
+
+        // Memoise canonical frontmatter order per (type, variant) for this
+        // pass so the effective template is resolved once per key, not once
+        // per note (#248).
+        let mut order_cache: HashMap<(NoteType, Option<String>), Vec<String>> = HashMap::new();
 
         for path in paths {
             // A concurrent writer could remove a note between the
@@ -182,7 +187,7 @@ impl Vault {
             // same order `normalise` would apply, so lint and the fixer
             // never disagree. A broken template surfaces as an Error
             // rather than aborting the whole pass.
-            match self.canonical_frontmatter_order(note_type, &content) {
+            match self.canonical_frontmatter_order(note_type, &content, &mut order_cache) {
                 Ok(order) => {
                     if super::normalise::reorder_frontmatter(&content, &order).is_some() {
                         issues.push(LintIssue::warning(

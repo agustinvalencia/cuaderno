@@ -266,3 +266,42 @@ fn normalise_places_a_custom_template_field_in_template_position() {
         "the added `author` field should land in template position:\n{out}"
     );
 }
+
+#[test]
+fn normalise_memoises_order_per_variant_not_per_type() {
+    // Two tracking notes of *different* variants in one pass must each
+    // follow their own variant template's order. Guards that the #248
+    // per-pass memo keys on (type, variant), not type alone — which
+    // would hand the second note the first variant's order. Uses custom
+    // variant templates whose orders differ mid-sequence (activity vs
+    // stewardship swapped), since the built-in variants differ only by
+    // trailing keys and so can't discriminate.
+    let gym_tmpl = "---\ntype: tracking\nactivity: gym\nstewardship: {{stewardship}}\ndate: {{date}}\n---\n# Gym\n";
+    let swim_tmpl = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: swim\ndate: {{date}}\n---\n# Swim\n";
+    // Both notes scrambled (date first); distinct activities.
+    let gym =
+        "---\ndate: 2026-04-26\nstewardship: health\nactivity: gym\ntype: tracking\n---\n# Gym\n";
+    let swim =
+        "---\ndate: 2026-04-27\nactivity: swim\nstewardship: health\ntype: tracking\n---\n# Swim\n";
+    let gym_path = "stewardships/health/tracking/2026-04-26-gym.md";
+    let swim_path = "stewardships/health/tracking/2026-04-27-swim.md";
+    let (vault, store) = vault_with_notes(&[
+        (".cuaderno/templates/tracking-gym.md", gym_tmpl),
+        (".cuaderno/templates/tracking-swim.md", swim_tmpl),
+        (gym_path, gym),
+        (swim_path, swim),
+    ]);
+
+    vault.normalise_notes(false).expect("normalise");
+
+    assert_eq!(
+        frontmatter_keys(&store.read_file(&vp(gym_path)).unwrap()),
+        vec!["type", "activity", "stewardship", "date"],
+        "gym note must follow tracking-gym's order"
+    );
+    assert_eq!(
+        frontmatter_keys(&store.read_file(&vp(swim_path)).unwrap()),
+        vec!["type", "stewardship", "activity", "date"],
+        "swim note must follow tracking-swim's order"
+    );
+}
