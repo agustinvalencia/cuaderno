@@ -688,3 +688,98 @@ fn lint_frontmatter_order_follows_a_custom_template() {
         report.issues
     );
 }
+
+#[test]
+fn lint_flags_tracking_note_out_of_variant_order() {
+    // Tracking order is variant-specific (keyed by `activity`). A gym
+    // note must be checked against the tracking-gym order, not generic.
+    // This scrambled gym note mirrors the normalise variant test, but
+    // through the lint entry point.
+    let scrambled = "---\ndate: 2026-04-26\ntype: tracking\nactivity: gym\nroutine: null\nstewardship: health\nduration_min: null\n---\n# Gym\n";
+    let p = "stewardships/health/tracking/2026-04-26-gym.md";
+    let vault = vault_with_notes(&[(p, scrambled)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let order_issues: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("canonical order"))
+        .collect();
+    assert_eq!(order_issues.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(order_issues[0].severity, LintSeverity::Warning);
+    assert_eq!(order_issues[0].path, vp(p));
+}
+
+#[test]
+fn lint_does_not_flag_tracking_note_in_variant_order() {
+    // A gym note already in tracking-gym order is clean -- confirms the
+    // variant resolves as gym (not the generic tracking order).
+    let in_order = "---\ntype: tracking\nstewardship: health\nactivity: gym\ndate: 2026-04-26\nduration_min: null\nroutine: null\n---\n# Gym\n";
+    let p = "stewardships/health/tracking/2026-04-26-gym.md";
+    let vault = vault_with_notes(&[(p, in_order)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "gym note in variant order must not be flagged: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_does_not_flag_canonical_order_with_trailing_unknown_key() {
+    // Canonical project order with one extra key the template doesn't
+    // define: unknown keys stay trailing, so this is NOT drift.
+    let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\nextra: x\n---\n# Foo\n\n## Current State\n";
+    let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "a trailing unknown key is not order drift: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_order_flags_agree_with_normalise_check() {
+    // The PR's central claim: lint flags exactly the notes `normalise
+    // --check` would reorder. Seed one drifted + one canonical note and
+    // assert the two sets match.
+    let drifted = "---\ndate: 2026-04-19\ntype: daily\n---\n# A\n";
+    let canonical = "---\ntype: daily\ndate: 2026-04-20\n---\n# B\n";
+    let vault = vault_with_notes(
+        &[
+            ("journal/2026/daily/2026-04-19.md", drifted),
+            ("journal/2026/daily/2026-04-20.md", canonical),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let mut lint_flagged: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("canonical order"))
+        .map(|i| i.path.clone())
+        .collect();
+    lint_flagged.sort_by_key(|p| p.to_string());
+
+    let mut normalise_would_change = vault
+        .normalise_notes(true)
+        .expect("normalise check")
+        .changed;
+    normalise_would_change.sort_by_key(|p| p.to_string());
+
+    assert_eq!(
+        lint_flagged, normalise_would_change,
+        "lint's order flags must match normalise --check"
+    );
+    assert_eq!(lint_flagged, vec![vp("journal/2026/daily/2026-04-19.md")]);
+}
