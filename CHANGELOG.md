@@ -4,11 +4,21 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.1.16] - 2026-06-28
+
+Backlog-hardening plus a template fix: a config `ignore` glob list, the daily `{{weekday}}` variable, and the weekly note's anchor-section rename. No new MCP tools (40); `cdno reindex` gains an excluded-files count line.
+
+### Added
+
+- **Config `ignore` globs** (#242) — a top-level `ignore = ["glob", ...]` in `.cuaderno/config.toml` excludes matched files from the index, and therefore from reconciliation, search, and lint, in one place. Matched against each file's vault-relative path: `*` stays within a path segment, `**` spans segments, bare names are root-anchored (`**/name` to match at any depth); patterns are additive only (no `!` negation). Empty by default — markdown is the source of truth, so a note is never silently dropped; intended for repo scaffolding (`CLAUDE.md`, `README.md`) that lives in the vault dir but isn't a note. Files are never deleted: exclusion only drops index rows (fully recoverable by clearing the glob and reindexing), and `cdno reindex` now reports how many files an `ignore` pattern excluded so an over-broad glob isn't a silent retrieval blackout.
 
 ### Changed
 
-- **Weekly note: `Next Week's Focus` → `This Week's Goal`** — the weekly note's fourth section is renamed so each week's note carries *its own* anchoring goal, rather than holding next week's goal a week early (which forced cross-week reads to find the current week's anchor). Carry-forward is now explicit: weekly-review writes the goal into *next* week's note (its `This Week's Goal`), and weekly-planning sets/re-aims the planned week's goal directly — passing a `date` in that week creates the note and sets its goal in one call, so the upcoming week's daily notes get an umbrella. `cdno review weekly` now writes the three retrospective sections into the ending week's note and the forward goal into next week's. `upsert_weekly_section` still accepts the former `Next Week's Focus` name as a deprecated alias (it maps to `This Week's Goal`) so pre-rename callers don't hard-fail. Template, MCP tool docs, and design §5.2 updated; existing notes keep the old heading until rewritten or migrated. Note: writing the goal into a pre-rename note (one that still has `## Next Week's Focus`) adds a fresh `## This Week's Goal` section rather than replacing the old heading, leaving the stale `## Next Week's Focus` to delete by hand — there is no automatic section-heading migration (`cdno normalise` reorders frontmatter keys, not section headings).
+- **Weekly note: `Next Week's Focus` → `This Week's Goal`** (#245) — the weekly note's fourth section is renamed so each week's note carries *its own* anchoring goal, rather than holding next week's goal a week early (which forced cross-week reads to find the current week's anchor). Carry-forward is now explicit: weekly-review writes the goal into *next* week's note (its `This Week's Goal`), and weekly-planning sets/re-aims the planned week's goal directly — passing a `date` in that week creates the note and sets its goal in one call, so the upcoming week's daily notes get an umbrella. `cdno review weekly` now writes the three retrospective sections into the ending week's note and the forward goal into next week's. `upsert_weekly_section` still accepts the former `Next Week's Focus` name as a deprecated alias (it maps to `This Week's Goal`) so pre-rename callers don't hard-fail. Template, MCP tool docs, and design §5.2 updated; existing notes keep the old heading until rewritten or migrated. Note: writing the goal into a pre-rename note (one that still has `## Next Week's Focus`) adds a fresh `## This Week's Goal` section rather than replacing the old heading, leaving the stale `## Next Week's Focus` to delete by hand — there is no automatic section-heading migration (`cdno normalise` reorders frontmatter keys, not section headings).
+
+### Fixed
+
+- **Daily `{{weekday}}` template variable** (#244) — a custom `.cuaderno/templates/daily.md` titled `# {{weekday}}` rendered the literal placeholder, because the daily scaffold supplied only `date` and `heading` and the engine leaves unknown placeholders verbatim. The scaffold now also supplies `weekday` (the full weekday name, e.g. `Sunday`). The design §9 variable table's unimplemented `{{day_name}}` is corrected to the implemented `{{weekday}}`, and a contradictory precedence note (it claimed later tiers override earlier) is fixed to match the code (earlier tiers win).
 
 ## [0.1.15] - 2026-06-21
 
