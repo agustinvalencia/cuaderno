@@ -170,6 +170,32 @@ fn daily_creation_uses_a_custom_template_override() {
 }
 
 #[test]
+fn daily_template_supplies_the_weekday_variable() {
+    // Regression: a custom daily template titled `# {{weekday}}` must
+    // render the weekday name, not the literal `{{weekday}}`. The daily
+    // scaffold supplies `date`, `heading`, and `weekday`.
+    let custom = "---\ntype: daily\ndate: {{date}}\n---\n\n# {{weekday}}\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    // today() is 2026-04-26, a Sunday — assert the literal rather than
+    // re-deriving via %A, so a coordinated format change in both source
+    // and test can't pass silently.
+    assert!(
+        content.contains("# Sunday"),
+        "weekday should render as `# Sunday`:\n{content}"
+    );
+    assert!(
+        !content.contains("{{weekday}}"),
+        "no unrendered placeholder should remain:\n{content}"
+    );
+}
+
+#[test]
 fn weekly_creation_uses_a_custom_template_override() {
     use cdno_domain::WeeklySection;
     let custom = "---\ntype: weekly\nweek: {{week}}\ndate_start: {{date_start}}\ndate_end: {{date_end}}\n---\n\n# Week {{week_num}}, {{year}}\n\nCUSTOM WEEKLY PREAMBLE\n\n## Wins\n";

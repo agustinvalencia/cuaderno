@@ -114,6 +114,16 @@ impl Vault {
     /// template engine (#212), so a custom `.cuaderno/templates/daily.md`
     /// takes effect.
     ///
+    /// Variables supplied to the daily template:
+    /// - `{{date}}` — ISO date, e.g. `2026-06-28`
+    /// - `{{heading}}` — long form, e.g. `Sunday, 28 June 2026`
+    /// - `{{weekday}}` — weekday name, e.g. `Sunday`
+    ///
+    /// Unsupplied placeholders are left verbatim by the engine, so a
+    /// custom template referencing a variable not in this set renders it
+    /// literally (e.g. `# {{weekday}}` stayed unrendered before `weekday`
+    /// was provided here).
+    ///
     /// `pub(in crate::vault)` so `upsert_daily_section` can seed a fresh
     /// note when a planning section is written before any log line exists.
     pub(in crate::vault) fn scaffold_daily_base(
@@ -123,6 +133,7 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
         ctx.set_contextual("heading", date.format("%A, %-d %B %Y").to_string());
+        ctx.set_contextual("weekday", date.format("%A").to_string());
         self.scaffold("daily", None, &ctx)
     }
 
