@@ -57,7 +57,7 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # Interactive CLI prompts (fuzzy selectors, calendar widgets, confirms)
 # applied for missing-but-required-in-TTY args. CLI-only; library and
 # domain crates never see prompts.
-inquire = { version = "0.7", features = ["date"] }
+inquire = { version = "0.7", features = ["date", "editor"] }
 
 # Tabular CLI output with automatic content wrapping. Default features
 # include `tty` (terminal-width auto-detection via crossterm) and

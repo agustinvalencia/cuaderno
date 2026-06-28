@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Changed
+
+- **`cdno review weekly` prose sections open in `$EDITOR`** (#230) — Wins and Challenges (the multi-line retrospective sections) now launch `$EDITOR` instead of a single-line text prompt, pre-seeded with the section's current content so you edit in place. Editing in place also dissolves the compose-vs-accrue question: whatever you save replaces the section. The single-line `One Improvement` and the forward goal stay plain text prompts. Non-interactive / piped runs are unchanged (they print the note).
+
 ## [0.1.17] - 2026-06-28
 
 Small hardening release: one new lint rule. No new MCP tools (40); no CLI surface changes.

@@ -6,6 +6,11 @@
 //! note, then composes the forward goal — which lands in *next* week's
 //! note as its `This Week's Goal`, the carry-forward hand-off.
 //!
+//! The prose sections (Wins, Challenges) open in `$EDITOR`, pre-seeded
+//! with their current content so the user edits in place (#230); the
+//! single-line `One Improvement` and the forward goal stay plain text
+//! prompts.
+//!
 //! Non-interactive (or piped) runs print the current weekly note
 //! instead of prompting, so the command stays scriptable and TTY-test
 //! friendly.
@@ -66,7 +71,11 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Weekly review. Leave a section blank to skip it.\n");
+    println!(
+        "Weekly review. Wins and Challenges open in your editor, pre-filled with the \
+         current content — edit in place and save. One Improvement and next week's goal \
+         are single-line prompts. Leaving a section blank (or unchanged) skips it.\n"
+    );
     if view.exists {
         println!(
             "Current note:\n{}",
@@ -74,9 +83,29 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
         );
     }
 
+    // Pre-seed the prose editors with each section's current content (if
+    // the note exists) so the user edits in place. Parse the note once.
+    let current = view
+        .exists
+        .then(|| cdno_core::markdown::MarkdownDocument::parse(&view.markdown).ok())
+        .flatten();
+
     let mut saved_path: Option<String> = None;
     for section in REVIEW_SECTIONS {
-        let entry = prompt::prompt_text(section.heading())?;
+        // Prose sections open in `$EDITOR`, pre-seeded with their current
+        // content (#230); the single-line `One Improvement` stays a plain
+        // text prompt.
+        let entry = match section {
+            WeeklySection::Wins | WeeklySection::Challenges => {
+                let prefill = current
+                    .as_ref()
+                    .and_then(|d| d.section(section.heading()).ok())
+                    .unwrap_or("")
+                    .trim();
+                prompt::prompt_editor(section.heading(), prefill)?
+            }
+            _ => prompt::prompt_text(section.heading())?,
+        };
         if entry.trim().is_empty() {
             continue;
         }

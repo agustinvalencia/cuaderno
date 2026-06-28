@@ -20,7 +20,7 @@ use std::io::IsTerminal;
 
 use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
-use inquire::{Confirm, DateSelect, Select, Text};
+use inquire::{Confirm, DateSelect, Editor, Select, Text};
 
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
@@ -79,6 +79,15 @@ pub fn prompt_project(vault: &Vault) -> Result<String> {
 /// Plain text input with `prompt` as the displayed label.
 pub fn prompt_text(prompt: &str) -> Result<String> {
     Ok(Text::new(prompt).prompt()?)
+}
+
+/// Multi-line input via `$EDITOR` (#230), for prose review sections that
+/// want more than one line. Pre-seeds the editor with `prefill` (the
+/// section's current content) so the user edits in place — which also
+/// makes compose-vs-accrue a non-question: whatever they save replaces
+/// the section. An empty `prefill` opens a blank editor.
+pub fn prompt_editor(prompt: &str, prefill: &str) -> Result<String> {
+    Ok(Editor::new(prompt).with_predefined_text(prefill).prompt()?)
 }
 
 /// Three-option energy selector matching the bullet suffix vocabulary.
