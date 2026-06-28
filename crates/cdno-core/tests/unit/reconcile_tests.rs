@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use cdno_core::config::IgnoreSet;
 use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
 use cdno_core::hash::content_hash;
@@ -41,7 +42,7 @@ fn as_index(i: &Arc<MemoryIndex>) -> Arc<dyn VaultIndex> {
 #[test]
 fn empty_vault_empty_index_nothing_happens() {
     let (store, index) = fixtures();
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 0);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 0);
@@ -54,7 +55,7 @@ fn new_file_is_added() {
     let (store, index) = fixtures();
     seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 1);
     assert_eq!(report.updated, 0);
@@ -80,7 +81,7 @@ fn reconcile_indexes_inline_body_tags_alongside_frontmatter_tags() {
         .write_file(&vp("note.md"), raw)
         .expect("seed mixed-tags note");
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
 
     let frontmatter_hits = index.find_by_tag("frontmatter-tag").unwrap();
@@ -103,7 +104,7 @@ fn reconcile_indexes_namespaced_action_tags() {
         .write_file(&vp("journal/daily/2026-05-26.md"), raw)
         .expect("seed action-tagged daily note");
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
 
     let full = index
@@ -126,7 +127,7 @@ fn reconcile_resolves_wikilinks_to_their_target_paths() {
         with label: [[foo|My Foo]]\n";
     store.write_file(&vp("src.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
     assert_eq!(outgoing.len(), 3, "got: {outgoing:?}");
@@ -167,7 +168,7 @@ fn reconcile_backlinks_a_relocated_note_via_last_segment_fallback() {
         .write_file(&vp("journal/2026/daily/2026-05-02.md"), daily)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let backlinks = index
         .find_backlinks(&vp("actions/_done/2026/characterise.md"))
@@ -186,7 +187,7 @@ fn reconcile_marks_wikilink_unresolved_when_basename_is_ambiguous() {
     let raw = "---\ntype: daily\n---\n\nbody references [[foo]]\n";
     store.write_file(&vp("src.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let outgoing = index.find_outgoing_links(&vp("src.md")).unwrap();
     assert_eq!(outgoing.len(), 1);
@@ -208,7 +209,7 @@ fn cuaderno_meta_files_are_excluded_from_scan() {
     // would otherwise match a real note.
     seed_note(&store, ".cuaderno/templates/daily.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     assert_eq!(report.scanned, 1, "only the real note should be scanned");
     assert_eq!(report.added, 1);
@@ -242,7 +243,7 @@ fn stale_cuaderno_index_row_is_removed_as_orphan() {
         })
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     assert_eq!(report.scanned, 0);
     assert_eq!(report.removed, 1);
@@ -259,10 +260,10 @@ fn matching_index_entry_is_skipped() {
     let (store, index) = fixtures();
     seed_note(&store, "note.md", "daily", "");
     // First run indexes the note.
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // Second run sees the same state — no adds/updates.
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 0);
@@ -273,7 +274,7 @@ fn matching_index_entry_is_skipped() {
 fn changed_content_triggers_update() {
     let (store, index) = fixtures();
     seed_note(&store, "note.md", "daily", "");
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // Rewrite with different content → hash changes.
     store
@@ -283,7 +284,7 @@ fn changed_content_triggers_update() {
         )
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.updated, 1);
@@ -298,12 +299,12 @@ fn orphan_index_rows_are_removed() {
     let (store, index) = fixtures();
     seed_note(&store, "keep.md", "daily", "");
     seed_note(&store, "delete-me.md", "daily", "");
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // Simulate external deletion of delete-me.md.
     store.delete_file(&vp("delete-me.md")).unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.removed, 1);
     assert!(index.find_by_path(&vp("delete-me.md")).unwrap().is_none());
@@ -322,7 +323,7 @@ fn non_markdown_files_are_ignored() {
         .write_file(&vp("portfolios/foo/notebook.ipynb"), "{\"cells\": []}")
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 1);
     assert!(report.errors.is_empty());
@@ -341,7 +342,7 @@ fn note_without_frontmatter_is_reported_as_error() {
         .write_file(&vp("broken.md"), "# No frontmatter here\nplain body\n")
         .unwrap();
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 1);
     assert_eq!(report.added, 0);
     assert_eq!(report.errors.len(), 1);
@@ -357,7 +358,7 @@ fn one_broken_note_does_not_block_others() {
         .unwrap();
     seed_note(&store, "also-good.md", "daily", "");
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.scanned, 3);
     assert_eq!(report.added, 2);
     assert_eq!(report.errors.len(), 1);
@@ -388,7 +389,7 @@ working on it
         .write_file(&vp("projects/surrogate.md"), project)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
     let titles: Vec<String> = deadlines.iter().map(|(_, d)| d.title.clone()).collect();
@@ -412,7 +413,7 @@ title: 2026-04-19
         .write_file(&vp("journal/daily/2026-04-19.md"), raw)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
     assert!(deadlines.is_empty(), "daily notes must not spawn deadlines");
@@ -436,7 +437,7 @@ title: Surrogate model
 ";
     store.write_file(&vp("projects/surrogate.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // All three milestones land, in source order, queryable by slug.
     let all = index.milestones_for_project("surrogate").unwrap();
@@ -480,7 +481,7 @@ title: 2026-04-19
         .write_file(&vp("journal/daily/2026-04-19.md"), raw)
         .unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     assert!(
         index
@@ -507,7 +508,7 @@ content
 ";
     store.write_file(&vp("note.md"), raw).unwrap();
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     let tagged = index.find_by_tag("agustin-valencia").unwrap();
     assert_eq!(tagged, vec![vp("note.md")]);
@@ -524,7 +525,7 @@ fn updating_a_project_replaces_its_deadlines() {
             "---\ntype: project\n---\n# Milestones\n- [ ] first — hard: 2026-05-01\n",
         )
         .unwrap();
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // Replace the milestone list.
     store
@@ -533,7 +534,7 @@ fn updating_a_project_replaces_its_deadlines() {
             "---\ntype: project\n---\n# Milestones\n- [ ] second — hard: 2026-06-01\n",
         )
         .unwrap();
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
     assert_eq!(report.updated, 1);
 
     let deadlines = index.deadlines_between("2026-01-01", "2027-01-01").unwrap();
@@ -554,10 +555,10 @@ tags:
 - [ ] ship — hard: 2026-05-01
 ";
     store.write_file(&vp("projects/p.md"), raw).unwrap();
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     store.delete_file(&vp("projects/p.md")).unwrap();
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     assert!(
         index
@@ -575,7 +576,12 @@ fn orphan_removal_failure_is_reported_as_error() {
     // will retry; meanwhile the caller sees the failure.
     let (store, backing_index) = fixtures();
     seed_note(&store, "orphan.md", "daily", "");
-    reconcile(&as_store(&store), &as_index(&backing_index)).unwrap();
+    reconcile(
+        &as_store(&store),
+        &as_index(&backing_index),
+        &IgnoreSet::empty(),
+    )
+    .unwrap();
 
     // Simulate the file being deleted on disk.
     store.delete_file(&vp("orphan.md")).unwrap();
@@ -586,7 +592,7 @@ fn orphan_removal_failure_is_reported_as_error() {
         inner: backing_index.clone(),
     });
     let store_arc: Arc<dyn VaultStore> = store.clone();
-    let report = reconcile(&store_arc, &failing).unwrap();
+    let report = reconcile(&store_arc, &failing, &IgnoreSet::empty()).unwrap();
 
     assert_eq!(report.removed, 0);
     assert_eq!(report.errors.len(), 1);
@@ -606,7 +612,7 @@ fn reconcile_populates_fts_for_indexed_notes() {
     seed_note(&store, "inbox/a.md", "inbox", "");
     seed_note(&store, "projects/b.md", "project", "status: active\n");
 
-    reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // reconcile_one wrote the FTS rows alongside the note rows, so the
     // body text ("content for <path>") is searchable.
@@ -646,7 +652,7 @@ fn reconcile_backfills_fts_for_notes_missing_from_search() {
         .unwrap();
     assert!(index.search("searchable", 10).unwrap().is_empty());
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     // Phase 1 skipped the unchanged note; phase 3 backfilled its FTS row.
     assert_eq!(report.added, 0);
@@ -667,7 +673,7 @@ fn reconcile_drops_orphan_fts_rows() {
         .unwrap();
     assert_eq!(index.fts_indexed_paths().unwrap(), vec![vp("gone.md")]);
 
-    let report = reconcile(&as_store(&store), &as_index(&index)).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
     assert_eq!(report.fts_removed, 1);
     assert!(index.fts_indexed_paths().unwrap().is_empty());
@@ -848,14 +854,14 @@ fn second_pass_skips_reading_unchanged_files() {
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
 
     // First pass indexes both files — each is read once.
-    let first = reconcile(&store, &index).unwrap();
+    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(first.added, 2);
     assert_eq!(counting.reads(), 2);
 
     // Second pass: nothing changed, so the mtime+size fast path skips both
     // without a single read.
     counting.reset();
-    let second = reconcile(&store, &index).unwrap();
+    let second = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(second.added, 0);
     assert_eq!(second.updated, 0);
     assert_eq!(
@@ -874,7 +880,7 @@ fn a_changed_file_is_still_detected_after_the_fast_path() {
     let counting = Arc::new(CountingStore::new(mem.clone()));
     let store: Arc<dyn VaultStore> = counting.clone();
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    reconcile(&store, &index).unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
 
     // Edit one file — write_file bumps its mtime, so the fast path misses it
     // (and only it) on the next pass.
@@ -885,7 +891,7 @@ fn a_changed_file_is_still_detected_after_the_fast_path() {
     .unwrap();
 
     counting.reset();
-    let report = reconcile(&store, &index).unwrap();
+    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(report.updated, 1);
     assert_eq!(
         counting.reads(),
@@ -907,7 +913,7 @@ fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
     let counting = Arc::new(CountingStore::new(mem.clone()));
     let store: Arc<dyn VaultStore> = counting.clone();
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    reconcile(&store, &index).unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
 
     // Rewrite identical bytes — bumps the memory store's mtime, same content.
     mem.write_file(&vp("inbox/a.md"), &raw).unwrap();
@@ -915,14 +921,14 @@ fn a_touched_but_unchanged_file_is_restamped_then_fast_paths() {
     // Pass after the touch: fast path misses (mtime drifted), so the file is
     // read once and hash-matched; nothing is reindexed.
     counting.reset();
-    let report = reconcile(&store, &index).unwrap();
+    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(report.updated, 0);
     assert_eq!(report.added, 0);
     assert_eq!(counting.reads(), 1, "touched file is read once to confirm");
 
     // Next pass: the re-stamp made mtime match, so it fast-paths — no read.
     counting.reset();
-    reconcile(&store, &index).unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(
         counting.reads(),
         0,
@@ -971,10 +977,113 @@ fn commit_stamps_the_real_file_mtime_so_a_written_note_fast_paths() {
     // And so reconcile reads nothing — the note fast-paths immediately.
     let counting = Arc::new(CountingStore::new(mem));
     let store: Arc<dyn VaultStore> = counting.clone();
-    reconcile(&store, &index).unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
     assert_eq!(
         counting.reads(),
         0,
         "a freshly-written note should fast-path on the first reconcile"
     );
+}
+
+#[test]
+fn ignore_glob_skips_matching_file_entirely() {
+    let (store, index) = fixtures();
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+    // A repo doc that lives in the vault dir but isn't a note: no
+    // frontmatter, so reconciling it would otherwise record an error.
+    store
+        .write_file(
+            &vp("CLAUDE.md"),
+            "# CLAUDE\n\nrepo instructions, not a note\n",
+        )
+        .unwrap();
+
+    let ignore = IgnoreSet::compile(&["CLAUDE.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+
+    // The ignored file never enters the pass: not scanned, no error, no
+    // index row. Only the real note is reflected.
+    assert_eq!(report.scanned, 1);
+    assert!(report.errors.is_empty());
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
+}
+
+#[test]
+fn without_ignore_a_non_note_file_reconciles_with_an_error() {
+    // Counterpart to the test above: the same stray file, left
+    // un-ignored, is walked and fails to parse — proving the ignore
+    // glob is what suppresses it, not some other filter.
+    let (store, index) = fixtures();
+    store
+        .write_file(
+            &vp("CLAUDE.md"),
+            "# CLAUDE\n\nrepo instructions, not a note\n",
+        )
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.errors.len(), 1);
+    assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
+}
+
+#[test]
+fn newly_ignored_file_is_removed_from_index_as_orphan() {
+    let (store, index) = fixtures();
+    seed_note(&store, "README.md", "zettel", "");
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+
+    // First pass: nothing ignored, both notes indexed.
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert!(index.find_by_path(&vp("README.md")).unwrap().is_some());
+
+    // Add README.md to the ignore list and reconcile again: it falls
+    // out of the filesystem set, so Phase 2 drops the now-stale row.
+    let ignore = IgnoreSet::compile(&["README.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert_eq!(report.removed, 1);
+    assert!(index.find_by_path(&vp("README.md")).unwrap().is_none());
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn ignore_glob_matches_nested_paths_with_doublestar() {
+    let (store, index) = fixtures();
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+    seed_note(&store, "inbox/scratch.draft.md", "zettel", "");
+
+    let ignore = IgnoreSet::compile(&["**/*.draft.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert_eq!(report.scanned, 1);
+    assert!(
+        index
+            .find_by_path(&vp("inbox/scratch.draft.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn invalid_ignore_glob_is_a_config_error() {
+    // An unclosed character class is malformed; it surfaces as a
+    // ConfigError at compile time rather than silently matching nothing.
+    let err = IgnoreSet::compile(&["a[".to_string()]).unwrap_err();
+    assert!(matches!(err, cdno_core::error::ConfigError::InvalidGlob(_)));
 }

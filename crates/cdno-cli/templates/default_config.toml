@@ -8,6 +8,14 @@
 name = "My Vault"
 max_active_projects = 5
 
+# ignore — glob patterns for files to keep out of the index (and so out
+# of reconciliation, search, and lint). Matched against each file's
+# vault-relative path, gitignore-style `**`. Empty by default; markdown
+# is the source of truth, so nothing is dropped unless you list it.
+# Typical use is fencing off repo scaffolding that isn't a note.
+#
+# ignore = ["CLAUDE.md", "README.md"]
+
 # [schemas.<note-type>] — extend the built-in schema with vault-specific
 # required frontmatter fields. One section per note type.
 #

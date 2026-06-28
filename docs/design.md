@@ -789,6 +789,13 @@ The vault configuration lives at `.cuaderno/config.toml`:
 [vault]
 name = "My Research Vault"
 
+# Glob patterns for files to exclude from the index — and therefore
+# from reconciliation, search, and lint. Matched against each file's
+# vault-relative path (gitignore-style `**`). Empty by default: markdown
+# is the source of truth, so a note is never silently dropped. Use it to
+# fence off repo scaffolding that lives in the vault dir but isn't a note.
+ignore = ["CLAUDE.md", "README.md"]
+
 # Per-type frontmatter schema extensions.
 # Built-in required fields are always enforced.
 # These add vault-specific requirements on top.

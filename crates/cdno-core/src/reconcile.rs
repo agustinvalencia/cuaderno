@@ -4,7 +4,8 @@
 //! every `Vault::new` (and can be re-run on demand). The algorithm is
 //! simple:
 //!
-//! 1. Walk every `.md` file in the vault.
+//! 1. Walk every `.md` file in the vault, minus any matching the
+//!    config `ignore` globs (passed in as a compiled [`IgnoreSet`]).
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -21,6 +22,7 @@ use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::config::IgnoreSet;
 use crate::error::IndexError;
 use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
@@ -73,6 +75,7 @@ pub struct ReconciliationIssue {
 pub fn reconcile(
     store: &Arc<dyn VaultStore>,
     index: &Arc<dyn VaultIndex>,
+    ignore: &IgnoreSet,
 ) -> Result<ReconciliationReport, IndexError> {
     let mut report = ReconciliationReport::default();
 
@@ -90,6 +93,14 @@ pub fn reconcile(
         // not notes; indexing them would mean e.g. the dumped daily
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
+        // Config `ignore` globs (#config-ignore-glob): user-declared
+        // non-vault docs (e.g. CLAUDE.md, README.md) that live in the
+        // vault dir but aren't notes. Excluding them here is the single
+        // enforcement point — a path absent from the index is also
+        // absent from lint (index-driven) and search. A file that was
+        // indexed before becoming ignored falls out via Phase 2's
+        // orphan removal, since it's no longer in `fs_set`.
+        .filter(|p| !ignore.is_match(p.as_path()))
         .collect();
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 
