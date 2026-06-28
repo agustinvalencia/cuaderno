@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.16 (2026-06-28). The CLI is daily-usable end-to-end and the MCP server is production-ready (40 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.16 is a backlog-hardening + template-fix release: a config `ignore` glob list keeps non-vault scaffolding (`CLAUDE.md`, `README.md`) out of the index / search / lint without ever deleting files (#242), the daily `{{weekday}}` template variable is supplied so custom daily templates render it (#244), and the weekly note's anchor section is renamed `Next Week's Focus` → `This Week's Goal` so each week carries its own goal (#245, old name kept as a deprecated alias). No new MCP tools (40); `cdno reindex` now reports how many files an `ignore` pattern excluded. See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
+**Current release**: 0.1.17 (2026-06-28). The CLI is daily-usable end-to-end and the MCP server is production-ready (40 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.17 is a small hardening release: `cdno lint` now warns on frontmatter-order drift — keys not in the canonical per-type order (the order `cdno normalise` would apply), a `Warning` that `cdno lint --strict` / CI can gate on (#236). It follows v0.1.16 (config `ignore` globs #242, daily `{{weekday}}` variable #244, weekly `This Week's Goal` rename #245). No new MCP tools (40); no CLI surface changes. See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
 
 ## Phase summary
 
