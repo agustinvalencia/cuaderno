@@ -60,8 +60,11 @@ const RELATED_QUESTIONS_SECTION: &str = "Related Questions";
 /// Heading in a project map that lists the portfolios collecting
 /// evidence under it. The forward direction of the portfolio ↔ project
 /// link: the portfolio's `project:` frontmatter points up, this body
-/// wikilink points down (and, unlike the frontmatter field, lands in the
-/// index link graph so the project's backlinks surface the portfolio).
+/// wikilink points down so the project map visibly lists its portfolios
+/// (and, unlike a frontmatter link, is body-scannable — it joins the
+/// backlink graph on the next full reindex, the same deferred-resolution
+/// caveat as every other domain-written body wikilink; see
+/// `context.rs`).
 const PROJECT_LINKS_SECTION: &str = "Links";
 
 /// The placeholder the project template ships in `## Links`. Treated as

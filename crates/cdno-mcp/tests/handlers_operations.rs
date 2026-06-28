@@ -277,6 +277,21 @@ async fn link_portfolio_to_project_errors_on_missing_project() {
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
 
+#[tokio::test]
+async fn link_portfolio_to_project_errors_on_missing_portfolio() {
+    let (server, _store) = server_with(|vault, _s| {
+        seed_active_project(vault); // projects/surrogate-model.md
+    });
+    let err = server
+        .link_portfolio_to_project(Parameters(LinkPortfolioToProjectInput {
+            portfolio: "no-such-portfolio".to_owned(),
+            project: "projects/surrogate-model".to_owned(),
+        }))
+        .await
+        .expect_err("missing portfolio should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+}
+
 // ---------------------------------------------------------------------
 // update_project_state
 // ---------------------------------------------------------------------

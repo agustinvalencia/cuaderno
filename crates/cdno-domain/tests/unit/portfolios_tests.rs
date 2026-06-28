@@ -1159,7 +1159,11 @@ fn create_portfolio_skips_backfill_when_project_note_is_absent() {
         )
         .expect("create_portfolio succeeds without the project note");
 
-    assert!(store.read_file(&path).is_ok());
+    let portfolio = store.read_file(&path).expect("portfolio created");
+    assert!(
+        portfolio.contains("project: \"[[projects/does-not-exist]]\""),
+        "the frontmatter link still stands even though the project note is absent:\n{portfolio}"
+    );
     assert!(
         store.read_file(&vp("projects/does-not-exist.md")).is_err(),
         "no phantom project note should be created"
@@ -1189,6 +1193,10 @@ fn link_portfolio_to_project_sets_frontmatter_and_backfills_links() {
     assert!(
         project.contains("- Portfolio: [[portfolios/late-link/_index]]"),
         "project ## Links backfilled:\n{project}"
+    );
+    assert!(
+        !project.contains("(none yet)"),
+        "placeholder replaced on retrofit too:\n{project}"
     );
 }
 
@@ -1254,5 +1262,80 @@ fn link_portfolio_to_project_rejects_a_bracketed_target() {
     assert!(
         matches!(err, DomainError::MalformedWikilink { .. }),
         "got {err:?}"
+    );
+}
+
+#[test]
+fn project_links_accumulate_multiple_portfolios() {
+    // The non-empty / non-placeholder branch of stage_project_link: a
+    // project already linked to one portfolio gains a second — the bullet
+    // appends, both survive (guards against replace-instead-of-append).
+    let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+    vault
+        .create_portfolio(
+            dt(2026, 4, 26, 9, 0),
+            "First angle",
+            Some("projects/surrogate-model"),
+        )
+        .expect("first");
+    vault
+        .create_portfolio(dt(2026, 4, 27, 9, 0), "Second angle", None)
+        .expect("second");
+    vault
+        .link_portfolio_to_project("second-angle", "projects/surrogate-model")
+        .expect("link second");
+
+    let project = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        project.contains("- Portfolio: [[portfolios/first-angle/_index]]"),
+        "first portfolio kept:\n{project}"
+    );
+    assert!(
+        project.contains("- Portfolio: [[portfolios/second-angle/_index]]"),
+        "second portfolio appended:\n{project}"
+    );
+    assert_eq!(
+        project.matches("- Portfolio: [[portfolios/").count(),
+        2,
+        "exactly two portfolio bullets:\n{project}"
+    );
+    assert!(
+        !project.contains("(none yet)"),
+        "placeholder gone:\n{project}"
+    );
+}
+
+#[test]
+fn project_link_resolves_through_the_wikilink_resolver() {
+    // The backfilled `## Links` wikilink must resolve to the portfolio's
+    // `_index.md` (not dangle) — the body-scannable form is what later
+    // joins the backlink graph. Asserts resolution, not graph membership
+    // (the latter only follows a full reindex; see context.rs).
+    use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
+    use std::collections::HashSet;
+
+    let (vault, store) = vault_with_seeded_store(&[("projects/surrogate-model.md", PROJECT_NOTE)]);
+    let portfolio_path = vault
+        .create_portfolio(
+            dt(2026, 4, 26, 9, 0),
+            "Resolves cleanly",
+            Some("projects/surrogate-model"),
+        )
+        .expect("create");
+    let project_path = vp("projects/surrogate-model.md");
+    let vault_paths: HashSet<VaultPath> = [project_path.clone(), portfolio_path.clone()]
+        .into_iter()
+        .collect();
+
+    let project_raw = store.read_file(&project_path).unwrap();
+    let links = resolve_wikilinks(extract_wikilinks(&project_raw), &vault_paths);
+    let portfolio_link = links
+        .iter()
+        .find(|l| l.target_raw.starts_with("portfolios/"))
+        .expect("project carries a portfolio wikilink");
+    assert_eq!(
+        portfolio_link.resolved_path.as_ref(),
+        Some(&portfolio_path),
+        "must resolve to the portfolio _index, not dangle: {portfolio_link:?}"
     );
 }
