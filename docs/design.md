@@ -891,7 +891,7 @@ Variables are resolved in order of precedence (later tiers override earlier ones
 |`{{year}}`     |`2026`                     |
 |`{{month}}`    |`04`                       |
 |`{{week}}`     |`W14`                      |
-|`{{day_name}}` |`Sunday`                   |
+|`{{weekday}}`  |`Sunday`                   |
 |`{{day_short}}`|`Sun`                      |
 |`{{timestamp}}`|`1743946200`               |
 
