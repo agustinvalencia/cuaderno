@@ -47,6 +47,12 @@ pub struct ReconciliationReport {
     /// Index rows that had no corresponding filesystem file and were
     /// dropped (cascades facets).
     pub removed: usize,
+    /// Markdown files excluded from this pass by the config `ignore`
+    /// globs (#242). Surfaced so an over-broad pattern (a stray `**`)
+    /// that drops notes from search/lint/backlinks is observable rather
+    /// than a silent retrieval blackout — the files themselves are never
+    /// touched, and clearing the glob then reindexing restores every row.
+    pub ignored: usize,
     /// Notes present in the `notes` table but absent from the FTS index
     /// that were backfilled this pass. Non-zero on the first reconcile
     /// after the FTS migration (or after the index is dropped), when the
@@ -85,7 +91,7 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    let fs_md_paths: Vec<VaultPath> = all_fs_paths
+    let candidate_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
         // `.cuaderno/` is the vault's meta directory — config,
@@ -93,15 +99,23 @@ pub fn reconcile(
         // not notes; indexing them would mean e.g. the dumped daily
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
-        // Config `ignore` globs (#242): user-declared
-        // non-vault docs (e.g. CLAUDE.md, README.md) that live in the
-        // vault dir but aren't notes. Excluding them here is the single
-        // enforcement point — a path absent from the index is also
-        // absent from lint (index-driven) and search. A file that was
-        // indexed before becoming ignored falls out via Phase 2's
-        // orphan removal, since it's no longer in `fs_set`.
-        .filter(|p| !ignore.is_match(p.as_path()))
         .collect();
+    // Config `ignore` globs (#242): user-declared non-vault docs (e.g.
+    // CLAUDE.md, README.md) that live in the vault dir but aren't notes.
+    // Excluding them here is the single enforcement point — a path absent
+    // from the index is also absent from lint (index-driven) and search.
+    // A file that was indexed before becoming ignored falls out via
+    // Phase 2's orphan removal, since it's no longer in `fs_set`.
+    //
+    // Partition rather than filter so the excluded count is reported: an
+    // over-broad pattern silently evicting notes from retrieval is the
+    // feature's sharpest footgun, so the number must be observable. The
+    // files are never touched; clearing the glob and reindexing restores
+    // every row.
+    let (ignored_paths, fs_md_paths): (Vec<VaultPath>, Vec<VaultPath>) = candidate_md_paths
+        .into_iter()
+        .partition(|p| ignore.is_match(p.as_path()));
+    report.ignored = ignored_paths.len();
     let fs_set: HashSet<VaultPath> = fs_md_paths.iter().cloned().collect();
 
     // Phase 1: walk the filesystem, ensure every `.md` is correctly

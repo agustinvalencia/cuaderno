@@ -36,5 +36,15 @@ pub fn run(root: &Path) -> Result<()> {
         "Reindexed {} note(s) ({} scanned).",
         report.added, report.scanned
     );
+    // Make ignore-glob exclusions visible: a stray `**` that drops every
+    // note from search/lint should never be silent. The files are on
+    // disk untouched — removing the offending pattern and reindexing
+    // brings them all back.
+    if report.ignored > 0 {
+        println!(
+            "{} file(s) excluded by `ignore` globs (still on disk; clear the glob and reindex to restore).",
+            report.ignored
+        );
+    }
     Ok(())
 }

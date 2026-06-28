@@ -19,11 +19,19 @@ pub struct VaultConfig {
     /// file's vault-relative path: `*` matches within one path segment,
     /// `**` matches across segments, and a bare name like `CLAUDE.md` is
     /// anchored to the vault root — use `**/CLAUDE.md` to match at any
-    /// depth. Empty by default: nothing is ignored unless explicitly
-    /// listed, since markdown is the source of truth and silently
-    /// dropping a note would be data loss to retrieval. Typical use is
-    /// fencing off repo scaffolding that lives in the vault dir but isn't
-    /// a note — `CLAUDE.md`, `README.md`.
+    /// depth. Patterns are additive only; `!`-negation / re-inclusion is
+    /// not supported, and a leading `/` does not anchor (paths are
+    /// already root-relative).
+    ///
+    /// Empty by default: nothing is ignored unless explicitly listed,
+    /// since markdown is the source of truth and silently dropping a note
+    /// would be data loss to retrieval. Intended for fencing off repo
+    /// scaffolding that lives in the vault dir but isn't a note —
+    /// `CLAUDE.md`, `README.md`. Ignoring a *real* note is supported but
+    /// discouraged: it disappears from search, lint, backlinks, and the
+    /// active-project count, with no per-file warning. Exclusion never
+    /// deletes anything — the file stays on disk and reappears the moment
+    /// the pattern is removed and the vault is reindexed.
     #[serde(default)]
     pub ignore: Vec<String>,
 }

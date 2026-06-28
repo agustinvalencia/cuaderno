@@ -1002,8 +1002,10 @@ fn ignore_glob_skips_matching_file_entirely() {
     let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
 
     // The ignored file never enters the pass: not scanned, no error, no
-    // index row. Only the real note is reflected.
+    // index row. Only the real note is reflected, and the exclusion is
+    // counted so it isn't silent.
     assert_eq!(report.scanned, 1);
+    assert_eq!(report.ignored, 1);
     assert!(report.errors.is_empty());
     assert!(
         index
@@ -1141,6 +1143,7 @@ fn ignore_applies_every_pattern_in_the_set() {
     let ignore = IgnoreSet::compile(&["CLAUDE.md".to_string(), "README.md".to_string()]).unwrap();
     let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
     assert_eq!(report.scanned, 1);
+    assert_eq!(report.ignored, 2);
     assert!(index.find_by_path(&vp("CLAUDE.md")).unwrap().is_none());
     assert!(index.find_by_path(&vp("README.md")).unwrap().is_none());
     assert!(
@@ -1163,7 +1166,81 @@ fn ignore_pattern_matching_nothing_leaves_the_vault_intact() {
     let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
     assert_eq!(report.scanned, 2);
     assert_eq!(report.added, 2);
+    assert_eq!(report.ignored, 0);
     assert!(report.errors.is_empty());
+}
+
+#[test]
+fn over_broad_ignore_empties_index_but_files_survive_and_recover() {
+    // The prime directive: even a catastrophic `**` must never lose a
+    // note. It empties the *index* (via Phase-2 orphan removal) but the
+    // files on disk are untouched, and removing the glob restores every
+    // row. This is the test that guarantees "we never nuke the notes".
+    let (store, index) = fixtures();
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+    seed_note(&store, "journal/daily/2026-04-19.md", "daily", "");
+    seed_note(&store, "inbox/scratch.md", "zettel", "");
+
+    // Baseline: everything indexed.
+    let base = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(base.added, 3);
+
+    // `**` matches every path: the index is wiped, the exclusion counted.
+    let nuke = IgnoreSet::compile(&["**".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &nuke).unwrap();
+    assert_eq!(report.ignored, 3);
+    assert_eq!(report.removed, 3);
+    assert!(index.list_all_paths().unwrap().is_empty());
+
+    // ...but the markdown files are all still on disk.
+    assert_eq!(store.walk_dir(&VaultPath::root()).unwrap().len(), 3);
+
+    // Recovery: drop the glob and reconcile — every note re-enters the
+    // index from the surviving files. Fully recoverable, zero data loss.
+    let restored = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(restored.added, 3);
+    assert_eq!(restored.ignored, 0);
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn ignore_negation_is_literal_not_re_inclusion() {
+    // globset has no gitignore `!` re-inclusion. `["*.md", "!keep.md"]`
+    // must NOT rescue keep.md: `*.md` still excludes it (root segment),
+    // and `!keep.md` is just a literal pattern for a file so named.
+    let (store, index) = fixtures();
+    seed_note(&store, "keep.md", "zettel", "");
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+
+    let ignore = IgnoreSet::compile(&["*.md".to_string(), "!keep.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert!(index.find_by_path(&vp("keep.md")).unwrap().is_none());
+    assert!(
+        index
+            .find_by_path(&vp("projects/cuaderno.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(report.ignored, 1);
+}
+
+#[test]
+fn root_anchored_and_empty_patterns_exclude_nothing() {
+    // A leading `/` does not anchor (paths are already root-relative) and
+    // an empty pattern matches no path — both are inert, never match-all.
+    let (store, index) = fixtures();
+    seed_note(&store, "CLAUDE.md", "zettel", "");
+    seed_note(&store, "projects/cuaderno.md", "project", "");
+
+    let ignore = IgnoreSet::compile(&["/CLAUDE.md".to_string(), String::new()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+    assert_eq!(report.ignored, 0);
+    assert_eq!(report.scanned, 2);
 }
 
 #[test]
