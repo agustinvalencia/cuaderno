@@ -10,6 +10,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **`cdno review weekly` prose sections open in `$EDITOR`** (#230) — Wins and Challenges (the multi-line retrospective sections) now launch `$EDITOR` instead of a single-line text prompt, pre-seeded with the section's current content so you edit in place. Editing in place also dissolves the compose-vs-accrue question: whatever you save replaces the section. The single-line `One Improvement` and the forward goal stay plain text prompts. Non-interactive / piped runs are unchanged (they print the note).
 
+### Internal
+
+- **Memoise canonical frontmatter order per `(type, variant)`** (#248) — `cdno lint` and `cdno normalise` now resolve each note type's effective template once per pass instead of once per note, removing O(notes) redundant template stats/reads on large vaults. No behavioural change; output is identical.
+
 ## [0.1.17] - 2026-06-28
 
 Small hardening release: one new lint rule. No new MCP tools (40); no CLI surface changes.
