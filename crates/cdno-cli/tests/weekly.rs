@@ -14,7 +14,7 @@ fn day_in_w18() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 4, 29).unwrap()
 }
 
-const WEEKLY_NOTE: &str = "---\ntype: weekly\nweek: 2026-W18\ndate_start: 2026-04-27\ndate_end: 2026-05-03\n---\n\n# Week 18, 2026\n\n## Wins\n- Shipped the release.\n\n## Challenges\n- Wednesday was low energy.\n\n## One Improvement\n- Block Tuesday morning.\n\n## Next Week's Focus\nDraft the methods section.\n";
+const WEEKLY_NOTE: &str = "---\ntype: weekly\nweek: 2026-W18\ndate_start: 2026-04-27\ndate_end: 2026-05-03\n---\n\n# Week 18, 2026\n\n## Wins\n- Shipped the release.\n\n## Challenges\n- Wednesday was low energy.\n\n## One Improvement\n- Block Tuesday morning.\n\n## This Week's Goal\nDraft the methods section.\n";
 
 fn seed_weekly_note(root: &Path) {
     init::run(root).expect("init");
@@ -48,8 +48,8 @@ fn weekly_renders_the_note_body_without_frontmatter() {
     );
     // The sections and their content render.
     assert!(
-        out.contains("## Next Week's Focus\nDraft the methods section."),
-        "focus section:\n{out}"
+        out.contains("## This Week's Goal\nDraft the methods section."),
+        "goal section:\n{out}"
     );
     assert!(
         out.contains("## Wins\n- Shipped the release."),

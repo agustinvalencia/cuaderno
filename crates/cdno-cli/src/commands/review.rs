@@ -1,9 +1,10 @@
 //! `cdno review weekly` — the guided weekly-review ritual.
 //!
 //! Distinct from `cdno weekly` (which just *reads* the note) and the
-//! low-level `upsert_weekly_section`: this walks the four review
-//! sections (Wins, Challenges, One Improvement, Next Week's Focus) and
-//! composes each interactively, writing them to the week's note.
+//! low-level `upsert_weekly_section`: this walks the three retrospective
+//! sections (Wins, Challenges, One Improvement) into the ending week's
+//! note, then composes the forward goal — which lands in *next* week's
+//! note as its `This Week's Goal`, the carry-forward hand-off.
 //!
 //! Non-interactive (or piped) runs print the current weekly note
 //! instead of prompting, so the command stays scriptable and TTY-test
@@ -25,8 +26,9 @@ use crate::prompt;
 
 #[derive(Debug, Subcommand)]
 pub enum ReviewCommands {
-    /// Walk the weekly review sections and compose each into this
-    /// week's note. Reads the current note when not interactive.
+    /// Walk the retrospective sections into this week's note, then set
+    /// next week's goal in next week's note. Reads the current note when
+    /// not interactive.
     Weekly,
 }
 
@@ -41,12 +43,13 @@ pub fn run(
     }
 }
 
-/// The four review sections, in ritual order.
-const WEEKLY_SECTIONS: [WeeklySection; 4] = [
+/// The three retrospective sections, in ritual order. They reflect on
+/// the ending week and land in its own note. The forward goal is handled
+/// separately — it belongs in *next* week's note (see `weekly`).
+const REVIEW_SECTIONS: [WeeklySection; 3] = [
     WeeklySection::Wins,
     WeeklySection::Challenges,
     WeeklySection::OneImprovement,
-    WeeklySection::NextWeeksFocus,
 ];
 
 fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
@@ -72,7 +75,7 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
     }
 
     let mut saved_path: Option<String> = None;
-    for section in WEEKLY_SECTIONS {
+    for section in REVIEW_SECTIONS {
         let entry = prompt::prompt_text(section.heading())?;
         if entry.trim().is_empty() {
             continue;
@@ -89,6 +92,17 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
     match saved_path {
         Some(path) => println!("\nWeekly review saved to {path}."),
         None => println!("\nNothing entered \u{2014} weekly note unchanged."),
+    }
+
+    // The forward goal is next week's anchor, so it lands in *next*
+    // week's note as its `This Week's Goal` — not this (ending) week's.
+    let next_week = today + chrono::Duration::days(7);
+    let goal = prompt::prompt_text("Next week's goal (its This Week's Goal)")?;
+    if !goal.trim().is_empty() {
+        let path = vault
+            .upsert_weekly_section(next_week, WeeklySection::ThisWeeksGoal, &goal, false)
+            .context("writing next week's goal")?;
+        println!("Next week's goal saved to {path}.");
     }
     Ok(())
 }

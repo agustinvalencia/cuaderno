@@ -369,7 +369,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Write a section of the weekly-review note for the ISO week containing `date` (any day in the week; defaults to this week). `section` is one of `Wins`, `Challenges`, `One Improvement`, `Next Week's Focus` (case-insensitive); any other value is rejected. Creates the weekly note (frontmatter + all four section headings) if absent. With `append: false` (default) the section is replaced — compose the review; with `append: true` the content is appended — accrue within a section across a session. `Next Week's Focus` is where the forward plan lives. cdno keeps no separate weekly-plan note: the review and the plan share this one artefact per week."
+        description = "Write a section of the weekly note for the ISO week containing `date` (any day in the week; defaults to this week). `section` is one of `Wins`, `Challenges`, `One Improvement`, `This Week's Goal` (case-insensitive; the former `Next Week's Focus` is still accepted as a deprecated alias and maps to `This Week's Goal`); any other value is rejected. Creates the weekly note (frontmatter + all four section headings) if absent. With `append: false` (default) the section is replaced — compose the review; with `append: true` the content is appended — accrue within a section across a session. `This Week's Goal` is the week's anchoring goal: set ahead of the week by weekly-planning (pass a `date` in the week being planned to create that week's note and set its goal in one call), or written into next week's note by weekly-review as the carry-forward hand-off. cdno keeps no separate weekly-plan note: the review and the plan share this one artefact per week."
     )]
     pub async fn upsert_weekly_section(
         &self,

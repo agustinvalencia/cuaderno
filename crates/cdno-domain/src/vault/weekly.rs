@@ -3,8 +3,10 @@
 //! The weekly note (design §5.2) is one artefact per ISO week at
 //! `journal/<iso-year>/weekly/<YYYY>-W<ww>.md`, composed during the
 //! weekly-review ritual. It carries four sections — Wins, Challenges,
-//! One Improvement, and Next Week's Focus — the last of which is where
-//! the forward *plan* lives. Two operations sit here, mirroring the
+//! One Improvement, and This Week's Goal — the last of which is the
+//! week's anchoring goal (set by planning at the top of the week, or
+//! carried into the next week's note by the review). Two operations sit
+//! here, mirroring the
 //! daily-note seam (`daily.rs`):
 //!
 //! - [`Vault::read_weekly_note`] — the read side, so a skill can check
@@ -45,15 +47,17 @@ pub struct WeeklyNoteView {
     pub markdown: String,
 }
 
-/// The writable sections of a weekly-review note (design §5.2). All four
-/// are review content composed during the ritual, so — unlike the daily
-/// note — there is no history section held back from the writer.
+/// The writable sections of a weekly note (design §5.2). Three are
+/// review content composed during the ritual (Wins, Challenges, One
+/// Improvement); `ThisWeeksGoal` is the week's anchor, set ahead of the
+/// week by planning. None is an append-only history section, so — unlike
+/// the daily note — there is nothing held back from the writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WeeklySection {
     Wins,
     Challenges,
     OneImprovement,
-    NextWeeksFocus,
+    ThisWeeksGoal,
 }
 
 impl WeeklySection {
@@ -63,7 +67,7 @@ impl WeeklySection {
             WeeklySection::Wins => "Wins",
             WeeklySection::Challenges => "Challenges",
             WeeklySection::OneImprovement => "One Improvement",
-            WeeklySection::NextWeeksFocus => "Next Week's Focus",
+            WeeklySection::ThisWeeksGoal => "This Week's Goal",
         }
     }
 }
@@ -72,8 +76,10 @@ impl FromStr for WeeklySection {
     type Err = String;
 
     /// Case-insensitive parse, tolerant of hyphens/underscores and the
-    /// apostrophe in "Next Week's Focus". The error string names the
-    /// allowlist so the MCP layer can surface it verbatim.
+    /// apostrophe in "This Week's Goal". The error string names the
+    /// allowlist so the MCP layer can surface it verbatim. The former
+    /// "Next Week's Focus" name is still accepted as a deprecated alias
+    /// so pre-rename callers don't hard-fail during the transition.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let normalised = s
             .trim()
@@ -84,10 +90,13 @@ impl FromStr for WeeklySection {
             "wins" => Ok(WeeklySection::Wins),
             "challenges" => Ok(WeeklySection::Challenges),
             "one improvement" => Ok(WeeklySection::OneImprovement),
-            "next weeks focus" => Ok(WeeklySection::NextWeeksFocus),
+            "this weeks goal" => Ok(WeeklySection::ThisWeeksGoal),
+            // Deprecated alias from before the rename; maps to the same
+            // section so existing automation keeps working.
+            "next weeks focus" => Ok(WeeklySection::ThisWeeksGoal),
             other => Err(format!(
                 "unknown weekly section '{other}' (expected one of: \
-                 wins, challenges, one improvement, next week's focus)"
+                 wins, challenges, one improvement, this week's goal)"
             )),
         }
     }
