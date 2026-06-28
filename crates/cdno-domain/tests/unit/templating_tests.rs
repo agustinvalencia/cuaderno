@@ -182,10 +182,12 @@ fn daily_template_supplies_the_weekday_variable() {
         .expect("log");
     let content = store.read_file(&path).unwrap();
 
-    let weekday = today().format("%A").to_string();
+    // today() is 2026-04-26, a Sunday — assert the literal rather than
+    // re-deriving via %A, so a coordinated format change in both source
+    // and test can't pass silently.
     assert!(
-        content.contains(&format!("# {weekday}")),
-        "weekday should be substituted (expected `# {weekday}`):\n{content}"
+        content.contains("# Sunday"),
+        "weekday should render as `# Sunday`:\n{content}"
     );
     assert!(
         !content.contains("{{weekday}}"),

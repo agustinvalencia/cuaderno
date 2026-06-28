@@ -879,7 +879,7 @@ New project. No work done yet.
 
 ### Variable tiers
 
-Variables are resolved in order of precedence (later tiers override earlier ones):
+Variables are resolved in tier order — the first tier that defines a name wins, so earlier tiers take precedence over later ones:
 
 **Tier 1 — Built-in variables.** Always available, computed by the tool:
 
