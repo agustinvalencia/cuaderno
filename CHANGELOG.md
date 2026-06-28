@@ -4,7 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.1.17] - 2026-06-28
+
+Small hardening release: one new lint rule. No new MCP tools (40); no CLI surface changes.
 
 ### Added
 
