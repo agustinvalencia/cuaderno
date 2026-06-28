@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **Portfolio → project links are bidirectional** (#253) — `create_portfolio` with a `project` now backfills that project map's `## Links` with `[[portfolios/<slug>/_index]]` (replacing the `(none yet)` placeholder) in the same commit, so the project map visibly lists its portfolios. Previously the portfolio's `project:` frontmatter pointed up but nothing pointed down — the project's `## Links` stayed empty, forcing a hand-edit (frontmatter links aren't body-scanned). Being a body wikilink, it also becomes a backlink-graph edge on the next full reindex (the same deferred-resolution caveat as every domain-written body link). A new retrofit verb — `cdno portfolio link --project <target>` and MCP tool `link_portfolio_to_project` — sets the portfolio's `project:` frontmatter *and* backfills the project's `## Links`, for portfolios created before their project, without one, or before this change. Idempotent on each end; skips silently at create time when the named project note doesn't exist (the frontmatter link still stands). MCP catalogue 40 → 41.
+
 ## [0.1.18] - 2026-06-28
 
 Weekly-review ergonomics + an internal speedup. No new MCP tools (40); no new CLI commands.

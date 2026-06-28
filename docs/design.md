@@ -1030,6 +1030,13 @@ cdno portfolio link sparse-vs-dense-ood \
                          # the portfolio's ## Related Questions.
                          # (create does this automatically when the
                          # portfolio and question slugs match)
+cdno portfolio link sparse-vs-dense-ood \
+  --project projects/surrogate-model
+                         # Retrofit: link a portfolio to a project.
+                         # Sets the portfolio's `project:` frontmatter
+                         # and backfills the project map's ## Links.
+                         # (create does this automatically with --project;
+                         # pass exactly one of --question / --project)
 ```
 
 ### Stewardships

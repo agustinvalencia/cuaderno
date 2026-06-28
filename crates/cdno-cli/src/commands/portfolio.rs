@@ -54,19 +54,28 @@ pub enum PortfolioCommands {
         portfolio: Option<String>,
     },
 
-    /// Link an existing portfolio to an existing question, writing
-    /// both ends: the question's `## Related Portfolios` and the
-    /// portfolio's `## Related Questions`. The retrofit path for
-    /// portfolios created before their question, or whose slug differs
-    /// from it.
+    /// Link an existing portfolio to an existing question or project.
+    ///
+    /// With `--question`, writes both ends of the question link (the
+    /// question's `## Related Portfolios` and the portfolio's `## Related
+    /// Questions`). With `--project`, sets the portfolio's `project:`
+    /// frontmatter and appends the portfolio to the project map's `##
+    /// Links`. Pass exactly one. The retrofit path for portfolios created
+    /// before their question/project, or whose `## Links` predates the
+    /// auto-backfill.
     Link {
         /// Portfolio slug (the `portfolios/<slug>/` folder name).
         #[arg(long, add = ArgValueCompleter::new(completions::complete_portfolio))]
         portfolio: Option<String>,
         /// Question slug, resolved across the `research` and `life`
-        /// domains.
+        /// domains. Mutually exclusive with `--project`.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_question))]
         question: Option<String>,
+        /// Bare wikilink target to a project (e.g.
+        /// `"projects/surrogate-model"`). Mutually exclusive with
+        /// `--question`.
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
@@ -93,8 +102,64 @@ pub fn run(
         PortfolioCommands::Link {
             portfolio,
             question,
-        } => link_to_question(&vault, at, portfolio, question, interactive),
+            project,
+        } => link(&vault, at, portfolio, question, project, interactive),
     }
+}
+
+/// Dispatch `portfolio link` to the question or project linker. Exactly
+/// one of `--question` / `--project` must be given — they write
+/// different targets, so there's no sensible default and prompting for
+/// "which kind" would be more friction than just asking the caller.
+fn link(
+    vault: &Vault,
+    at: NaiveDateTime,
+    portfolio: Option<String>,
+    question: Option<String>,
+    project: Option<String>,
+    interactive: bool,
+) -> Result<()> {
+    match (question, project) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("pass only one of --question / --project, not both")
+        }
+        (None, None) => {
+            anyhow::bail!("pass one of --question / --project to choose what to link")
+        }
+        (Some(question), None) => {
+            link_to_question(vault, at, portfolio, Some(question), interactive)
+        }
+        (None, Some(project)) => link_to_project(vault, at, portfolio, project, interactive),
+    }
+}
+
+fn link_to_project(
+    vault: &Vault,
+    at: NaiveDateTime,
+    portfolio: Option<String>,
+    project: String,
+    interactive: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let portfolio =
+        prompt::gather_or_error(portfolio, "portfolio", interactive, &mut prompted, || {
+            prompt::prompt_portfolio(vault, at.date())
+        })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to link portfolio '{portfolio}' to project '{project}'"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let path = vault
+        .link_portfolio_to_project(&portfolio, &project)
+        .with_context(|| format!("linking portfolio '{portfolio}' to project '{project}'"))?;
+    println!("Linked portfolio '{portfolio}' to project '{project}' ({path})");
+    Ok(())
 }
 
 fn create(

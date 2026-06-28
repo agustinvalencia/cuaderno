@@ -25,6 +25,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::rewrite_field_in_frontmatter;
 use super::slug::slugify;
 
 /// One row in the `Vault::list_portfolios` output. Aggregates per-
@@ -55,6 +56,20 @@ const RELATED_PORTFOLIOS_SECTION: &str = "Related Portfolios";
 /// [`RELATED_PORTFOLIOS_SECTION`] — both ends of the link are written
 /// together so the navigation works in either direction (#200).
 const RELATED_QUESTIONS_SECTION: &str = "Related Questions";
+
+/// Heading in a project map that lists the portfolios collecting
+/// evidence under it. The forward direction of the portfolio ↔ project
+/// link: the portfolio's `project:` frontmatter points up, this body
+/// wikilink points down so the project map visibly lists its portfolios
+/// (and, unlike a frontmatter link, is body-scannable — it joins the
+/// backlink graph on the next full reindex, the same deferred-resolution
+/// caveat as every other domain-written body wikilink; see
+/// `context.rs`).
+const PROJECT_LINKS_SECTION: &str = "Links";
+
+/// The placeholder the project template ships in `## Links`. Treated as
+/// empty so the first portfolio link replaces it rather than trailing it.
+const PROJECT_LINKS_PLACEHOLDER: &str = "- Portfolio: (none yet)";
 
 impl Vault {
     /// Create a new portfolio at `portfolios/<slug>/_index.md` from
@@ -127,12 +142,135 @@ impl Vault {
             )?;
         }
 
+        // Backfill the parent project's `## Links` so the link is visible
+        // on the project map and enters the backlink graph — the
+        // portfolio's `project:` frontmatter alone is not body-scanned, so
+        // without this the project never lists its portfolios. Skipped when
+        // the named project note doesn't exist; the frontmatter link
+        // (already in `content`) still stands.
+        if let Some(project_target) = project {
+            let project_path = VaultPath::new(format!("{project_target}.md"))?;
+            if self.store.exists(&project_path)? {
+                self.stage_project_link(&project_path, &path, &mut tx)?;
+            }
+        }
+
         let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
         tx.commit()?;
 
         Ok(path)
+    }
+
+    /// Link an *existing* portfolio to an *existing* project — the
+    /// retrofit counterpart to the backfill `create_portfolio` does
+    /// automatically. Sets the portfolio's `project:` frontmatter (the
+    /// up direction) and appends `[[portfolios/<slug>/_index]]` to the
+    /// project map's `## Links` (the down direction). Reach for it when a
+    /// portfolio predates its project, was created without one, or (for
+    /// portfolios created before the backfill landed) has a `project:`
+    /// frontmatter but a stale `## Links`.
+    ///
+    /// Returns the resolved project-note path. Idempotent: re-linking the
+    /// same pair rewrites identical frontmatter and adds no duplicate
+    /// bullet.
+    ///
+    /// Errors:
+    /// - [`DomainError::EmptyField`] / [`DomainError::MalformedWikilink`]
+    ///   — `project` is empty or already bracketed (`[[…]]`); pass the
+    ///   bare path (e.g. `"projects/surrogate-model"`).
+    /// - [`StoreError::NotFound`] — no portfolio `_index.md` for
+    ///   `portfolio` (message lists the available slugs), or no project
+    ///   note at `<project>.md`.
+    pub fn link_portfolio_to_project(
+        &self,
+        portfolio: &str,
+        project: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let project = project.trim();
+        if project.is_empty() {
+            return Err(DomainError::EmptyField { field: "project" });
+        }
+        if project.contains("[[") || project.contains("]]") {
+            return Err(DomainError::MalformedWikilink {
+                value: project.to_owned(),
+            });
+        }
+
+        let portfolio_index = VaultPath::new(format!(
+            "{}/{portfolio}/_index.md",
+            cdno_core::paths::PORTFOLIOS
+        ))?;
+        if !self.store.exists(&portfolio_index)? {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{portfolio_index}{}",
+                self.available_portfolios_hint()
+            ))));
+        }
+        let project_path = VaultPath::new(format!("{project}.md"))?;
+        if !self.store.exists(&project_path)? {
+            return Err(DomainError::Store(StoreError::NotFound(
+                project_path.to_string(),
+            )));
+        }
+
+        // Up direction: set the portfolio's `project:` frontmatter. The
+        // template always ships the field (null when unset), so a rewrite
+        // is always in range. Skip the write when it's already this value.
+        let portfolio_raw = self.store.read_file(&portfolio_index)?;
+        let project_field = format!("\"[[{project}]]\"");
+        let updated = rewrite_field_in_frontmatter(&portfolio_raw, "project", &project_field)?;
+        if updated != portfolio_raw {
+            let entry =
+                build_index_entry_for(&portfolio_index, &updated, NoteType::Portfolio.as_str())?;
+            tx.write_file(portfolio_index.clone(), updated);
+            tx.upsert_note(entry);
+        }
+
+        // Down direction: backfill the project's `## Links`.
+        self.stage_project_link(&project_path, &portfolio_index, &mut tx)?;
+        tx.commit()?;
+
+        Ok(project_path)
+    }
+
+    /// Append `- Portfolio: [[portfolios/<slug>/_index]]` under a project
+    /// map's `## Links`, replacing the `(none yet)` placeholder on the
+    /// first link. Idempotent — returns `false` when the wikilink is
+    /// already present. Stages the rewrite + index re-stamp onto `tx`;
+    /// the caller commits. Shared by `create_portfolio` and
+    /// `link_portfolio_to_project`.
+    fn stage_project_link(
+        &self,
+        project_path: &VaultPath,
+        portfolio_index: &VaultPath,
+        tx: &mut VaultTransaction,
+    ) -> Result<bool, DomainError> {
+        let raw = self.store.read_file(project_path)?;
+        let mut doc = MarkdownDocument::parse(raw)?;
+        let target = note_wikilink_target(portfolio_index);
+        let marker = format!("[[{target}]]");
+
+        doc.ensure_section(PROJECT_LINKS_SECTION)?;
+        let existing = doc.section(PROJECT_LINKS_SECTION)?.trim_end();
+        if existing.lines().any(|line| line.contains(&marker)) {
+            return Ok(false); // already linked — no duplicate bullet
+        }
+        let bullet = format!("- Portfolio: [[{target}]]");
+        let new_section = if existing.is_empty() || existing == PROJECT_LINKS_PLACEHOLDER {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(PROJECT_LINKS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry = build_index_entry_for(project_path, &new_content, NoteType::Project.as_str())?;
+        tx.write_file(project_path.clone(), new_content);
+        tx.upsert_note(entry);
+        Ok(true)
     }
 
     /// Link an *existing* portfolio to an *existing* question — the
