@@ -617,3 +617,74 @@ fn lint_does_not_flag_an_archived_action_reference() {
         report.issues
     );
 }
+
+// --- frontmatter-order drift (#236) ----------------------------------
+
+#[test]
+fn lint_flags_frontmatter_out_of_canonical_order() {
+    // Canonical daily order is `type` then `date`; this note reverses
+    // them, so lint emits an order Warning (the note is valid, just
+    // untidy -- `cdno normalise` fixes it).
+    let body = "---\ndate: 2026-04-19\ntype: daily\n---\n# Note\n";
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-04-19.md", body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let order_issues: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("canonical order"))
+        .collect();
+    assert_eq!(order_issues.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(order_issues[0].severity, LintSeverity::Warning);
+    assert_eq!(order_issues[0].path, vp("journal/2026/daily/2026-04-19.md"));
+}
+
+#[test]
+fn lint_does_not_flag_canonical_frontmatter_order() {
+    // Keys already in the canonical `type` then `date` order: no drift.
+    let body = "---\ntype: daily\ndate: 2026-04-19\n---\n# Note\n";
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-04-19.md", body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "a canonical note must not be flagged: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_frontmatter_order_follows_a_custom_template() {
+    // A custom daily template declaring `date` before `type` makes that
+    // the canonical order, so a note in that order is clean -- proving
+    // the rule derives order from the effective template (matching
+    // `cdno normalise`), not a hardcoded built-in order.
+    let custom = "---\ndate: {{date}}\ntype: daily\n---\n# {{heading}}\n\n## Logs\n";
+    let note = "---\ndate: 2026-04-19\ntype: daily\n---\n# Note\n";
+    let vault = vault_with_notes(
+        &[
+            (".cuaderno/templates/daily.md", custom),
+            ("journal/2026/daily/2026-04-19.md", note),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "note matches the custom template's order, so no drift: {:?}",
+        report.issues
+    );
+}

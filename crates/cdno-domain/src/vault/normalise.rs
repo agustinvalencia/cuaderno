@@ -78,20 +78,7 @@ impl Vault {
                 }
             };
 
-            // Canonical order comes from the *effective* template (custom
-            // override if present, else built-in), so `normalise` respects
-            // a custom template's field order rather than a hardcoded one.
-            // Tracking's order is variant-specific, keyed by the note's
-            // `activity`.
-            let variant = if note_type == NoteType::Tracking {
-                Frontmatter::parse(&raw)
-                    .ok()
-                    .and_then(|(fm, _)| fm.optional_field::<String>("activity").ok().flatten())
-            } else {
-                None
-            };
-            let template = self.resolve_template_content(note_type.as_str(), variant.as_deref())?;
-            let order = frontmatter_key_order(&template);
+            let order = self.canonical_frontmatter_order(note_type, &raw)?;
 
             let Some(new_raw) = reorder_frontmatter(&raw, &order) else {
                 continue; // no frontmatter, or already canonical
@@ -109,6 +96,31 @@ impl Vault {
             tx.commit()?;
         }
         Ok(report)
+    }
+
+    /// The canonical frontmatter key order for a note of `note_type`
+    /// whose raw content is `raw`. Derived from the *effective* template
+    /// (custom `.cuaderno/templates/` override if present, else the
+    /// built-in), so it respects a custom template's field order rather
+    /// than a hardcoded one. Tracking's order is variant-specific, keyed
+    /// by the note's `activity`, so `raw` is parsed to pick the variant.
+    ///
+    /// Shared by `normalise_notes` (which reorders to this) and the lint
+    /// frontmatter-order rule (#236, which flags deviation from it).
+    pub(in crate::vault) fn canonical_frontmatter_order(
+        &self,
+        note_type: NoteType,
+        raw: &str,
+    ) -> Result<Vec<String>, DomainError> {
+        let variant = if note_type == NoteType::Tracking {
+            Frontmatter::parse(raw)
+                .ok()
+                .and_then(|(fm, _)| fm.optional_field::<String>("activity").ok().flatten())
+        } else {
+            None
+        };
+        let template = self.resolve_template_content(note_type.as_str(), variant.as_deref())?;
+        Ok(frontmatter_key_order(&template))
     }
 }
 

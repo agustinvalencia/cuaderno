@@ -32,7 +32,9 @@ impl Vault {
     /// - append-only-after-completion on archived action notes;
     /// - attachment stub / artefact-folder pairing;
     /// - broken wikilinks: body links that resolve to no note
-    ///   (a `Warning`, not an `Error` -- the note is structurally fine).
+    ///   (a `Warning`, not an `Error` -- the note is structurally fine);
+    /// - frontmatter-order drift: keys not in the effective template's
+    ///   canonical order (a `Warning`; `cdno normalise` fixes it, #236).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -59,13 +61,16 @@ impl Vault {
             // can't pick a schema, so don't bother checking
             // `extra_required` — the report would just compound a
             // problem the user already needs to fix.
-            if NoteType::from_str(&entry.note_type).is_err() {
-                issues.push(LintIssue::error(
-                    path,
-                    format!("unknown note type: `{}`", entry.note_type),
-                ));
-                continue;
-            }
+            let note_type = match NoteType::from_str(&entry.note_type) {
+                Ok(t) => t,
+                Err(_) => {
+                    issues.push(LintIssue::error(
+                        path,
+                        format!("unknown note type: `{}`", entry.note_type),
+                    ));
+                    continue;
+                }
+            };
 
             for required in self.config.extra_required_fields(&entry.note_type) {
                 let present = entry
@@ -170,6 +175,30 @@ impl Vault {
                     continue;
                 }
             };
+
+            // Frontmatter-order drift (#236): keys not in the effective
+            // template's canonical order. A Warning -- the note is valid,
+            // just untidy; `cdno normalise` reorders it. Computed via the
+            // same order `normalise` would apply, so lint and the fixer
+            // never disagree. A broken template surfaces as an Error
+            // rather than aborting the whole pass.
+            match self.canonical_frontmatter_order(note_type, &content) {
+                Ok(order) => {
+                    if super::normalise::reorder_frontmatter(&content, &order).is_some() {
+                        issues.push(LintIssue::warning(
+                            path.clone(),
+                            "frontmatter keys are not in canonical order \
+                             (run `cdno normalise` to fix)"
+                                .to_owned(),
+                        ));
+                    }
+                }
+                Err(e) => issues.push(LintIssue::error(
+                    path.clone(),
+                    format!("could not resolve canonical frontmatter order: {e}"),
+                )),
+            }
+
             for link in resolve_wikilinks(extract_wikilinks(body), &path_set) {
                 if link.resolved_path.is_none() {
                     issues.push(LintIssue::warning(
