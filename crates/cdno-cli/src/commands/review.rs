@@ -71,7 +71,11 @@ fn weekly(root: &Path, today: NaiveDate, no_interactive: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Weekly review. Leave a section blank to skip it.\n");
+    println!(
+        "Weekly review. Wins and Challenges open in your editor, pre-filled with the \
+         current content — edit in place and save. One Improvement and next week's goal \
+         are single-line prompts. Leaving a section blank (or unchanged) skips it.\n"
+    );
     if view.exists {
         println!(
             "Current note:\n{}",
