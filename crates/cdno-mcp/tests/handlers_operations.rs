@@ -603,7 +603,7 @@ async fn upsert_weekly_section_writes_a_review_section() {
 
     let result = server
         .upsert_weekly_section(Parameters(UpsertWeeklySectionInput {
-            section: "Next Week's Focus".to_owned(),
+            section: "This Week's Goal".to_owned(),
             content: "Draft the methods section.".to_owned(),
             date: Some(week_day()),
             append: false,
@@ -617,7 +617,7 @@ async fn upsert_weekly_section_writes_a_review_section() {
     let body = store.read_file(&vp(path)).unwrap();
     assert!(body.contains("week: 2026-W18"), "frontmatter:\n{body}");
     assert!(
-        body.contains("## Next Week's Focus\nDraft the methods section."),
+        body.contains("## This Week's Goal\nDraft the methods section."),
         "body:\n{body}"
     );
 }

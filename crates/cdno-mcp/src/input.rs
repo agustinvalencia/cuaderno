@@ -182,12 +182,12 @@ pub struct ReadWeeklyNoteInput {
     pub date: Option<chrono::NaiveDate>,
 }
 
-/// Input for `upsert_weekly_section`. `section` is one of the weekly-review
+/// Input for `upsert_weekly_section`. `section` is one of the weekly-note
 /// sections; `date` is any day in the target ISO week (omitted = this
 /// week); `append` defaults to replace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpsertWeeklySectionInput {
-    /// One of `Wins`, `Challenges`, `One Improvement`, `Next Week's Focus`
+    /// One of `Wins`, `Challenges`, `One Improvement`, `This Week's Goal`
     /// (case-insensitive).
     pub section: String,
     #[serde(default)]

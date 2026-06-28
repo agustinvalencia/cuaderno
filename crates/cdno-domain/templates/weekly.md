@@ -13,4 +13,4 @@ date_end: {{date_end}}
 
 ## One Improvement
 
-## Next Week's Focus
+## This Week's Goal

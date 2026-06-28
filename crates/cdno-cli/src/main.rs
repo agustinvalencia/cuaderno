@@ -127,16 +127,16 @@ enum Commands {
     /// Quick snapshot: active projects and their top next actions.
     Status,
 
-    /// Guided review rituals. `review weekly` walks the weekly note's
-    /// sections (Wins, Challenges, One Improvement, Next Week's Focus)
-    /// and composes each interactively.
+    /// Guided review rituals. `review weekly` walks the retrospective
+    /// sections (Wins, Challenges, One Improvement) into this week's note
+    /// and sets next week's goal (its This Week's Goal) in next week's.
     Review {
         #[command(subcommand)]
         subcommand: ReviewCommands,
     },
 
     /// Show the weekly review/plan note: Wins, Challenges, One
-    /// Improvement, and Next Week's Focus. Defaults to this ISO week.
+    /// Improvement, and This Week's Goal. Defaults to this ISO week.
     Weekly {
         /// Any day in the target ISO week (YYYY-MM-DD). Defaults to this week.
         #[arg(long)]

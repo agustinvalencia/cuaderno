@@ -41,12 +41,18 @@ fn weekly_section_parses_case_and_punctuation_insensitively() {
         WeeklySection::OneImprovement
     );
     assert_eq!(
-        WeeklySection::from_str("Next Week's Focus").unwrap(),
-        WeeklySection::NextWeeksFocus
+        WeeklySection::from_str("This Week's Goal").unwrap(),
+        WeeklySection::ThisWeeksGoal
     );
     assert_eq!(
-        WeeklySection::from_str("next weeks focus").unwrap(),
-        WeeklySection::NextWeeksFocus
+        WeeklySection::from_str("this weeks goal").unwrap(),
+        WeeklySection::ThisWeeksGoal
+    );
+    // The former name is kept as a deprecated alias; it resolves to the
+    // renamed section so pre-rename callers don't hard-fail.
+    assert_eq!(
+        WeeklySection::from_str("Next Week's Focus").unwrap(),
+        WeeklySection::ThisWeeksGoal
     );
 }
 
@@ -55,7 +61,7 @@ fn weekly_section_rejects_unknown_with_an_allowlist_message() {
     let err = WeeklySection::from_str("retrospective").unwrap_err();
     assert!(err.contains("unknown weekly section"), "msg: {err}");
     assert!(
-        err.contains("next week's focus"),
+        err.contains("this week's goal"),
         "msg names allowlist: {err}"
     );
 }
@@ -104,7 +110,7 @@ fn upsert_scaffolds_the_note_with_iso_week_frontmatter_and_four_sections() {
     assert!(raw.contains("## Wins\n- Shipped the release."), "{raw}");
     assert!(raw.contains("## Challenges"), "{raw}");
     assert!(raw.contains("## One Improvement"), "{raw}");
-    assert!(raw.contains("## Next Week's Focus"), "{raw}");
+    assert!(raw.contains("## This Week's Goal"), "{raw}");
 }
 
 #[test]
@@ -138,7 +144,7 @@ fn upsert_replace_overwrites_the_section_append_accrues() {
     vault
         .upsert_weekly_section(
             midweek(),
-            WeeklySection::NextWeeksFocus,
+            WeeklySection::ThisWeeksGoal,
             "First draft.",
             false,
         )
@@ -147,7 +153,7 @@ fn upsert_replace_overwrites_the_section_append_accrues() {
     let path = vault
         .upsert_weekly_section(
             midweek(),
-            WeeklySection::NextWeeksFocus,
+            WeeklySection::ThisWeeksGoal,
             "Final focus.",
             false,
         )

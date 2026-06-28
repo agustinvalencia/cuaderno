@@ -232,11 +232,11 @@ date_end: 2026-04-06
 ## One Improvement
 - Block Tuesday morning for deep writing. No Slack until noon.
 
-## Next Week's Focus
+## This Week's Goal
 Draft the ICML methods section using the ablation results.
 ```
 
-**Created by**: Claude during the weekly review ritual, with user input.
+**Created by**: scaffolded for the ISO week on first write. The three retrospective sections (Wins, Challenges, One Improvement) are composed by Claude during the weekly-review ritual; `This Week's Goal` is the week's anchor — set ahead of the week by weekly-planning, or written into next week's note by the review as the carry-forward hand-off. It is the goal a daily orientation reads for the day's umbrella.
 
 ### 5.3 Project Map
 

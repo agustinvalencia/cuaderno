@@ -324,7 +324,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Read the weekly-review note for the ISO week containing `date` (any day in the week; defaults to this week). Returns `{ path, exists, markdown }`. A week with no note yet returns `exists: false` and empty `markdown` rather than erroring, so a weekly-review skill can check whether the week is already started before composing. The note's sections are Wins, Challenges, One Improvement, and Next Week's Focus (the forward plan)."
+        description = "Read the weekly note for the ISO week containing `date` (any day in the week; defaults to this week). Returns `{ path, exists, markdown }`. A week with no note yet returns `exists: false` and empty `markdown` rather than erroring, so a skill can check whether the week is already started before composing. The note's sections are Wins, Challenges, One Improvement, and This Week's Goal (the week's anchoring goal — read it for the day's umbrella in a daily orientation)."
     )]
     pub async fn read_weekly_note(
         &self,

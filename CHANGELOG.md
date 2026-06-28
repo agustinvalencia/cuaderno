@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **Weekly note: `Next Week's Focus` → `This Week's Goal`** — the weekly note's fourth section is renamed so each week's note carries *its own* anchoring goal, rather than holding next week's goal a week early (which forced cross-week reads to find the current week's anchor). Carry-forward is now explicit: weekly-review writes the goal into *next* week's note (its `This Week's Goal`), and weekly-planning sets/re-aims the planned week's goal directly — passing a `date` in that week creates the note and sets its goal in one call, so the upcoming week's daily notes get an umbrella. `cdno review weekly` now writes the three retrospective sections into the ending week's note and the forward goal into next week's. `upsert_weekly_section` still accepts the former `Next Week's Focus` name as a deprecated alias (it maps to `This Week's Goal`) so pre-rename callers don't hard-fail. Template, MCP tool docs, and design §5.2 updated; existing notes keep the old heading until rewritten or migrated.
+
 ## [0.1.15] - 2026-06-21
 
 Note structure & custom templates: notes keep a consistent shape, and the long-promised custom-template system (design §9) is finally wired so `.cuaderno/templates/` overrides take effect. No new MCP tools; one new CLI command (`cdno normalise`). Tool count unchanged (40).
