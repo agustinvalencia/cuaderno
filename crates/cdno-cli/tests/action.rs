@@ -40,6 +40,7 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             question: None,
         },
         true,
+        false,
     )
     .expect("create project");
 }
@@ -63,6 +64,7 @@ fn add_appends_open_bullet_with_energy() {
             note: false,
         },
         true,
+        false,
     )
     .expect("action add");
 
@@ -93,6 +95,7 @@ fn add_with_note_writes_note_and_wikilink_bullet() {
             note: true,
         },
         true,
+        false,
     )
     .expect("action add --note");
 
@@ -127,6 +130,7 @@ fn promote_attaches_note_to_existing_bullet() {
             note: false,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -138,6 +142,7 @@ fn promote_attaches_note_to_existing_bullet() {
             query: Some("draft methods".to_owned()),
         },
         true,
+        false,
     )
     .expect("promote");
 
@@ -175,6 +180,7 @@ fn complete_removes_matching_plain_bullet() {
             note: false,
         },
         true,
+        false,
     )
     .expect("add");
 
@@ -186,6 +192,7 @@ fn complete_removes_matching_plain_bullet() {
             query: Some("ablation".to_owned()),
         },
         true,
+        false,
     )
     .expect("complete");
 
@@ -207,6 +214,7 @@ fn complete_on_wikilink_bullet_archives_the_note() {
             note: true,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -218,6 +226,7 @@ fn complete_on_wikilink_bullet_archives_the_note() {
             query: Some("characterise".to_owned()),
         },
         true,
+        false,
     )
     .expect("complete");
 
@@ -248,6 +257,7 @@ fn complete_errors_when_action_not_found() {
             query: Some("nothing-like-this".to_owned()),
         },
         true,
+        false,
     )
     .expect_err("query should not match");
     assert!(format!("{err:#}").contains("nothing-like-this"));
@@ -269,6 +279,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
             query: Some("first concrete".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
     action::run(
@@ -281,6 +292,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
             note: false,
         },
         true,
+        false,
     )
     .unwrap();
     action::run(
@@ -293,6 +305,7 @@ fn list_renders_plain_and_attached_bullets_with_status() {
             note: true,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -323,6 +336,7 @@ fn list_on_empty_section_shows_placeholder() {
             query: Some("first concrete".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -351,6 +365,7 @@ fn add_without_project_in_non_interactive_errors() {
             note: false,
         },
         true,
+        false,
     )
     .expect_err("missing --project should error in non-interactive mode");
     let msg = format!("{err:#}");

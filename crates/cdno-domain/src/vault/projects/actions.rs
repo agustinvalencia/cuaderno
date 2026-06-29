@@ -20,7 +20,10 @@ use super::NEXT_ACTIONS_SECTION;
 /// not part of the action surface — action completion removes the
 /// bullet rather than checking it — so the list only carries open
 /// items.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// `--json` serialises this directly; field shape + enum casing match the
+// MCP `ActionListEntryDto` (energy/status are kebab-case via their serde
+// rename, same as the DTO's `as_str()` strings).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ActionListEntry {
     /// The bullet text after `- [ ] `, including any `(<energy>)`
     /// suffix and wikilink target. Preserved verbatim so the caller
@@ -39,7 +42,7 @@ pub struct ActionListEntry {
 /// The action note hanging off a wikilink bullet. Carries the slug
 /// and the current frontmatter `status` so a list view can flag
 /// active / blocked / completed inline.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AttachedAction {
     pub slug: String,
     pub status: ActionStatus,

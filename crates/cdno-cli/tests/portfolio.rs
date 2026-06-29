@@ -34,6 +34,7 @@ fn seed_portfolio(root: &Path) {
             project: None,
         },
         true,
+        false,
     )
     .expect("create portfolio");
 }
@@ -53,6 +54,7 @@ fn portfolio_create_writes_index_file() {
             project: Some("projects/surrogate".to_owned()),
         },
         true,
+        false,
     )
     .expect("create");
 
@@ -76,6 +78,7 @@ fn portfolio_create_errors_when_missing_question_in_non_interactive() {
             project: None,
         },
         true,
+        false,
     )
     .expect_err("missing --question should error");
     let msg = format!("{err:#}");
@@ -134,6 +137,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
             project: None,
         },
         true,
+        false,
     )
     .expect("link");
 
@@ -168,6 +172,7 @@ fn portfolio_link_errors_when_missing_question_in_non_interactive() {
             project: None,
         },
         true,
+        false,
     )
     .expect_err("missing both --question and --project should error");
     let msg = format!("{err:#}");
@@ -197,6 +202,7 @@ fn portfolio_link_to_project_backfills_the_project_map() {
             project: Some("projects/surrogate-model".to_owned()),
         },
         true,
+        false,
     )
     .expect("link to project");
 
@@ -226,6 +232,7 @@ fn portfolio_link_errors_when_both_question_and_project_given() {
             project: Some("projects/p".to_owned()),
         },
         true,
+        false,
     )
     .expect_err("both targets should error");
     assert!(format!("{err:#}").contains("only one"), "error: {err:#}");
@@ -342,6 +349,7 @@ fn portfolio_show_errors_when_missing_portfolio_in_non_interactive() {
         moment(2026, 4, 1, 9, 0),
         PortfolioCommands::Show { portfolio: None },
         true,
+        false,
     )
     .expect_err("missing --portfolio should error");
     let msg = format!("{err:#}");

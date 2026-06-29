@@ -42,6 +42,7 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             question: None,
         },
         true,
+        false,
     )
     .expect("create");
 }
@@ -70,6 +71,7 @@ fn create_with_question_wraps_target_in_wikilink() {
             question: Some("questions/research/surrogate-cost".to_owned()),
         },
         true,
+        false,
     )
     .expect("create");
 
@@ -93,6 +95,7 @@ fn state_replaces_current_state_section() {
             text: Some("Updated state.".to_owned()),
         },
         true,
+        false,
     )
     .expect("state");
 
@@ -112,6 +115,7 @@ fn park_moves_file_to_parked_folder() {
             slug: Some("x".to_owned()),
         },
         true,
+        false,
     )
     .expect("park");
 
@@ -130,6 +134,7 @@ fn activate_moves_file_back_and_flips_status() {
             slug: Some("x".to_owned()),
         },
         true,
+        false,
     )
     .expect("park");
 
@@ -140,6 +145,7 @@ fn activate_moves_file_back_and_flips_status() {
             slug: Some("x".to_owned()),
         },
         true,
+        false,
     )
     .expect("activate");
 
@@ -155,6 +161,7 @@ fn list_succeeds_with_and_without_active_projects() {
         moment(2026, 5, 2, 9, 0),
         ProjectCommands::List,
         true,
+        false,
     )
     .expect("list (empty)");
 
@@ -164,6 +171,7 @@ fn list_succeeds_with_and_without_active_projects() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::List,
         true,
+        false,
     )
     .expect("list (one)");
 }
@@ -180,6 +188,7 @@ fn show_succeeds_for_active_parked_and_completed() {
             slug: "alpha".to_owned(),
         },
         true,
+        false,
     )
     .expect("show active");
 
@@ -190,6 +199,7 @@ fn show_succeeds_for_active_parked_and_completed() {
             slug: Some("alpha".to_owned()),
         },
         true,
+        false,
     )
     .expect("park");
 
@@ -200,6 +210,7 @@ fn show_succeeds_for_active_parked_and_completed() {
             slug: "alpha".to_owned(),
         },
         true,
+        false,
     )
     .expect("show parked");
 
@@ -214,6 +225,7 @@ fn show_succeeds_for_active_parked_and_completed() {
             slug: "done".to_owned(),
         },
         true,
+        false,
     )
     .expect("show completed");
 }
@@ -232,6 +244,7 @@ fn show_renders_no_open_actions_branch() {
             query: Some("first concrete".to_owned()),
         },
         true,
+        false,
     )
     .expect("action complete");
 
@@ -242,6 +255,7 @@ fn show_renders_no_open_actions_branch() {
             slug: "x".to_owned(),
         },
         true,
+        false,
     )
     .expect("show with no open actions");
 }
@@ -258,6 +272,7 @@ fn show_renders_state_none_branch() {
             text: Some("  ".to_owned()),
         },
         true,
+        false,
     )
     .expect("state");
 
@@ -268,6 +283,7 @@ fn show_renders_state_none_branch() {
             slug: "x".to_owned(),
         },
         true,
+        false,
     )
     .expect("show with empty state");
 }
@@ -285,6 +301,7 @@ fn show_renders_top_action_without_energy_branch() {
             slug: "x".to_owned(),
         },
         true,
+        false,
     )
     .expect("show with bare action");
 }
@@ -306,6 +323,7 @@ fn milestone_add_writes_hard_bullet() {
             },
         },
         true,
+        false,
     )
     .expect("milestone add");
 
@@ -329,6 +347,7 @@ fn milestone_done_marks_with_completion_date() {
             },
         },
         true,
+        false,
     )
     .expect("milestone add");
 
@@ -342,6 +361,7 @@ fn milestone_done_marks_with_completion_date() {
             },
         },
         true,
+        false,
     )
     .expect("milestone done");
 
@@ -364,6 +384,7 @@ fn waiting_add_and_resolve_round_trip() {
             },
         },
         true,
+        false,
     )
     .expect("waiting add");
 
@@ -380,6 +401,7 @@ fn waiting_add_and_resolve_round_trip() {
             },
         },
         true,
+        false,
     )
     .expect("waiting resolve");
 
@@ -424,6 +446,7 @@ fn create_in_non_interactive_errors_when_missing_title() {
             question: None,
         },
         true,
+        false,
     )
     .expect_err("missing --title should error in non-interactive mode");
     let msg = format!("{err:#}");
@@ -443,6 +466,7 @@ fn state_in_non_interactive_errors_when_missing_slug() {
             text: Some("Some state".to_owned()),
         },
         true,
+        false,
     )
     .expect_err("missing --slug should error in non-interactive mode");
     let msg = format!("{err:#}");
@@ -457,6 +481,7 @@ fn park_in_non_interactive_errors_when_missing_slug() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Park { slug: None },
         true,
+        false,
     )
     .expect_err("missing --slug should error");
     let msg = format!("{err:#}");
@@ -471,6 +496,7 @@ fn activate_in_non_interactive_errors_when_missing_slug() {
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Activate { slug: None },
         true,
+        false,
     )
     .expect_err("missing --slug should error");
     let msg = format!("{err:#}");
@@ -493,6 +519,7 @@ fn milestone_add_in_non_interactive_errors_when_missing_date() {
             },
         },
         true,
+        false,
     )
     .expect_err("missing --date should error");
     let msg = format!("{err:#}");
@@ -513,6 +540,7 @@ fn waiting_add_in_non_interactive_errors_when_missing_description() {
             },
         },
         true,
+        false,
     )
     .expect_err("missing --description should error");
     let msg = format!("{err:#}");

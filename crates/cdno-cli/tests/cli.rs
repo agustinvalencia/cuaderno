@@ -1088,6 +1088,131 @@ fn search_json_emits_empty_array_on_no_matches() {
     assert_eq!(v, serde_json::json!([]));
 }
 
+#[test]
+fn project_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["project", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "alpha");
+    // `state_snippet` exists only on the summary, not on ProjectFrontmatter
+    // — its presence pins that we serialise summaries, not the raw
+    // (path, frontmatter) tuples.
+    assert!(
+        arr[0].get("state_snippet").is_some(),
+        "summary carries derived state_snippet: {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn project_list_json_is_empty_array_with_no_active_projects() {
+    // The empty-Vec path, shared by all three list verbs.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    assert_eq!(
+        json_stdout(dir.path(), &["project", "list", "--json"]),
+        serde_json::json!([])
+    );
+}
+
+#[test]
+fn portfolio_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["portfolio", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "sparse-vs-dense-ood");
+    assert_eq!(arr[0]["question"], "Sparse vs dense OOD");
+    assert!(
+        arr[0].get("evidence_count").is_some(),
+        "summary carries evidence_count: {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn stewardship_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+        ])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["stewardship", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "finances");
+    // Lowercase, matching the MCP DTO (`flat`/`expanded`), not PascalCase.
+    assert_eq!(
+        arr[0]["variant"], "flat",
+        "variant casing matches the MCP DTO: {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn action_list_json_emits_entries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "action",
+            "add",
+            "--project",
+            "alpha",
+            "--title",
+            "Run ablation",
+            "--energy",
+            "deep",
+        ])
+        .assert()
+        .success();
+
+    let v = json_stdout(
+        dir.path(),
+        &["action", "list", "--project", "alpha", "--json"],
+    );
+    let arr = v.as_array().expect("JSON array");
+    // The project scaffold seeds a default "Define first concrete step"
+    // bullet, so find ours rather than assuming the count.
+    let ablation = arr
+        .iter()
+        .find(|e| e["text"].as_str().unwrap_or("").contains("Run ablation"))
+        .unwrap_or_else(|| panic!("Run ablation entry present: {v}"));
+    // energy serialises kebab-case ("deep"), matching the MCP DTO.
+    assert_eq!(ablation["energy"], "deep", "energy casing: {ablation}");
+}
+
 // ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------

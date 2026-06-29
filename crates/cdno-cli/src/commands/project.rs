@@ -144,6 +144,7 @@ pub fn run(
     at: NaiveDateTime,
     command: ProjectCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let interactive = crate::prompt::is_interactive(no_interactive);
@@ -160,7 +161,25 @@ pub fn run(
         ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive)?,
         ProjectCommands::List => {
             let active = vault.active_projects().context("listing active projects")?;
-            print_active_list(&vault, &active)?;
+            if json {
+                // Serialise the per-project summaries (the same data the
+                // text renderer fetches), not the raw frontmatter tuples.
+                let summaries = active
+                    .iter()
+                    .map(|(path, _fm)| {
+                        let slug = path
+                            .as_path()
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("");
+                        vault.project_summary(slug)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .context("loading project summaries")?;
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                print_active_list(&vault, &active)?;
+            }
         }
         ProjectCommands::Show { slug } => {
             let summary = vault

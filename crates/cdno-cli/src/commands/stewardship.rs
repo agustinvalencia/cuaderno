@@ -79,6 +79,7 @@ pub fn run(
     at: NaiveDateTime,
     command: StewardshipCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let interactive = prompt::is_interactive(no_interactive);
@@ -92,7 +93,11 @@ pub fn run(
             let summaries = vault
                 .list_stewardships(at.date())
                 .context("listing stewardships")?;
-            print!("{}", render_list(&summaries));
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                print!("{}", render_list(&summaries));
+            }
             Ok(())
         }
         StewardshipCommands::Show { slug } => show(&vault, at, slug, interactive),
