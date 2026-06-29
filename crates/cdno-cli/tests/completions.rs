@@ -25,7 +25,11 @@ use predicates::prelude::*;
 use tempfile::tempdir;
 
 fn cdno() -> Command {
-    Command::cargo_bin("cdno").expect("cdno binary built")
+    let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
+    // Hermetic: don't inherit the developer's ambient CUADERNO_VAULT_PATH
+    // so a stray shell export can't route a test at the real vault.
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd
 }
 
 // ---------------------------------------------------------------------
