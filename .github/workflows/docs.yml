@@ -10,6 +10,13 @@ on:
     paths:
       - "docs-site/**"
       - ".github/workflows/docs.yml"
+  # Build (but don't deploy) on PRs, so a broken docs build is caught
+  # before merge — parity with how ci.yml gates code.
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 # Allow the deploy job to publish to Pages via OIDC.
@@ -43,6 +50,8 @@ jobs:
   deploy:
     name: Deploy
     needs: build
+    # Deploy only for real pushes to main / manual runs — never for PRs.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

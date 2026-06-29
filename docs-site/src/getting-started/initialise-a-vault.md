@@ -13,9 +13,8 @@ built-in note templates into `.cuaderno/templates/` (so you can customise them l
 
 ```text
 ~/notebook/
-├── journal/
-│   ├── daily/        # one append-only entry per day
-│   └── weekly/       # weekly review notes
+├── journal/          # daily + weekly notes, partitioned by year
+│   └── 2026/         #   e.g. journal/2026/daily/2026-04-25.md, journal/2026/weekly/2026-W17.md
 ├── projects/         # project maps (max 5 active)
 │   └── _parked/      # inactive projects
 ├── actions/          # manifest action notes (the heavy form)
@@ -56,6 +55,22 @@ cdno log "spotted a bug in the sampler"
 
 > If you're standing inside vault A while `CUADERNO_VAULT_PATH` points at vault B, the directory you
 > are in wins — writes land in A. The env var is only a fallback for when discovery finds nothing.
+
+## Back up your vault
+
+A vault is just Markdown files (the SQLite index in `.cuaderno/index.db` is a rebuildable cache — see
+[Business rules](../concepts/business-rules.md)). The simplest, most durable backup is **version
+control**: `git init` the vault and commit as you go, or keep it in a synced folder.
+
+```bash
+cd ~/notebook
+git init && git add . && git commit -m "Initial vault"
+# The index is regenerated on demand, so it's safe to ignore:
+echo ".cuaderno/index.db" >> .gitignore
+```
+
+Because the Markdown is the source of truth, your history is just your commits — nothing is locked
+inside a proprietary store.
 
 ## Next step
 

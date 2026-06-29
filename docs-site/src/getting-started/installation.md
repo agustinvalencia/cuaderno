@@ -61,6 +61,17 @@ source <(cdno completions zsh)
 Supported shells: `bash`, `zsh`, `fish`, `elvish`, `powershell`. See
 [`completions`](../reference/cli/completions.md) for per-shell setup.
 
+## Uninstall
+
+```bash
+brew uninstall cuaderno          # if installed via Homebrew
+# or, for a source build, remove the symlinks you created:
+rm -f /usr/local/bin/cdno /usr/local/bin/cdno-mcp
+```
+
+Uninstalling the binaries never touches your vault — it's just Markdown files on disk. Delete the
+vault directory yourself if you want it gone.
+
 ## Next step
 
 Create your vault: [Initialise a vault](initialise-a-vault.md).

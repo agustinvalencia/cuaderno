@@ -3,7 +3,7 @@
 A **project** is a lightweight map of a piece of active work: a current state, next actions,
 milestones, and things you're waiting on. You keep at most [five active](../concepts/business-rules.md)
 at once. All the verbs live under [`cdno project`](../reference/cli/project.md) (plus
-[`cdno action`](action.md) for the next-action list).
+[`cdno action`](../reference/cli/action.md) for the next-action list).
 
 ## Create one
 

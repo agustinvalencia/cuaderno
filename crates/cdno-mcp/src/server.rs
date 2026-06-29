@@ -2,7 +2,7 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 38 tools are wired through to the domain — the 16
+//! Status: all 41 tools are wired through to the domain — the 16
 //! design §11 tools, the two daily-note tools (GH #158), the two
 //! weekly-note tools (`read_weekly_note`, `upsert_weekly_section`), the
 //! four structural-creation tools (GH #162), the four lifecycle tools

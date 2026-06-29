@@ -5,8 +5,8 @@ typed structure — if it parses, it's valid. There are **ten** note types.
 
 | Type | Lives in | Mutability | Purpose |
 |------|----------|------------|---------|
-| `daily` | `journal/daily/` | Append-only | One day's chronological log |
-| `weekly` | `journal/weekly/` | Append-only | Weekly review (Wins, Challenges, One Improvement, This Week's Goal) |
+| `daily` | `journal/<year>/daily/` | Append-only | One day's chronological log |
+| `weekly` | `journal/<year>/weekly/` | Append-only | Weekly review (Wins, Challenges, One Improvement, This Week's Goal) |
 | `project` | `projects/` (+ `_parked/`) | **Mutable** | Project map: state, next actions, milestones, waiting-on |
 | `action` | `actions/` → `actions/_done/<year>/` | Mutable while open, then archived | Manifest note for an action-as-investigation |
 | `portfolio` | `portfolios/<slug>/_index.md` | Occasionally edited | Index/summary of an evidence dossier |

@@ -6,11 +6,11 @@ the whole layout; here's what each part holds.
 ```text
 vault/
 ├── journal/
-│   ├── daily/
-│   │   └── 2026/
-│   │       └── 2026-04-25.md      # type: daily (append-only)
-│   └── weekly/
-│       └── 2026-W17.md           # type: weekly (append-only)
+│   └── 2026/                      # partitioned by (ISO) year
+│       ├── daily/
+│       │   └── 2026-04-25.md      # type: daily (append-only)
+│       └── weekly/
+│           └── 2026-W17.md       # type: weekly (append-only)
 │
 ├── projects/
 │   ├── surrogate-model.md        # type: project (mutable)
