@@ -1088,6 +1088,82 @@ fn search_json_emits_empty_array_on_no_matches() {
     assert_eq!(v, serde_json::json!([]));
 }
 
+#[test]
+fn project_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["project", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "alpha");
+    assert!(
+        arr[0].get("status").is_some(),
+        "summary carries status: {}",
+        arr[0]
+    );
+}
+
+#[test]
+fn project_list_json_is_empty_array_with_no_active_projects() {
+    // The empty-Vec path, shared by all three list verbs.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    assert_eq!(
+        json_stdout(dir.path(), &["project", "list", "--json"]),
+        serde_json::json!([])
+    );
+}
+
+#[test]
+fn portfolio_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["portfolio", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "sparse-vs-dense-ood");
+}
+
+#[test]
+fn stewardship_list_json_emits_summaries() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+        ])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["stewardship", "list", "--json"]);
+    let arr = v.as_array().expect("JSON array");
+    assert_eq!(arr.len(), 1, "{v}");
+    assert_eq!(arr[0]["slug"], "finances");
+    assert!(
+        arr[0].get("variant").is_some(),
+        "summary carries variant: {}",
+        arr[0]
+    );
+}
+
 // ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------

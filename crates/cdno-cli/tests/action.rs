@@ -40,6 +40,7 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             question: None,
         },
         true,
+        false,
     )
     .expect("create project");
 }

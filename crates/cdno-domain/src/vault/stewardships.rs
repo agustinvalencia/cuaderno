@@ -44,7 +44,7 @@ pub(in crate::vault) const PERIODIC_COMMITMENTS_SECTION: &str = "Periodic Commit
 /// Which on-disk variant a stewardship lives as. Drives where tracking
 /// notes can land (only expanded stewardships have a `tracking/`
 /// subdirectory) and what `cdno stewardship show` (#44) renders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum StewardshipVariant {
     /// `stewardships/<slug>.md` — single file, no tracking subdir.
     Flat,
@@ -59,7 +59,7 @@ pub enum StewardshipVariant {
 /// and the most recent tracking date (the staleness proxy that
 /// stands in for a hard "status" field — design §5.6 keeps the
 /// dashboard's status as prose in the body).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StewardshipSummary {
     pub slug: String,
     /// The dashboard's body H1. Empty string if absent — lint will

@@ -39,6 +39,7 @@ fn create_flat_writes_root_level_file() {
             tracking: false,
         },
         true,
+        false,
     )
     .expect("create flat");
 
@@ -60,6 +61,7 @@ fn create_with_tracking_writes_expanded_layout() {
             tracking: true,
         },
         true,
+        false,
     )
     .expect("create expanded");
 
@@ -79,6 +81,7 @@ fn create_errors_when_missing_required_flags_in_non_interactive() {
             tracking: false,
         },
         true,
+        false,
     )
     .expect_err("missing --name should error");
     assert!(format!("{err:#}").contains("--name"));
@@ -107,6 +110,7 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
             tracking: false,
         },
         true,
+        false,
     )
     .unwrap();
     stewardship::run(
@@ -118,6 +122,7 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
             tracking: true,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -141,6 +146,7 @@ fn show_errors_when_missing_slug_in_non_interactive() {
         moment(2026, 1, 10, 9, 0),
         StewardshipCommands::Show { slug: None },
         true,
+        false,
     )
     .expect_err("missing --slug should error");
     assert!(format!("{err:#}").contains("--slug"));
@@ -162,6 +168,7 @@ fn add_periodic_appends_line_to_dashboard() {
             tracking: false,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -175,6 +182,7 @@ fn add_periodic_appends_line_to_dashboard() {
             next: Some(NaiveDate::from_ymd_opt(2026, 5, 2).unwrap()),
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -197,6 +205,7 @@ fn add_periodic_errors_when_missing_flags_in_non_interactive() {
             tracking: false,
         },
         true,
+        false,
     )
     .unwrap();
     let err = stewardship::run(
@@ -209,6 +218,7 @@ fn add_periodic_errors_when_missing_flags_in_non_interactive() {
             next: Some(NaiveDate::from_ymd_opt(2026, 5, 2).unwrap()),
         },
         true,
+        false,
     )
     .expect_err("missing --title should error");
     assert!(format!("{err:#}").contains("--title"));
@@ -230,6 +240,7 @@ fn track_writes_gym_note_under_expanded_stewardship() {
             tracking: true,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -268,6 +279,7 @@ fn track_defaults_to_only_expanded_stewardship_when_unambiguous() {
             tracking: true,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -318,6 +330,7 @@ fn track_errors_on_flat_stewardship_for_explicit_slug() {
             tracking: false,
         },
         true,
+        false,
     )
     .unwrap();
     let err = track::run(

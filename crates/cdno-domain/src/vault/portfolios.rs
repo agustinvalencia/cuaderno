@@ -32,7 +32,7 @@ use super::slug::slugify;
 /// portfolio metadata that's expensive to recompute by hand: the
 /// number of evidence notes filed into the folder, the most recent
 /// `created` date among them, and a derived staleness in days.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PortfolioSummary {
     pub slug: String,
     pub question: String,

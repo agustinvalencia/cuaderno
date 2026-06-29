@@ -84,6 +84,7 @@ pub fn run(
     at: NaiveDateTime,
     command: PortfolioCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let interactive = prompt::is_interactive(no_interactive);
@@ -95,7 +96,11 @@ pub fn run(
             let summaries = vault
                 .list_portfolios(at.date())
                 .context("listing portfolios")?;
-            print!("{}", render_list(&summaries));
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                print!("{}", render_list(&summaries));
+            }
             Ok(())
         }
         PortfolioCommands::Show { portfolio } => show(&vault, at, portfolio, interactive),

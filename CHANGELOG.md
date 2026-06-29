@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`--json` on the `list` read verbs** (#227) — `cdno project list`, `portfolio list`, and `stewardship list` now honour `--json`, emitting their summaries as a JSON array (`project list` serialises the per-project summaries the text view shows). Continues #227 after `search --json`; the `show` verbs and the write-verb JSON result are still tracked there.
+
 ## [0.1.20] - 2026-06-29
 
 `cdno search` gains `--json`.
