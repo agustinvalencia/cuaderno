@@ -84,7 +84,9 @@ pub fn run(
     json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
 
     match command {
         ActionCommands::Add {
@@ -149,6 +151,9 @@ fn add(
     }
 
     if note {
+        // `path` here is the new action NOTE (the with-note branch
+        // scaffolds one); the plain branch below reports the project map.
+        // Both are "the file written", just different files per branch.
         let path = vault
             .add_action_with_note(at, &project, &title, energy)
             .context("adding action with note")?;

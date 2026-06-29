@@ -87,7 +87,9 @@ pub fn run(
     json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
     match command {
         PortfolioCommands::Create { question, project } => {
             create(&vault, at, question, project, interactive, json)
