@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **Documentation site** — a full user guide built with [mdBook](https://rust-lang.github.io/mdBook/) under [`docs-site/`](docs-site/), deployed to GitHub Pages (<https://agustinvalencia.github.io/cuaderno>) by a new `docs.yml` workflow. Covers concepts (the RLM, note types, vault structure, business rules, configuration), task tutorials, the full CLI reference (every command + flags), and the MCP tool reference (all 41 tools). Docs-only; no code or behaviour change.
+
 ## [0.1.24] - 2026-06-29
 
 `--json` on the `show` verbs — completes the `--json` surface (#227 closed).

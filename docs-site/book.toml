@@ -1,0 +1,25 @@
+[book]
+title = "Cuaderno"
+description = "User guide for Cuaderno — a Research Logbook Method vault manager (CLI + MCP server)."
+authors = ["Agustín Valencia"]
+language = "en"
+src = "src"
+
+[output.html]
+# Served as a GitHub Pages *project* site under /cuaderno/, so asset and
+# cross-page links must resolve against that path prefix.
+site-url = "/cuaderno/"
+git-repository-url = "https://github.com/agustinvalencia/cuaderno"
+edit-url-template = "https://github.com/agustinvalencia/cuaderno/edit/main/docs-site/{path}"
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+no-section-label = false
+
+[output.html.search]
+enable = true
+limit-results = 30
+use-boolean-and = true
+
+[output.html.fold]
+enable = true
+level = 1
