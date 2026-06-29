@@ -244,6 +244,7 @@ fn show_renders_no_open_actions_branch() {
             query: Some("first concrete".to_owned()),
         },
         true,
+        false,
     )
     .expect("action complete");
 

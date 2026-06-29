@@ -44,7 +44,11 @@ pub(in crate::vault) const PERIODIC_COMMITMENTS_SECTION: &str = "Periodic Commit
 /// Which on-disk variant a stewardship lives as. Drives where tracking
 /// notes can land (only expanded stewardships have a `tracking/`
 /// subdirectory) and what `cdno stewardship show` (#44) renders.
+// `lowercase` so CLI `--json` matches the MCP DTO's `flat`/`expanded`
+// (dto.rs `stewardship_variant_str`); the two JSON surfaces serialise
+// from different layers, so casing is kept in sync by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum StewardshipVariant {
     /// `stewardships/<slug>.md` — single file, no tracking subdir.
     Flat,

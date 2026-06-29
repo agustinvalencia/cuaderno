@@ -81,6 +81,7 @@ pub fn run(
     at: NaiveDateTime,
     command: ActionCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let interactive = prompt::is_interactive(no_interactive);
@@ -98,7 +99,7 @@ pub fn run(
         ActionCommands::Complete { project, query } => {
             complete(&vault, at, project, query, interactive)
         }
-        ActionCommands::List { project } => list(&vault, project, interactive),
+        ActionCommands::List { project } => list(&vault, project, interactive, json),
     }
 }
 
@@ -231,7 +232,7 @@ fn complete(
     Ok(())
 }
 
-fn list(vault: &Vault, project: Option<String>, interactive: bool) -> Result<()> {
+fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -> Result<()> {
     // List is read-only — no confirm step even if we prompt for the
     // project, since nothing is being mutated.
     let project = match project {
@@ -240,7 +241,11 @@ fn list(vault: &Vault, project: Option<String>, interactive: bool) -> Result<()>
         None => return Err(prompt::missing_flag("project")),
     };
     let entries = vault.list_actions(&project).context("listing actions")?;
-    print!("{}", render_list(&project, &entries));
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        print!("{}", render_list(&project, &entries));
+    }
     Ok(())
 }
 

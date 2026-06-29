@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **`--json` on the `list` read verbs** (#227) — `cdno project list`, `portfolio list`, and `stewardship list` now honour `--json`, emitting their summaries as a JSON array (`project list` serialises the per-project summaries the text view shows). Continues #227 after `search --json`; the `show` verbs and the write-verb JSON result are still tracked there.
+- **`--json` on the `list` read verbs** (#227) — `cdno project list`, `portfolio list`, `stewardship list`, and `action list` now honour `--json`, emitting their summaries as a JSON array (`project list` serialises the per-project summaries the text view shows). Casing matches the MCP DTOs (e.g. `stewardship` variant `flat`/`expanded`, action energy `deep`/`medium`/`light`). Continues #227 after `search --json`; the `show` verbs and the write-verb JSON result are still tracked there.
 
 ## [0.1.20] - 2026-06-29
 

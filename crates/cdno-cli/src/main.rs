@@ -47,7 +47,7 @@ struct Cli {
     /// Emit machine-readable JSON instead of the formatted table.
     /// Supported on the read verbs (`commitments`, `questions`,
     /// `status`, `orient`, `search`, and `project`/`portfolio`/
-    /// `stewardship list`); ignored by write/other commands.
+    /// `stewardship`/`action list`); ignored by write/other commands.
     #[arg(long, global = true)]
     json: bool,
 
@@ -370,6 +370,7 @@ fn main() -> Result<()> {
                 Local::now().naive_local(),
                 subcommand,
                 cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Portfolio { subcommand } => {
