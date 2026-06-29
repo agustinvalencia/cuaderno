@@ -2,7 +2,7 @@
 
 Snapshot of development progress as of the most recent merge. For per-PR detail see [`CHANGELOG.md`](CHANGELOG.md); for the underlying plan see [`docs/implementation-plan.md`](docs/implementation-plan.md).
 
-**Current release**: 0.1.21 (2026-06-29). The CLI is daily-usable end-to-end and the MCP server is production-ready (41 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.21 extends `--json` to the `list` read verbs (`project`/`portfolio`/`stewardship`/`action list`), continuing #227 after `search --json` (v0.1.20); the `show` verbs and the write-verb JSON result remain tracked there. Earlier: v0.1.19 (portfolio↔project bidirectional links #253), v0.1.18 (`$EDITOR` review prose #230, lint/normalise template memoisation #248), v0.1.17 (frontmatter-order lint #236), v0.1.16 (config `ignore` globs #242, daily `{{weekday}}` #244, weekly `This Week's Goal` rename #245). See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
+**Current release**: 0.1.22 (2026-06-29). The CLI is daily-usable end-to-end and the MCP server is production-ready (41 tools) against Claude Desktop / Claude Code / Kiro / Gemini CLI. v0.1.22 makes `--json` emit a `{path, message}` write result on the `project`/`action`/`portfolio`/`stewardship` write verbs (and forces those verbs non-interactive under `--json`), continuing #227. The remaining #227 slices are the standalone write commands (`log`/`capture`/`question`/`file`/`commit`) and the `show` verbs. Earlier: v0.1.21 (`--json` list verbs), v0.1.20 (`search --json`), v0.1.19 (portfolio↔project links #253), v0.1.18 (`$EDITOR` review prose #230, memoisation #248), v0.1.17 (frontmatter-order lint #236), v0.1.16 (#242/#244/#245). See [`CHANGELOG.md`](CHANGELOG.md) for the full list.
 
 ## Phase summary
 
