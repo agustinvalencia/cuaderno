@@ -48,15 +48,26 @@ pub fn run(
     if json {
         // Emit the raw hits (#227), in the same best-first order the text
         // renderer uses (the result Vec's order, which serde preserves).
-        let (vault, _report) = bootstrap::open_vault(root)?;
-        let results = vault
-            .search(query, &filters, limit)
-            .context("searching the vault")?;
+        let results = search_hits(root, query, &filters, limit)?;
         println!("{}", serde_json::to_string_pretty(&results)?);
     } else {
         print!("{}", build_search(root, query, &filters, limit)?);
     }
     Ok(())
+}
+
+/// Open the vault and run the search. The shared seam behind both output
+/// modes so the JSON and text paths can't drift on filters/order/limit.
+fn search_hits(
+    root: &Path,
+    query: &str,
+    filters: &SearchFilters,
+    limit: usize,
+) -> Result<Vec<SearchResultEntry>> {
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    vault
+        .search(query, filters, limit)
+        .context("searching the vault")
 }
 
 /// Open the vault, run the search, and render the hits to a string.
@@ -67,10 +78,7 @@ pub fn build_search(
     filters: &SearchFilters,
     limit: usize,
 ) -> Result<String> {
-    let (vault, _report) = bootstrap::open_vault(root)?;
-    let results = vault
-        .search(query, filters, limit)
-        .context("searching the vault")?;
+    let results = search_hits(root, query, filters, limit)?;
     Ok(render(query, &results))
 }
 
