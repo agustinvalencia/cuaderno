@@ -1364,6 +1364,194 @@ fn portfolio_link_json_emits_a_write_result() {
 }
 
 #[test]
+fn log_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(dir.path(), &["log", "a quick entry", "--json"]);
+    assert!(
+        v["path"].as_str().unwrap().contains("daily/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Logged"), "{v}");
+}
+
+#[test]
+fn capture_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(dir.path(), &["capture", "a stray thought", "--json"]);
+    assert!(
+        v["path"].as_str().unwrap().starts_with("inbox/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Captured"), "{v}");
+}
+
+#[test]
+fn question_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "question",
+            "create",
+            "--domain",
+            "research",
+            "--text",
+            "Does sparse beat dense?",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("questions/research/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+#[test]
+fn question_transition_json_emits_a_write_result() {
+    // The transition verbs (park/answer/retire/activate) build a dynamic
+    // message via capitalise_first(past_tense(verb)) — a distinct path
+    // from `create`, so exercise it under --json too.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "question",
+            "create",
+            "--domain",
+            "research",
+            "--text",
+            "Does sparse beat dense?",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "question",
+            "park",
+            "--slug",
+            "does-sparse-beat-dense",
+            "--json",
+        ],
+    );
+    // Park keeps the note at questions/research/<slug>.md (no folder move).
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("questions/research/"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().starts_with("Parked"),
+        "transition message: {v}"
+    );
+}
+
+#[test]
+fn commit_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "commit",
+            "create",
+            "--title",
+            "Pay rent",
+            "--due",
+            "2026-08-01",
+            "--context",
+            "personal",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().contains("commitments/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+#[test]
+fn file_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Chen 2025",
+            "--origin",
+            "projects/foo",
+            "--content",
+            "They show a 4x speedup.",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("portfolios/sparse-vs-dense-ood/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Filed"), "{v}");
+}
+
+#[test]
+fn track_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Health",
+            "--context",
+            "personal",
+            "--tracking",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "track",
+            "gym",
+            "--stewardship",
+            "health",
+            "--content",
+            "Upper body, good energy.",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().contains("stewardships/health/"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Tracked"), "{v}");
+}
+
+#[test]
 fn portfolio_create_json_emits_a_write_result() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();

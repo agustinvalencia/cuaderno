@@ -61,9 +61,12 @@ pub fn run(
     at: NaiveDateTime,
     command: CommitCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
     match command {
         CommitCommands::Create {
             title,
@@ -80,8 +83,9 @@ pub fn run(
             project,
             stewardship,
             interactive,
+            json,
         ),
-        CommitCommands::Done { slug } => done(&vault, at, slug, interactive),
+        CommitCommands::Done { slug } => done(&vault, at, slug, interactive, json),
     }
 }
 
@@ -95,6 +99,7 @@ fn create(
     project: Option<String>,
     stewardship: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
@@ -128,11 +133,17 @@ fn create(
             stewardship.as_deref(),
         )
         .context("creating commitment")?;
-    println!("Created {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
 
-fn done(vault: &Vault, at: NaiveDateTime, slug: Option<String>, interactive: bool) -> Result<()> {
+fn done(
+    vault: &Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
     let mut prompted = false;
     // Plain text prompt for the slug — the fuzzy picker over active
     // commitments lands with the rest of the retrofit follow-up. Users
@@ -149,6 +160,6 @@ fn done(vault: &Vault, at: NaiveDateTime, slug: Option<String>, interactive: boo
     let path = vault
         .complete_commitment(at, &slug)
         .context("completing commitment")?;
-    println!("Completed at {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Completed at {path}"))?;
     Ok(())
 }

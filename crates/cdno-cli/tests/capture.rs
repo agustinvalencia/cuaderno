@@ -17,7 +17,7 @@ fn capture_writes_an_inbox_note_with_the_expected_filename() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).expect("init");
 
-    capture::run(dir.path(), moment(), "Read the new design doc").expect("capture");
+    capture::run(dir.path(), moment(), "Read the new design doc", false).expect("capture");
 
     let expected = dir
         .path()
@@ -32,8 +32,8 @@ fn capture_writes_an_inbox_note_with_the_expected_filename() {
 fn capture_errors_when_target_is_not_a_vault() {
     let dir = tempdir().unwrap();
 
-    let err =
-        capture::run(dir.path(), moment(), "x").expect_err("capture without a vault must fail");
+    let err = capture::run(dir.path(), moment(), "x", false)
+        .expect_err("capture without a vault must fail");
     let msg = format!("{err}");
     assert!(msg.contains("no Cuaderno vault"), "unexpected error: {msg}");
 }

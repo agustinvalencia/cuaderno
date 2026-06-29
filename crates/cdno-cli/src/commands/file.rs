@@ -31,9 +31,12 @@ pub fn run(
     attach: Option<PathBuf>,
     move_after: bool,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
 
     let mut prompted = false;
     let portfolio =
@@ -79,7 +82,7 @@ pub fn run(
         }
         None => file_via_vault(&vault, at, &portfolio, &source, &origin, &content)?,
     };
-    println!("Filed at {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Filed at {path}"))?;
     Ok(())
 }
 

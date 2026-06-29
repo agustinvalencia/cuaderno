@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`--json` on the standalone write commands** (#227) — `log`, `capture`, `file`, `track`, and the `question`/`commit` create/transition verbs now emit a `{path, message}` JSON result under `--json` (and run non-interactively), completing the write-verb half of #227. With the earlier project/action/portfolio/stewardship slice, every write verb now honours `--json`. Only the `show` verbs remain on #227.
+
 ## [0.1.22] - 2026-06-29
 
 `--json` write results on the project/action/portfolio/stewardship write verbs.
