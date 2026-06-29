@@ -21,6 +21,7 @@ use cdno_domain::{StewardshipVariant, Vault};
 use crate::bootstrap;
 use crate::prompt;
 
+#[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 pub fn run(
     root: &Path,
     at: NaiveDateTime,
@@ -29,9 +30,12 @@ pub fn run(
     routine: Option<String>,
     content: String,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
 
     // Resolve --stewardship. Three branches: explicit, exactly-one
     // expanded stewardship in the vault (default-to-that ergonomic),
@@ -66,7 +70,7 @@ pub fn run(
     let path = vault
         .add_tracking_entry(at, &stewardship, &activity, routine.as_deref(), &content)
         .context("filing tracking entry")?;
-    println!("Tracked at {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
     Ok(())
 }
 

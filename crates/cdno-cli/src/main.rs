@@ -46,10 +46,13 @@ struct Cli {
 
     /// Emit machine-readable JSON instead of the formatted table.
     /// Read verbs (`commitments`, `questions`, `status`, `orient`,
-    /// `search`, and `project`/`portfolio`/`stewardship`/`action list`)
-    /// emit their listing; the `project`/`action`/`portfolio`/
-    /// `stewardship` write verbs emit a `{path, message}` result.
-    /// Ignored by other commands.
+    /// `search`, and the `project`/`portfolio`/`stewardship`/`action
+    /// list` verbs) emit their listing; write verbs (`log`, `capture`,
+    /// `file`, `track`, and the create/update verbs of `project`,
+    /// `action`, `portfolio`, `stewardship`, `question`, `commit`) emit a
+    /// `{path, message}` result and run non-interactively. Ignored by
+    /// maintenance/interactive commands (`lint`, `reindex`, `normalise`,
+    /// `triage`, `review`, `weekly`).
     #[arg(long, global = true)]
     json: bool,
 
@@ -312,7 +315,7 @@ fn main() -> Result<()> {
                 Some(s) => parse_timestamp(&s)?,
                 None => Local::now().naive_local(),
             };
-            commands::log::run(&root, at, &message)
+            commands::log::run(&root, at, &message, cli.json)
         }
         Commands::Lint { strict } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
@@ -328,7 +331,7 @@ fn main() -> Result<()> {
         }
         Commands::Capture { text } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::capture::run(&root, Local::now().naive_local(), &text)
+            commands::capture::run(&root, Local::now().naive_local(), &text, cli.json)
         }
         Commands::Triage => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
@@ -404,6 +407,7 @@ fn main() -> Result<()> {
                 attach,
                 r#move,
                 cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Question { subcommand } => {
@@ -413,6 +417,7 @@ fn main() -> Result<()> {
                 Local::now().naive_local(),
                 subcommand,
                 cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Questions => {
@@ -444,6 +449,7 @@ fn main() -> Result<()> {
                 routine,
                 content,
                 cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Commit { subcommand } => {
@@ -453,6 +459,7 @@ fn main() -> Result<()> {
                 Local::now().naive_local(),
                 subcommand,
                 cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Commitments { weeks } => {

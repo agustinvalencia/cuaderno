@@ -99,6 +99,7 @@ fn portfolio_create_backlinks_existing_question_note() {
             text: Some("Sparse vs dense OOD".to_owned()),
         },
         true,
+        false,
     )
     .expect("create question");
     seed_portfolio(dir.path());
@@ -125,6 +126,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
             text: Some("Where does the budget go".to_owned()),
         },
         true,
+        false,
     )
     .expect("create question");
 
@@ -280,6 +282,7 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
         None,
         false,
         true,
+        false,
     )
     .expect("file evidence");
 
@@ -321,6 +324,7 @@ fn portfolio_show_tags_attachment_evidence_with_its_kind() {
         Some(artefact),
         false,
         true,
+        false,
     )
     .expect("attach");
 
@@ -375,6 +379,7 @@ fn file_writes_evidence_note_with_wrapped_origin() {
         None,
         false,
         true,
+        false,
     )
     .expect("file");
 
@@ -403,6 +408,7 @@ fn file_writes_empty_body_when_content_omitted() {
         None,
         false,
         true,
+        false,
     )
     .expect("file with empty content");
 
@@ -432,6 +438,7 @@ fn file_errors_when_missing_portfolio_in_non_interactive() {
         None,
         false,
         true,
+        false,
     )
     .expect_err("missing --portfolio should error");
     let msg = format!("{err:#}");
@@ -453,6 +460,7 @@ fn file_errors_on_prewrapped_origin() {
         None,
         false,
         true,
+        false,
     )
     .expect_err("pre-wrapped origin should error");
     let msg = format!("{err:#}");
@@ -480,6 +488,7 @@ fn file_attach_imports_artefact_and_writes_linked_stub() {
         Some(artefact.clone()),
         false,
         true,
+        false,
     )
     .expect("attach");
 
@@ -520,6 +529,7 @@ fn file_attach_move_removes_the_source() {
         Some(artefact.clone()),
         true, // --move
         true,
+        false,
     )
     .expect("attach move");
 

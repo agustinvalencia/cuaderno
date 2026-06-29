@@ -74,22 +74,32 @@ pub fn run(
     at: NaiveDateTime,
     command: QuestionCommands,
     no_interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
     match command {
-        QuestionCommands::Create { domain, text } => create(&vault, at, domain, text, interactive),
+        QuestionCommands::Create { domain, text } => {
+            create(&vault, at, domain, text, interactive, json)
+        }
         QuestionCommands::Park { slug } => {
-            transition(&vault, at, slug, QuestionStatus::Parked, interactive)
+            transition(&vault, at, slug, QuestionStatus::Parked, interactive, json)
         }
-        QuestionCommands::Answer { slug } => {
-            transition(&vault, at, slug, QuestionStatus::Answered, interactive)
-        }
+        QuestionCommands::Answer { slug } => transition(
+            &vault,
+            at,
+            slug,
+            QuestionStatus::Answered,
+            interactive,
+            json,
+        ),
         QuestionCommands::Retire { slug } => {
-            transition(&vault, at, slug, QuestionStatus::Retired, interactive)
+            transition(&vault, at, slug, QuestionStatus::Retired, interactive, json)
         }
         QuestionCommands::Activate { slug } => {
-            transition(&vault, at, slug, QuestionStatus::Active, interactive)
+            transition(&vault, at, slug, QuestionStatus::Active, interactive, json)
         }
     }
 }
@@ -100,6 +110,7 @@ fn create(
     domain: Option<QuestionDomain>,
     text: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let domain = prompt::gather_or_error(domain, "domain", interactive, &mut prompted, || {
@@ -120,7 +131,7 @@ fn create(
     let path = vault
         .create_question(at, domain, &text)
         .context("creating question")?;
-    println!("Created {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
 
@@ -133,6 +144,7 @@ fn transition(
     slug: Option<String>,
     target: QuestionStatus,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let (allowed, verb, picker_label) = match target {
         QuestionStatus::Parked => (vec![QuestionStatus::Active], "park", "Question to park"),
@@ -170,7 +182,8 @@ fn transition(
     let path = vault
         .set_question_status(at, &slug, target)
         .with_context(|| format!("{verb}ing question"))?;
-    println!("{} {path}", capitalise_first(&past_tense(verb)));
+    let message = format!("{} {path}", capitalise_first(&past_tense(verb)));
+    crate::output::emit_write_result(json, &path.to_string(), &message)?;
     Ok(())
 }
 

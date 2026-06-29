@@ -252,6 +252,7 @@ fn track_writes_gym_note_under_expanded_stewardship() {
         Some("upper-body-a".to_owned()),
         "Energy was good.".to_owned(),
         true,
+        false,
     )
     .expect("track");
 
@@ -291,6 +292,7 @@ fn track_defaults_to_only_expanded_stewardship_when_unambiguous() {
         None,
         String::new(),
         true,
+        false,
     )
     .expect("track defaults to single expanded");
 
@@ -313,6 +315,7 @@ fn track_errors_when_no_default_and_no_flag_in_non_interactive() {
         None,
         String::new(),
         true,
+        false,
     )
     .expect_err("ambiguous default should require --stewardship");
     assert!(format!("{err:#}").contains("--stewardship"));
@@ -341,6 +344,7 @@ fn track_errors_on_flat_stewardship_for_explicit_slug() {
         None,
         String::new(),
         true,
+        false,
     )
     .expect_err("flat stewardship has no tracking subdir");
     let msg = format!("{err:#}");

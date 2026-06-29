@@ -37,6 +37,7 @@ fn commit_create_writes_active_commitment_file() {
             stewardship: None,
         },
         true,
+        false,
     )
     .expect("commit create");
 
@@ -66,6 +67,7 @@ fn commit_create_writes_origin_link_slugs_from_flags() {
             stewardship: Some("health".to_owned()),
         },
         true,
+        false,
     )
     .expect("commit create");
 
@@ -94,6 +96,7 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
             stewardship: None,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -104,6 +107,7 @@ fn commit_done_moves_file_to_year_subfolder_with_completed_stamp() {
             slug: Some("pay-rent".to_owned()),
         },
         true,
+        false,
     )
     .expect("commit done");
 
@@ -134,6 +138,7 @@ fn commitments_lists_active_in_window() {
             stewardship: None,
         },
         true,
+        false,
     )
     .unwrap();
     commit::run(
@@ -147,6 +152,7 @@ fn commitments_lists_active_in_window() {
             stewardship: None,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -177,6 +183,7 @@ fn commitments_weeks_flag_widens_the_window() {
             stewardship: None,
         },
         true,
+        false,
     )
     .unwrap();
 
@@ -217,6 +224,7 @@ fn commit_create_in_non_interactive_errors_when_missing_due() {
             stewardship: None,
         },
         true,
+        false,
     )
     .expect_err("missing --due should error in non-interactive mode");
     let msg = format!("{err:#}");
@@ -232,6 +240,7 @@ fn commit_done_in_non_interactive_errors_when_missing_slug() {
         dt(2026, 5, 29, 14, 0),
         CommitCommands::Done { slug: None },
         true,
+        false,
     )
     .expect_err("missing --slug should error in non-interactive mode");
     let msg = format!("{err:#}");

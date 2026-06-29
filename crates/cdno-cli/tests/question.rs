@@ -33,6 +33,7 @@ fn create(root: &Path, at: NaiveDateTime, domain: QuestionDomain, text: &str) {
             text: Some(text.to_owned()),
         },
         true,
+        false,
     )
     .expect("create");
 }
@@ -72,6 +73,7 @@ fn create_errors_when_missing_domain_in_non_interactive() {
             text: Some("Anything?".to_owned()),
         },
         true,
+        false,
     )
     .expect_err("missing --domain should error");
     assert!(format!("{err:#}").contains("--domain"));
@@ -88,6 +90,7 @@ fn create_errors_when_missing_text_in_non_interactive() {
             text: None,
         },
         true,
+        false,
     )
     .expect_err("missing --text should error");
     assert!(format!("{err:#}").contains("--text"));
@@ -134,6 +137,7 @@ fn park_transitions_status_and_logs_to_daily() {
             slug: Some("does-sparse-beat-dense".to_owned()),
         },
         true,
+        false,
     )
     .expect("park");
 
@@ -173,6 +177,7 @@ fn answer_retire_activate_each_set_the_target_status() {
             slug: Some("does-sparse-beat-dense".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
     assert!(
@@ -190,6 +195,7 @@ fn answer_retire_activate_each_set_the_target_status() {
             slug: Some("does-sparse-beat-dense".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
     assert!(
@@ -207,6 +213,7 @@ fn answer_retire_activate_each_set_the_target_status() {
             slug: Some("does-sparse-beat-dense".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
     assert!(
@@ -224,6 +231,7 @@ fn park_errors_when_missing_slug_in_non_interactive() {
         moment(2026, 5, 1, 9, 0),
         QuestionCommands::Park { slug: None },
         true,
+        false,
     )
     .expect_err("missing --slug should error");
     assert!(format!("{err:#}").contains("--slug"));
@@ -239,6 +247,7 @@ fn park_errors_when_slug_unknown() {
             slug: Some("nonexistent".to_owned()),
         },
         true,
+        false,
     )
     .expect_err("unknown slug should error");
     let msg = format!("{err:#}");
@@ -313,6 +322,7 @@ fn questions_list_skips_non_active() {
             slug: Some("does-sparse-beat-dense".to_owned()),
         },
         true,
+        false,
     )
     .unwrap();
 
