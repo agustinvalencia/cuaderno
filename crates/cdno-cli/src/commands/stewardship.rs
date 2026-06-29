@@ -82,13 +82,15 @@ pub fn run(
     json: bool,
 ) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let interactive = prompt::is_interactive(no_interactive);
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result. Scripted callers pass full args.
+    let interactive = prompt::is_interactive(no_interactive || json);
     match command {
         StewardshipCommands::Create {
             name,
             context,
             tracking,
-        } => create(&vault, at, name, context, tracking, interactive),
+        } => create(&vault, at, name, context, tracking, interactive, json),
         StewardshipCommands::List => {
             let summaries = vault
                 .list_stewardships(at.date())
@@ -106,7 +108,16 @@ pub fn run(
             title,
             every,
             next,
-        } => add_periodic(&vault, at, stewardship, title, every, next, interactive),
+        } => add_periodic(
+            &vault,
+            at,
+            stewardship,
+            title,
+            every,
+            next,
+            interactive,
+            json,
+        ),
     }
 }
 
@@ -117,6 +128,7 @@ fn create(
     context: Option<Context>,
     tracking: bool,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let name = prompt::gather_or_error(name, "name", interactive, &mut prompted, || {
@@ -154,7 +166,7 @@ fn create(
         vault.create_stewardship_flat(at, &name, context)
     }
     .context("creating stewardship")?;
-    println!("Created {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
 
@@ -169,6 +181,7 @@ fn show(vault: &Vault, at: NaiveDateTime, slug: Option<String>, interactive: boo
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 fn add_periodic(
     vault: &Vault,
     at: NaiveDateTime,
@@ -177,6 +190,7 @@ fn add_periodic(
     every: Option<Recurrence>,
     next: Option<NaiveDate>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let stewardship = prompt::gather_or_error(
@@ -206,7 +220,7 @@ fn add_periodic(
     let path = vault
         .add_periodic_commitment(at, &stewardship, &title, every, next)
         .context("adding periodic commitment")?;
-    println!("Updated {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
     Ok(())
 }
 

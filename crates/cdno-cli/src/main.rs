@@ -45,9 +45,11 @@ struct Cli {
     vault: Option<PathBuf>,
 
     /// Emit machine-readable JSON instead of the formatted table.
-    /// Supported on the read verbs (`commitments`, `questions`,
-    /// `status`, `orient`, `search`, and `project`/`portfolio`/
-    /// `stewardship`/`action list`); ignored by write/other commands.
+    /// Read verbs (`commitments`, `questions`, `status`, `orient`,
+    /// `search`, and `project`/`portfolio`/`stewardship`/`action list`)
+    /// emit their listing; the `project`/`action`/`portfolio`/
+    /// `stewardship` write verbs emit a `{path, message}` result.
+    /// Ignored by other commands.
     #[arg(long, global = true)]
     json: bool,
 

@@ -1214,6 +1214,206 @@ fn action_list_json_emits_entries() {
 }
 
 // ---------------------------------------------------------------------
+// --json on write verbs (#227): {path, message}
+// ---------------------------------------------------------------------
+
+#[test]
+fn project_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().ends_with("projects/alpha.md"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().contains("Created"),
+        "write result message: {v}"
+    );
+}
+
+#[test]
+fn action_add_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "add",
+            "--project",
+            "alpha",
+            "--title",
+            "Run ablation",
+            "--energy",
+            "deep",
+            "--json",
+        ],
+    );
+    // No-note branch reports the project map as the written file.
+    assert!(
+        v["path"].as_str().unwrap().ends_with("projects/alpha.md"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().contains("Action added"),
+        "write result message: {v}"
+    );
+}
+
+#[test]
+fn action_add_with_note_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "add",
+            "--project",
+            "alpha",
+            "--title",
+            "Run ablation",
+            "--energy",
+            "deep",
+            "--note",
+            "--json",
+        ],
+    );
+    // Distinct branch: `path` is the action NOTE, not the project map.
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("actions/run-ablation.md"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap()
+            .contains("Action added to projects/alpha.md with note"),
+        "write result message: {v}"
+    );
+}
+
+#[test]
+fn portfolio_link_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "project",
+            "create",
+            "--title",
+            "Surrogate",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "link",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--project",
+            "projects/surrogate",
+            "--json",
+        ],
+    );
+    let msg = v["message"].as_str().unwrap();
+    assert!(
+        msg.contains("Linked portfolio") && msg.contains("surrogate"),
+        "write result message: {v}"
+    );
+    // The link verb's message embeds the path it returns.
+    assert!(
+        msg.contains(v["path"].as_str().unwrap()),
+        "path embedded in message: {v}"
+    );
+}
+
+#[test]
+fn portfolio_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "create",
+            "--question",
+            "Sparse vs dense OOD",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("portfolios/sparse-vs-dense-ood/_index.md"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+#[test]
+fn stewardship_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("stewardships/finances.md"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+// ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------
 

@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`--json` on the `project`/`action`/`portfolio`/`stewardship` write verbs** (#227) — these write verbs now emit a `{path, message}` JSON result under `--json` (the same shape as the MCP `WriteResultDto`) instead of treating the flag as a silent no-op. Covers `project create`/`state`/`park`/`activate`/`milestone`/`waiting`, `action add`/`promote`/`complete`, `portfolio create`/`link`, and `stewardship create`/`add-periodic`. The standalone write commands (`log`, `capture`, `question`, `file`, `commit`/`track`) follow in a subsequent slice; `show` verbs still tracked on #227.
+
 ## [0.1.21] - 2026-06-29
 
 `--json` on the `list` read verbs.
