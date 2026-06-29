@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`--json` on the `show` verbs** (#227) — `project show`, `portfolio show`, and `stewardship show` now emit a composite detail object under `--json`: `project show` serialises the `ProjectSummary` (same shape as `project list`); `portfolio show` mirrors the MCP `PortfolioDetailDto` (`slug`/`question`/`created`/`project`/`evidence[]`); `stewardship show` mirrors `StewardshipDetailDto` (`slug`/`name`/`context`/`variant`/`body_markdown`). This is the final slice of #227 — every read and write verb now honours `--json`.
+
 ## [0.1.23] - 2026-06-29
 
 `--json` write results on the standalone write commands — every write verb now honours `--json`.

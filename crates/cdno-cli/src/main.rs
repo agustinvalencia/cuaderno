@@ -46,13 +46,14 @@ struct Cli {
 
     /// Emit machine-readable JSON instead of the formatted table.
     /// Read verbs (`commitments`, `questions`, `status`, `orient`,
-    /// `search`, and the `project`/`portfolio`/`stewardship`/`action
-    /// list` verbs) emit their listing; write verbs (`log`, `capture`,
-    /// `file`, `track`, and the create/update verbs of `project`,
-    /// `action`, `portfolio`, `stewardship`, `question`, `commit`) emit a
-    /// `{path, message}` result and run non-interactively. Ignored by
-    /// maintenance/interactive/bootstrap commands (`init`, `lint`,
-    /// `reindex`, `normalise`, `triage`, `review`, `weekly`).
+    /// `search`, and the `list`/`show` verbs of `project`, `portfolio`,
+    /// `stewardship`, plus `action list`) emit their listing/detail;
+    /// write verbs (`log`, `capture`, `file`, `track`, and the
+    /// create/update verbs of `project`, `action`, `portfolio`,
+    /// `stewardship`, `question`, `commit`) emit a `{path, message}`
+    /// result and run non-interactively. Ignored by maintenance/
+    /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
+    /// `normalise`, `triage`, `review`, `weekly`).
     #[arg(long, global = true)]
     json: bool,
 

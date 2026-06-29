@@ -1602,6 +1602,168 @@ fn stewardship_create_json_emits_a_write_result() {
 }
 
 // ---------------------------------------------------------------------
+// --json on the show verbs (#227): composite detail objects
+// ---------------------------------------------------------------------
+
+#[test]
+fn project_show_json_emits_the_summary() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    // show takes the bare slug as a positional arg.
+    let v = json_stdout(dir.path(), &["project", "show", "alpha", "--json"]);
+    assert_eq!(v["slug"], "alpha", "{v}");
+    // Same ProjectSummary shape as `project list` elements.
+    assert!(v.get("status").is_some(), "carries status: {v}");
+    assert!(
+        v.get("state_snippet").is_some(),
+        "carries state_snippet: {v}"
+    );
+}
+
+#[test]
+fn portfolio_show_json_emits_a_detail_object() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "show",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--json",
+        ],
+    );
+    // Mirrors the MCP PortfolioDetailDto shape.
+    assert_eq!(v["slug"], "sparse-vs-dense-ood", "{v}");
+    assert_eq!(v["question"], "Sparse vs dense OOD", "{v}");
+    assert!(v.get("created").is_some(), "carries created: {v}");
+    assert!(v["evidence"].is_array(), "evidence is an array: {v}");
+}
+
+#[test]
+fn stewardship_show_json_emits_a_detail_object() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &["stewardship", "show", "--slug", "finances", "--json"],
+    );
+    // Mirrors the MCP StewardshipDetailDto shape.
+    assert_eq!(v["slug"], "finances", "{v}");
+    assert_eq!(v["name"], "Finances", "{v}");
+    // variant serialises lowercase, matching the DTO.
+    assert_eq!(v["variant"], "flat", "{v}");
+    assert!(
+        v.get("body_markdown").is_some(),
+        "carries body_markdown: {v}"
+    );
+}
+
+#[test]
+fn stewardship_show_json_reports_expanded_variant() {
+    // The other variant value, to pin both sides of the lowercase casing.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Health",
+            "--context",
+            "personal",
+            "--tracking",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &["stewardship", "show", "--slug", "health", "--json"],
+    );
+    assert_eq!(v["variant"], "expanded", "{v}");
+}
+
+#[test]
+fn portfolio_show_json_includes_filed_evidence_entries() {
+    // The empty-evidence test leaves the per-entry mapping + the
+    // kind-omitted-when-absent contract (the parity point with
+    // EvidenceEntryDto) unexercised — file a plain note and assert it.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Chen 2025",
+            "--origin",
+            "projects/foo",
+            "--content",
+            "They show a 4x speedup.",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "show",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--json",
+        ],
+    );
+    let ev = &v["evidence"][0];
+    assert_eq!(ev["source"], "Chen 2025", "{v}");
+    // `file` wraps the bare origin into a wikilink; stored/serialised as-is.
+    assert_eq!(ev["origin"], "[[projects/foo]]", "{v}");
+    assert!(
+        ev["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("portfolios/sparse-vs-dense-ood/"),
+        "evidence path: {v}"
+    );
+    assert!(ev.get("created").is_some(), "evidence carries created: {v}");
+    // A plain prose note has no media kind — the key is omitted, not null.
+    assert!(
+        ev.get("kind").is_none(),
+        "kind omitted for a prose note: {v}"
+    );
+}
+
+// ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------
 

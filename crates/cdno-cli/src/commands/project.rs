@@ -187,7 +187,12 @@ pub fn run(
             let summary = vault
                 .project_summary(&slug)
                 .context("loading project summary")?;
-            print_summary(&summary);
+            if json {
+                // Same ProjectSummary shape as `project list` elements.
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                print_summary(&summary);
+            }
         }
         ProjectCommands::Milestone { action } => match action {
             MilestoneCommands::Add {
