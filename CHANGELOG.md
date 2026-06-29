@@ -4,7 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.1.23] - 2026-06-29
+
+`--json` write results on the standalone write commands — every write verb now honours `--json`.
 
 ### Added
 
