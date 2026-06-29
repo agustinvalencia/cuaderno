@@ -51,8 +51,8 @@ struct Cli {
     /// `file`, `track`, and the create/update verbs of `project`,
     /// `action`, `portfolio`, `stewardship`, `question`, `commit`) emit a
     /// `{path, message}` result and run non-interactively. Ignored by
-    /// maintenance/interactive commands (`lint`, `reindex`, `normalise`,
-    /// `triage`, `review`, `weekly`).
+    /// maintenance/interactive/bootstrap commands (`init`, `lint`,
+    /// `reindex`, `normalise`, `triage`, `review`, `weekly`).
     #[arg(long, global = true)]
     json: bool,
 

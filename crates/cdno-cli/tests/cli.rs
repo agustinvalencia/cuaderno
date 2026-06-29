@@ -1414,6 +1414,49 @@ fn question_create_json_emits_a_write_result() {
 }
 
 #[test]
+fn question_transition_json_emits_a_write_result() {
+    // The transition verbs (park/answer/retire/activate) build a dynamic
+    // message via capitalise_first(past_tense(verb)) — a distinct path
+    // from `create`, so exercise it under --json too.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "question",
+            "create",
+            "--domain",
+            "research",
+            "--text",
+            "Does sparse beat dense?",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "question",
+            "park",
+            "--slug",
+            "does-sparse-beat-dense",
+            "--json",
+        ],
+    );
+    // Park keeps the note at questions/research/<slug>.md (no folder move).
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("questions/research/"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().starts_with("Parked"),
+        "transition message: {v}"
+    );
+}
+
+#[test]
 fn commit_create_json_emits_a_write_result() {
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
