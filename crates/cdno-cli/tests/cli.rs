@@ -1682,6 +1682,87 @@ fn stewardship_show_json_emits_a_detail_object() {
     );
 }
 
+#[test]
+fn stewardship_show_json_reports_expanded_variant() {
+    // The other variant value, to pin both sides of the lowercase casing.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Health",
+            "--context",
+            "personal",
+            "--tracking",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &["stewardship", "show", "--slug", "health", "--json"],
+    );
+    assert_eq!(v["variant"], "expanded", "{v}");
+}
+
+#[test]
+fn portfolio_show_json_includes_filed_evidence_entries() {
+    // The empty-evidence test leaves the per-entry mapping + the
+    // kind-omitted-when-absent contract (the parity point with
+    // EvidenceEntryDto) unexercised — file a plain note and assert it.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "file",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--source",
+            "Chen 2025",
+            "--origin",
+            "projects/foo",
+            "--content",
+            "They show a 4x speedup.",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "show",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--json",
+        ],
+    );
+    let ev = &v["evidence"][0];
+    assert_eq!(ev["source"], "Chen 2025", "{v}");
+    // `file` wraps the bare origin into a wikilink; stored/serialised as-is.
+    assert_eq!(ev["origin"], "[[projects/foo]]", "{v}");
+    assert!(
+        ev["path"]
+            .as_str()
+            .unwrap()
+            .starts_with("portfolios/sparse-vs-dense-ood/"),
+        "evidence path: {v}"
+    );
+    assert!(ev.get("created").is_some(), "evidence carries created: {v}");
+    // A plain prose note has no media kind — the key is omitted, not null.
+    assert!(
+        ev.get("kind").is_none(),
+        "kind omitted for a prose note: {v}"
+    );
+}
+
 // ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------
