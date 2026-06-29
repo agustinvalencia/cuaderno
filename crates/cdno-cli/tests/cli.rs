@@ -1037,6 +1037,57 @@ fn orient_json_emits_the_orientation_context() {
     assert!(v["commitments"].is_array(), "orient JSON shape: {v}");
 }
 
+#[test]
+fn search_json_emits_an_array_of_hits() {
+    // End-to-end through the real `--json` flag wiring (#227): two notes
+    // match the query, so the array has two structured hits in best-first
+    // order. Exercises clap -> main -> run -> serialize -> stdout.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["capture", "sparse attention kernel benchmark"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["capture", "more notes on sparse attention today"])
+        .assert()
+        .success();
+
+    let v = json_stdout(dir.path(), &["search", "sparse attention", "--json"]);
+    let arr = v.as_array().expect("JSON array of hits");
+    assert_eq!(arr.len(), 2, "both captures should match: {v}");
+
+    let first = &arr[0];
+    for key in ["path", "note_type", "snippet", "score"] {
+        assert!(first.get(key).is_some(), "hit missing `{key}`: {first}");
+    }
+    assert!(
+        first.as_object().unwrap().contains_key("title"),
+        "hit carries a title key (may be null): {first}"
+    );
+    assert!(
+        first["path"].as_str().unwrap().starts_with("inbox/"),
+        "captured notes live in inbox/: {first}"
+    );
+    // Best-first: lower bm25 score ranks earlier (the documented sort key).
+    let s0 = arr[0]["score"].as_f64().expect("numeric score");
+    let s1 = arr[1]["score"].as_f64().expect("numeric score");
+    assert!(
+        s0 <= s1,
+        "results must be best-first by score: {s0} then {s1}"
+    );
+}
+
+#[test]
+fn search_json_emits_empty_array_on_no_matches() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(dir.path(), &["search", "nonexistent-term-xyz", "--json"]);
+    assert_eq!(v, serde_json::json!([]));
+}
+
 // ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------

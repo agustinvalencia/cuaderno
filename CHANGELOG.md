@@ -4,6 +4,12 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`cdno search --json`** (#227) — `search` now honours the global `--json` flag, emitting the ranked hits as a JSON array (`path`, `note_type`, `title`, `snippet`, `score`) in best-first order for scripted consumers, alongside the existing `commitments` / `questions` / `status` / `orient` JSON verbs. This is the first slice of #227; the remaining `list`/`show` read verbs and the write-verb JSON policy are tracked there.
+
 ## [0.1.19] - 2026-06-28
 
 Portfolio ↔ project linking is now bidirectional. MCP catalogue 40 → 41.

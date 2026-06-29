@@ -40,7 +40,7 @@ const FILTERED_SCAN_CAP: usize = 500;
 /// [`SearchHit`](cdno_core::index::SearchHit); kept as its own type so the
 /// domain surface owns its result shape (and can diverge later) rather
 /// than leaking the core struct through every caller.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct SearchResultEntry {
     pub path: VaultPath,
     pub note_type: String,

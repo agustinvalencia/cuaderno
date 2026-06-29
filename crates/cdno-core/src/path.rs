@@ -12,6 +12,17 @@ use crate::error::PathError;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct VaultPath(PathBuf);
 
+// Serialize via `Display`, not the derived transparent `PathBuf` impl, so
+// JSON output matches the `to_string()` convention used everywhere else
+// (the MCP DTOs): the root renders as `"."` (not `""`), and odd bytes are
+// lossy rather than erroring the whole command. Keeps CLI-JSON and
+// MCP-JSON path strings identical.
+impl serde::Serialize for VaultPath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl VaultPath {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, PathError> {
         let input = path.as_ref();
