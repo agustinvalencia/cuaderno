@@ -102,7 +102,7 @@ pub fn run(
             }
             Ok(())
         }
-        StewardshipCommands::Show { slug } => show(&vault, at, slug, interactive),
+        StewardshipCommands::Show { slug } => show(&vault, at, slug, interactive, json),
         StewardshipCommands::AddPeriodic {
             stewardship,
             title,
@@ -170,14 +170,36 @@ fn create(
     Ok(())
 }
 
-fn show(vault: &Vault, at: NaiveDateTime, slug: Option<String>, interactive: bool) -> Result<()> {
+fn show(
+    vault: &Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
     let slug = match slug {
         Some(s) => s,
         None if interactive => prompt::prompt_stewardship(vault, at.date())?,
         None => return Err(prompt::missing_flag("slug")),
     };
-    let (fm, body, summary) = load_for_show(vault, at, &slug)?;
-    print!("{}", render_show(&slug, &fm, &body, summary.as_ref()));
+    let (fm, body, variant, summary) = load_for_show(vault, at, &slug)?;
+    if json {
+        // Mirrors the MCP StewardshipDetailDto (dto.rs); the name comes
+        // from the summary row (the human name lives there, not in
+        // frontmatter), falling back to the slug. `variant` serialises
+        // lowercase (flat/expanded), matching the DTO.
+        let name = summary.as_ref().map(|s| s.name.as_str()).unwrap_or(&slug);
+        let detail = serde_json::json!({
+            "slug": slug,
+            "name": name,
+            "context": fm.context.as_str(),
+            "variant": variant,
+            "body_markdown": body,
+        });
+        println!("{}", serde_json::to_string_pretty(&detail)?);
+    } else {
+        print!("{}", render_show(&slug, &fm, &body, summary.as_ref()));
+    }
     Ok(())
 }
 
@@ -231,15 +253,20 @@ fn load_for_show(
     vault: &Vault,
     at: NaiveDateTime,
     slug: &str,
-) -> Result<(StewardshipFrontmatter, String, Option<StewardshipSummary>)> {
-    let (fm, body, _variant) = vault
+) -> Result<(
+    StewardshipFrontmatter,
+    String,
+    StewardshipVariant,
+    Option<StewardshipSummary>,
+)> {
+    let (fm, body, variant) = vault
         .get_stewardship(slug)
         .with_context(|| format!("loading stewardship '{slug}'"))?;
     let summaries = vault
         .list_stewardships(at.date())
         .context("listing stewardships")?;
     let summary = summaries.iter().find(|s| s.slug == slug).cloned();
-    Ok((fm, body, summary))
+    Ok((fm, body, variant, summary))
 }
 
 /// Render `cdno stewardship list` output. Public so tests can

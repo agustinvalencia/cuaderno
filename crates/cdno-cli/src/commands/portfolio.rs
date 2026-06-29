@@ -105,7 +105,7 @@ pub fn run(
             }
             Ok(())
         }
-        PortfolioCommands::Show { portfolio } => show(&vault, at, portfolio, interactive),
+        PortfolioCommands::Show { portfolio } => show(&vault, at, portfolio, interactive, json),
         PortfolioCommands::Link {
             portfolio,
             question,
@@ -211,6 +211,7 @@ fn show(
     at: NaiveDateTime,
     portfolio: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     // show is read-only — no confirm step, just gather the slug.
     let slug = match portfolio {
@@ -225,10 +226,40 @@ fn show(
     let entries = vault
         .get_portfolio_contents(&slug)
         .context("listing portfolio contents")?;
-    let summaries = vault.list_portfolios(at.date())?;
-    let summary = summaries.iter().find(|s| s.slug == slug);
 
-    print!("{}", render_show(&slug, &fm, summary, &entries));
+    if json {
+        // Mirrors the MCP PortfolioDetailDto / EvidenceEntryDto (dto.rs)
+        // so CLI `--json` and the MCP detail view agree; the CLI can't
+        // import cdno-mcp, so the shape is kept in sync by hand. `kind`
+        // is omitted (not null) when absent, matching the DTO's skip.
+        let evidence: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(path, ef)| {
+                let mut obj = serde_json::json!({
+                    "path": path.to_string(),
+                    "created": ef.created,
+                    "source": ef.source,
+                    "origin": ef.origin,
+                });
+                if let Some(kind) = &ef.kind {
+                    obj["kind"] = serde_json::json!(kind);
+                }
+                obj
+            })
+            .collect();
+        let detail = serde_json::json!({
+            "slug": slug,
+            "question": fm.question,
+            "created": fm.created,
+            "project": fm.project,
+            "evidence": evidence,
+        });
+        println!("{}", serde_json::to_string_pretty(&detail)?);
+    } else {
+        let summaries = vault.list_portfolios(at.date())?;
+        let summary = summaries.iter().find(|s| s.slug == slug);
+        print!("{}", render_show(&slug, &fm, summary, &entries));
+    }
     Ok(())
 }
 

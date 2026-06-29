@@ -1602,6 +1602,87 @@ fn stewardship_create_json_emits_a_write_result() {
 }
 
 // ---------------------------------------------------------------------
+// --json on the show verbs (#227): composite detail objects
+// ---------------------------------------------------------------------
+
+#[test]
+fn project_show_json_emits_the_summary() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    // show takes the bare slug as a positional arg.
+    let v = json_stdout(dir.path(), &["project", "show", "alpha", "--json"]);
+    assert_eq!(v["slug"], "alpha", "{v}");
+    // Same ProjectSummary shape as `project list` elements.
+    assert!(v.get("status").is_some(), "carries status: {v}");
+    assert!(
+        v.get("state_snippet").is_some(),
+        "carries state_snippet: {v}"
+    );
+}
+
+#[test]
+fn portfolio_show_json_emits_a_detail_object() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["portfolio", "create", "--question", "Sparse vs dense OOD"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "show",
+            "--portfolio",
+            "sparse-vs-dense-ood",
+            "--json",
+        ],
+    );
+    // Mirrors the MCP PortfolioDetailDto shape.
+    assert_eq!(v["slug"], "sparse-vs-dense-ood", "{v}");
+    assert_eq!(v["question"], "Sparse vs dense OOD", "{v}");
+    assert!(v.get("created").is_some(), "carries created: {v}");
+    assert!(v["evidence"].is_array(), "evidence is an array: {v}");
+}
+
+#[test]
+fn stewardship_show_json_emits_a_detail_object() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+        ])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &["stewardship", "show", "--slug", "finances", "--json"],
+    );
+    // Mirrors the MCP StewardshipDetailDto shape.
+    assert_eq!(v["slug"], "finances", "{v}");
+    assert_eq!(v["name"], "Finances", "{v}");
+    // variant serialises lowercase, matching the DTO.
+    assert_eq!(v["variant"], "flat", "{v}");
+    assert!(
+        v.get("body_markdown").is_some(),
+        "carries body_markdown: {v}"
+    );
+}
+
+// ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------
 
