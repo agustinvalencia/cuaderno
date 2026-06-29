@@ -156,3 +156,43 @@ fn render_uses_a_placeholder_for_an_untitled_hit() {
 fn render_reports_no_matches_for_empty_results() {
     assert!(search::render("anything", &[]).contains("(no matches)"));
 }
+
+#[test]
+fn search_json_output_is_valid_and_carries_hit_fields() {
+    // Parse-level (not substring): the --json path serialises the hit
+    // Vec; assert it round-trips to valid JSON with the structured fields
+    // a scripted consumer needs, and that the path serialises correctly
+    // (VaultPath -> string). Mirrors the data `search --json` prints.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let (vault, _r) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open vault");
+    let results = vault
+        .search("sparse attention", &SearchFilters::default(), 20)
+        .expect("search");
+
+    let json = serde_json::to_string(&results).expect("serialise hits");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    let arr = parsed.as_array().expect("array of hits");
+    assert!(!arr.is_empty(), "expected at least one hit");
+
+    let first = &arr[0];
+    assert!(
+        first.get("path").and_then(|p| p.as_str()).is_some(),
+        "hit carries a string path: {first}"
+    );
+    assert!(
+        first.get("note_type").is_some(),
+        "hit carries note_type: {first}"
+    );
+    assert!(
+        first.get("snippet").is_some(),
+        "hit carries snippet: {first}"
+    );
+
+    let paths: Vec<&str> = arr.iter().filter_map(|h| h["path"].as_str()).collect();
+    assert!(
+        paths.contains(&"projects/alpha.md"),
+        "path serialised to the vault-relative string: {paths:?}"
+    );
+}

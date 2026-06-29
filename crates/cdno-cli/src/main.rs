@@ -46,7 +46,7 @@ struct Cli {
 
     /// Emit machine-readable JSON instead of the formatted table.
     /// Supported on the read verbs (`commitments`, `questions`,
-    /// `status`, `orient`); ignored by write/other commands.
+    /// `status`, `orient`, `search`); ignored by write/other commands.
     #[arg(long, global = true)]
     json: bool,
 
@@ -461,7 +461,9 @@ fn main() -> Result<()> {
             limit,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::search::run(&root, &query, note_type, from, to, portfolio, limit)
+            commands::search::run(
+                &root, &query, note_type, from, to, portfolio, limit, cli.json,
+            )
         }
         Commands::Completions { shell } => {
             // Script emission needs no vault — sourcing is a shell-rc-time

@@ -18,6 +18,10 @@ use cdno_domain::{SearchFilters, SearchResultEntry};
 
 use crate::bootstrap;
 
+// Thin CLI passthrough of the search flags plus `--json`; bundling them
+// into a struct would add indirection for no real gain (same rationale
+// as `file::run` / `commit::run`).
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     root: &Path,
     query: &str,
@@ -26,6 +30,7 @@ pub fn run(
     to: Option<NaiveDate>,
     portfolio: Option<String>,
     limit: usize,
+    json: bool,
 ) -> Result<()> {
     let mut filters = SearchFilters {
         date_from: from,
@@ -40,7 +45,17 @@ pub fn run(
         filters.note_types.push(parsed);
     }
 
-    print!("{}", build_search(root, query, &filters, limit)?);
+    if json {
+        // Emit the raw hits (#227), in the same best-first order the text
+        // renderer uses (the result Vec's order, which serde preserves).
+        let (vault, _report) = bootstrap::open_vault(root)?;
+        let results = vault
+            .search(query, &filters, limit)
+            .context("searching the vault")?;
+        println!("{}", serde_json::to_string_pretty(&results)?);
+    } else {
+        print!("{}", build_search(root, query, &filters, limit)?);
+    }
     Ok(())
 }
 

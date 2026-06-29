@@ -9,7 +9,7 @@ use crate::error::PathError;
 /// prefixes and `..` components. The root of the vault is represented
 /// by an empty inner `PathBuf` and is constructed via [`VaultPath::root`]
 /// or by passing `"."` to [`VaultPath::new`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct VaultPath(PathBuf);
 
 impl VaultPath {
