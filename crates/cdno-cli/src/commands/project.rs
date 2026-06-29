@@ -153,12 +153,12 @@ pub fn run(
             title,
             context,
             question,
-        } => create(&vault, at, title, context, question, interactive)?,
+        } => create(&vault, at, title, context, question, interactive, json)?,
         ProjectCommands::State { slug, text } => {
-            state(&vault, at, slug, text, interactive)?;
+            state(&vault, at, slug, text, interactive, json)?;
         }
-        ProjectCommands::Park { slug } => park(&vault, at, slug, interactive)?,
-        ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive)?,
+        ProjectCommands::Park { slug } => park(&vault, at, slug, interactive, json)?,
+        ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive, json)?,
         ProjectCommands::List => {
             let active = vault.active_projects().context("listing active projects")?;
             if json {
@@ -193,17 +193,17 @@ pub fn run(
                 title,
                 date,
                 hard,
-            } => milestone_add(&vault, at, slug, title, date, hard, interactive)?,
+            } => milestone_add(&vault, at, slug, title, date, hard, interactive, json)?,
             MilestoneCommands::Done { slug, query } => {
-                milestone_done(&vault, at, slug, query, interactive)?
+                milestone_done(&vault, at, slug, query, interactive, json)?
             }
         },
         ProjectCommands::Waiting { action } => match action {
             WaitingCommands::Add { slug, description } => {
-                waiting_add(&vault, at, slug, description, interactive)?
+                waiting_add(&vault, at, slug, description, interactive, json)?
             }
             WaitingCommands::Resolve { slug, query } => {
-                waiting_resolve(&vault, at, slug, query, interactive)?
+                waiting_resolve(&vault, at, slug, query, interactive, json)?
             }
         },
     }
@@ -220,6 +220,7 @@ fn create(
     context: Option<ProjectContext>,
     question: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -244,7 +245,7 @@ fn create(
     let path = vault
         .create_project(at.date(), &title, context, question.as_deref())
         .context("creating project")?;
-    println!("Created {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
 
@@ -258,6 +259,7 @@ fn state(
     slug: Option<String>,
     text: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -279,7 +281,7 @@ fn state(
     let path = vault
         .update_project_state(at, &slug, &text)
         .context("updating project state")?;
-    println!("Updated {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
     Ok(())
 }
 
@@ -289,6 +291,7 @@ fn park(
     at: NaiveDateTime,
     slug: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -300,7 +303,7 @@ fn park(
         return Ok(());
     }
     let path = vault.park_project(at, &slug).context("parking project")?;
-    println!("Parked at {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Parked at {path}"))?;
     Ok(())
 }
 
@@ -310,6 +313,7 @@ fn activate(
     at: NaiveDateTime,
     slug: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -323,12 +327,13 @@ fn activate(
     let path = vault
         .activate_project(at, &slug)
         .context("activating project")?;
-    println!("Activated at {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Activated at {path}"))?;
     Ok(())
 }
 
 /// `cdno project milestone add` — slug picker, title text, calendar
 /// date, hard/soft confirm.
+#[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 fn milestone_add(
     vault: &cdno_domain::Vault,
     at: NaiveDateTime,
@@ -337,6 +342,7 @@ fn milestone_add(
     date: Option<NaiveDate>,
     hard_flag: bool,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -366,7 +372,11 @@ fn milestone_add(
     let path = vault
         .add_milestone(at, &slug, &title, date, hard)
         .context("adding milestone")?;
-    println!("Milestone added to {path}");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Milestone added to {path}"),
+    )?;
     Ok(())
 }
 
@@ -378,6 +388,7 @@ fn milestone_done(
     slug: Option<String>,
     query: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -398,7 +409,11 @@ fn milestone_done(
     let path = vault
         .complete_milestone(at, &slug, &query)
         .context("completing milestone")?;
-    println!("Milestone done on {path}");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Milestone done on {path}"),
+    )?;
     Ok(())
 }
 
@@ -410,6 +425,7 @@ fn waiting_add(
     slug: Option<String>,
     description: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -434,7 +450,11 @@ fn waiting_add(
     let path = vault
         .add_waiting_on(at, &slug, &description)
         .context("adding waiting-on item")?;
-    println!("Waiting-on added to {path}");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Waiting-on added to {path}"),
+    )?;
     Ok(())
 }
 
@@ -448,6 +468,7 @@ fn waiting_resolve(
     slug: Option<String>,
     query: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     use crate::prompt;
     let mut prompted = false;
@@ -468,7 +489,11 @@ fn waiting_resolve(
     let path = vault
         .resolve_waiting_on(at, &slug, &query)
         .context("resolving waiting-on item")?;
-    println!("Waiting-on resolved on {path}");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Waiting-on resolved on {path}"),
+    )?;
     Ok(())
 }
 

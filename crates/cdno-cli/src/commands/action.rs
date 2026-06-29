@@ -92,12 +92,12 @@ pub fn run(
             title,
             energy,
             note,
-        } => add(&vault, at, project, title, energy, note, interactive),
+        } => add(&vault, at, project, title, energy, note, interactive, json),
         ActionCommands::Promote { project, query } => {
-            promote(&vault, at, project, query, interactive)
+            promote(&vault, at, project, query, interactive, json)
         }
         ActionCommands::Complete { project, query } => {
-            complete(&vault, at, project, query, interactive)
+            complete(&vault, at, project, query, interactive, json)
         }
         ActionCommands::List { project } => list(&vault, project, interactive, json),
     }
@@ -107,6 +107,7 @@ pub fn run(
 // Per-verb handlers — gather missing fields, confirm-on-prompt, execute.
 // ---------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 fn add(
     vault: &Vault,
     at: NaiveDateTime,
@@ -115,6 +116,7 @@ fn add(
     energy: Option<EnergyLevel>,
     note_flag: bool,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
@@ -150,12 +152,20 @@ fn add(
         let path = vault
             .add_action_with_note(at, &project, &title, energy)
             .context("adding action with note")?;
-        println!("Action added to projects/{project}.md with note {path}");
+        crate::output::emit_write_result(
+            json,
+            &path.to_string(),
+            &format!("Action added to projects/{project}.md with note {path}"),
+        )?;
     } else {
         let path = vault
             .add_action(at, &project, &title, energy)
             .context("adding action")?;
-        println!("Action added to {path}");
+        crate::output::emit_write_result(
+            json,
+            &path.to_string(),
+            &format!("Action added to {path}"),
+        )?;
     }
     Ok(())
 }
@@ -166,6 +176,7 @@ fn promote(
     project: Option<String>,
     query: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
@@ -192,7 +203,11 @@ fn promote(
     let note_path = vault
         .promote_action(at, &project, &query)
         .context("promoting action")?;
-    println!("Promoted to {note_path}");
+    crate::output::emit_write_result(
+        json,
+        &note_path.to_string(),
+        &format!("Promoted to {note_path}"),
+    )?;
     Ok(())
 }
 
@@ -202,6 +217,7 @@ fn complete(
     project: Option<String>,
     query: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
@@ -228,7 +244,11 @@ fn complete(
     let project_path = vault
         .complete_action(at, &project, &query)
         .context("completing action")?;
-    println!("Action done on {project_path}");
+    crate::output::emit_write_result(
+        json,
+        &project_path.to_string(),
+        &format!("Action done on {project_path}"),
+    )?;
     Ok(())
 }
 

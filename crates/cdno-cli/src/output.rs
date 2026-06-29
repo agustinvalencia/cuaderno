@@ -73,3 +73,19 @@ pub fn render(table: &Table) -> String {
     }
     out
 }
+
+/// Emit a write verb's result. With `json`, prints a `{path, message}`
+/// object (the same shape as the MCP `WriteResultDto`) so scripted
+/// callers get a stable, parseable result; otherwise prints the
+/// human-readable `message` line (#227). Write verbs route their success
+/// output through here instead of `println!` so `--json` isn't a silent
+/// no-op on them.
+pub fn emit_write_result(json: bool, path: &str, message: &str) -> anyhow::Result<()> {
+    if json {
+        let payload = serde_json::json!({ "path": path, "message": message });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{message}");
+    }
+    Ok(())
+}

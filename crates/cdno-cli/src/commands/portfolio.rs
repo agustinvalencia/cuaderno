@@ -90,7 +90,7 @@ pub fn run(
     let interactive = prompt::is_interactive(no_interactive);
     match command {
         PortfolioCommands::Create { question, project } => {
-            create(&vault, at, question, project, interactive)
+            create(&vault, at, question, project, interactive, json)
         }
         PortfolioCommands::List => {
             let summaries = vault
@@ -108,7 +108,7 @@ pub fn run(
             portfolio,
             question,
             project,
-        } => link(&vault, at, portfolio, question, project, interactive),
+        } => link(&vault, at, portfolio, question, project, interactive, json),
     }
 }
 
@@ -123,6 +123,7 @@ fn link(
     question: Option<String>,
     project: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     match (question, project) {
         (Some(_), Some(_)) => {
@@ -132,9 +133,9 @@ fn link(
             anyhow::bail!("pass one of --question / --project to choose what to link")
         }
         (Some(question), None) => {
-            link_to_question(vault, at, portfolio, Some(question), interactive)
+            link_to_question(vault, at, portfolio, Some(question), interactive, json)
         }
-        (None, Some(project)) => link_to_project(vault, at, portfolio, project, interactive),
+        (None, Some(project)) => link_to_project(vault, at, portfolio, project, interactive, json),
     }
 }
 
@@ -144,6 +145,7 @@ fn link_to_project(
     portfolio: Option<String>,
     project: String,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let portfolio =
@@ -163,7 +165,11 @@ fn link_to_project(
     let path = vault
         .link_portfolio_to_project(&portfolio, &project)
         .with_context(|| format!("linking portfolio '{portfolio}' to project '{project}'"))?;
-    println!("Linked portfolio '{portfolio}' to project '{project}' ({path})");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Linked portfolio '{portfolio}' to project '{project}' ({path})"),
+    )?;
     Ok(())
 }
 
@@ -173,6 +179,7 @@ fn create(
     question: Option<String>,
     project: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     let mut prompted = false;
     let question =
@@ -193,7 +200,7 @@ fn create(
     let path = vault
         .create_portfolio(at, &question, project.as_deref())
         .context("creating portfolio")?;
-    println!("Created {path}");
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
 }
 
@@ -229,6 +236,7 @@ fn link_to_question(
     portfolio: Option<String>,
     question: Option<String>,
     interactive: bool,
+    json: bool,
 ) -> Result<()> {
     // Same gather -> confirm -> execute shape as the other write verbs.
     let mut prompted = false;
@@ -256,7 +264,11 @@ fn link_to_question(
     let path = vault
         .link_portfolio_to_question(&portfolio, &question)
         .with_context(|| format!("linking portfolio '{portfolio}' to question '{question}'"))?;
-    println!("Linked portfolio '{portfolio}' to question '{question}' ({path})");
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Linked portfolio '{portfolio}' to question '{question}' ({path})"),
+    )?;
     Ok(())
 }
 

@@ -1214,6 +1214,116 @@ fn action_list_json_emits_entries() {
 }
 
 // ---------------------------------------------------------------------
+// --json on write verbs (#227): {path, message}
+// ---------------------------------------------------------------------
+
+#[test]
+fn project_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().ends_with("projects/alpha.md"),
+        "write result path: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().contains("Created"),
+        "write result message: {v}"
+    );
+}
+
+#[test]
+fn action_add_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "add",
+            "--project",
+            "alpha",
+            "--title",
+            "Run ablation",
+            "--energy",
+            "deep",
+            "--json",
+        ],
+    );
+    assert!(v["path"].as_str().is_some(), "write result path: {v}");
+    assert!(
+        v["message"].as_str().unwrap().contains("Action added"),
+        "write result message: {v}"
+    );
+}
+
+#[test]
+fn portfolio_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "portfolio",
+            "create",
+            "--question",
+            "Sparse vs dense OOD",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("portfolios/sparse-vs-dense-ood/_index.md"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+#[test]
+fn stewardship_create_json_emits_a_write_result() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "stewardship",
+            "create",
+            "--name",
+            "Finances",
+            "--context",
+            "household",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("stewardships/finances.md"),
+        "write result path: {v}"
+    );
+    assert!(v["message"].as_str().unwrap().contains("Created"), "{v}");
+}
+
+// ---------------------------------------------------------------------
 // review weekly (#209)
 // ---------------------------------------------------------------------
 
