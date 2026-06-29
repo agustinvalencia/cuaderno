@@ -11,8 +11,10 @@ src = "src"
 site-url = "/cuaderno/"
 git-repository-url = "https://github.com/agustinvalencia/cuaderno"
 edit-url-template = "https://github.com/agustinvalencia/cuaderno/edit/main/docs-site/{path}"
-default-theme = "rust"
-preferred-dark-theme = "ayu"
+# Light-mode visitors get "light"; dark-mode (prefers-color-scheme: dark)
+# visitors get "coal". Both are built-in mdBook themes.
+default-theme = "light"
+preferred-dark-theme = "coal"
 no-section-label = false
 
 [output.html.search]
