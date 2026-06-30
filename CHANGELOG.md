@@ -4,9 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.1.26] - 2026-06-30
 
-Interactive `[variables.prompt]` template variables, with a `--var name=value` flag (#238 tier 4).
+Interactive `[variables.prompt]` template variables, with a `--var name=value` flag (#238 tier 4) — completes #238.
 
 ### Added
 
