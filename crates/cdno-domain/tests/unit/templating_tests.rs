@@ -486,3 +486,122 @@ fn template_prompts_ignores_prompt_names_the_template_does_not_use() {
         "an unused prompt name should not be reported"
     );
 }
+
+// The prompt machinery lives in the shared `scaffold`, so `project` proves
+// the core path; these cover the *other* `*_with_vars` entry points (each
+// threads `prompted` through its own render helper) so a missing
+// `set_prompted` in one can't ship silently.
+
+#[test]
+fn create_commitment_with_vars_renders_a_prompted_variable() {
+    let custom = "---\ntype: commitment\ntitle: {{title}}\nstatus: {{status}}\ndue: {{due}}\ncontext: {{context}}\nproject: {{project}}\nstewardship: {{stewardship}}\ncreated: {{created}}\ncompleted: {{completed}}\nticket: {{ticket}}\n---\n# {{title}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) =
+        vault_with_config(&[(".cuaderno/templates/commitment.md", custom)], config);
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+
+    let path = vault
+        .create_commitment_with_vars(
+            at,
+            "Promise",
+            today(),
+            Context::Work,
+            None,
+            None,
+            &prompted(&[("ticket", "ABC-9")]),
+        )
+        .expect("commitment");
+    assert!(
+        store.read_file(&path).unwrap().contains("ticket: ABC-9"),
+        "commitment prompted value should render"
+    );
+}
+
+#[test]
+fn file_evidence_with_vars_renders_a_prompted_variable() {
+    let custom = "---\ntype: evidence\nsource: {{source}}\norigin: {{origin}}\nportfolio: {{portfolio}}\ncreated: {{created}}\nticket: {{ticket}}\n---\n{{content}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/evidence.md", custom)], config);
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+    vault
+        .create_portfolio(at, "Sparse vs dense", None)
+        .expect("portfolio");
+
+    let path = vault
+        .file_evidence_with_vars(
+            at,
+            "sparse-vs-dense",
+            "Chen 2025",
+            "projects/foo",
+            "Body.",
+            &prompted(&[("ticket", "EV-3")]),
+        )
+        .expect("evidence");
+    assert!(
+        store.read_file(&path).unwrap().contains("ticket: EV-3"),
+        "evidence prompted value should render"
+    );
+}
+
+#[test]
+fn add_tracking_entry_with_vars_renders_a_prompted_variable_from_a_variant_template() {
+    // Covers both the tracking `*_with_vars` path AND variant resolution:
+    // the prompt lives in `tracking-gym.md`, the variant the gym entry uses.
+    let custom = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: {{activity}}\ndate: {{date}}\nticket: {{ticket}}\n---\n# {{activity_title}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) =
+        vault_with_config(&[(".cuaderno/templates/tracking-gym.md", custom)], config);
+    vault
+        .create_stewardship_expanded(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Health",
+            Context::Personal,
+        )
+        .expect("stewardship");
+
+    // `template_prompts` for the variant reports the prompt...
+    assert_eq!(
+        vault.template_prompts("tracking", Some("gym")).unwrap(),
+        vec![("ticket".to_owned(), "Ticket?".to_owned())]
+    );
+    // ...and the create path renders the supplied value.
+    let path = vault
+        .add_tracking_entry_with_vars(
+            today().and_hms_opt(19, 0, 0).unwrap(),
+            "health",
+            "gym",
+            None,
+            "Good session.",
+            &prompted(&[("ticket", "GYM-1")]),
+        )
+        .expect("tracking");
+    assert!(
+        store.read_file(&path).unwrap().contains("ticket: GYM-1"),
+        "tracking-variant prompted value should render"
+    );
+}
+
+#[test]
+fn promote_action_with_vars_renders_a_prompted_variable() {
+    // Promotion scaffolds an action note, so it must thread prompted vars
+    // too (regression guard for the promote path).
+    use cdno_domain::frontmatter::EnergyLevel;
+    let custom = "---\ntype: action\nstatus: {{status}}\nproject: {{project}}\nenergy: {{energy}}\nmilestone: {{milestone}}\ndue: {{due}}\ncreated: {{created}}\ncompleted: {{completed}}\nblocker: {{blocker}}\ncriteria: {{criteria}}\ntags: {{tags}}\nticket: {{ticket}}\n---\n# {{title}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/action.md", custom)], config);
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+    vault
+        .create_project(today(), "Proj", Context::Work, None)
+        .expect("project");
+    vault
+        .add_action(at, "proj", "Profile the assembly", EnergyLevel::Deep)
+        .expect("bullet");
+
+    let path = vault
+        .promote_action_with_vars(at, "proj", "profile", &prompted(&[("ticket", "PR-1")]))
+        .expect("promote");
+    assert!(
+        store.read_file(&path).unwrap().contains("ticket: PR-1"),
+        "promoted action note should carry the prompted value"
+    );
+}

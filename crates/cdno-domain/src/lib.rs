@@ -12,6 +12,7 @@ pub mod vault;
 
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
+pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, NormaliseReport,

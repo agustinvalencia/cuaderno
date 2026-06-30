@@ -144,6 +144,7 @@ fn promote_attaches_note_to_existing_bullet() {
         ActionCommands::Promote {
             project: Some("x".to_owned()),
             query: Some("draft methods".to_owned()),
+            var: vec![],
         },
         true,
         false,

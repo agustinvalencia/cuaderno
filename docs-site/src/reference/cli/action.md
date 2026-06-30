@@ -47,6 +47,7 @@ energy is inherited.
 |------|-------------|
 | `--project <SLUG>` | Project slug. |
 | `--query <QUERY>` | Case-insensitive substring of the bullet text. |
+| `--var <NAME=VALUE>` | Value for a custom action-note template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Promotion scaffolds an action note, so it gathers the same prompts as `add --note`. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno action promote --project surrogate-model --query "profile the assembly"

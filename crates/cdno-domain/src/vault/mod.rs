@@ -43,7 +43,7 @@ mod portfolios;
 mod projects;
 mod questions;
 mod search;
-mod slug;
+pub(crate) mod slug;
 mod slug_hint;
 mod stewardships;
 mod templating;

@@ -58,6 +58,10 @@ pub enum ActionCommands {
         /// Substring matching the bullet to promote.
         #[arg(long)]
         query: Option<String>,
+        /// Value for a custom action-note template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Mark a next action as completed by case-insensitive substring
@@ -111,9 +115,11 @@ pub fn run(
             interactive,
             json,
         ),
-        ActionCommands::Promote { project, query } => {
-            promote(&vault, at, project, query, interactive, json)
-        }
+        ActionCommands::Promote {
+            project,
+            query,
+            var,
+        } => promote(&vault, at, project, query, var, interactive, json),
         ActionCommands::Complete { project, query } => {
             complete(&vault, at, project, query, interactive, json)
         }
@@ -200,11 +206,13 @@ fn add(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn promote(
     vault: &Vault,
     at: NaiveDateTime,
     project: Option<String>,
     query: Option<String>,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -220,6 +228,10 @@ fn promote(
         let picked = prompt::prompt_bullet(&project, &labels)?;
         Ok(strip_energy_for_query(&picked))
     })?;
+    // Promotion scaffolds an action note, so it gathers the action template's
+    // prompted variables just like `add --note`.
+    let template_vars =
+        prompt::gather_template_vars(vault, "action", None, &var, interactive, &mut prompted)?;
 
     if prompted
         && !prompt::confirm_preview(&format!(
@@ -231,7 +243,7 @@ fn promote(
     }
 
     let note_path = vault
-        .promote_action(at, &project, &query)
+        .promote_action_with_vars(at, &project, &query, &template_vars)
         .context("promoting action")?;
     crate::output::emit_write_result(
         json,

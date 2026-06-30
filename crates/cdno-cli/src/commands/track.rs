@@ -57,12 +57,16 @@ pub fn run(
         },
     };
     // routine and content stay genuinely optional.
-    // The variant is the activity, so prompts come from the activity's
-    // template (e.g. `tracking-gym`) when one exists, else the generic.
+    // The variant is the activity *slug* — mirror the domain's slugify so
+    // `template_prompts` resolves the same variant template `scaffold` will
+    // (e.g. `cdno track "weight training"` → `tracking-weight-training`),
+    // rather than the generic fallback. Otherwise a variant-only prompt var
+    // would be missed here and then hard-error at scaffold time.
+    let activity_variant = cdno_domain::slugify(&activity);
     let template_vars = prompt::gather_template_vars(
         &vault,
         "tracking",
-        Some(&activity),
+        Some(&activity_variant),
         &var,
         interactive,
         &mut prompted,

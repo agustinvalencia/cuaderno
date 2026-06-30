@@ -12,12 +12,12 @@ Interactive `[variables.prompt]` template variables, with a `--var name=value` f
 
 - **Prompted template variables** (#238) — `[variables.prompt]` entries in `.cuaderno/config.toml` are
   now gathered at note creation. A creating command resolves each prompted variable its effective
-  template uses from a repeatable **`--var name=value`** flag, an interactive prompt (shown in the
-  confirm preview), or a static `[variables]` default; if none supplies it the command errors with the
-  new `UnresolvedPrompts` message instead of writing a literal `{{name}}`. `--var` is available on
-  `project create`, `question create`, `stewardship create`, `commit create`, `portfolio create`,
-  `file`, `track`, and `action add --note`. A new `Vault::template_prompts` query backs both the CLI
-  gathering and the domain enforcement.
+  template uses from a static `[variables]` default if one exists (which suppresses the prompt), else a
+  repeatable **`--var name=value`** flag, else an interactive prompt (shown in the confirm preview);
+  if none supplies it the command errors instead of writing a literal `{{name}}`. `--var` is available
+  on `project create`, `question create`, `stewardship create`, `commit create`, `portfolio create`,
+  `file`, `track`, `action add --note`, and `action promote`. A new `DomainError::UnresolvedPrompts`
+  and a `Vault::template_prompts` query back the domain enforcement and the CLI gathering.
 - Docs: the [Customising templates and frontmatter](https://agustinvalencia.github.io/cuaderno/tutorials/templates-and-frontmatter.html)
   tutorial gains a **Prompted variables** section, and `--var` is documented on each create command's
   CLI reference page.

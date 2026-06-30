@@ -159,25 +159,27 @@ gets the value one of three ways:
   `{{ticket}}`:
 
 ```text
-Error: template 'project' references prompted variable(s) ["ticket"] with no value — provide them
-(run interactively, or pass `--var name=value`) or set defaults under [variables] in
-.cuaderno/config.toml
+Error: missing value for template variable 'ticket' (pass `--var ticket=value`, set a default under
+[variables] in .cuaderno/config.toml, or run interactively in a TTY)
 ```
 
 `--var` is available on every note-creating command: `project create`, `question create`,
-`stewardship create`, `commit create`, `portfolio create`, `file`, `track`, and `action add --note`.
+`stewardship create`, `commit create`, `portfolio create`, `file`, `track`, `action add --note`, and
+`action promote`.
 
 A few rules worth knowing:
 
 - A prompted name that *also* has a static `[variables]` default is satisfied by that default — you're
-  not asked, and it won't error. The default acts as a fallback you can still override with `--var`.
+  not asked, and it won't error. (The static default wins by precedence, so `--var` can't override it;
+  remove the default if you want to be prompted.)
 - A `[variables.prompt]` entry whose `{{name}}` your template doesn't actually use is ignored.
 - The same precedence applies: a per-type placeholder of the same name wins over a prompted variable.
 - `--var` only applies to **templated** notes. `cdno file --attach` (the attachment stub) and a plain
   `action add` (no `--note`) aren't templated, so `--var` is ignored there.
 - The implicit-write paths — daily (`log`), weekly, and inbox (`capture`) notes — don't gather
-  prompted values. A `[variables.prompt]` placeholder in one of those templates surfaces the
-  `UnresolvedPrompts` error above; give it a static `[variables]` default instead.
+  prompted values, and neither do MCP-driven creations (there's no `--var` over MCP). A
+  `[variables.prompt]` placeholder in one of those templates fails at creation (an `UnresolvedPrompts`
+  error) instead of being asked for; give it a static `[variables]` default instead.
 
 ## Frontmatter field order and `normalise`
 

@@ -14,7 +14,12 @@ pub(in crate::vault) const SLUG_MAX_CHARS: usize = 50;
 /// alphanumerics joined by `-`, capped to [`SLUG_MAX_WORDS`] /
 /// [`SLUG_MAX_CHARS`] so the filename stays manageable. Returns
 /// `"untitled"` if the text contains no alphanumerics.
-pub(in crate::vault) fn slugify(text: &str) -> String {
+///
+/// Public so callers that must resolve the same template *variant* the
+/// domain will (e.g. the CLI deriving the tracking activity variant for
+/// [`Vault::template_prompts`](crate::Vault::template_prompts)) share one
+/// slug rule rather than reimplementing it and drifting.
+pub fn slugify(text: &str) -> String {
     let cleaned: String = text
         .chars()
         .map(|c| {
