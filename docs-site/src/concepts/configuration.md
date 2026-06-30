@@ -6,7 +6,7 @@ configurable and why; the [Configuration reference](../reference/configuration.m
 
 ## What you can configure
 
-- **The active-project cap.** Change the default of five active projects.
+- **The active-project cap.** Change the default of five via `[vault] max_active_projects`.
 - **Ignore globs.** Patterns for files the index should skip — `CLAUDE.md`, `README.md`, scratch
   notes — so they don't appear in search, lint, or link checks. Patterns are additive (no negation),
   matched against vault-relative paths, and **never delete anything on disk** — they only scope what
@@ -14,7 +14,6 @@ configurable and why; the [Configuration reference](../reference/configuration.m
 - **Templates.** Override any built-in note template by adding a file under `.cuaderno/templates/`.
 - **Schema extensions.** Add vault-specific required frontmatter fields per note type (e.g. require
   `collaborators` on every project), enforced by `cdno lint`.
-- **The active-project cap.** Change the default of five via `[vault] max_active_projects`.
 
 The hands-on walkthrough is [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md).
 
@@ -25,9 +24,10 @@ conditionals, no logic. `cdno init` writes one starter template (`.cuaderno/temp
 every other type uses its built-in default until you add a file for it. `cdno` picks the most
 specific template that exists:
 
-1. A custom **variant** template (for tracking, e.g. `tracking-gym.md`), then
+1. a custom **variant** template (for tracking, e.g. `tracking-gym.md`), then
 2. a custom **type** template (e.g. `project.md`), then
-3. the **built-in** default compiled into the binary.
+3. the **built-in variant** default, then
+4. the **built-in type** default.
 
 Because templates also define the canonical *order* of frontmatter keys,
 [`cdno normalise`](../reference/cli/normalise.md) uses them to reorder hand-authored or migrated

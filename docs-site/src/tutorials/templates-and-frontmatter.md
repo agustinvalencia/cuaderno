@@ -78,6 +78,10 @@ A good way to start is to copy the built-in as your base, then edit. The built-i
 [source tree](https://github.com/agustinvalencia/cuaderno/tree/main/crates/cdno-domain/templates);
 or just look at a note `cdno` already created and shape the template to match.
 
+> Editing a template only affects notes created **afterwards** — existing notes are untouched. (And
+> `cdno normalise` only reorders frontmatter keys; it won't add a new section like `## Risks` to old
+> notes.)
+
 ### Tracking variants
 
 `tracking` is the one type with variants. A custom `.cuaderno/templates/tracking-gym.md` overrides
@@ -99,7 +103,7 @@ Each type provides these:
 
 | Note type | Available `{{placeholders}}` |
 |-----------|------------------------------|
-| `daily` | `date`, `heading` |
+| `daily` | `date`, `heading`, `weekday` |
 | `weekly` | `week`, `week_num`, `year`, `date_start`, `date_end` |
 | `project` | `title`, `context`, `status`, `created`, `core_question` |
 | `action` | `title`, `slug`, `project`, `energy`, `status`, `created`, `due`, `completed`, `milestone`, `criteria`, `blocker`, `tags` |
@@ -107,8 +111,8 @@ Each type provides these:
 | `evidence` | `source`, `origin`, `portfolio`, `content`, `created` |
 | `stewardship` | `name`, `context` |
 | `tracking` | `stewardship`, `activity`, `activity_title`, `routine`, `content`, `date`, `date_long` |
-| `question` | `question`, `domain`, `status`, `created`, `updated` |
-| `commitment` | `title`, `context`, `status`, `due`, `project`, `stewardship`, `created` |
+| `question` | `question`, `domain`, `created`, `updated` |
+| `commitment` | `title`, `context`, `status`, `due`, `project`, `stewardship`, `created`, `completed` |
 | `inbox` | `body`, `created` |
 
 You can use any subset, in any order, and add as much static Markdown around them as you like.
