@@ -163,7 +163,9 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         // With `attach`, file the artefact (copy + linked stub); otherwise
         // write a plain markdown evidence note. `content` is the body /
-        // abstract respectively.
+        // abstract respectively. `vars` feeds the evidence template's
+        // prompted variables and is ignored on the (non-templated) attach path.
+        let vars = input.vars.unwrap_or_default();
         let path = match input.attach.as_deref() {
             Some(artefact) => self.vault.file_attachment(
                 at,
@@ -173,12 +175,13 @@ impl CuadernoServer {
                 &input.origin,
                 &input.content,
             ),
-            None => self.vault.file_evidence(
+            None => self.vault.file_evidence_with_vars(
                 at,
                 &input.portfolio,
                 &input.source,
                 &input.origin,
                 &input.content,
+                &vars,
             ),
         }
         .map_err(into_mcp_error)?;
@@ -217,8 +220,11 @@ impl CuadernoServer {
         let energy = EnergyLevel::from_str(&input.energy)
             .map_err(|e| invalid_argument("energy", &e.to_string()))?;
         let path = if input.with_note {
+            // Only the action-note form is templated; `vars` feeds its
+            // prompted variables. The inline-bullet form below ignores them.
+            let vars = input.vars.unwrap_or_default();
             self.vault
-                .add_action_with_note(at, &input.project, &input.title, energy)
+                .add_action_with_note_and_vars(at, &input.project, &input.title, energy, &vars)
                 .map_err(into_mcp_error)?
         } else {
             self.vault
@@ -241,12 +247,13 @@ impl CuadernoServer {
     )]
     pub async fn promote_action(
         &self,
-        Parameters(input): Parameters<ActionQueryInput>,
+        Parameters(input): Parameters<PromoteActionInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .promote_action(at, &input.project, &input.query)
+            .promote_action_with_vars(at, &input.project, &input.query, &vars)
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -282,15 +289,17 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .create_commitment(
+            .create_commitment_with_vars(
                 at,
                 &input.title,
                 input.due,
                 context,
                 input.project.as_deref(),
                 input.stewardship.as_deref(),
+                &vars,
             )
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
@@ -325,14 +334,16 @@ impl CuadernoServer {
         Parameters(input): Parameters<CreateTrackingEntryInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .add_tracking_entry(
+            .add_tracking_entry_with_vars(
                 at,
                 &input.stewardship,
                 &input.activity,
                 input.routine.as_deref(),
                 &input.content,
+                &vars,
             )
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(

@@ -30,9 +30,16 @@ impl CuadernoServer {
         let today = chrono::Local::now().date_naive();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .create_project(today, &input.title, context, input.core_question.as_deref())
+            .create_project_with_vars(
+                today,
+                &input.title,
+                context,
+                input.core_question.as_deref(),
+                &vars,
+            )
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -48,9 +55,10 @@ impl CuadernoServer {
         Parameters(input): Parameters<CreatePortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .create_portfolio(at, &input.question, input.project.as_deref())
+            .create_portfolio_with_vars(at, &input.question, input.project.as_deref(), &vars)
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -108,9 +116,10 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let domain = QuestionDomain::from_str(&input.domain)
             .map_err(|e| invalid_argument("domain", &e.to_string()))?;
+        let vars = input.vars.unwrap_or_default();
         let path = self
             .vault
-            .create_question(at, domain, &input.text)
+            .create_question_with_vars(at, domain, &input.text, &vars)
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -128,13 +137,14 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
+        let vars = input.vars.unwrap_or_default();
         let path = if input.expanded {
             self.vault
-                .create_stewardship_expanded(at, &input.name, context)
+                .create_stewardship_expanded_with_vars(at, &input.name, context, &vars)
                 .map_err(into_mcp_error)?
         } else {
             self.vault
-                .create_stewardship_flat(at, &input.name, context)
+                .create_stewardship_flat_with_vars(at, &input.name, context, &vars)
                 .map_err(into_mcp_error)?
         };
         json_result(WriteResultDto::new(

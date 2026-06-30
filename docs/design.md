@@ -1155,18 +1155,18 @@ get_active_questions(domain?)
 append_to_log(text)
   → appends to today's daily entry, creating it if needed
 
-file_to_portfolio(portfolio, source, content)
+file_to_portfolio(portfolio, source, content, vars?)
   → creates evidence note in the portfolio folder
 
 update_project_state(project, new_state)
   → reads old state, logs to daily, writes new state
 
-add_action(project, title, energy, with_note?)
+add_action(project, title, energy, with_note?, vars?)
   → appends a bullet to project's Next Actions section
   → if with_note=true, also creates an action note (§5.11)
     and rewrites the bullet to wikilink it
 
-promote_action(project, query)
+promote_action(project, query, vars?)
   → finds a matching bullet, creates an action note
     from the template, and rewrites the bullet to
     wikilink the new note
@@ -1176,18 +1176,26 @@ complete_action(project, query)
     and (if a note was attached) updates its status
     to completed and archives it to actions/_done/<year>/
 
-create_commitment(title, due, context, project?, stewardship?)
+create_commitment(title, due, context, project?, stewardship?, vars?)
   → creates commitment note
 
 complete_commitment(commitment)
   → moves to _done/
 
-create_tracking_entry(stewardship, activity)
+create_tracking_entry(stewardship, activity, vars?)
   → scaffolds tracking note, returns path for editing
 
 triage_inbox()
   → returns inbox items one by one for routing decisions
 ```
+
+The optional `vars?` parameter (a `name -> value` map) supplies values for a template's
+`[variables.prompt]` placeholders (§9 Tier 4) — the MCP analogue of the CLI's repeatable
+`--var name=value`. It is accepted on every templated create tool (`create_project`,
+`create_portfolio`, `create_question`, `create_stewardship`, `create_commitment`,
+`create_tracking_entry`, and the templated paths of `file_to_portfolio`, `add_action`, and
+`promote_action`). MCP has no interactive prompt, so a required prompted variable the supplied
+map omits surfaces `UnresolvedPrompts` rather than blocking on input.
 
 -----
 
