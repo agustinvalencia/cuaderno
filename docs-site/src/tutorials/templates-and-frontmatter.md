@@ -5,10 +5,10 @@ can override any of them per-vault — to change the structure, the default sect
 fields. You can also **require extra frontmatter fields** so [`cdno lint`](../reference/cli/lint.md)
 keeps your notes consistent. This tutorial walks through both, hands-on.
 
-> What's covered here is the shipped behaviour. Static config variables (`[variables]`) resolve in
-> custom templates (see [Static config variables](#static-config-variables)); interactive
-> `[variables.prompt]` variables are recognised in `config.toml` but **not yet applied during note
-> creation**.
+> What's covered here is the shipped behaviour. Both kinds of config variable now resolve in custom
+> templates: static [`[variables]`](#static-config-variables) and interactive
+> [`[variables.prompt]`](#prompted-variables) (gathered from a TTY prompt or a `--var name=value`
+> flag).
 
 ## Where templates live
 
@@ -135,9 +135,51 @@ A custom template can then use `{{author}}` / `{{institution}}` and they'll be s
 creation. Precedence: a per-type (contextual) placeholder of the same name always wins over a config
 variable, so config vars only fill names the note type doesn't already supply.
 
-> **Prompted variables (`[variables.prompt]`) aren't wired in yet.** That section is parsed but not
-> applied at note creation — a `{{ticket}}` backed by `[variables.prompt]` still renders literally for
-> now. Static `[variables]` (above) do work. Prompted variables are coming in a follow-up.
+### Prompted variables
+
+A static variable is the same on every note. When you want a value that *changes per note* — a ticket
+id, a collaborator, a meeting code — declare it under `[variables.prompt]`, where the value is the
+**prompt message**:
+
+```toml
+# .cuaderno/config.toml
+[variables.prompt]
+ticket = "Ticket reference?"
+```
+
+Reference it in a custom template like any other placeholder (e.g. `ticket: {{ticket}}` in the
+project frontmatter). When you create a note whose effective template uses a prompted variable, `cdno`
+gets the value one of three ways:
+
+- **`--var name=value`** on the command (repeatable), e.g.
+  `cdno project create --title T --context work --var ticket=ABC-123`;
+- otherwise, in an interactive TTY, `cdno` **asks** ("Ticket reference?") and shows the value in the
+  confirm preview before writing;
+- otherwise (non-interactive, no `--var`) it **errors** rather than writing a note with a literal
+  `{{ticket}}`:
+
+```text
+Error: missing value for template variable 'ticket' (pass `--var ticket=value`, set a default under
+[variables] in .cuaderno/config.toml, or run interactively in a TTY)
+```
+
+`--var` is available on every note-creating command: `project create`, `question create`,
+`stewardship create`, `commit create`, `portfolio create`, `file`, `track`, `action add --note`, and
+`action promote`.
+
+A few rules worth knowing:
+
+- A prompted name that *also* has a static `[variables]` default is satisfied by that default — you're
+  not asked, and it won't error. (The static default wins by precedence, so `--var` can't override it;
+  remove the default if you want to be prompted.)
+- A `[variables.prompt]` entry whose `{{name}}` your template doesn't actually use is ignored.
+- The same precedence applies: a per-type placeholder of the same name wins over a prompted variable.
+- `--var` only applies to **templated** notes. `cdno file --attach` (the attachment stub) and a plain
+  `action add` (no `--note`) aren't templated, so `--var` is ignored there.
+- The implicit-write paths — daily (`log`), weekly, and inbox (`capture`) notes — don't gather
+  prompted values, and neither do MCP-driven creations (there's no `--var` over MCP). A
+  `[variables.prompt]` placeholder in one of those templates fails at creation (an `UnresolvedPrompts`
+  error) instead of being asked for; give it a static `[variables]` default instead.
 
 ## Frontmatter field order and `normalise`
 

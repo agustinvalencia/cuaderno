@@ -13,6 +13,8 @@
 //! ambiguous so commands like `cdno question park <slug>` can never
 //! act on the wrong file.
 
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
@@ -65,6 +67,18 @@ impl Vault {
         domain: QuestionDomain,
         text: &str,
     ) -> Result<VaultPath, DomainError> {
+        self.create_question_with_vars(at, domain, text, &HashMap::new())
+    }
+
+    /// As [`create_question`](Self::create_question), with caller-supplied
+    /// prompted-variable values (`[variables.prompt]`, #238).
+    pub fn create_question_with_vars(
+        &self,
+        at: NaiveDateTime,
+        domain: QuestionDomain,
+        text: &str,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let text = text.trim();
         if text.is_empty() {
@@ -91,6 +105,9 @@ impl Vault {
         ctx.set_contextual("created", date.as_str());
         ctx.set_contextual("updated", date.as_str());
         ctx.set_contextual("question", text);
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         let content = self.scaffold("question", None, &mut ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Question.as_str())?;
 

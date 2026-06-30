@@ -31,6 +31,7 @@ with room for `tracking/` and `routines/`); without it, the dashboard is a singl
 | `--name <NAME>` | Human-readable name (the slug derives from it). |
 | `--context <CONTEXT>` | Life domain (`work`, `household`, `personal`, …). |
 | `--tracking` | Create the expanded variant with a `tracking/` folder. |
+| `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno stewardship create --name "Finances" --context household           # flat

@@ -105,6 +105,18 @@ impl Vault {
         question: &str,
         project: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
+        self.create_portfolio_with_vars(at, question, project, &HashMap::new())
+    }
+
+    /// As [`create_portfolio`](Self::create_portfolio), with caller-supplied
+    /// prompted-variable values (`[variables.prompt]`, #238).
+    pub fn create_portfolio_with_vars(
+        &self,
+        at: NaiveDateTime,
+        question: &str,
+        project: Option<&str>,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let question = question.trim();
         if question.is_empty() {
@@ -118,7 +130,7 @@ impl Vault {
             )));
         }
 
-        let mut content = self.render_portfolio(question, at.date(), project)?;
+        let mut content = self.render_portfolio(question, at.date(), project, prompted)?;
 
         // Bidirectional link when a question note shares the slug. The
         // portfolio side is written into the fresh template (cheaper
@@ -391,6 +403,21 @@ impl Vault {
         origin: &str,
         content: &str,
     ) -> Result<VaultPath, DomainError> {
+        self.file_evidence_with_vars(at, portfolio, source, origin, content, &HashMap::new())
+    }
+
+    /// As [`file_evidence`](Self::file_evidence), with caller-supplied
+    /// prompted-variable values (`[variables.prompt]`, #238).
+    #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
+    pub fn file_evidence_with_vars(
+        &self,
+        at: NaiveDateTime,
+        portfolio: &str,
+        source: &str,
+        origin: &str,
+        content: &str,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let source = source.trim();
         let origin = origin.trim();
@@ -430,7 +457,7 @@ impl Vault {
             )));
         }
 
-        let body = self.render_evidence(created, source, portfolio, origin, content)?;
+        let body = self.render_evidence(created, source, portfolio, origin, content, prompted)?;
         let entry = build_index_entry_for(&path, &body, NoteType::Evidence.as_str())?;
 
         tx.write_file(path.clone(), body);
@@ -729,6 +756,7 @@ impl Vault {
         question: &str,
         created: NaiveDate,
         project: Option<&str>,
+        prompted: &HashMap<String, String>,
     ) -> Result<String, DomainError> {
         let project_field = match project {
             Some(target) => format!("\"[[{target}]]\""),
@@ -738,11 +766,15 @@ impl Vault {
         ctx.set_contextual("question", question);
         ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
         ctx.set_contextual("project", project_field);
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         self.scaffold("portfolio", None, &mut ctx)
     }
 
     /// Render the evidence template (custom or built-in). `origin`
     /// arrives bare and is wrapped in `[[…]]` before substitution.
+    #[allow(clippy::too_many_arguments)] // thin gather→render passthrough
     fn render_evidence(
         &self,
         created: NaiveDate,
@@ -750,6 +782,7 @@ impl Vault {
         portfolio: &str,
         origin: &str,
         content: &str,
+        prompted: &HashMap<String, String>,
     ) -> Result<String, DomainError> {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
@@ -757,6 +790,9 @@ impl Vault {
         ctx.set_contextual("portfolio", portfolio);
         ctx.set_contextual("origin", format!("[[{origin}]]"));
         ctx.set_contextual("content", content.trim_end());
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         self.scaffold("evidence", None, &mut ctx)
     }
 }

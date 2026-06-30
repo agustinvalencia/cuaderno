@@ -29,6 +29,7 @@ pub fn run(
     stewardship: Option<String>,
     routine: Option<String>,
     content: String,
+    var: Vec<(String, String)>,
     no_interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -56,6 +57,20 @@ pub fn run(
         },
     };
     // routine and content stay genuinely optional.
+    // The variant is the activity *slug* — mirror the domain's slugify so
+    // `template_prompts` resolves the same variant template `scaffold` will
+    // (e.g. `cdno track "weight training"` → `tracking-weight-training`),
+    // rather than the generic fallback. Otherwise a variant-only prompt var
+    // would be missed here and then hard-error at scaffold time.
+    let activity_variant = cdno_domain::slugify(&activity);
+    let template_vars = prompt::gather_template_vars(
+        &vault,
+        "tracking",
+        Some(&activity_variant),
+        &var,
+        interactive,
+        &mut prompted,
+    )?;
 
     if prompted
         && !prompt::confirm_preview(&format!(
@@ -68,7 +83,14 @@ pub fn run(
     }
 
     let path = vault
-        .add_tracking_entry(at, &stewardship, &activity, routine.as_deref(), &content)
+        .add_tracking_entry_with_vars(
+            at,
+            &stewardship,
+            &activity,
+            routine.as_deref(),
+            &content,
+            &template_vars,
+        )
         .context("filing tracking entry")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
     Ok(())

@@ -28,6 +28,7 @@ Create a new portfolio. The slug derives from the question.
 |------|-------------|
 | `--question <QUESTION>` | The question this dossier accumulates evidence for. |
 | `--project <PROJECT>` | Optional wikilink to a project to associate it with. |
+| `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno portfolio create --question "Sparse vs dense attention OOD"

@@ -82,6 +82,16 @@ pub enum DomainError {
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 
+    #[error(
+        "template '{note_type}' references prompted variable(s) {names:?} with no value \u{2014} \
+         provide them (run interactively, or pass `--var name=value`) or set defaults under \
+         [variables] in .cuaderno/config.toml"
+    )]
+    UnresolvedPrompts {
+        note_type: String,
+        names: Vec<String>,
+    },
+
     #[error(transparent)]
     Validation(#[from] ValidationError),
 

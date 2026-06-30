@@ -29,6 +29,7 @@ Create a new question under `questions/<domain>/<slug>.md`. The slug derives fro
 |------|-------------|
 | `--domain <DOMAIN>` | `research` or `life`. |
 | `--text <TEXT>` | The question text (becomes the body H1). |
+| `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno question create --domain research --text "Does sparse attention beat dense OOD?"

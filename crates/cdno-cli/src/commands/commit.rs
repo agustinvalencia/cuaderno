@@ -45,6 +45,10 @@ pub enum CommitCommands {
         /// items.
         #[arg(long)]
         stewardship: Option<String>,
+        /// Value for a custom template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Mark a commitment as completed: stamps `status` and `completed`,
@@ -74,6 +78,7 @@ pub fn run(
             context,
             project,
             stewardship,
+            var,
         } => create(
             &vault,
             at,
@@ -82,6 +87,7 @@ pub fn run(
             context,
             project,
             stewardship,
+            var,
             interactive,
             json,
         ),
@@ -98,6 +104,7 @@ fn create(
     context: Option<CommitmentContext>,
     project: Option<String>,
     stewardship: Option<String>,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -111,6 +118,8 @@ fn create(
     let context = prompt::gather_or_error(context, "context", interactive, &mut prompted, || {
         prompt::prompt_context()
     })?;
+    let template_vars =
+        prompt::gather_template_vars(vault, "commitment", None, &var, interactive, &mut prompted)?;
 
     if prompted
         && !prompt::confirm_preview(&format!(
@@ -124,13 +133,14 @@ fn create(
         return Ok(());
     }
     let path = vault
-        .create_commitment(
+        .create_commitment_with_vars(
             at,
             &title,
             due,
             context,
             project.as_deref(),
             stewardship.as_deref(),
+            &template_vars,
         )
         .context("creating commitment")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;

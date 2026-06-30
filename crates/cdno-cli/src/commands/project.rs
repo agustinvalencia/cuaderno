@@ -36,6 +36,10 @@ pub enum ProjectCommands {
         /// (e.g. `questions/research/foo`). Always optional.
         #[arg(long)]
         question: Option<String>,
+        /// Value for a custom template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Update the Current State section, auto-logging the previous body.
@@ -155,7 +159,8 @@ pub fn run(
             title,
             context,
             question,
-        } => create(&vault, at, title, context, question, interactive, json)?,
+            var,
+        } => create(&vault, at, title, context, question, var, interactive, json)?,
         ProjectCommands::State { slug, text } => {
             state(&vault, at, slug, text, interactive, json)?;
         }
@@ -220,12 +225,14 @@ pub fn run(
 /// `cdno project create` — gather title / context / question with the
 /// ergonomics convention, then call `Vault::create_project`. Confirm
 /// when anything was prompted.
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn create(
     vault: &cdno_domain::Vault,
     at: NaiveDateTime,
     title: Option<String>,
     context: Option<ProjectContext>,
     question: Option<String>,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -238,6 +245,8 @@ fn create(
         prompt::prompt_context()
     })?;
     // `question` is genuinely optional — no prompt, no error if absent.
+    let template_vars =
+        prompt::gather_template_vars(vault, "project", None, &var, interactive, &mut prompted)?;
 
     if prompted {
         let q = question.as_deref().unwrap_or("(none)");
@@ -250,7 +259,13 @@ fn create(
         }
     }
     let path = vault
-        .create_project(at.date(), &title, context, question.as_deref())
+        .create_project_with_vars(
+            at.date(),
+            &title,
+            context,
+            question.as_deref(),
+            &template_vars,
+        )
         .context("creating project")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())

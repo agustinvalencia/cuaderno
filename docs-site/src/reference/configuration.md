@@ -28,7 +28,7 @@ extra_required = []
 [variables]
 author = "A. Researcher"
 
-# Prompted variables — parsed but NOT yet applied at note creation (follow-up).
+# Prompted variables — gathered at note creation (--var, prompt, or error).
 [variables.prompt]
 collaborators = "Who are the collaborators?"
 ```
@@ -42,7 +42,7 @@ collaborators = "Who are the collaborators?"
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that note type, enforced by `cdno lint`. |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
-| `variables.prompt.<name>` | string | — | Prompted template variable; value is the prompt text. **Parsed but not yet applied at note creation.** |
+| `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
 
 ## Templates
 
@@ -57,10 +57,10 @@ The per-type placeholders that resolve at creation, with a worked example, are i
 [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md). An unknown
 placeholder is left verbatim in the note.
 
-Static `[variables]` resolve in any custom template (e.g. `{{author}}`).
-
-> **`[variables.prompt]` is not yet applied at note creation.** That section parses fine but is a
-> follow-up; a `{{ticket}}` backed by it renders literally for now. Static `[variables]` do work.
+Static `[variables]` resolve in any custom template (e.g. `{{author}}`). Prompted
+`[variables.prompt]` are gathered at creation (via `--var name=value`, an interactive prompt, or a
+static default) — see the
+[tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables).
 
 ## See also
 

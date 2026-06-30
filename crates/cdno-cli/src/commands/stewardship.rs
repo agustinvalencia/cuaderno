@@ -39,6 +39,10 @@ pub enum StewardshipCommands {
         /// Without this flag the dashboard is flat.
         #[arg(long)]
         tracking: bool,
+        /// Value for a custom template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// List every stewardship with its variant, tracking count, and
@@ -90,7 +94,8 @@ pub fn run(
             name,
             context,
             tracking,
-        } => create(&vault, at, name, context, tracking, interactive, json),
+            var,
+        } => create(&vault, at, name, context, tracking, var, interactive, json),
         StewardshipCommands::List => {
             let summaries = vault
                 .list_stewardships(at.date())
@@ -121,12 +126,14 @@ pub fn run(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn create(
     vault: &Vault,
     at: NaiveDateTime,
     name: Option<String>,
     context: Option<Context>,
     tracking: bool,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -137,6 +144,8 @@ fn create(
     let context = prompt::gather_or_error(context, "context", interactive, &mut prompted, || {
         prompt::prompt_context()
     })?;
+    let template_vars =
+        prompt::gather_template_vars(vault, "stewardship", None, &var, interactive, &mut prompted)?;
     // `--tracking` is a CLI bool. In interactive mode (when other
     // fields prompted) we ask explicitly; in non-interactive mode the
     // flag value is taken at face value.
@@ -161,9 +170,9 @@ fn create(
     }
 
     let path = if tracking {
-        vault.create_stewardship_expanded(at, &name, context)
+        vault.create_stewardship_expanded_with_vars(at, &name, context, &template_vars)
     } else {
-        vault.create_stewardship_flat(at, &name, context)
+        vault.create_stewardship_flat_with_vars(at, &name, context, &template_vars)
     }
     .context("creating stewardship")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;

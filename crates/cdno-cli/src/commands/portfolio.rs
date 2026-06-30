@@ -42,6 +42,10 @@ pub enum PortfolioCommands {
         /// stand alone.
         #[arg(long)]
         project: Option<String>,
+        /// Value for a custom template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// List every portfolio with its evidence count and staleness.
@@ -91,9 +95,11 @@ pub fn run(
     // which would corrupt the JSON result. Scripted callers pass full args.
     let interactive = prompt::is_interactive(no_interactive || json);
     match command {
-        PortfolioCommands::Create { question, project } => {
-            create(&vault, at, question, project, interactive, json)
-        }
+        PortfolioCommands::Create {
+            question,
+            project,
+            var,
+        } => create(&vault, at, question, project, var, interactive, json),
         PortfolioCommands::List => {
             let summaries = vault
                 .list_portfolios(at.date())
@@ -180,6 +186,7 @@ fn create(
     at: NaiveDateTime,
     question: Option<String>,
     project: Option<String>,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -189,6 +196,8 @@ fn create(
             prompt::prompt_text("Question")
         })?;
     // `project` is genuinely optional — no prompt, no error if absent.
+    let template_vars =
+        prompt::gather_template_vars(vault, "portfolio", None, &var, interactive, &mut prompted)?;
 
     if prompted {
         let project_label = project.as_deref().unwrap_or("(none)");
@@ -200,7 +209,7 @@ fn create(
         }
     }
     let path = vault
-        .create_portfolio(at, &question, project.as_deref())
+        .create_portfolio_with_vars(at, &question, project.as_deref(), &template_vars)
         .context("creating portfolio")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())

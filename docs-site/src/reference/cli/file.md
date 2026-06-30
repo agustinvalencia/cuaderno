@@ -18,6 +18,7 @@ cdno file [OPTIONS]
 | `--content <CONTENT>` | Inline body. For a plain note it's the content; with `--attach` it's the abstract. Optional; defaults to empty. |
 | `--attach <ATTACH>` | Path to a non-Markdown artefact. Copied into `portfolios/<slug>/<evidence-slug>/` with a stub that links to it. |
 | `--move` | With `--attach`, remove the source file after a successful copy (move instead of copy). |
+| `--var <NAME=VALUE>` | Value for a custom evidence template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Ignored with `--attach` (attachment stubs aren't templated). See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`
 result and runs non-interactively.

@@ -4,6 +4,32 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+Interactive `[variables.prompt]` template variables, with a `--var name=value` flag (#238 tier 4).
+
+### Added
+
+- **Prompted template variables** (#238) — `[variables.prompt]` entries in `.cuaderno/config.toml` are
+  now gathered at note creation. A creating command resolves each prompted variable its effective
+  template uses from a static `[variables]` default if one exists (which suppresses the prompt), else a
+  repeatable **`--var name=value`** flag, else an interactive prompt (shown in the confirm preview);
+  if none supplies it the command errors instead of writing a literal `{{name}}`. `--var` is available
+  on `project create`, `question create`, `stewardship create`, `commit create`, `portfolio create`,
+  `file`, `track`, `action add --note`, and `action promote`. A new `DomainError::UnresolvedPrompts`
+  and a `Vault::template_prompts` query back the domain enforcement and the CLI gathering.
+- Docs: the [Customising templates and frontmatter](https://agustinvalencia.github.io/cuaderno/tutorials/templates-and-frontmatter.html)
+  tutorial gains a **Prompted variables** section, and `--var` is documented on each create command's
+  CLI reference page.
+
+### Notes
+
+- The implicit-write paths (daily `log`, weekly, inbox `capture`) and the non-templated paths
+  (`file --attach`, plain `action add`) don't gather prompted values — a `[variables.prompt]`
+  placeholder in one of those templates surfaces `UnresolvedPrompts`; give it a static default.
+- MCP create handlers don't supply prompted values, so an MCP-created note whose template uses a
+  prompted variable surfaces the same error via normal MCP error mapping.
+
 ## [0.1.25] - 2026-06-30
 
 Static config template variables now resolve; plus the documentation site (shipped earlier this cycle).

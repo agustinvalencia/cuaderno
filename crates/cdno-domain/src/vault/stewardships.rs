@@ -100,9 +100,21 @@ impl Vault {
     ///   expanded path for the same slug already exists.
     pub fn create_stewardship_flat(
         &self,
+        at: NaiveDateTime,
+        name: &str,
+        context: Context,
+    ) -> Result<VaultPath, DomainError> {
+        self.create_stewardship_flat_with_vars(at, name, context, &HashMap::new())
+    }
+
+    /// As [`create_stewardship_flat`](Self::create_stewardship_flat), with
+    /// caller-supplied prompted-variable values (`[variables.prompt]`, #238).
+    pub fn create_stewardship_flat_with_vars(
+        &self,
         _at: NaiveDateTime,
         name: &str,
         context: Context,
+        prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
         let (slug, flat_path, expanded_path) = resolve_paths(name)?;
         if self.store.exists(&flat_path)? {
@@ -116,7 +128,7 @@ impl Vault {
             )));
         }
 
-        let content = self.render_stewardship(name, context)?;
+        let content = self.render_stewardship(name, context, prompted)?;
         write_stewardship(self, &slug, &flat_path, &content)
     }
 
@@ -127,9 +139,21 @@ impl Vault {
     /// write into them — no placeholder files.
     pub fn create_stewardship_expanded(
         &self,
+        at: NaiveDateTime,
+        name: &str,
+        context: Context,
+    ) -> Result<VaultPath, DomainError> {
+        self.create_stewardship_expanded_with_vars(at, name, context, &HashMap::new())
+    }
+
+    /// As [`create_stewardship_expanded`](Self::create_stewardship_expanded),
+    /// with caller-supplied prompted-variable values (`[variables.prompt]`, #238).
+    pub fn create_stewardship_expanded_with_vars(
+        &self,
         _at: NaiveDateTime,
         name: &str,
         context: Context,
+        prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
         let (slug, flat_path, expanded_path) = resolve_paths(name)?;
         if self.store.exists(&expanded_path)? {
@@ -143,16 +167,24 @@ impl Vault {
             )));
         }
 
-        let content = self.render_stewardship(name, context)?;
+        let content = self.render_stewardship(name, context, prompted)?;
         write_stewardship(self, &slug, &expanded_path, &content)
     }
 
     /// Render the stewardship template (custom or built-in): `{{name}}`
     /// carried to the H1 verbatim, `{{context}}` the life context.
-    fn render_stewardship(&self, name: &str, context: Context) -> Result<String, DomainError> {
+    fn render_stewardship(
+        &self,
+        name: &str,
+        context: Context,
+        prompted: &HashMap<String, String>,
+    ) -> Result<String, DomainError> {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("name", name);
         ctx.set_contextual("context", context.as_str());
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         self.scaffold("stewardship", None, &mut ctx)
     }
 

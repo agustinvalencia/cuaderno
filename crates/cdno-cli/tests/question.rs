@@ -31,6 +31,7 @@ fn create(root: &Path, at: NaiveDateTime, domain: QuestionDomain, text: &str) {
         QuestionCommands::Create {
             domain: Some(domain),
             text: Some(text.to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -71,6 +72,7 @@ fn create_errors_when_missing_domain_in_non_interactive() {
         QuestionCommands::Create {
             domain: None,
             text: Some("Anything?".to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -88,6 +90,7 @@ fn create_errors_when_missing_text_in_non_interactive() {
         QuestionCommands::Create {
             domain: Some(QuestionDomain::Life),
             text: None,
+            var: vec![],
         },
         true,
         false,

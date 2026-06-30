@@ -193,6 +193,11 @@ enum Commands {
         /// copy (move instead of copy).
         #[arg(long)]
         r#move: bool,
+        /// Value for a custom evidence template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`. Ignored
+        /// with `--attach` (attachment stubs aren't templated).
+        #[arg(long = "var", value_parser = cdno_cli::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Manage question notes: create, then status transitions
@@ -236,6 +241,10 @@ enum Commands {
         /// fill in tables or notes after creation.
         #[arg(long, default_value = "")]
         content: String,
+        /// Value for a custom tracking template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = cdno_cli::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Manage standalone commitments: create and complete.
@@ -396,6 +405,7 @@ fn main() -> Result<()> {
             content,
             attach,
             r#move,
+            var,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::file::run(
@@ -407,6 +417,7 @@ fn main() -> Result<()> {
                 content,
                 attach,
                 r#move,
+                var,
                 cli.no_interactive,
                 cli.json,
             )
@@ -440,6 +451,7 @@ fn main() -> Result<()> {
             stewardship,
             routine,
             content,
+            var,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::track::run(
@@ -449,6 +461,7 @@ fn main() -> Result<()> {
                 stewardship,
                 routine,
                 content,
+                var,
                 cli.no_interactive,
                 cli.json,
             )

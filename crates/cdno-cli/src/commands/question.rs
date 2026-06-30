@@ -34,6 +34,10 @@ pub enum QuestionCommands {
         /// The question text. Becomes the body H1.
         #[arg(long)]
         text: Option<String>,
+        /// Value for a custom template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`.
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Park a question: set status to `parked`. Pick from active
@@ -81,8 +85,8 @@ pub fn run(
     // which would corrupt the JSON result. Scripted callers pass full args.
     let interactive = prompt::is_interactive(no_interactive || json);
     match command {
-        QuestionCommands::Create { domain, text } => {
-            create(&vault, at, domain, text, interactive, json)
+        QuestionCommands::Create { domain, text, var } => {
+            create(&vault, at, domain, text, var, interactive, json)
         }
         QuestionCommands::Park { slug } => {
             transition(&vault, at, slug, QuestionStatus::Parked, interactive, json)
@@ -109,6 +113,7 @@ fn create(
     at: NaiveDateTime,
     domain: Option<QuestionDomain>,
     text: Option<String>,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -119,6 +124,8 @@ fn create(
     let text = prompt::gather_or_error(text, "text", interactive, &mut prompted, || {
         prompt::prompt_text("Question")
     })?;
+    let template_vars =
+        prompt::gather_template_vars(vault, "question", None, &var, interactive, &mut prompted)?;
     if prompted
         && !prompt::confirm_preview(&format!(
             "About to create question:\n  domain: {}\n  text:   {text}",
@@ -129,7 +136,7 @@ fn create(
         return Ok(());
     }
     let path = vault
-        .create_question(at, domain, &text)
+        .create_question_with_vars(at, domain, &text, &template_vars)
         .context("creating question")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
