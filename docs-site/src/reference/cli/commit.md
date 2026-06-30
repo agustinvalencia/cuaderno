@@ -29,6 +29,7 @@ Create an active commitment note. Optionally attribute it to a project or stewar
 | `--context <CONTEXT>` | Life domain (`work`, `personal`, …). |
 | `--project <SLUG>` | Optional associated project. |
 | `--stewardship <SLUG>` | Optional associated stewardship. |
+| `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno commit create --title "Pay rent" --due 2026-06-01 --context personal

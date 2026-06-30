@@ -12,6 +12,8 @@
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
+use std::collections::HashMap;
+
 use cdno_core::error::StoreError;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
@@ -54,6 +56,7 @@ impl Vault {
         energy: EnergyLevel,
         milestone: Option<&str>,
         due: Option<NaiveDate>,
+        prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
         let title = title.trim();
         let slug = slugify(title);
@@ -84,6 +87,9 @@ impl Vault {
         ctx.set_contextual("tags", "[]");
         ctx.set_contextual("title", title);
         ctx.set_contextual("slug", slug.as_str());
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         let content = self.scaffold("action", None, &mut ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Action.as_str())?;
 
@@ -111,13 +117,27 @@ impl Vault {
         title: &str,
         energy: EnergyLevel,
     ) -> Result<VaultPath, DomainError> {
+        self.add_action_with_note_and_vars(at, project, title, energy, &HashMap::new())
+    }
+
+    /// As [`add_action_with_note`](Self::add_action_with_note), with
+    /// caller-supplied prompted-variable values (`[variables.prompt]`, #238).
+    pub fn add_action_with_note_and_vars(
+        &self,
+        at: NaiveDateTime,
+        project: &str,
+        title: &str,
+        energy: EnergyLevel,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         // One transaction, opened before any read, so the write lock
         // covers the project's read-modify-write as well as the note
         // creation (#196). The project is validated under the lock; a bad
         // project errors and the uncommitted transaction rolls back.
         let mut tx = self.transaction()?;
         let (project_path, mut doc) = self.resolve_active_project(project)?;
-        let note_path = self.create_action_note(&mut tx, at, project, title, energy, None, None)?;
+        let note_path =
+            self.create_action_note(&mut tx, at, project, title, energy, None, None, prompted)?;
         let action_slug = action_slug_from_path(&note_path);
 
         // Append the wikilinked bullet, mirroring add_action's section

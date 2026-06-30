@@ -2,6 +2,8 @@
 //! checklist of an active project, with daily-note logging on both
 //! the addition (planning trace) and the completion.
 
+use std::collections::HashMap;
+
 use chrono::NaiveDateTime;
 
 use cdno_core::frontmatter::Frontmatter;
@@ -266,7 +268,16 @@ impl Vault {
 
         // Spin the note onto the existing transaction so note write +
         // bullet rewrite + daily log commit together, all under one lock.
-        let note_path = self.create_action_note(&mut tx, at, slug, &title, energy, None, None)?;
+        let note_path = self.create_action_note(
+            &mut tx,
+            at,
+            slug,
+            &title,
+            energy,
+            None,
+            None,
+            &HashMap::new(),
+        )?;
         let action_slug = note_path
             .as_path()
             .file_stem()

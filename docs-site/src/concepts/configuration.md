@@ -45,9 +45,9 @@ Custom templates can also reference **static vault variables** you set under `[v
 `config.toml` (e.g. `{{author}}`); these resolve on every note type, with per-type values taking
 precedence over a config variable of the same name.
 
-> **Prompted variables (`[variables.prompt]`) aren't wired in yet** — that section is parsed but not
-> applied at note creation, so a `{{ticket}}` backed by it still renders literally for now. Static
-> `[variables]` do work. Prompted variables land in a follow-up.
+For values that change per note, **prompted variables** under `[variables.prompt]` are gathered at
+creation — from a `--var name=value` flag, an interactive prompt, or (failing both) a clear error.
+The [tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables) covers them in full.
 
 ## Example
 
@@ -67,7 +67,7 @@ extra_required = ["collaborators"]
 [variables]
 author = "A. Researcher"
 
-# Prompted variables — parsed but NOT yet applied at note creation (follow-up):
+# Prompted variables — gathered at note creation (--var, prompt, or error):
 [variables.prompt]
 collaborators = "Who are the collaborators?"
 ```

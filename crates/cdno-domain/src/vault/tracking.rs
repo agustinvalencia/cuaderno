@@ -14,6 +14,8 @@
 //! after the file is created — this op writes the scaffold and gets
 //! out of the way.
 
+use std::collections::HashMap;
+
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
@@ -69,6 +71,28 @@ impl Vault {
         routine: Option<&str>,
         content: &str,
     ) -> Result<VaultPath, DomainError> {
+        self.add_tracking_entry_with_vars(
+            at,
+            stewardship,
+            activity,
+            routine,
+            content,
+            &HashMap::new(),
+        )
+    }
+
+    /// As [`add_tracking_entry`](Self::add_tracking_entry), with caller-supplied
+    /// prompted-variable values (`[variables.prompt]`, #238).
+    #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
+    pub fn add_tracking_entry_with_vars(
+        &self,
+        at: NaiveDateTime,
+        stewardship: &str,
+        activity: &str,
+        routine: Option<&str>,
+        content: &str,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let activity = activity.trim();
         if activity.is_empty() {
@@ -101,7 +125,14 @@ impl Vault {
             )));
         }
 
-        let body = self.render_tracking(stewardship, &activity_slug, date, routine, content)?;
+        let body = self.render_tracking(
+            stewardship,
+            &activity_slug,
+            date,
+            routine,
+            content,
+            prompted,
+        )?;
         let entry = build_index_entry_for(&path, &body, NoteType::Tracking.as_str())?;
 
         tx.write_file(path.clone(), body);
@@ -119,6 +150,7 @@ impl Vault {
     /// `tracking` template otherwise. `routine` becomes a quoted
     /// routine wikilink when present, else `null`; only templates with a
     /// `routine:` field (gym) consume it.
+    #[allow(clippy::too_many_arguments)] // thin gather→render passthrough
     fn render_tracking(
         &self,
         stewardship: &str,
@@ -126,6 +158,7 @@ impl Vault {
         date: NaiveDate,
         routine: Option<&str>,
         content: &str,
+        prompted: &HashMap<String, String>,
     ) -> Result<String, DomainError> {
         let date_long = format!(
             "{day} {month} {year}",
@@ -145,6 +178,9 @@ impl Vault {
         ctx.set_contextual("date_long", date_long);
         ctx.set_contextual("content", content.trim_end());
         ctx.set_contextual("routine", routine_yaml);
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         self.scaffold("tracking", Some(activity_slug), &mut ctx)
     }
 }

@@ -20,6 +20,7 @@ cdno track [OPTIONS] <ACTIVITY>
 | `--stewardship <STEWARDSHIP>` | Stewardship slug. Defaults to the only expanded stewardship if there's exactly one; otherwise required. |
 | `--routine <ROUTINE>` | Bare slug of a routine doc — wrapped into `[[stewardships/<slug>/routines/<routine>]]` and substituted into the template's `routine:` field. |
 | `--content <CONTENT>` | Inline body. Optional; defaults to empty so you can fill in tables afterward. |
+| `--var <NAME=VALUE>` | Value for a custom tracking template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Prompts come from the activity's template (e.g. `tracking-gym`) when one exists. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`
 result and runs non-interactively.

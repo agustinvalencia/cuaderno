@@ -40,11 +40,82 @@ fn create_project(root: &Path, at: NaiveDateTime, title: &str, context: Context)
             title: Some(title.to_owned()),
             context: Some(context),
             question: None,
+            var: vec![],
         },
         true,
         false,
     )
     .expect("create");
+}
+
+/// Add a `[variables.prompt]` config entry and a custom project template
+/// using the matching `{{name}}` placeholder, so `--var`/prompt behaviour
+/// can be exercised through `project create`.
+fn seed_prompt_var_template(root: &Path) {
+    let config = root.join(".cuaderno/config.toml");
+    let mut body = fs::read_to_string(&config).unwrap_or_default();
+    body.push_str("\n[variables.prompt]\nticket = \"Ticket?\"\n");
+    fs::write(&config, body).unwrap();
+    fs::write(
+        root.join(".cuaderno/templates/project.md"),
+        "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\ncore_question: {{core_question}}\nticket: {{ticket}}\n---\n# {{title}}\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn create_without_var_errors_when_a_prompt_variable_is_unsatisfied() {
+    // Non-interactive (no_interactive = true), no `--var`: the prompted
+    // template variable can't be gathered, so the command errors rather
+    // than writing a note with a literal `{{ticket}}`.
+    let dir = vault();
+    seed_prompt_var_template(dir.path());
+
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        ProjectCommands::Create {
+            title: Some("Alpha".to_owned()),
+            context: Some(Context::Work),
+            question: None,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect_err("should error without --var");
+    assert!(
+        err.to_string().contains("ticket"),
+        "error should name the missing variable: {err}"
+    );
+    assert!(
+        !dir.path().join("projects/alpha.md").exists(),
+        "no note should be written when the prompt is unsatisfied"
+    );
+}
+
+#[test]
+fn create_with_var_supplies_the_prompted_value() {
+    let dir = vault();
+    seed_prompt_var_template(dir.path());
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        ProjectCommands::Create {
+            title: Some("Alpha".to_owned()),
+            context: Some(Context::Work),
+            question: None,
+            var: vec![("ticket".to_owned(), "ABC-1".to_owned())],
+        },
+        true,
+        false,
+    )
+    .expect("create with --var");
+
+    let body = fs::read_to_string(dir.path().join("projects/alpha.md")).unwrap();
+    assert!(body.contains("ticket: ABC-1"), "prompted value:\n{body}");
+    assert!(!body.contains("{{ticket}}"), "{body}");
 }
 
 #[test]
@@ -69,6 +140,7 @@ fn create_with_question_wraps_target_in_wikilink() {
             title: Some("Surrogate".to_owned()),
             context: Some(Context::Work),
             question: Some("questions/research/surrogate-cost".to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -444,6 +516,7 @@ fn create_in_non_interactive_errors_when_missing_title() {
             title: None,
             context: Some(Context::Work),
             question: None,
+            var: vec![],
         },
         true,
         false,

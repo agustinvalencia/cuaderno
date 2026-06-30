@@ -30,6 +30,7 @@ pub fn run(
     content: String,
     attach: Option<PathBuf>,
     move_after: bool,
+    var: Vec<(String, String)>,
     no_interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -51,6 +52,14 @@ pub fn run(
     })?;
     // `content` stays optional — no prompt. For a plain note it's the
     // body; with `--attach` it's the abstract.
+
+    // Prompted template variables apply only to the templated (plain-note)
+    // path; attachment stubs aren't templated, so `--var` is ignored there.
+    let template_vars = if attach.is_none() {
+        prompt::gather_template_vars(&vault, "evidence", None, &var, interactive, &mut prompted)?
+    } else {
+        std::collections::HashMap::new()
+    };
 
     if prompted
         && !prompt::confirm_preview(&summarise_filing(
@@ -80,12 +89,21 @@ pub fn run(
             }
             stub
         }
-        None => file_via_vault(&vault, at, &portfolio, &source, &origin, &content)?,
+        None => file_via_vault(
+            &vault,
+            at,
+            &portfolio,
+            &source,
+            &origin,
+            &content,
+            &template_vars,
+        )?,
     };
     crate::output::emit_write_result(json, &path.to_string(), &format!("Filed at {path}"))?;
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // thin gather→create passthrough
 fn file_via_vault(
     vault: &Vault,
     at: NaiveDateTime,
@@ -93,9 +111,10 @@ fn file_via_vault(
     source: &str,
     origin: &str,
     content: &str,
+    prompted: &std::collections::HashMap<String, String>,
 ) -> Result<cdno_core::path::VaultPath> {
     vault
-        .file_evidence(at, portfolio, source, origin, content)
+        .file_evidence_with_vars(at, portfolio, source, origin, content, prompted)
         .context("filing evidence")
 }
 

@@ -42,6 +42,11 @@ pub enum ActionCommands {
         /// the bullet to it.
         #[arg(long)]
         note: bool,
+        /// Value for a custom action-note template's prompted variable
+        /// (`[variables.prompt]`), repeatable: `--var name=value`. Only
+        /// applies with `--note` (a plain bullet isn't templated).
+        #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
+        var: Vec<(String, String)>,
     },
 
     /// Promote an existing plain bullet to a wikilinked manifest note.
@@ -94,7 +99,18 @@ pub fn run(
             title,
             energy,
             note,
-        } => add(&vault, at, project, title, energy, note, interactive, json),
+            var,
+        } => add(
+            &vault,
+            at,
+            project,
+            title,
+            energy,
+            note,
+            var,
+            interactive,
+            json,
+        ),
         ActionCommands::Promote { project, query } => {
             promote(&vault, at, project, query, interactive, json)
         }
@@ -117,6 +133,7 @@ fn add(
     title: Option<String>,
     energy: Option<EnergyLevel>,
     note_flag: bool,
+    var: Vec<(String, String)>,
     interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -139,6 +156,14 @@ fn add(
         note_flag
     };
 
+    // Prompted template variables apply only to the action *note*; a plain
+    // bullet isn't templated, so `--var` is ignored without `--note`.
+    let template_vars = if note {
+        prompt::gather_template_vars(vault, "action", None, &var, interactive, &mut prompted)?
+    } else {
+        std::collections::HashMap::new()
+    };
+
     if prompted
         && !prompt::confirm_preview(&format!(
             "About to add to project '{project}':\n  title:  {title}\n  energy: {}\n  note:   {}",
@@ -155,7 +180,7 @@ fn add(
         // scaffolds one); the plain branch below reports the project map.
         // Both are "the file written", just different files per branch.
         let path = vault
-            .add_action_with_note(at, &project, &title, energy)
+            .add_action_with_note_and_vars(at, &project, &title, energy, &template_vars)
             .context("adding action with note")?;
         crate::output::emit_write_result(
             json,

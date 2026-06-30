@@ -31,6 +31,7 @@ Append a next action to a project. `--note` also scaffolds a manifest note and w
 | `--title <TITLE>` | Action title. |
 | `--energy <ENERGY>` | `deep`, `medium`, or `light`. |
 | `--note` | Also create a manifest note alongside the bullet and wikilink it. |
+| `--var <NAME=VALUE>` | Value for a custom action-note template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Only applies with `--note` (a plain bullet isn't templated). See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno action add --project surrogate-model --title "Profile the assembly step" --energy medium

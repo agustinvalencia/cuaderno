@@ -72,6 +72,13 @@ impl Vault {
     /// ([`VariableContext::resolve`]), so config vars only fill names a
     /// caller hasn't already set contextually — they can't override
     /// `title`/`context`/etc.
+    ///
+    /// Prompted variables (`[variables.prompt]`, #238 tier 4) are rendered
+    /// against the config's prompt definitions; a placeholder that is
+    /// prompt-defined, present in the template, and still unresolved (no
+    /// `set_prompted` value and no static default) is an error rather than
+    /// a literal `{{name}}` left in the note. Callers that gather prompted
+    /// values (the CLI) call `set_prompted` on `ctx` first.
     pub(in crate::vault) fn scaffold(
         &self,
         note_type: &str,
@@ -81,9 +88,37 @@ impl Vault {
         let engine = self.template_engine();
         ctx.load_from_config(self.config());
         let template = engine.load_template(note_type, variant)?;
-        // Prompted variables (config `[variables.prompt]`) are wired in a
-        // follow-up; pass none, so every placeholder resolves from `ctx`.
-        Ok(engine.render(&template, ctx, &HashMap::new()).content)
+        let rendered = engine.render(&template, ctx, &self.config().variables.prompt);
+        if !rendered.unresolved_prompts.is_empty() {
+            return Err(DomainError::UnresolvedPrompts {
+                note_type: note_type.to_owned(),
+                names: rendered
+                    .unresolved_prompts
+                    .into_iter()
+                    .map(|(name, _msg)| name)
+                    .collect(),
+            });
+        }
+        Ok(rendered.content)
+    }
+
+    /// The prompt-defined variables (`[variables.prompt]`) a note's effective
+    /// template actually references and that static config doesn't already
+    /// satisfy — `(name, prompt-message)` pairs. The CLI calls this to know
+    /// what to ask for before creating the note; it shares `render`'s
+    /// `unresolved_prompts` logic so "what to ask" matches what `scaffold`
+    /// will later enforce.
+    pub fn template_prompts(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+    ) -> Result<Vec<(String, String)>, DomainError> {
+        let engine = self.template_engine();
+        let template = engine.load_template(note_type, variant)?;
+        let mut ctx = VariableContext::new();
+        ctx.load_from_config(self.config());
+        let rendered = engine.render(&template, &ctx, &self.config().variables.prompt);
+        Ok(rendered.unresolved_prompts)
     }
 
     /// The resolved (effective) template content for `note_type` (+

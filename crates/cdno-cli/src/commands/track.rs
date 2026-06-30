@@ -29,6 +29,7 @@ pub fn run(
     stewardship: Option<String>,
     routine: Option<String>,
     content: String,
+    var: Vec<(String, String)>,
     no_interactive: bool,
     json: bool,
 ) -> Result<()> {
@@ -56,6 +57,16 @@ pub fn run(
         },
     };
     // routine and content stay genuinely optional.
+    // The variant is the activity, so prompts come from the activity's
+    // template (e.g. `tracking-gym`) when one exists, else the generic.
+    let template_vars = prompt::gather_template_vars(
+        &vault,
+        "tracking",
+        Some(&activity),
+        &var,
+        interactive,
+        &mut prompted,
+    )?;
 
     if prompted
         && !prompt::confirm_preview(&format!(
@@ -68,7 +79,14 @@ pub fn run(
     }
 
     let path = vault
-        .add_tracking_entry(at, &stewardship, &activity, routine.as_deref(), &content)
+        .add_tracking_entry_with_vars(
+            at,
+            &stewardship,
+            &activity,
+            routine.as_deref(),
+            &content,
+            &template_vars,
+        )
         .context("filing tracking entry")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
     Ok(())

@@ -32,6 +32,7 @@ fn seed_portfolio(root: &Path) {
         PortfolioCommands::Create {
             question: Some("Sparse vs dense OOD".to_owned()),
             project: None,
+            var: vec![],
         },
         true,
         false,
@@ -52,6 +53,7 @@ fn portfolio_create_writes_index_file() {
         PortfolioCommands::Create {
             question: Some("Does sparse beat dense on OOD?".to_owned()),
             project: Some("projects/surrogate".to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -76,6 +78,7 @@ fn portfolio_create_errors_when_missing_question_in_non_interactive() {
         PortfolioCommands::Create {
             question: None,
             project: None,
+            var: vec![],
         },
         true,
         false,
@@ -97,6 +100,7 @@ fn portfolio_create_backlinks_existing_question_note() {
         QuestionCommands::Create {
             domain: Some(QuestionDomain::Research),
             text: Some("Sparse vs dense OOD".to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -124,6 +128,7 @@ fn portfolio_link_backlinks_a_retrofit_question() {
         QuestionCommands::Create {
             domain: Some(QuestionDomain::Research),
             text: Some("Where does the budget go".to_owned()),
+            var: vec![],
         },
         true,
         false,
@@ -281,6 +286,7 @@ fn portfolio_show_renders_frontmatter_and_evidence() {
         "They show 4x speedup at 95% accuracy.\n".to_owned(),
         None,
         false,
+        vec![],
         true,
         false,
     )
@@ -323,6 +329,7 @@ fn portfolio_show_tags_attachment_evidence_with_its_kind() {
         "The closed-form bound.".to_owned(),
         Some(artefact),
         false,
+        vec![],
         true,
         false,
     )
@@ -378,6 +385,7 @@ fn file_writes_evidence_note_with_wrapped_origin() {
         "Body text.\n".to_owned(),
         None,
         false,
+        vec![],
         true,
         false,
     )
@@ -407,6 +415,7 @@ fn file_writes_empty_body_when_content_omitted() {
         String::new(),
         None,
         false,
+        vec![],
         true,
         false,
     )
@@ -437,6 +446,7 @@ fn file_errors_when_missing_portfolio_in_non_interactive() {
         String::new(),
         None,
         false,
+        vec![],
         true,
         false,
     )
@@ -459,6 +469,7 @@ fn file_errors_on_prewrapped_origin() {
         String::new(),
         None,
         false,
+        vec![],
         true,
         false,
     )
@@ -487,6 +498,7 @@ fn file_attach_imports_artefact_and_writes_linked_stub() {
         "The closed-form bound.".to_owned(),
         Some(artefact.clone()),
         false,
+        vec![],
         true,
         false,
     )
@@ -528,6 +540,7 @@ fn file_attach_move_removes_the_source() {
         String::new(),
         Some(artefact.clone()),
         true, // --move
+        vec![],
         true,
         false,
     )

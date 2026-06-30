@@ -5,6 +5,8 @@
 //! project file is unchanged by this module — that's the realm of
 //! [`super::state`], [`super::actions`], etc.
 
+use std::collections::HashMap;
+
 use chrono::{NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
@@ -87,6 +89,21 @@ impl Vault {
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
+        self.create_project_with_vars(today, title, context, core_question, &HashMap::new())
+    }
+
+    /// As [`create_project`](Self::create_project), but with caller-supplied
+    /// values for the template's prompted variables (`[variables.prompt]`,
+    /// #238 tier 4). The CLI gathers these up front; other callers use the
+    /// no-vars wrapper above.
+    pub fn create_project_with_vars(
+        &self,
+        today: NaiveDate,
+        title: &str,
+        context: Context,
+        core_question: Option<&str>,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active = self.active_projects()?;
         let cap = self.config.vault.max_active_projects as usize;
@@ -133,6 +150,9 @@ impl Vault {
         ctx.set_contextual("status", status.as_str());
         ctx.set_contextual("created", today.format("%Y-%m-%d").to_string());
         ctx.set_contextual("core_question", core_question_yaml);
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         let content = self.scaffold("project", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 

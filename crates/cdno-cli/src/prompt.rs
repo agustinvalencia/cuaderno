@@ -40,6 +40,59 @@ pub fn missing_flag(flag: &str) -> anyhow::Error {
     anyhow!("missing required flag: --{flag} (provide it explicitly or run interactively in a TTY)")
 }
 
+/// `clap` value-parser for a repeatable `--var name=value` flag (#238):
+/// splits on the first `=`. The name must be non-empty; the value may be.
+pub fn parse_key_val(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((k, v)) if !k.is_empty() => Ok((k.to_owned(), v.to_owned())),
+        _ => Err(format!("expected `name=value`, got `{s}`")),
+    }
+}
+
+/// Error for a prompted template variable (`[variables.prompt]`) with no
+/// value in the non-interactive path — mirrors [`missing_flag`].
+pub fn missing_prompt(name: &str) -> anyhow::Error {
+    anyhow!(
+        "missing value for template variable '{name}' \
+         (pass `--var {name}=value`, set a default under [variables] in \
+         .cuaderno/config.toml, or run interactively in a TTY)"
+    )
+}
+
+/// Gather values for the prompted template variables (`[variables.prompt]`)
+/// the note's effective template actually uses (#238 tier 4). For each
+/// such variable: take it from the `--var` flags if supplied, else prompt
+/// when interactive, else error. Sets `*prompted = true` when it prompts,
+/// so the caller shows its confirm preview.
+pub fn gather_template_vars(
+    vault: &Vault,
+    note_type: &str,
+    variant: Option<&str>,
+    var_flags: &[(String, String)],
+    interactive: bool,
+    prompted: &mut bool,
+) -> Result<std::collections::HashMap<String, String>> {
+    let needed = vault.template_prompts(note_type, variant)?;
+    let supplied: std::collections::HashMap<&str, &str> = var_flags
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut out = std::collections::HashMap::new();
+    for (name, message) in needed {
+        let value = if let Some(v) = supplied.get(name.as_str()) {
+            (*v).to_owned()
+        } else if interactive {
+            *prompted = true;
+            prompt_text(&message)?
+        } else {
+            return Err(missing_prompt(&name));
+        };
+        out.insert(name, value);
+    }
+    Ok(out)
+}
+
 /// Fuzzy-pick an active project. Returns the project slug.
 ///
 /// Errors if there are no active projects — the user can't pick

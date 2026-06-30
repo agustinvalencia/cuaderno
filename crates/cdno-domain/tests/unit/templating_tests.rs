@@ -46,6 +46,27 @@ fn config_with_static_vars(pairs: &[(&str, &str)]) -> VaultConfig {
     config
 }
 
+/// A `VaultConfig` whose `[variables.prompt]` map has `pairs` (name → prompt
+/// message).
+fn config_with_prompt_vars(pairs: &[(&str, &str)]) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    for (k, v) in pairs {
+        config
+            .variables
+            .prompt
+            .insert((*k).to_owned(), (*v).to_owned());
+    }
+    config
+}
+
+/// A `HashMap` of caller-supplied prompted values from `pairs`.
+fn prompted(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
 #[test]
 fn create_uses_a_custom_type_template_override_from_the_store() {
     // A custom project template in the vault (read via the store, not
@@ -343,5 +364,125 @@ fn config_variables_do_not_leak_into_templates_that_do_not_use_them() {
         plain_store.read_file(&p1).unwrap(),
         withcfg_store.read_file(&p2).unwrap(),
         "an unused config variable must not change rendered output"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Tier 4: prompted config `[variables.prompt]` + caller-supplied values (#238)
+// ---------------------------------------------------------------------
+
+const PROJECT_WITH_TICKET: &str = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\nticket: {{ticket}}\n---\n# {{title}}\n";
+
+#[test]
+fn create_with_vars_renders_a_prompted_variable() {
+    // A `[variables.prompt]` placeholder resolves from the caller-supplied
+    // prompted map (the value the CLI gathered up front).
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) = vault_with_config(
+        &[(".cuaderno/templates/project.md", PROJECT_WITH_TICKET)],
+        config,
+    );
+
+    let path = vault
+        .create_project_with_vars(
+            today(),
+            "My Proj",
+            Context::Work,
+            None,
+            &prompted(&[("ticket", "ABC-1")]),
+        )
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("ticket: ABC-1"),
+        "prompted value should render:\n{content}"
+    );
+    assert!(!content.contains("{{ticket}}"), "{content}");
+}
+
+#[test]
+fn create_without_a_prompted_value_errors_with_unresolved_prompts() {
+    // The no-vars wrapper supplies nothing, so a prompt-defined placeholder
+    // the template uses is unresolved → a clear error, not a literal
+    // `{{ticket}}` left in the note.
+    use cdno_domain::error::DomainError;
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, _store) = vault_with_config(
+        &[(".cuaderno/templates/project.md", PROJECT_WITH_TICKET)],
+        config,
+    );
+
+    let err = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect_err("should error on the unresolved prompt");
+    match err {
+        DomainError::UnresolvedPrompts { note_type, names } => {
+            assert_eq!(note_type, "project");
+            assert_eq!(names, vec!["ticket".to_owned()]);
+        }
+        other => panic!("expected UnresolvedPrompts, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_static_default_satisfies_a_prompted_variable_without_a_value() {
+    // A name defined in BOTH `[variables.prompt]` and `[variables]` is
+    // satisfied by the static default, so the no-vars path doesn't error.
+    let mut config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    config
+        .variables
+        .static_vars
+        .insert("ticket".to_owned(), "DEFAULT-0".to_owned());
+    let (vault, store) = vault_with_config(
+        &[(".cuaderno/templates/project.md", PROJECT_WITH_TICKET)],
+        config,
+    );
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("static default should resolve the prompt");
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("ticket: DEFAULT-0"), "{content}");
+}
+
+#[test]
+fn template_prompts_reports_only_unsatisfied_prompted_names() {
+    // `template_prompts` is the "what to ask" query the CLI uses. It lists a
+    // prompt-defined name the template uses...
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, _store) = vault_with_config(
+        &[(".cuaderno/templates/project.md", PROJECT_WITH_TICKET)],
+        config,
+    );
+    let needed = vault.template_prompts("project", None).expect("prompts");
+    assert_eq!(needed, vec![("ticket".to_owned(), "Ticket?".to_owned())]);
+
+    // ...but excludes one a static `[variables]` already satisfies.
+    let mut config2 = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    config2
+        .variables
+        .static_vars
+        .insert("ticket".to_owned(), "DEFAULT-0".to_owned());
+    let (vault2, _s2) = vault_with_config(
+        &[(".cuaderno/templates/project.md", PROJECT_WITH_TICKET)],
+        config2,
+    );
+    assert!(
+        vault2.template_prompts("project", None).unwrap().is_empty(),
+        "a statically-defaulted prompt name should not be asked for"
+    );
+}
+
+#[test]
+fn template_prompts_ignores_prompt_names_the_template_does_not_use() {
+    // A `[variables.prompt]` entry whose `{{name}}` isn't in the template is
+    // not reported (and won't block creation).
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, _store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+    assert!(
+        vault.template_prompts("project", None).unwrap().is_empty(),
+        "an unused prompt name should not be reported"
     );
 }

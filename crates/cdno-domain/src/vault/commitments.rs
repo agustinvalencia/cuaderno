@@ -9,6 +9,8 @@
 //! commitments aggregation query (#32) and weekly/monthly reviews
 //! can run as index lookups rather than filesystem walks.
 
+use std::collections::HashMap;
+
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
@@ -101,6 +103,30 @@ impl Vault {
         project: Option<&str>,
         stewardship: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
+        self.create_commitment_with_vars(
+            at,
+            title,
+            due,
+            context,
+            project,
+            stewardship,
+            &HashMap::new(),
+        )
+    }
+
+    /// As [`create_commitment`](Self::create_commitment), with caller-supplied
+    /// prompted-variable values (`[variables.prompt]`, #238).
+    #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
+    pub fn create_commitment_with_vars(
+        &self,
+        at: NaiveDateTime,
+        title: &str,
+        due: NaiveDate,
+        context: Context,
+        project: Option<&str>,
+        stewardship: Option<&str>,
+        prompted: &HashMap<String, String>,
+    ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let title = title.trim();
         let slug = slugify(title);
@@ -131,6 +157,9 @@ impl Vault {
         ctx.set_contextual("context", context.as_str());
         ctx.set_contextual("project", yaml_opt_slug(project.as_deref()));
         ctx.set_contextual("stewardship", yaml_opt_slug(stewardship.as_deref()));
+        for (k, v) in prompted {
+            ctx.set_prompted(k, v);
+        }
         let content = self.scaffold("commitment", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 

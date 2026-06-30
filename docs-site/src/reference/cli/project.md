@@ -34,9 +34,11 @@ Create a new project map. Created **parked** if you're already at the active cap
 | `--title <TITLE>` | Project title (the slug derives from it). |
 | `--context <CONTEXT>` | Life domain: `work`, `side-project`, `university`, `family`, `household`, `legal`, `personal`. |
 | `--question <QUESTION>` | Vault-relative core-question wikilink target (e.g. `questions/research/foo`). Optional. |
+| `--var <NAME=VALUE>` | Value for a custom template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 ```bash
 cdno project create --title "Surrogate model" --context work
+cdno project create --title "Thesis" --context university --var ticket=ABC-123
 cdno project create --title "Thesis" --context university --question questions/research/surrogate-cost
 ```
 
