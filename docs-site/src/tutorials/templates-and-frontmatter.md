@@ -5,9 +5,10 @@ can override any of them per-vault — to change the structure, the default sect
 fields. You can also **require extra frontmatter fields** so [`cdno lint`](../reference/cli/lint.md)
 keeps your notes consistent. This tutorial walks through both, hands-on.
 
-> What's covered here is the shipped behaviour. Config-driven template *variables*
-> (`[variables]` / `[variables.prompt]`) are recognised in `config.toml` but **not yet applied during
-> note creation** — see [the caveat below](#a-note-on-config-variables).
+> What's covered here is the shipped behaviour. Static config variables (`[variables]`) resolve in
+> custom templates (see [Static config variables](#static-config-variables)); interactive
+> `[variables.prompt]` variables are recognised in `config.toml` but **not yet applied during note
+> creation**.
 
 ## Where templates live
 
