@@ -29,6 +29,7 @@
 - [Weekly review](tutorials/weekly-review.md)
 - [Inbox and triage](tutorials/inbox-and-triage.md)
 - [Searching your vault](tutorials/search.md)
+- [Customising templates and frontmatter](tutorials/templates-and-frontmatter.md)
 
 # CLI reference
 
