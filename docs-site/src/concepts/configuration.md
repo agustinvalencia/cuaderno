@@ -41,11 +41,13 @@ note type, and how to use them in a custom template, is covered in
 [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md). An unknown
 placeholder is left verbatim, so use only the ones a type provides.
 
-> **Config-driven variables are not wired in yet.** `config.toml` accepts `[variables]` (static) and
-> `[variables.prompt]` (prompted) sections — and the `init` file documents them — but as of v0.1.24
-> they are **parsed but not applied during note creation**. A `{{author}}` backed by
-> `[variables] author = "..."` would render literally as `{{author}}`. They're reserved for a future
-> release; don't rely on them yet.
+Custom templates can also reference **static vault variables** you set under `[variables]` in
+`config.toml` (e.g. `{{author}}`); these resolve on every note type, with per-type values taking
+precedence over a config variable of the same name.
+
+> **Prompted variables (`[variables.prompt]`) aren't wired in yet** — that section is parsed but not
+> applied at note creation, so a `{{ticket}}` backed by it still renders literally for now. Static
+> `[variables]` do work. Prompted variables land in a follow-up.
 
 ## Example
 
@@ -61,11 +63,11 @@ ignore = ["CLAUDE.md", "README.md"]
 [schemas.project]
 extra_required = ["collaborators"]
 
-# Parsed, but NOT yet applied during note creation (reserved for a future
-# release — see the note above):
+# Static template variables — resolve in any custom template (e.g. {{author}}):
 [variables]
 author = "A. Researcher"
 
+# Prompted variables — parsed but NOT yet applied at note creation (follow-up):
 [variables.prompt]
 collaborators = "Who are the collaborators?"
 ```

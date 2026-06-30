@@ -84,7 +84,7 @@ impl Vault {
         ctx.set_contextual("tags", "[]");
         ctx.set_contextual("title", title);
         ctx.set_contextual("slug", slug.as_str());
-        let content = self.scaffold("action", None, &ctx)?;
+        let content = self.scaffold("action", None, &mut ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Action.as_str())?;
 
         tx.write_file(path.clone(), content);

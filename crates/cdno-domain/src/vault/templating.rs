@@ -65,15 +65,23 @@ impl Vault {
     /// `variant`) and render it with `ctx`. Custom `.cuaderno/templates/`
     /// overrides win over the built-in default; unknown `{{placeholders}}`
     /// are left verbatim (the caller is expected to supply every one).
+    ///
+    /// Static config variables (`[variables]` in `config.toml`) are layered
+    /// into `ctx` here (#238 tier 3), so every create path gets them for
+    /// free. Precedence is builtins → contextual → vault-level → prompted
+    /// ([`VariableContext::resolve`]), so config vars only fill names a
+    /// caller hasn't already set contextually — they can't override
+    /// `title`/`context`/etc.
     pub(in crate::vault) fn scaffold(
         &self,
         note_type: &str,
         variant: Option<&str>,
-        ctx: &VariableContext,
+        ctx: &mut VariableContext,
     ) -> Result<String, DomainError> {
         let engine = self.template_engine();
+        ctx.load_from_config(self.config());
         let template = engine.load_template(note_type, variant)?;
-        // Prompted variables (config `[variables.prompt]`) are a deferred
+        // Prompted variables (config `[variables.prompt]`) are wired in a
         // follow-up; pass none, so every placeholder resolves from `ctx`.
         Ok(engine.render(&template, ctx, &HashMap::new()).content)
     }

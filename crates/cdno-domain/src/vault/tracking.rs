@@ -145,7 +145,7 @@ impl Vault {
         ctx.set_contextual("date_long", date_long);
         ctx.set_contextual("content", content.trim_end());
         ctx.set_contextual("routine", routine_yaml);
-        self.scaffold("tracking", Some(activity_slug), &ctx)
+        self.scaffold("tracking", Some(activity_slug), &mut ctx)
     }
 }
 

@@ -47,13 +47,15 @@ impl VariableContext {
         self.contextual.insert(key.into(), value.into());
     }
 
-    // Tiers 3–4 (vault-level + prompted) are resolved by `resolve` but
-    // not yet populated by any creation path; they're wired to config
-    // `[variables]` / `[variables.prompt]` in #238.
+    /// Tier 3 (vault-level): populated from config `[variables]` via
+    /// [`load_from_config`](Self::load_from_config), called on every
+    /// creation path (#238).
     pub fn set_vault_level(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.vault_level.insert(key.into(), value.into());
     }
 
+    /// Tier 4 (prompted): from config `[variables.prompt]`. Resolved by
+    /// `resolve` but not yet populated by any creation path (follow-up).
     pub fn set_prompted(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.prompted.insert(key.into(), value.into());
     }
@@ -61,7 +63,7 @@ impl VariableContext {
     /// Populate tier 3 variables from a VaultConfig (wired in #238).
     pub fn load_from_config(&mut self, config: &VaultConfig) {
         for (key, value) in &config.variables.static_vars {
-            self.vault_level.insert(key.clone(), value.clone());
+            self.set_vault_level(key.clone(), value.clone());
         }
     }
 

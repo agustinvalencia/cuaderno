@@ -21,14 +21,29 @@ fn today() -> NaiveDate {
 }
 
 fn vault_with(custom: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
+    vault_with_config(custom, VaultConfig::default())
+}
+
+fn vault_with_config(custom: &[(&str, &str)], config: VaultConfig) -> (Vault, Arc<dyn VaultStore>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     for (path, body) in custom {
         store.write_file(&vp(path), body).unwrap();
     }
-    let (vault, _r) =
-        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
     (vault, store)
+}
+
+/// A `VaultConfig` whose `[variables]` static map has `pairs`.
+fn config_with_static_vars(pairs: &[(&str, &str)]) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    for (k, v) in pairs {
+        config
+            .variables
+            .static_vars
+            .insert((*k).to_owned(), (*v).to_owned());
+    }
+    config
 }
 
 #[test]
@@ -258,5 +273,75 @@ fn daily_anchor_follows_a_custom_templates_last_section() {
     assert!(
         reflection > meeting && reflection > logs,
         "the custom template's last section (Reflection) should stay last:\n{content}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Tier 3: static config `[variables]` (#238)
+// ---------------------------------------------------------------------
+
+#[test]
+fn custom_template_renders_a_static_config_variable() {
+    // A custom template references {{owner}}, supplied by config
+    // `[variables] owner = "..."` — exercises load_from_config / vault_level.
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\nowner: {{owner}}\n---\n# {{title}}\n";
+    let config = config_with_static_vars(&[("owner", "A. Researcher")]);
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("owner: A. Researcher"),
+        "static config variable should render:\n{content}"
+    );
+    // And no placeholder survives.
+    assert!(!content.contains("{{owner}}"), "{content}");
+}
+
+#[test]
+fn contextual_variable_beats_a_config_variable_of_the_same_name() {
+    // Precedence guard: a config `[variables] context` must NOT override the
+    // project's contextual `context` (tier 2 wins over tier 3).
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n";
+    let config = config_with_static_vars(&[("context", "personal")]);
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("context: work"),
+        "contextual value must win over the config variable:\n{content}"
+    );
+    assert!(!content.contains("context: personal"), "{content}");
+}
+
+#[test]
+fn config_variables_do_not_leak_into_templates_that_do_not_use_them() {
+    // A template with no config-referenced placeholders renders identically
+    // whether or not `[variables]` is set — no accidental injection.
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n\nBODY\n";
+    let (plain, plain_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+    let (withcfg, withcfg_store) = vault_with_config(
+        &[(".cuaderno/templates/project.md", custom)],
+        config_with_static_vars(&[("unused", "value")]),
+    );
+
+    let p1 = plain
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+    let p2 = withcfg
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+
+    assert_eq!(
+        plain_store.read_file(&p1).unwrap(),
+        withcfg_store.read_file(&p2).unwrap(),
+        "an unused config variable must not change rendered output"
     );
 }

@@ -153,7 +153,7 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("name", name);
         ctx.set_contextual("context", context.as_str());
-        self.scaffold("stewardship", None, &ctx)
+        self.scaffold("stewardship", None, &mut ctx)
     }
 
     /// Append a periodic commitment to the stewardship's `## Periodic

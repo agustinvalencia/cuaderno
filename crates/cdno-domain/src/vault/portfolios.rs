@@ -738,7 +738,7 @@ impl Vault {
         ctx.set_contextual("question", question);
         ctx.set_contextual("created", created.format("%Y-%m-%d").to_string());
         ctx.set_contextual("project", project_field);
-        self.scaffold("portfolio", None, &ctx)
+        self.scaffold("portfolio", None, &mut ctx)
     }
 
     /// Render the evidence template (custom or built-in). `origin`
@@ -757,7 +757,7 @@ impl Vault {
         ctx.set_contextual("portfolio", portfolio);
         ctx.set_contextual("origin", format!("[[{origin}]]"));
         ctx.set_contextual("content", content.trim_end());
-        self.scaffold("evidence", None, &ctx)
+        self.scaffold("evidence", None, &mut ctx)
     }
 }
 
