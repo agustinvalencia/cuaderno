@@ -199,6 +199,6 @@ impl Vault {
         ctx.set_contextual("year", iso.year().to_string());
         ctx.set_contextual("date_start", monday.format("%Y-%m-%d").to_string());
         ctx.set_contextual("date_end", sunday.format("%Y-%m-%d").to_string());
-        self.scaffold("weekly", None, &ctx)
+        self.scaffold("weekly", None, &mut ctx)
     }
 }

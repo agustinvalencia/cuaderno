@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Static config template variables** (#238) — custom templates can now reference vault-wide
+  variables set under `[variables]` in `.cuaderno/config.toml` (e.g. `{{author}}`); they resolve on
+  every note type at creation. Per-type (contextual) placeholders take precedence over a config
+  variable of the same name. (Previously parsed but inert.) Interactive `[variables.prompt]` variables
+  remain a follow-up.
 - **Documentation site** — a full user guide built with [mdBook](https://rust-lang.github.io/mdBook/) under [`docs-site/`](docs-site/), deployed to GitHub Pages (<https://agustinvalencia.github.io/cuaderno>) by a new `docs.yml` workflow. Covers concepts (the RLM, note types, vault structure, business rules, configuration), task tutorials, the full CLI reference (every command + flags), and the MCP tool reference (all 41 tools). Docs-only; no code or behaviour change.
 
 ## [0.1.24] - 2026-06-29

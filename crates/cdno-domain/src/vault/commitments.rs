@@ -131,7 +131,7 @@ impl Vault {
         ctx.set_contextual("context", context.as_str());
         ctx.set_contextual("project", yaml_opt_slug(project.as_deref()));
         ctx.set_contextual("stewardship", yaml_opt_slug(stewardship.as_deref()));
-        let content = self.scaffold("commitment", None, &ctx)?;
+        let content = self.scaffold("commitment", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 
         let log_entry = format!(

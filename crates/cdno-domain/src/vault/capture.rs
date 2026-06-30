@@ -174,6 +174,6 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("created", at.format("%Y-%m-%dT%H:%M:%S").to_string());
         ctx.set_contextual("body", text.trim());
-        self.scaffold("inbox", None, &ctx)
+        self.scaffold("inbox", None, &mut ctx)
     }
 }

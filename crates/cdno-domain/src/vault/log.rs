@@ -134,7 +134,7 @@ impl Vault {
         ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
         ctx.set_contextual("heading", date.format("%A, %-d %B %Y").to_string());
         ctx.set_contextual("weekday", date.format("%A").to_string());
-        self.scaffold("daily", None, &ctx)
+        self.scaffold("daily", None, &mut ctx)
     }
 
     /// The section kept pinned at the bottom of a daily note: the last

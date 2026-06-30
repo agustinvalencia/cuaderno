@@ -133,7 +133,7 @@ impl Vault {
         ctx.set_contextual("status", status.as_str());
         ctx.set_contextual("created", today.format("%Y-%m-%d").to_string());
         ctx.set_contextual("core_question", core_question_yaml);
-        let content = self.scaffold("project", None, &ctx)?;
+        let content = self.scaffold("project", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
         tx.write_file(path.clone(), content);

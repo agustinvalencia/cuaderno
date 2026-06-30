@@ -91,7 +91,7 @@ impl Vault {
         ctx.set_contextual("created", date.as_str());
         ctx.set_contextual("updated", date.as_str());
         ctx.set_contextual("question", text);
-        let content = self.scaffold("question", None, &ctx)?;
+        let content = self.scaffold("question", None, &mut ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Question.as_str())?;
 
         tx.write_file(path.clone(), content);

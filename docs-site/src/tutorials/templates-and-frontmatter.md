@@ -117,13 +117,26 @@ Each type provides these:
 
 You can use any subset, in any order, and add as much static Markdown around them as you like.
 
-### A note on config variables
+### Static config variables
 
-`config.toml` accepts `[variables]` (static) and `[variables.prompt]` (prompted) sections, and the
-`init` file documents them. **As of v0.1.24 these are parsed but not yet applied when a note is
-created** — a `{{author}}` placeholder backed by `[variables] author = "..."` would render literally
-as `{{author}}`, not the value. They're reserved for a future release; for now, keep custom templates
-to the per-type placeholders in the table above, plus static text.
+Beyond the per-type placeholders above, a custom template can reference **vault-wide static
+variables** you define under `[variables]` in `.cuaderno/config.toml`. These resolve on every note
+type. For example:
+
+```toml
+# .cuaderno/config.toml
+[variables]
+author = "A. Researcher"
+institution = "University of Examples"
+```
+
+A custom template can then use `{{author}}` / `{{institution}}` and they'll be substituted at
+creation. Precedence: a per-type (contextual) placeholder of the same name always wins over a config
+variable, so config vars only fill names the note type doesn't already supply.
+
+> **Prompted variables (`[variables.prompt]`) aren't wired in yet.** That section is parsed but not
+> applied at note creation — a `{{ticket}}` backed by `[variables.prompt]` still renders literally for
+> now. Static `[variables]` (above) do work. Prompted variables are coming in a follow-up.
 
 ## Frontmatter field order and `normalise`
 

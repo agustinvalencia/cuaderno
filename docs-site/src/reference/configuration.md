@@ -24,11 +24,11 @@ extra_required = ["collaborators"]
 [schemas.evidence]
 extra_required = []
 
-# NOTE: [variables] and [variables.prompt] are parsed but NOT yet applied
-# during note creation (reserved for a future release). See "Variables".
+# Static template variables — resolve in any custom template ({{author}}).
 [variables]
 author = "A. Researcher"
 
+# Prompted variables — parsed but NOT yet applied at note creation (follow-up).
 [variables.prompt]
 collaborators = "Who are the collaborators?"
 ```
@@ -41,8 +41,8 @@ collaborators = "Who are the collaborators?"
 | `vault.max_active_projects` | integer | `5` | The active-project cap. |
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that note type, enforced by `cdno lint`. |
-| `variables.<name>` | string | — | Static template variable. **Parsed but not yet applied at note creation.** |
-| `variables.prompt.<name>` | string | — | Prompted template variable; value is the prompt text. **Parsed but not yet applied.** |
+| `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
+| `variables.prompt.<name>` | string | — | Prompted template variable; value is the prompt text. **Parsed but not yet applied at note creation.** |
 
 ## Templates
 
@@ -57,9 +57,10 @@ The per-type placeholders that resolve at creation, with a worked example, are i
 [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md). An unknown
 placeholder is left verbatim in the note.
 
-> **`[variables]` / `[variables.prompt]` are not yet applied at note creation** (v0.1.24). They parse
-> fine and are reserved for a future release, but a placeholder backed by config (e.g. `{{author}}`)
-> currently renders literally rather than being substituted. Stick to the per-type placeholders for now.
+Static `[variables]` resolve in any custom template (e.g. `{{author}}`).
+
+> **`[variables.prompt]` is not yet applied at note creation.** That section parses fine but is a
+> follow-up; a `{{ticket}}` backed by it renders literally for now. Static `[variables]` do work.
 
 ## See also
 
