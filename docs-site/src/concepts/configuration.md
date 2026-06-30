@@ -6,25 +6,28 @@ configurable and why; the [Configuration reference](../reference/configuration.m
 
 ## What you can configure
 
-- **The active-project cap.** Change the default of five active projects.
+- **The active-project cap.** Change the default of five via `[vault] max_active_projects`.
 - **Ignore globs.** Patterns for files the index should skip — `CLAUDE.md`, `README.md`, scratch
   notes — so they don't appear in search, lint, or link checks. Patterns are additive (no negation),
   matched against vault-relative paths, and **never delete anything on disk** — they only scope what
   the index considers.
-- **Templates.** Override the built-in note templates by editing the copies in `.cuaderno/templates/`.
+- **Templates.** Override any built-in note template by adding a file under `.cuaderno/templates/`.
 - **Schema extensions.** Add vault-specific required frontmatter fields per note type (e.g. require
-  `collaborators` on every project).
-- **Variables.** Static and prompted values your templates can substitute.
+  `collaborators` on every project), enforced by `cdno lint`.
+
+The hands-on walkthrough is [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md).
 
 ## Templates
 
 When `cdno` scaffolds a note, it fills a template. Templates are **pure variable substitution** — no
-conditionals, no logic. If you need different shapes for different situations, make different template
-files; `cdno` picks the most specific one that exists:
+conditionals, no logic. `cdno init` writes one starter template (`.cuaderno/templates/daily.md`);
+every other type uses its built-in default until you add a file for it. `cdno` picks the most
+specific template that exists:
 
-1. An **activity-specific** template (for tracking, e.g. `tracking-gym.md`), then
-2. a **type** template (e.g. `project.md`), then
-3. the **built-in** default compiled into the binary.
+1. a custom **variant** template (for tracking, e.g. `tracking-gym.md`), then
+2. a custom **type** template (e.g. `project.md`), then
+3. the **built-in variant** default, then
+4. the **built-in type** default.
 
 Because templates also define the canonical *order* of frontmatter keys,
 [`cdno normalise`](../reference/cli/normalise.md) uses them to reorder hand-authored or migrated
@@ -32,39 +35,37 @@ notes into a consistent shape.
 
 ## Variables
 
-Templates can reference `{{variables}}`, resolved from four tiers:
+Templates use `{{placeholder}}` markers that `cdno` fills from the values each note's creation
+command supplies — `{{title}}`, `{{context}}`, `{{created}}`, and so on. The exact set available per
+note type, and how to use them in a custom template, is covered in
+[Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md). An unknown
+placeholder is left verbatim, so use only the ones a type provides.
 
-1. **Built-in** — computed automatically: `{{date}}`, `{{time}}`, `{{year}}`, `{{month}}`,
-   `{{week}}`, `{{weekday}}`, `{{timestamp}}`, and friends.
-2. **Contextual** — from the command and vault state: `{{title}}`, `{{slug}}`, `{{context}}`,
-   `{{project}}`, `{{portfolio}}`, `{{stewardship}}`, `{{source}}`, `{{core_question}}`, …
-3. **Vault-level** — static values you set under `[variables]` in `config.toml` (e.g. your name,
-   institution, ORCID).
-4. **Prompted** — values under `[variables.prompt]`; if a template needs one and no flag supplied it,
-   `cdno` asks interactively (and errors in non-interactive mode).
-
-A special `{{cursor}}` marker tells an interactive editor where to drop your cursor after scaffolding
-(it's stripped when Claude provides the content directly).
+> **Config-driven variables are not wired in yet.** `config.toml` accepts `[variables]` (static) and
+> `[variables.prompt]` (prompted) sections — and the `init` file documents them — but as of v0.1.24
+> they are **parsed but not applied during note creation**. A `{{author}}` backed by
+> `[variables] author = "..."` would render literally as `{{author}}`. They're reserved for a future
+> release; don't rely on them yet.
 
 ## Example
 
 ```toml
 [vault]
 name = "My Research Vault"
+max_active_projects = 5            # the active-project cap
 
 # Skip these from the index entirely (search/lint/links). Never deletes files.
 ignore = ["CLAUDE.md", "README.md"]
 
-# Require an extra field on every project note:
+# Require an extra field on every project note — enforced by `cdno lint`:
 [schemas.project]
 extra_required = ["collaborators"]
 
-# Static values usable in any template:
+# Parsed, but NOT yet applied during note creation (reserved for a future
+# release — see the note above):
 [variables]
 author = "A. Researcher"
-institution = "University of Examples"
 
-# Values cdno will prompt for when a template needs them:
 [variables.prompt]
 collaborators = "Who are the collaborators?"
 ```

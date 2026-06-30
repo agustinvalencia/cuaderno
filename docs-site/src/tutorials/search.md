@@ -58,5 +58,7 @@ cdno reindex
 The Markdown files are always the source of truth; the index is just a rebuildable cache (see
 [Business rules](../concepts/business-rules.md)).
 
-That completes the tutorials. For exhaustive detail on any command, see the
-[CLI reference](../reference/cli/overview.md).
+Next: [Customising templates and frontmatter](templates-and-frontmatter.md) — tailor how notes are
+scaffolded and which frontmatter fields they require.
+
+For exhaustive detail on any command, see the [CLI reference](../reference/cli/overview.md).
