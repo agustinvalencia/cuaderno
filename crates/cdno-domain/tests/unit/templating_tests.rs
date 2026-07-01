@@ -755,3 +755,66 @@ fn template_placeholders_errors_on_unknown_type() {
         other => panic!("expected UnknownNoteType, got {other:?}"),
     }
 }
+
+#[test]
+fn template_placeholders_unknown_variant_falls_back_to_the_base_type() {
+    // A variant with no built-in template (e.g. `tracking --variant deadlift`)
+    // resolves the base type's template — mirroring `scaffold`/`load_template`
+    // — rather than erroring. This is correct: such an activity really does
+    // scaffold from the generic tracking template.
+    let (vault, _store) = vault_with(&[]);
+    let base = vault.template_placeholders("tracking", None).unwrap();
+    let unknown = vault
+        .template_placeholders("tracking", Some("deadlift"))
+        .unwrap();
+    assert_eq!(
+        base, unknown,
+        "an unknown variant falls back to the base set"
+    );
+}
+
+#[test]
+fn template_placeholders_classifies_a_name_in_both_config_sources_as_config() {
+    // A name under BOTH `[variables]` and `[variables.prompt]` has a static
+    // default that suppresses the prompt at creation, so it's `Config`, not
+    // `Prompt` — matching scaffold's resolve precedence.
+    let mut config = config_with_static_vars(&[("author", "Default Author")]);
+    config
+        .variables
+        .prompt
+        .insert("author".to_owned(), "Author?".to_owned());
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let author = placeholders
+        .iter()
+        .find(|p| p.name == "author")
+        .expect("author listed");
+    assert_eq!(author.source, PlaceholderSource::Config);
+    assert_eq!(
+        placeholders.iter().filter(|p| p.name == "author").count(),
+        1,
+        "listed once, not once per source"
+    );
+}
+
+#[test]
+fn template_placeholders_reflects_the_built_in_template_not_every_fillable_key() {
+    // Documented limitation: the supplied set is what the built-in template
+    // *references*. `daily`'s create path also sets `weekday`, but the
+    // default `daily.md` doesn't use it, so it isn't reported here. Pin this
+    // so the (intentional) subset behaviour can't regress silently.
+    let (vault, _store) = vault_with(&[]);
+    let names: Vec<String> = vault
+        .template_placeholders("daily", None)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert!(names.contains(&"date".to_owned()));
+    assert!(names.contains(&"heading".to_owned()));
+    assert!(
+        !names.contains(&"weekday".to_owned()),
+        "known subset: weekday is supplied by the create path but not referenced by the built-in daily template"
+    );
+}

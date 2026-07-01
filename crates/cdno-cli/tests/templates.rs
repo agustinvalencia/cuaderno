@@ -1,6 +1,6 @@
 //! In-process tests for `cdno templates vars`. Seed a vault on disk, then
-//! assert on the text from the `build_vars` seam rather than capturing
-//! stdout (same pattern as `cdno search` / `cdno orient`).
+//! assert on the `placeholders` data seam / `render_table` / `json_rows`
+//! rather than capturing stdout (same pattern as `cdno search`).
 
 use std::fs;
 use std::path::Path;
@@ -17,28 +17,31 @@ fn templates_vars_lists_the_project_supplied_placeholders() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let out = templates::build_vars(dir.path(), "project", None, false).expect("build");
+    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
     // The acceptance set for `project` (#271).
-    for name in ["title", "context", "status", "created", "core_question"] {
-        assert!(
-            out.contains(&format!("{{{{{name}}}}}")),
-            "missing {name}:\n{out}"
-        );
-    }
-    assert!(out.contains("supplied"), "output:\n{out}");
+    assert_eq!(
+        names,
+        ["context", "status", "created", "core_question", "title"]
+    );
+
+    let table = templates::render_table(&ph);
+    assert!(table.contains("{{title}}"), "table:\n{table}");
+    assert!(table.contains("supplied"), "table:\n{table}");
 }
 
 #[test]
-fn templates_vars_json_is_a_stable_array() {
+fn templates_vars_json_rows_are_a_stable_array() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let out = templates::build_vars(dir.path(), "project", None, true).expect("build");
-    let rows: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");
-    let arr = rows.as_array().expect("array");
-    assert_eq!(arr.len(), 5, "project supplies five placeholders");
-    assert_eq!(arr[0]["name"], "context");
-    assert_eq!(arr[0]["source"], "supplied");
+    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let rows = templates::json_rows(&ph);
+    assert_eq!(rows.len(), 5, "project supplies five placeholders");
+    assert_eq!(rows[0]["name"], "context");
+    assert_eq!(rows[0]["source"], "supplied");
+    // `message` is only present on prompt rows.
+    assert!(rows[0].get("message").is_none());
 }
 
 #[test]
@@ -51,15 +54,14 @@ fn templates_vars_surfaces_config_and_prompt_vars() {
     body.push_str("\n[variables]\nauthor = \"A. Researcher\"\n\n[variables.prompt]\nticket = \"Ticket ID?\"\n");
     fs::write(&cfg, body).unwrap();
 
-    let out = templates::build_vars(dir.path(), "project", None, true).expect("build");
-    let rows: serde_json::Value = serde_json::from_str(&out).unwrap();
-    let arr = rows.as_array().unwrap();
-    let author = arr
+    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let rows = templates::json_rows(&ph);
+    let author = rows
         .iter()
         .find(|r| r["name"] == "author")
         .expect("author listed");
     assert_eq!(author["source"], "config");
-    let ticket = arr
+    let ticket = rows
         .iter()
         .find(|r| r["name"] == "ticket")
         .expect("ticket listed");
@@ -72,10 +74,11 @@ fn templates_vars_resolves_a_tracking_variant() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let out = templates::build_vars(dir.path(), "tracking", Some("gym"), false).expect("build");
+    let ph = templates::placeholders(dir.path(), "tracking", Some("gym")).expect("placeholders");
+    let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
     assert!(
-        out.contains("{{routine}}"),
-        "gym variant supplies routine:\n{out}"
+        names.contains(&"routine"),
+        "gym variant supplies routine: {names:?}"
     );
 }
 
@@ -84,7 +87,7 @@ fn templates_vars_rejects_an_unknown_type() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let err = templates::build_vars(dir.path(), "bogus", None, false).expect_err("should error");
+    let err = templates::placeholders(dir.path(), "bogus", None).expect_err("should error");
     let msg = err.to_string();
     assert!(msg.contains("unknown note type"), "msg: {msg}");
     assert!(msg.contains("project"), "should list valid types: {msg}");

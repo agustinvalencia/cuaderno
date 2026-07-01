@@ -33,12 +33,20 @@ Each placeholder is classified by where its value comes from:
 
 | Source | Meaning |
 |--------|---------|
-| `supplied` | Filled automatically by the note type's create command. Derived from the built-in template, so the list can't drift from what the scaffold actually provides. |
+| `supplied` | Filled automatically by the note type's create command. Derived from the type's built-in template, so every entry is a real key the scaffold provides. |
 | `config` | A static `[variables]` entry in `.cuaderno/config.toml`, available to any template. |
 | `prompt` | A `[variables.prompt]` entry — a value must be provided at creation (via `--var name=value`, the MCP `vars` parameter, or interactively). The prompt message is shown. |
 
 A config or prompt name that collides with a `supplied` key is omitted: the
 supplied value shadows it, so it would never take effect.
+
+> **Scope.** The `supplied` list is what the built-in template *references* — so
+> it never advertises a placeholder that would render literally, but it isn't
+> exhaustive: a few types' create paths set an extra key their default template
+> doesn't use (e.g. `daily` also provides `{{weekday}}`, `tracking` provides
+> `{{routine}}` / `{{activity_title}}`). The per-type table in
+> [Customising templates and frontmatter](../../tutorials/templates-and-frontmatter.md)
+> is the complete fillable set.
 
 With `--json`, emits an array of `{ name, source }` objects (`prompt` entries
 also carry `message`).

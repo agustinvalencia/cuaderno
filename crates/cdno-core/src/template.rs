@@ -187,13 +187,6 @@ impl TemplateEngine {
         })
     }
 
-    /// The distinct `{{placeholder}}` names referenced in `template`, in
-    /// first-appearance order — a thin wrapper over [`placeholder_names`]
-    /// so callers holding a [`Template`] don't reach into its content.
-    pub fn placeholders(&self, template: &Template) -> Vec<String> {
-        placeholder_names(&template.content)
-    }
-
     /// Render a template by substituting variables from the context.
     ///
     /// Returns the rendered content plus any unresolved prompted variables.

@@ -150,17 +150,26 @@ impl Vault {
     /// discovery when writing a custom template, so the supported set isn't
     /// buried in source or docs.
     ///
-    /// The "supplied" set is derived from the **built-in** template for
-    /// `(note_type, variant)`: it references exactly the contextual keys the
-    /// create path fills, so this can't drift from the scaffold and needs no
-    /// hand-maintained second copy. (The built-in, not any custom override,
-    /// because the create path supplies the same keys regardless of how the
-    /// template is customised.) Config-level variables available to every
-    /// template are appended: `[variables]` as `Config`, `[variables.prompt]`
-    /// as `Prompt`. A config name that collides with a supplied key is
-    /// omitted — the contextual value shadows it (see [`Vault::scaffold`]
-    /// precedence), so it would never take effect. Errors with
-    /// [`DomainError::UnknownNoteType`] for an unrecognised type.
+    /// The "supplied" set is the placeholders the **built-in** template for
+    /// `(note_type, variant)` references (the built-in, not any custom
+    /// override, because the create path supplies the same keys regardless of
+    /// how the template is customised). Every one is genuinely filled by the
+    /// create path, so the list never advertises a placeholder that would
+    /// render literally. It is *not* guaranteed exhaustive, though: a few
+    /// types' create paths set an extra contextual key their default template
+    /// doesn't reference (e.g. `daily` also provides `weekday`; `tracking`
+    /// provides `routine` / `activity_title`), and those aren't derivable
+    /// from the template text. For the complete fillable set see the
+    /// "Customising templates" tutorial. Deriving from the template keeps the
+    /// common case in lock-step with the scaffold and needs no hand-maintained
+    /// registry.
+    ///
+    /// Config-level variables available to every template are appended:
+    /// `[variables]` as `Config`, `[variables.prompt]` as `Prompt`. A config
+    /// name that collides with a supplied key is omitted — the contextual
+    /// value shadows it (see [`Vault::scaffold`] precedence), so it would
+    /// never take effect. Errors with [`DomainError::UnknownNoteType`] for an
+    /// unrecognised type.
     pub fn template_placeholders(
         &self,
         note_type: &str,
