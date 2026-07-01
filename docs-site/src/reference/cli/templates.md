@@ -59,6 +59,45 @@ cdno templates vars tracking --variant gym
 cdno templates vars question --json | jq -r '.[].name'
 ```
 
+## `cdno templates eject <type>`
+
+Copy a built-in template into `.cuaderno/templates/<type>.md` as an editable
+starting point. Every note type except `daily` uses an in-binary default; this
+materialises one so you can customise it (add sections, reorder frontmatter,
+reference `{{placeholders}}` from `templates vars`) without hand-reconstructing
+it from the source tree.
+
+```text
+cdno templates eject [OPTIONS] <TYPE>
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `<TYPE>` | Note type to eject (same set as `templates vars`). |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--variant <VARIANT>` | Eject a variant template (e.g. `gym` for `tracking`), written to `.cuaderno/templates/<type>-<variant>.md`. The variant must have its own built-in — there's no fallback to the base type. |
+| `--force` | Overwrite an existing custom template. Without it, an existing file is left untouched and the command errors. |
+
+Plus the [global options](overview.md#global-options). With `--json`, emits the
+`{ path, message }` write result.
+
+### Examples
+
+```bash
+cdno templates eject project              # → .cuaderno/templates/project.md
+cdno templates eject tracking --variant gym
+cdno templates eject project --force      # overwrite an earlier customisation
+```
+
+The written file is exactly the built-in default, so a note created straight
+after ejecting is byte-identical to before — customise from there.
+
 ## Related
 
 - [Customising templates and frontmatter](../../tutorials/templates-and-frontmatter.md) — how to write a custom template and use `[variables]` / `[variables.prompt]`.

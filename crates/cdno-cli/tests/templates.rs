@@ -92,3 +92,52 @@ fn templates_vars_rejects_an_unknown_type() {
     assert!(msg.contains("unknown note type"), "msg: {msg}");
     assert!(msg.contains("project"), "should list valid types: {msg}");
 }
+
+#[test]
+fn templates_eject_materialises_the_builtin() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let path = templates::eject(dir.path(), "project", None, false).expect("eject");
+    assert_eq!(path, ".cuaderno/templates/project.md");
+    let content = fs::read_to_string(dir.path().join(&path)).unwrap();
+    assert!(content.contains("## Current State"), "content:\n{content}");
+    assert!(content.contains("{{title}}"), "content:\n{content}");
+}
+
+#[test]
+fn templates_eject_refuses_to_clobber_then_force_overwrites() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let target = dir.path().join(".cuaderno/templates/project.md");
+    fs::write(&target, "# mine\n").unwrap();
+
+    let err = templates::eject(dir.path(), "project", None, false).expect_err("should refuse");
+    assert!(err.to_string().contains("already exists"), "msg: {err}");
+    assert_eq!(
+        fs::read_to_string(&target).unwrap(),
+        "# mine\n",
+        "left untouched"
+    );
+
+    templates::eject(dir.path(), "project", None, true).expect("force eject");
+    assert!(
+        fs::read_to_string(&target)
+            .unwrap()
+            .contains("## Current State")
+    );
+}
+
+#[test]
+fn templates_eject_variant_and_unknown_variant_error() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let path = templates::eject(dir.path(), "tracking", Some("gym"), false).expect("gym");
+    assert_eq!(path, ".cuaderno/templates/tracking-gym.md");
+    assert!(dir.path().join(&path).exists());
+
+    let err =
+        templates::eject(dir.path(), "tracking", Some("deadlift"), false).expect_err("no builtin");
+    assert!(err.to_string().contains("variant 'deadlift'"), "msg: {err}");
+}

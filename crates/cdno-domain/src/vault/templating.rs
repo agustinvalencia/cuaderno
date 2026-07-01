@@ -234,6 +234,48 @@ impl Vault {
         Ok(out)
     }
 
+    /// Materialise a built-in template into `.cuaderno/templates/<key>.md` as
+    /// an editable starting point for customisation (#270). `<key>` is
+    /// `note_type` or `note_type-variant`, matching the engine's resolution
+    /// names (`builtin_defaults`) — so the ejected file is exactly what the
+    /// custom-template loader will later pick up.
+    ///
+    /// Unlike scaffolding, a `variant` is *not* resolved with a fallback: it
+    /// must have its own built-in (only `tracking` has `gym`/`body`/`swim`),
+    /// otherwise there's nothing distinct to eject — `UnknownTemplateVariant`.
+    /// Refuses to overwrite an existing custom template unless `force`
+    /// (`TemplateAlreadyExists`). Returns the written path.
+    pub fn eject_template(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+        force: bool,
+    ) -> Result<VaultPath, DomainError> {
+        let builtins = builtin_defaults();
+        let key = match variant {
+            Some(v) => format!("{note_type}-{v}"),
+            None => note_type.to_owned(),
+        };
+        let content = builtins.get(&key).ok_or_else(|| match variant {
+            Some(v) => DomainError::UnknownTemplateVariant {
+                note_type: note_type.to_owned(),
+                variant: v.to_owned(),
+            },
+            None => DomainError::UnknownNoteType {
+                note_type: note_type.to_owned(),
+            },
+        })?;
+
+        let path = VaultPath::new(format!("{}/{key}.md", cdno_core::paths::TEMPLATES_DIR))?;
+        if !force && self.store.exists(&path)? {
+            return Err(DomainError::TemplateAlreadyExists {
+                path: path.to_string(),
+            });
+        }
+        self.store.write_file(&path, content)?;
+        Ok(path)
+    }
+
     /// The resolved (effective) template content for `note_type` (+
     /// optional `variant`) — the custom `.cuaderno/templates/` override
     /// if present, else the built-in default. Used by the normaliser to

@@ -95,6 +95,12 @@ pub enum DomainError {
     #[error("unknown note type '{note_type}'")]
     UnknownNoteType { note_type: String },
 
+    #[error("no built-in template for variant '{variant}' of '{note_type}'")]
+    UnknownTemplateVariant { note_type: String, variant: String },
+
+    #[error("a custom template already exists at {path} — pass force to overwrite it")]
+    TemplateAlreadyExists { path: String },
+
     #[error(transparent)]
     Validation(#[from] ValidationError),
 

@@ -23,13 +23,22 @@ Templates live in `.cuaderno/templates/`, one Markdown file per note type (e.g. 
 So a custom file in `.cuaderno/templates/` always wins over the built-in.
 
 > `cdno init` writes just one starter template — `.cuaderno/templates/daily.md`. Every other type
-> uses its built-in default until you add a file for it. To customise one, create that file yourself
-> (the next section shows how).
+> uses its built-in default until you add a file for it. The quickest way to get an editable copy of
+> a built-in is [`cdno templates eject <type>`](../reference/cli/templates.md#cdno-templates-eject-type)
+> — e.g. `cdno templates eject project` writes `.cuaderno/templates/project.md` matching the built-in,
+> ready to edit. You can also just create the file yourself, as the next section shows.
 
 ## Customise a template
 
-Say you want every project to start with a **## Risks** section. Create
-`.cuaderno/templates/project.md`:
+Say you want every project to start with a **## Risks** section. Eject the built-in as a starting
+point, then edit it:
+
+```bash
+cdno templates eject project        # writes .cuaderno/templates/project.md
+```
+
+Add a `## Risks` section (and reference any of the `{{placeholders}}` from
+`cdno templates vars project`), so `.cuaderno/templates/project.md` reads:
 
 ```markdown
 ---
