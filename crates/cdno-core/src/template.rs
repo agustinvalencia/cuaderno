@@ -233,3 +233,29 @@ impl TemplateEngine {
         }
     }
 }
+
+/// Extract the distinct `{{placeholder}}` names referenced in template
+/// `content`, in first-appearance order.
+///
+/// Tokenisation mirrors [`TemplateEngine::render`] exactly — names are
+/// trimmed, and a `{{` with no following `}}` is skipped rather than
+/// treated as a placeholder — so "what a template references" always
+/// matches "what render will substitute".
+pub fn placeholder_names(content: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find("{{") {
+        let after_open = &rest[start + 2..];
+        if let Some(end) = after_open.find("}}") {
+            let name = after_open[..end].trim();
+            if !name.is_empty() && !names.iter().any(|existing| existing == name) {
+                names.push(name.to_owned());
+            }
+            rest = &after_open[end + 2..];
+        } else {
+            // No closing `}}` — mirror render and advance past the `{{`.
+            rest = after_open;
+        }
+    }
+    names
+}

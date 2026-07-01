@@ -118,6 +118,14 @@ Each type provides these:
 
 You can use any subset, in any order, and add as much static Markdown around them as you like.
 
+> **Discover them from the CLI.** `cdno templates vars <type>` lists a type's placeholders derived
+> live from its built-in template, and folds in any `[variables]` / `[variables.prompt]` names your
+> config adds. For example `cdno templates vars tracking --variant gym`. It reads the built-in
+> template, so it shows exactly what an ejected/custom template contains — for a couple of types
+> that's a subset of this table (e.g. it won't list `daily`'s `weekday`, which the default template
+> doesn't reference); this table remains the complete fillable set. See the
+> [`templates` reference](../reference/cli/templates.md).
+
 ### Static config variables
 
 Beyond the per-type placeholders above, a custom template can reference **vault-wide static

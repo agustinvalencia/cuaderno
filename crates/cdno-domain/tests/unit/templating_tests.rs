@@ -8,8 +8,8 @@ use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::Vault;
 use cdno_domain::frontmatter::Context;
+use cdno_domain::{PlaceholderSource, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -635,5 +635,186 @@ fn add_action_with_note_and_vars_renders_a_prompted_variable() {
     assert!(
         store.read_file(&path).unwrap().contains("ticket: AN-1"),
         "action note should carry the prompted value"
+    );
+}
+
+// ---------------------------------------------------------------------
+// template_placeholders — discovery of a type's supported {{placeholders}} (#271)
+// ---------------------------------------------------------------------
+
+/// Convenience: the placeholder names of a given `source`, in order.
+fn names_with_source(
+    placeholders: &[cdno_domain::TemplatePlaceholder],
+    want: &PlaceholderSource,
+) -> Vec<String> {
+    placeholders
+        .iter()
+        .filter(|p| &p.source == want)
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+#[test]
+fn template_placeholders_lists_the_project_supplied_set() {
+    // Derived from the built-in project template — exactly the contextual
+    // keys the create path fills, all classified `Supplied`.
+    let (vault, _store) = vault_with(&[]);
+    let placeholders = vault.template_placeholders("project", None).unwrap();
+
+    let supplied = names_with_source(&placeholders, &PlaceholderSource::Supplied);
+    assert_eq!(
+        supplied,
+        vec![
+            "context".to_owned(),
+            "status".to_owned(),
+            "created".to_owned(),
+            "core_question".to_owned(),
+            "title".to_owned()
+        ],
+        "project supplies exactly its built-in template's placeholders"
+    );
+    // A default vault has no config vars, so nothing else is listed.
+    assert_eq!(placeholders.len(), supplied.len());
+}
+
+#[test]
+fn template_placeholders_classifies_config_and_prompt_vars() {
+    // `[variables]` -> Config, `[variables.prompt]` -> Prompt (with message),
+    // appended after the supplied set.
+    let mut config = config_with_static_vars(&[("author", "A. Researcher")]);
+    config
+        .variables
+        .prompt
+        .insert("ticket".to_owned(), "Ticket ID?".to_owned());
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("project", None).unwrap();
+    assert_eq!(
+        names_with_source(&placeholders, &PlaceholderSource::Config),
+        vec!["author".to_owned()]
+    );
+    assert_eq!(
+        placeholders
+            .iter()
+            .find(|p| p.name == "ticket")
+            .map(|p| &p.source),
+        Some(&PlaceholderSource::Prompt {
+            message: "Ticket ID?".to_owned()
+        })
+    );
+}
+
+#[test]
+fn template_placeholders_omits_a_config_name_shadowed_by_a_supplied_key() {
+    // A config/prompt var named like a supplied key never takes effect
+    // (contextual value shadows it), so it isn't double-listed.
+    let mut config = VaultConfig::default();
+    config
+        .variables
+        .prompt
+        .insert("title".to_owned(), "won't fire".to_owned());
+    config
+        .variables
+        .static_vars
+        .insert("context".to_owned(), "won't fire".to_owned());
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("project", None).unwrap();
+    // `title` and `context` appear once each, and as Supplied.
+    assert_eq!(placeholders.iter().filter(|p| p.name == "title").count(), 1);
+    assert!(
+        placeholders
+            .iter()
+            .all(|p| p.source == PlaceholderSource::Supplied),
+        "shadowed config/prompt names are omitted, leaving only supplied keys"
+    );
+}
+
+#[test]
+fn template_placeholders_resolves_a_tracking_variant() {
+    // The gym variant's built-in template wraps a routine wikilink, so its
+    // supplied set includes `routine` — proving variant resolution.
+    let (vault, _store) = vault_with(&[]);
+    let gym = vault
+        .template_placeholders("tracking", Some("gym"))
+        .unwrap();
+    let names: Vec<&str> = gym.iter().map(|p| p.name.as_str()).collect();
+    assert!(
+        names.contains(&"routine"),
+        "gym variant supplies routine: {names:?}"
+    );
+    assert!(names.contains(&"stewardship"));
+}
+
+#[test]
+fn template_placeholders_errors_on_unknown_type() {
+    use cdno_domain::error::DomainError;
+    let (vault, _store) = vault_with(&[]);
+    match vault.template_placeholders("bogus", None) {
+        Err(DomainError::UnknownNoteType { note_type }) => assert_eq!(note_type, "bogus"),
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
+fn template_placeholders_unknown_variant_falls_back_to_the_base_type() {
+    // A variant with no built-in template (e.g. `tracking --variant deadlift`)
+    // resolves the base type's template — mirroring `scaffold`/`load_template`
+    // — rather than erroring. This is correct: such an activity really does
+    // scaffold from the generic tracking template.
+    let (vault, _store) = vault_with(&[]);
+    let base = vault.template_placeholders("tracking", None).unwrap();
+    let unknown = vault
+        .template_placeholders("tracking", Some("deadlift"))
+        .unwrap();
+    assert_eq!(
+        base, unknown,
+        "an unknown variant falls back to the base set"
+    );
+}
+
+#[test]
+fn template_placeholders_classifies_a_name_in_both_config_sources_as_config() {
+    // A name under BOTH `[variables]` and `[variables.prompt]` has a static
+    // default that suppresses the prompt at creation, so it's `Config`, not
+    // `Prompt` — matching scaffold's resolve precedence.
+    let mut config = config_with_static_vars(&[("author", "Default Author")]);
+    config
+        .variables
+        .prompt
+        .insert("author".to_owned(), "Author?".to_owned());
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let author = placeholders
+        .iter()
+        .find(|p| p.name == "author")
+        .expect("author listed");
+    assert_eq!(author.source, PlaceholderSource::Config);
+    assert_eq!(
+        placeholders.iter().filter(|p| p.name == "author").count(),
+        1,
+        "listed once, not once per source"
+    );
+}
+
+#[test]
+fn template_placeholders_reflects_the_built_in_template_not_every_fillable_key() {
+    // Documented limitation: the supplied set is what the built-in template
+    // *references*. `daily`'s create path also sets `weekday`, but the
+    // default `daily.md` doesn't use it, so it isn't reported here. Pin this
+    // so the (intentional) subset behaviour can't regress silently.
+    let (vault, _store) = vault_with(&[]);
+    let names: Vec<String> = vault
+        .template_placeholders("daily", None)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert!(names.contains(&"date".to_owned()));
+    assert!(names.contains(&"heading".to_owned()));
+    assert!(
+        !names.contains(&"weekday".to_owned()),
+        "known subset: weekday is supplied by the create path but not referenced by the built-in daily template"
     );
 }

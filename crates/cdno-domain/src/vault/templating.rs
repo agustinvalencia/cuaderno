@@ -23,6 +23,31 @@ use cdno_core::template::{CustomTemplateLoader, TemplateEngine, VariableContext}
 use super::Vault;
 use crate::error::DomainError;
 
+/// Where a template placeholder's value comes from — the classification
+/// [`Vault::template_placeholders`] attaches to each name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaceholderSource {
+    /// A contextual key the note type's create path fills automatically
+    /// (e.g. `title`, `created`, `status`). Derived from the built-in
+    /// template, which references exactly what the scaffold supplies.
+    Supplied,
+    /// A static config variable (`[variables]` in `config.toml`), available
+    /// to any template.
+    Config,
+    /// A prompted config variable (`[variables.prompt]`): a value must be
+    /// provided at creation — CLI `--var name=value`, MCP `vars`, or the
+    /// interactive prompt. Carries the prompt message.
+    Prompt { message: String },
+}
+
+/// A `{{placeholder}}` a note type's template supports, plus where its
+/// value comes from. Returned by [`Vault::template_placeholders`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplatePlaceholder {
+    pub name: String,
+    pub source: PlaceholderSource,
+}
+
 const PROJECT_TEMPLATE: &str = include_str!("../../templates/project.md");
 const ACTION_TEMPLATE: &str = include_str!("../../templates/action.md");
 const QUESTION_TEMPLATE: &str = include_str!("../../templates/question.md");
@@ -119,6 +144,94 @@ impl Vault {
         ctx.load_from_config(self.config());
         let rendered = engine.render(&template, &ctx, &self.config().variables.prompt);
         Ok(rendered.unresolved_prompts)
+    }
+
+    /// The `{{placeholders}}` a note type's template supports (#271) — for
+    /// discovery when writing a custom template, so the supported set isn't
+    /// buried in source or docs.
+    ///
+    /// The "supplied" set is the placeholders the **built-in** template for
+    /// `(note_type, variant)` references (the built-in, not any custom
+    /// override, because the create path supplies the same keys regardless of
+    /// how the template is customised). Every one is genuinely filled by the
+    /// create path, so the list never advertises a placeholder that would
+    /// render literally. It is *not* guaranteed exhaustive, though: a few
+    /// types' create paths set an extra contextual key their default template
+    /// doesn't reference (e.g. `daily` also provides `weekday`; `tracking`
+    /// provides `routine` / `activity_title`), and those aren't derivable
+    /// from the template text. For the complete fillable set see the
+    /// "Customising templates" tutorial. Deriving from the template keeps the
+    /// common case in lock-step with the scaffold and needs no hand-maintained
+    /// registry.
+    ///
+    /// Config-level variables available to every template are appended:
+    /// `[variables]` as `Config`, `[variables.prompt]` as `Prompt`. A config
+    /// name that collides with a supplied key is omitted — the contextual
+    /// value shadows it (see [`Vault::scaffold`] precedence), so it would
+    /// never take effect. Errors with [`DomainError::UnknownNoteType`] for an
+    /// unrecognised type.
+    pub fn template_placeholders(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+    ) -> Result<Vec<TemplatePlaceholder>, DomainError> {
+        let builtins = builtin_defaults();
+        let variant_key = variant.map(|v| format!("{note_type}-{v}"));
+        let content = variant_key
+            .as_ref()
+            .and_then(|k| builtins.get(k))
+            .or_else(|| builtins.get(note_type))
+            .ok_or_else(|| DomainError::UnknownNoteType {
+                note_type: note_type.to_owned(),
+            })?;
+
+        let supplied = cdno_core::template::placeholder_names(content);
+        let mut out: Vec<TemplatePlaceholder> = supplied
+            .iter()
+            .map(|name| TemplatePlaceholder {
+                name: name.clone(),
+                source: PlaceholderSource::Supplied,
+            })
+            .collect();
+
+        // Config-level names available to any template, sorted for
+        // deterministic output (HashMap iteration order is not). A name that
+        // is already supplied contextually is skipped — it can't take effect.
+        let variables = &self.config().variables;
+        let mut static_names: Vec<&String> = variables
+            .static_vars
+            .keys()
+            .filter(|name| !supplied.contains(name))
+            .collect();
+        static_names.sort();
+        for name in static_names {
+            out.push(TemplatePlaceholder {
+                name: name.clone(),
+                source: PlaceholderSource::Config,
+            });
+        }
+
+        // Prompted names, minus any already supplied or satisfied by a static
+        // default (a static default suppresses the prompt — it's effectively
+        // config).
+        let mut prompt_names: Vec<(&String, &String)> = variables
+            .prompt
+            .iter()
+            .filter(|(name, _)| {
+                !supplied.contains(*name) && !variables.static_vars.contains_key(*name)
+            })
+            .collect();
+        prompt_names.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, message) in prompt_names {
+            out.push(TemplatePlaceholder {
+                name: name.clone(),
+                source: PlaceholderSource::Prompt {
+                    message: message.clone(),
+                },
+            });
+        }
+
+        Ok(out)
     }
 
     /// The resolved (effective) template content for `note_type` (+

@@ -19,6 +19,7 @@ use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::commands::question::QuestionCommands;
 use cdno_cli::commands::review::ReviewCommands;
 use cdno_cli::commands::stewardship::StewardshipCommands;
+use cdno_cli::commands::templates::TemplatesCommands;
 use cdno_cli::completions;
 use cdno_cli::{bootstrap, commands};
 use cdno_domain::frontmatter::EnergyLevel;
@@ -213,6 +214,14 @@ enum Commands {
     /// system; pair with `cdno question {park,answer,…}` for
     /// lifecycle changes.
     Questions,
+
+    /// Inspect note templates. `templates vars <type>` lists the
+    /// `{{placeholders}}` a type's template supports, for writing a
+    /// custom `.cuaderno/templates/` override.
+    Templates {
+        #[command(subcommand)]
+        subcommand: TemplatesCommands,
+    },
 
     /// Manage stewardship dashboards: create (flat or expanded with
     /// `--tracking`), list, show, and append a periodic commitment
@@ -435,6 +444,10 @@ fn main() -> Result<()> {
         Commands::Questions => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::questions::run(&root, cli.json)
+        }
+        Commands::Templates { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::templates::run(&root, subcommand, cli.json)
         }
         Commands::Stewardship { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

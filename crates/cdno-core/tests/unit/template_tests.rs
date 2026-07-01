@@ -1,5 +1,5 @@
 use cdno_core::config::VaultConfig;
-use cdno_core::template::{Template, TemplateEngine, VariableContext};
+use cdno_core::template::{Template, TemplateEngine, VariableContext, placeholder_names};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -258,4 +258,60 @@ fn render_handles_adjacent_variables() {
     let rendered = engine.render(&template, &ctx, &prompts);
 
     assert_eq!(rendered.content, "2026-04-Thursday");
+}
+
+#[test]
+fn placeholder_names_lists_in_first_appearance_order_deduped() {
+    let content =
+        "---\ncontext: {{context}}\ncreated: {{created}}\n---\n# {{title}}\n#tag/{{title}}\n";
+    // `title` appears twice but is listed once; order follows first sighting.
+    assert_eq!(
+        placeholder_names(content),
+        vec![
+            "context".to_owned(),
+            "created".to_owned(),
+            "title".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn placeholder_names_trims_and_ignores_unterminated_open() {
+    // Names are trimmed; a `{{` with no closing `}}` is not a placeholder,
+    // mirroring `render`'s tokenisation.
+    assert_eq!(
+        placeholder_names("{{  spaced  }} then {{ unterminated"),
+        vec!["spaced".to_owned()]
+    );
+}
+
+#[test]
+fn placeholder_names_empty_for_plain_text() {
+    assert!(placeholder_names("no placeholders here").is_empty());
+}
+
+#[test]
+fn placeholder_names_matches_what_render_substitutes() {
+    // The set a template references must equal what `render` fills — guard
+    // that the two tokenisers stay in lockstep.
+    let engine = engine_with_defaults(None);
+    let content = "{{context}} {{title}} {{context}} {{ created }}";
+    let names = placeholder_names(content);
+
+    let mut ctx = VariableContext::new();
+    for name in &names {
+        ctx.set_builtin(name, "X");
+    }
+    let rendered = engine.render(
+        &Template {
+            content: content.to_owned(),
+        },
+        &ctx,
+        &HashMap::new(),
+    );
+    assert!(
+        !rendered.content.contains("{{"),
+        "every name placeholder_names reported should have been substituted: {}",
+        rendered.content
+    );
 }

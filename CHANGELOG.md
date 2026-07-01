@@ -6,10 +6,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-MCP parity for prompted template variables — agents can now supply `[variables.prompt]` values.
+MCP parity for prompted template variables, and a `templates vars` command to discover a type's placeholders.
 
 ### Added
 
+- **`cdno templates vars <type>`** (#271) — list the `{{placeholders}}` a note type's template
+  supports, so you know what a custom `.cuaderno/templates/` override may reference without reading
+  the source. The supplied set is **derived** from the type's built-in template — every entry is a
+  key the create path fills, so it never advertises a placeholder that would render literally.
+  (A couple of types' create paths set an extra key their default template doesn't use — e.g.
+  `daily` also provides `{{weekday}}` — so treat it as the built-in template's set plus config vars;
+  the templates tutorial lists the complete fillable set per type.) Config `[variables]` /
+  `[variables.prompt]` names are folded in and classified by source (`supplied` / `config` /
+  `prompt`). A `--variant` flag selects a variant template (e.g. `gym` for `tracking`); `--json`
+  emits a `{ name, source }` array. A new public `Vault::template_placeholders` and
+  `cdno_core::template::placeholder_names` back it.
 - **`vars` on the MCP create tools** (#238) — the templated create handlers now accept an optional
   `vars` object (a `name -> value` map, the MCP analogue of the CLI's repeatable `--var name=value`),
   threaded to the domain's `*_with_vars` methods. Covers `create_project`, `create_portfolio`,
