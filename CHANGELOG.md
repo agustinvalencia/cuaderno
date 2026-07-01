@@ -4,9 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.2.0] - 2026-07-01
 
-MCP parity for prompted template variables, a `cdno templates` command group to discover a type's placeholders and eject its built-in, and config-driven tracking variants.
+MCP parity for prompted template variables, a `cdno templates` command group to discover a type's placeholders and eject its built-in, and config-driven tracking variants (gym/body/swim no longer ship built-in).
 
 ### Changed
 
