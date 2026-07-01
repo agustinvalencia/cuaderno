@@ -23,13 +23,23 @@ Templates live in `.cuaderno/templates/`, one Markdown file per note type (e.g. 
 So a custom file in `.cuaderno/templates/` always wins over the built-in.
 
 > `cdno init` writes just one starter template — `.cuaderno/templates/daily.md`. Every other type
-> uses its built-in default until you add a file for it. To customise one, create that file yourself
-> (the next section shows how).
+> uses its built-in default until you add a file for it. The quickest way to get an editable copy of
+> a built-in is [`cdno templates eject <type>`](../reference/cli/templates.md#cdno-templates-eject-type)
+> — e.g. `cdno templates eject project` writes `.cuaderno/templates/project.md` matching the built-in,
+> ready to edit. You can also just create the file yourself, as the next section shows.
 
 ## Customise a template
 
-Say you want every project to start with a **## Risks** section. Create
-`.cuaderno/templates/project.md`:
+Say you want every project to start with a **## Risks** section. Eject the built-in as a starting
+point:
+
+```bash
+cdno templates eject project        # writes .cuaderno/templates/project.md
+```
+
+That writes the *full* built-in template. Insert a `## Risks` section (you can reference any of the
+`{{placeholders}}` that `cdno templates vars project` lists) and leave the rest as-is, so
+`.cuaderno/templates/project.md` reads:
 
 ```markdown
 ---
@@ -43,10 +53,21 @@ core_question: {{core_question}}
 # {{title}}
 
 ## Current State
+New project. No work done yet.
 
 ## Risks
 
 ## Next Actions
+- [ ] Define first concrete step (light)
+
+## Waiting On
+(nothing yet)
+
+## Milestones
+- [ ] First milestone — target: TBD
+
+## Links
+- Portfolio: (none yet)
 ```
 
 Now create a project:
@@ -69,15 +90,26 @@ core_question: null
 # Surrogate model
 
 ## Current State
+New project. No work done yet.
 
 ## Risks
 
 ## Next Actions
+- [ ] Define first concrete step (light)
+
+## Waiting On
+(nothing yet)
+
+## Milestones
+- [ ] First milestone — target: TBD
+
+## Links
+- Portfolio: (none yet)
 ```
 
-A good way to start is to copy the built-in as your base, then edit. The built-ins live in the
-[source tree](https://github.com/agustinvalencia/cuaderno/tree/main/crates/cdno-domain/templates);
-or just look at a note `cdno` already created and shape the template to match.
+`cdno templates eject <type>` is the recommended way to get an editable base — it always matches the
+current built-in. (You could instead hand-write the file, or shape it from a note `cdno` already
+created, but eject saves the guesswork.)
 
 > Editing a template only affects notes created **afterwards** — existing notes are untouched. (And
 > `cdno normalise` only reorders frontmatter keys; it won't add a new section like `## Risks` to old

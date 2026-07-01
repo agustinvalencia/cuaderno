@@ -35,6 +35,22 @@ pub enum TemplatesCommands {
         #[arg(long)]
         variant: Option<String>,
     },
+
+    /// Copy a built-in template into `.cuaderno/templates/<type>.md` as an
+    /// editable starting point for customisation. Refuses to overwrite an
+    /// existing custom template unless `--force`.
+    Eject {
+        /// Note type to eject (same set as `templates vars`).
+        #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
+        note_type: String,
+        /// Template variant (e.g. `gym` for `tracking`). The variant must
+        /// have its own built-in — there's no fallback to the base type.
+        #[arg(long)]
+        variant: Option<String>,
+        /// Overwrite an existing custom template.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 pub fn run(root: &Path, command: TemplatesCommands, json: bool) -> Result<()> {
@@ -51,7 +67,38 @@ pub fn run(root: &Path, command: TemplatesCommands, json: bool) -> Result<()> {
             }
             Ok(())
         }
+        TemplatesCommands::Eject {
+            note_type,
+            variant,
+            force,
+        } => {
+            let path = eject(root, &note_type, variant.as_deref(), force)?;
+            crate::output::emit_write_result(json, &path, &format!("Ejected template to {path}"))
+        }
     }
+}
+
+/// Validate `note_type` against the known set, returning a friendly error
+/// listing the valid types (richer than the domain's terser variant).
+fn validate_note_type(note_type: &str) -> Result<()> {
+    if NoteType::from_str(note_type).is_err() {
+        let valid = NoteType::ALL
+            .iter()
+            .map(|t| t.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!("unknown note type '{note_type}' — valid types: {valid}");
+    }
+    Ok(())
+}
+
+/// Write seam: eject a built-in template, returning the written path. Its own
+/// function so tests assert on the path/side effect (house pattern).
+pub fn eject(root: &Path, note_type: &str, variant: Option<&str>, force: bool) -> Result<String> {
+    validate_note_type(note_type)?;
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    let path = vault.eject_template(note_type, variant, force)?;
+    Ok(path.to_string())
 }
 
 /// Data seam: validate the type, open the vault, and gather the supported
@@ -64,15 +111,7 @@ pub fn placeholders(
 ) -> Result<Vec<TemplatePlaceholder>> {
     // Validate the type here so the user gets the full valid set, rather
     // than the domain's terser `unknown note type` error.
-    if NoteType::from_str(note_type).is_err() {
-        let valid = NoteType::ALL
-            .iter()
-            .map(|t| t.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        bail!("unknown note type '{note_type}' — valid types: {valid}");
-    }
-
+    validate_note_type(note_type)?;
     let (vault, _report) = bootstrap::open_vault(root)?;
     Ok(vault.template_placeholders(note_type, variant)?)
 }

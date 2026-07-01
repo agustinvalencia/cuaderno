@@ -798,6 +798,91 @@ fn template_placeholders_classifies_a_name_in_both_config_sources_as_config() {
     );
 }
 
+// ---------------------------------------------------------------------
+// eject_template — materialise a built-in for customisation (#270)
+// ---------------------------------------------------------------------
+
+#[test]
+fn eject_template_writes_the_builtin_into_the_vault() {
+    let (vault, store) = vault_with(&[]);
+    let path = vault.eject_template("project", None, false).expect("eject");
+    assert_eq!(path.to_string(), ".cuaderno/templates/project.md");
+
+    let content = store.read_file(&path).unwrap();
+    // The built-in project template's distinctive markers.
+    assert!(content.contains("# {{title}}"), "content:\n{content}");
+    assert!(content.contains("## Current State"), "content:\n{content}");
+    assert!(content.contains("No work done yet"), "content:\n{content}");
+}
+
+#[test]
+fn eject_template_writes_a_variant_key() {
+    let (vault, store) = vault_with(&[]);
+    let path = vault
+        .eject_template("tracking", Some("gym"), false)
+        .expect("eject variant");
+    assert_eq!(path.to_string(), ".cuaderno/templates/tracking-gym.md");
+    assert!(store.exists(&path).unwrap());
+}
+
+#[test]
+fn eject_template_refuses_to_clobber_without_force() {
+    use cdno_domain::error::DomainError;
+    let custom = "---\ntype: project\n---\n# mine\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+
+    match vault.eject_template("project", None, false) {
+        Err(DomainError::TemplateAlreadyExists { path }) => {
+            assert_eq!(path, ".cuaderno/templates/project.md")
+        }
+        other => panic!("expected TemplateAlreadyExists, got {other:?}"),
+    }
+    // The user's template is untouched.
+    assert_eq!(
+        store
+            .read_file(&vp(".cuaderno/templates/project.md"))
+            .unwrap(),
+        custom
+    );
+}
+
+#[test]
+fn eject_template_force_overwrites_an_existing_custom() {
+    let custom = "---\ntype: project\n---\n# mine\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+
+    vault
+        .eject_template("project", None, true)
+        .expect("force eject");
+    let content = store
+        .read_file(&vp(".cuaderno/templates/project.md"))
+        .unwrap();
+    assert!(
+        content.contains("## Current State"),
+        "overwritten with built-in"
+    );
+    assert!(!content.contains("# mine"), "custom content replaced");
+}
+
+#[test]
+fn eject_template_unknown_variant_errors_without_falling_back() {
+    use cdno_domain::error::DomainError;
+    let (vault, store) = vault_with(&[]);
+    match vault.eject_template("tracking", Some("deadlift"), false) {
+        Err(DomainError::UnknownTemplateVariant { note_type, variant }) => {
+            assert_eq!(note_type, "tracking");
+            assert_eq!(variant, "deadlift");
+        }
+        other => panic!("expected UnknownTemplateVariant, got {other:?}"),
+    }
+    // Nothing written on the error path.
+    assert!(
+        !store
+            .exists(&vp(".cuaderno/templates/tracking-deadlift.md"))
+            .unwrap()
+    );
+}
+
 #[test]
 fn template_placeholders_reflects_the_built_in_template_not_every_fillable_key() {
     // Documented limitation: the supplied set is what the built-in template

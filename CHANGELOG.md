@@ -6,10 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-MCP parity for prompted template variables, and a `templates vars` command to discover a type's placeholders.
+MCP parity for prompted template variables, and a `cdno templates` command group to discover a type's placeholders and eject its built-in for customisation.
 
 ### Added
 
+- **`cdno templates eject <type>`** (#270) — copy a built-in template into
+  `.cuaderno/templates/<type>.md` as an editable starting point, so customising a type no longer
+  means copying from the source tree or hand-reconstructing from a created note. `--variant` ejects a
+  variant template (e.g. `gym` for `tracking`, written to `<type>-<variant>.md`; the variant must have
+  its own built-in — no fallback). Refuses to overwrite an existing custom template unless `--force`.
+  The written file is byte-identical to the built-in, so behaviour is unchanged until you edit it.
+  Backed by a new `Vault::eject_template`.
 - **`cdno templates vars <type>`** (#271) — list the `{{placeholders}}` a note type's template
   supports, so you know what a custom `.cuaderno/templates/` override may reference without reading
   the source. The supplied set is **derived** from the type's built-in template — every entry is a
