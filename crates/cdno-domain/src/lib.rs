@@ -16,7 +16,8 @@ pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, NormaliseReport,
-    OrientationContext, PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary,
-    QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary, StewardshipVariant,
-    TopAction, TrackingEntry, Vault, WeeklyNoteView, WeeklySection,
+    OrientationContext, PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange,
+    ProjectSummary, QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary,
+    StewardshipVariant, TemplatePlaceholder, TopAction, TrackingEntry, Vault, WeeklyNoteView,
+    WeeklySection,
 };

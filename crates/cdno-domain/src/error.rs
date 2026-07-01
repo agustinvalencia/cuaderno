@@ -92,6 +92,9 @@ pub enum DomainError {
         names: Vec<String>,
     },
 
+    #[error("unknown note type '{note_type}'")]
+    UnknownNoteType { note_type: String },
+
     #[error(transparent)]
     Validation(#[from] ValidationError),
 

@@ -52,6 +52,7 @@
 - [question](reference/cli/question.md)
 - [stewardship](reference/cli/stewardship.md)
 - [track](reference/cli/track.md)
+- [templates](reference/cli/templates.md)
 - [commit](reference/cli/commit.md)
 - [lint](reference/cli/lint.md)
 - [reindex](reference/cli/reindex.md)

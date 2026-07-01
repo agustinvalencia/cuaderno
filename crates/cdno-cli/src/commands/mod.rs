@@ -17,6 +17,7 @@ pub mod review;
 pub mod search;
 pub mod status;
 pub mod stewardship;
+pub mod templates;
 pub mod track;
 pub mod triage;
 pub mod weekly;

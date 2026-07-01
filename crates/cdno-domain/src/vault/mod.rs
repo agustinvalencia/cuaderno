@@ -68,6 +68,7 @@ pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 pub use questions::QuestionSummary;
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
+pub use templating::{PlaceholderSource, TemplatePlaceholder};
 pub use weekly::{WeeklyNoteView, WeeklySection};
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
