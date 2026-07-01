@@ -31,14 +31,15 @@ So a custom file in `.cuaderno/templates/` always wins over the built-in.
 ## Customise a template
 
 Say you want every project to start with a **## Risks** section. Eject the built-in as a starting
-point, then edit it:
+point:
 
 ```bash
 cdno templates eject project        # writes .cuaderno/templates/project.md
 ```
 
-Add a `## Risks` section (and reference any of the `{{placeholders}}` from
-`cdno templates vars project`), so `.cuaderno/templates/project.md` reads:
+That writes the *full* built-in template. Insert a `## Risks` section (you can reference any of the
+`{{placeholders}}` that `cdno templates vars project` lists) and leave the rest as-is, so
+`.cuaderno/templates/project.md` reads:
 
 ```markdown
 ---
@@ -52,10 +53,21 @@ core_question: {{core_question}}
 # {{title}}
 
 ## Current State
+New project. No work done yet.
 
 ## Risks
 
 ## Next Actions
+- [ ] Define first concrete step (light)
+
+## Waiting On
+(nothing yet)
+
+## Milestones
+- [ ] First milestone — target: TBD
+
+## Links
+- Portfolio: (none yet)
 ```
 
 Now create a project:
@@ -78,15 +90,26 @@ core_question: null
 # Surrogate model
 
 ## Current State
+New project. No work done yet.
 
 ## Risks
 
 ## Next Actions
+- [ ] Define first concrete step (light)
+
+## Waiting On
+(nothing yet)
+
+## Milestones
+- [ ] First milestone — target: TBD
+
+## Links
+- Portfolio: (none yet)
 ```
 
-A good way to start is to copy the built-in as your base, then edit. The built-ins live in the
-[source tree](https://github.com/agustinvalencia/cuaderno/tree/main/crates/cdno-domain/templates);
-or just look at a note `cdno` already created and shape the template to match.
+`cdno templates eject <type>` is the recommended way to get an editable base — it always matches the
+current built-in. (You could instead hand-write the file, or shape it from a note `cdno` already
+created, but eject saves the guesswork.)
 
 > Editing a template only affects notes created **afterwards** — existing notes are untouched. (And
 > `cdno normalise` only reorders frontmatter keys; it won't add a new section like `## Risks` to old

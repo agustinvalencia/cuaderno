@@ -101,8 +101,14 @@ fn templates_eject_materialises_the_builtin() {
     let path = templates::eject(dir.path(), "project", None, false).expect("eject");
     assert_eq!(path, ".cuaderno/templates/project.md");
     let content = fs::read_to_string(dir.path().join(&path)).unwrap();
-    assert!(content.contains("## Current State"), "content:\n{content}");
-    assert!(content.contains("{{title}}"), "content:\n{content}");
+    // Byte-identical to the built-in — the guarantee the docs make (a note
+    // created straight after ejecting is unchanged). Compares the on-disk FS
+    // write against the compiled-in source template.
+    assert_eq!(
+        content,
+        include_str!("../../cdno-domain/templates/project.md"),
+        "ejected file must be byte-identical to the built-in"
+    );
 }
 
 #[test]

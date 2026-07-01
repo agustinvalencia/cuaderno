@@ -62,10 +62,10 @@ cdno templates vars question --json | jq -r '.[].name'
 ## `cdno templates eject <type>`
 
 Copy a built-in template into `.cuaderno/templates/<type>.md` as an editable
-starting point. Every note type except `daily` uses an in-binary default; this
-materialises one so you can customise it (add sections, reorder frontmatter,
-reference `{{placeholders}}` from `templates vars`) without hand-reconstructing
-it from the source tree.
+starting point. Note types use an in-binary default until you add a file for
+them (only `daily` is seeded on `cdno init`); this materialises one so you can
+customise it (add sections, reorder frontmatter, reference `{{placeholders}}`
+from `templates vars`) without hand-reconstructing it from the source tree.
 
 ```text
 cdno templates eject [OPTIONS] <TYPE>
