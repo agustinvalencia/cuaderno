@@ -16,8 +16,10 @@ MCP parity for prompted template variables — agents can now supply `[variables
   `create_question`, `create_stewardship`, `create_commitment`, `create_tracking_entry`,
   `file_to_portfolio` (markdown path), `add_action` (`with_note: true`), and `promote_action`. An MCP
   agent can now create a note whose template uses a prompted variable; omitting a required one still
-  surfaces `UnresolvedPrompts` via normal MCP error mapping. The non-templated paths (`capture`,
-  `complete_action`, `file_to_portfolio --attach`, inline `add_action`) are unchanged.
+  surfaces `UnresolvedPrompts` via normal MCP error mapping. The paths that don't gather prompted
+  variables (`capture`, `complete_action`, `file_to_portfolio --attach`, inline `add_action`) are
+  unchanged, matching the CLI. The `UnresolvedPrompts` message is reworded to name both the CLI
+  `--var` flag and the MCP `vars` parameter, so the guidance fits whichever surface hit it.
 
 ## [0.1.26] - 2026-06-30
 

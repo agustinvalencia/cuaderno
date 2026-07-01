@@ -163,9 +163,8 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         // With `attach`, file the artefact (copy + linked stub); otherwise
         // write a plain markdown evidence note. `content` is the body /
-        // abstract respectively. `vars` feeds the evidence template's
-        // prompted variables and is ignored on the (non-templated) attach path.
-        let vars = input.vars.unwrap_or_default();
+        // abstract respectively. Only the markdown path is templated, so
+        // `vars` is gathered inside that arm (the attach stub ignores it).
         let path = match input.attach.as_deref() {
             Some(artefact) => self.vault.file_attachment(
                 at,
@@ -175,14 +174,17 @@ impl CuadernoServer {
                 &input.origin,
                 &input.content,
             ),
-            None => self.vault.file_evidence_with_vars(
-                at,
-                &input.portfolio,
-                &input.source,
-                &input.origin,
-                &input.content,
-                &vars,
-            ),
+            None => {
+                let vars = input.vars.unwrap_or_default();
+                self.vault.file_evidence_with_vars(
+                    at,
+                    &input.portfolio,
+                    &input.source,
+                    &input.origin,
+                    &input.content,
+                    &vars,
+                )
+            }
         }
         .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(

@@ -125,6 +125,7 @@ pub struct AddActionInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ActionQueryInput {
     pub project: String,
+    /// Case-insensitive substring of the bullet to complete.
     pub query: String,
 }
 

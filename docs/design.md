@@ -1191,11 +1191,11 @@ triage_inbox()
 
 The optional `vars?` parameter (a `name -> value` map) supplies values for a template's
 `[variables.prompt]` placeholders (§9 Tier 4) — the MCP analogue of the CLI's repeatable
-`--var name=value`. It is accepted on every templated create tool (`create_project`,
-`create_portfolio`, `create_question`, `create_stewardship`, `create_commitment`,
-`create_tracking_entry`, and the templated paths of `file_to_portfolio`, `add_action`, and
-`promote_action`). MCP has no interactive prompt, so a required prompted variable the supplied
-map omits surfaces `UnresolvedPrompts` rather than blocking on input.
+`--var name=value`. It is accepted on every create tool that gathers prompted variables
+(`create_project`, `create_portfolio`, `create_question`, `create_stewardship`,
+`create_commitment`, `create_tracking_entry`, and the templated paths of `file_to_portfolio`,
+`add_action`, and `promote_action`). MCP has no interactive prompt, so a required prompted variable
+the supplied map omits surfaces `UnresolvedPrompts` rather than blocking on input.
 
 -----
 
