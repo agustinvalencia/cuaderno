@@ -84,8 +84,8 @@ pub enum DomainError {
 
     #[error(
         "template '{note_type}' references prompted variable(s) {names:?} with no value \u{2014} \
-         provide them (run interactively, or pass `--var name=value`) or set defaults under \
-         [variables] in .cuaderno/config.toml"
+         provide a value for each (the CLI `--var name=value` flag, the MCP `vars` parameter, or a \
+         static default under [variables] in .cuaderno/config.toml)"
     )]
     UnresolvedPrompts {
         note_type: String,

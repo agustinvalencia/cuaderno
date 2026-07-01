@@ -488,9 +488,12 @@ fn template_prompts_ignores_prompt_names_the_template_does_not_use() {
 }
 
 // The prompt machinery lives in the shared `scaffold`, so `project` proves
-// the core path; these cover the *other* `*_with_vars` entry points (each
-// threads `prompted` through its own render helper) so a missing
-// `set_prompted` in one can't ship silently.
+// the core path. These cover the `*_with_vars` entry points that reach
+// `scaffold` through their own render helper or a non-obvious path — commitment,
+// evidence, the tracking variant, promotion, and the action-note branch — so a
+// missing `set_prompted` in one of those can't ship silently. The remaining
+// creators (portfolio, question, stewardship) are plain single-scaffold calls
+// structurally identical to `project`, so `project` already covers them.
 
 #[test]
 fn create_commitment_with_vars_renders_a_prompted_variable() {
@@ -603,5 +606,34 @@ fn promote_action_with_vars_renders_a_prompted_variable() {
     assert!(
         store.read_file(&path).unwrap().contains("ticket: PR-1"),
         "promoted action note should carry the prompted value"
+    );
+}
+
+#[test]
+fn add_action_with_note_and_vars_renders_a_prompted_variable() {
+    // The `add_action --note` / MCP `with_note: true` branch scaffolds an
+    // action note from the same template as promotion, so it must thread
+    // prompted vars too (regression guard for the note-creating branch).
+    use cdno_domain::frontmatter::EnergyLevel;
+    let custom = "---\ntype: action\nstatus: {{status}}\nproject: {{project}}\nenergy: {{energy}}\nmilestone: {{milestone}}\ndue: {{due}}\ncreated: {{created}}\ncompleted: {{completed}}\nblocker: {{blocker}}\ncriteria: {{criteria}}\ntags: {{tags}}\nticket: {{ticket}}\n---\n# {{title}}\n";
+    let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/action.md", custom)], config);
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+    vault
+        .create_project(today(), "Proj", Context::Work, None)
+        .expect("project");
+
+    let path = vault
+        .add_action_with_note_and_vars(
+            at,
+            "proj",
+            "Profile the assembly",
+            EnergyLevel::Deep,
+            &prompted(&[("ticket", "AN-1")]),
+        )
+        .expect("add action with note");
+    assert!(
+        store.read_file(&path).unwrap().contains("ticket: AN-1"),
+        "action note should carry the prompted value"
     );
 }

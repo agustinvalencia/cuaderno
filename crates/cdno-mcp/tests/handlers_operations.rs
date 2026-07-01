@@ -23,9 +23,9 @@ use cdno_mcp::server::{
     CompleteMilestoneInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
     CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, DiscardInboxItemInput,
     FileToPortfolioInput, LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput,
-    ProjectSlugInput, ReadDailyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
-    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
-    UpsertWeeklySectionInput,
+    ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
+    ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
+    UpsertDailySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -53,6 +53,34 @@ fn server_with<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
     seed(&vault, Arc::clone(&store));
     (CuadernoServer::new(Arc::new(vault)), store)
 }
+
+/// Like [`server_with`] but with a caller-supplied `VaultConfig`, so tests
+/// can exercise templating that depends on `[variables.prompt]` config.
+fn server_with_config<F: FnOnce(&Vault, Arc<dyn VaultStore>)>(
+    config: VaultConfig,
+    seed: F,
+) -> (CuadernoServer, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).unwrap();
+    seed(&vault, Arc::clone(&store));
+    (CuadernoServer::new(Arc::new(vault)), store)
+}
+
+/// A `VaultConfig` whose `[variables.prompt]` map has a single `name → message`
+/// entry — enough to make a custom template's placeholder prompt-defined.
+fn config_with_prompt(name: &str, message: &str) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config
+        .variables
+        .prompt
+        .insert(name.to_owned(), message.to_owned());
+    config
+}
+
+/// A custom project template referencing a `{{ticket}}` placeholder, used by
+/// the `vars` tests to prove prompted values flow through the MCP handler.
+const PROJECT_WITH_TICKET: &str = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\nticket: {{ticket}}\n---\n# {{title}}\n";
 
 fn decode_json(result: &CallToolResult) -> serde_json::Value {
     assert_eq!(
@@ -127,6 +155,7 @@ async fn file_to_portfolio_creates_evidence_note() {
             origin: "projects/surrogate".to_owned(),
             content: "4x speedup at 95% accuracy.".to_owned(),
             attach: None,
+            vars: None,
         }))
         .await
         .expect("file_to_portfolio");
@@ -151,6 +180,7 @@ async fn file_to_portfolio_errors_on_missing_portfolio() {
             origin: "projects/foo".to_owned(),
             content: String::new(),
             attach: None,
+            vars: None,
         }))
         .await
         .expect_err("missing portfolio should error");
@@ -356,6 +386,7 @@ async fn add_action_bullet_appends_to_next_actions() {
             title: "Run sweep B".to_owned(),
             energy: "deep".to_owned(),
             with_note: false,
+            vars: None,
         }))
         .await
         .expect("add_action");
@@ -376,6 +407,7 @@ async fn add_action_with_note_creates_action_note_and_wikilinks_bullet() {
             title: "Investigate basis stability".to_owned(),
             energy: "deep".to_owned(),
             with_note: true,
+            vars: None,
         }))
         .await
         .expect("add_action with_note");
@@ -403,6 +435,7 @@ async fn add_action_rejects_unknown_energy_with_invalid_params() {
             title: "x".to_owned(),
             energy: "intense".to_owned(),
             with_note: false,
+            vars: None,
         }))
         .await
         .expect_err("unknown energy should error");
@@ -426,9 +459,10 @@ async fn promote_action_creates_action_note_from_existing_bullet() {
     });
 
     let result = server
-        .promote_action(Parameters(ActionQueryInput {
+        .promote_action(Parameters(PromoteActionInput {
             project: "surrogate-model".to_owned(),
             query: "sweep B".to_owned(),
+            vars: None,
         }))
         .await
         .expect("promote_action");
@@ -486,6 +520,7 @@ async fn create_commitment_writes_commitment_note() {
             context: "personal".to_owned(),
             project: None,
             stewardship: None,
+            vars: None,
         }))
         .await
         .expect("create_commitment");
@@ -508,6 +543,7 @@ async fn create_commitment_persists_stewardship_origin_link() {
             context: "personal".to_owned(),
             project: None,
             stewardship: Some("health".to_owned()),
+            vars: None,
         }))
         .await
         .expect("create_commitment");
@@ -531,6 +567,7 @@ async fn create_commitment_rejects_unknown_context_with_invalid_params() {
             context: "fortnightly".to_owned(),
             project: None,
             stewardship: None,
+            vars: None,
         }))
         .await
         .expect_err("unknown context should error");
@@ -586,6 +623,7 @@ async fn create_tracking_entry_writes_under_expanded_stewardship() {
             activity: "gym".to_owned(),
             routine: Some("upper-body-a".to_owned()),
             content: "Felt strong.".to_owned(),
+            vars: None,
         }))
         .await
         .expect("create_tracking_entry");
@@ -613,6 +651,7 @@ async fn create_tracking_entry_errors_on_flat_stewardship() {
             activity: "gym".to_owned(),
             routine: None,
             content: String::new(),
+            vars: None,
         }))
         .await
         .expect_err("flat stewardship has no tracking subdir");
@@ -860,6 +899,7 @@ async fn create_project_creates_a_project_map() {
             title: "Widget Redesign".to_owned(),
             context: "work".to_owned(),
             core_question: None,
+            vars: None,
         }))
         .await
         .expect("create_project");
@@ -880,6 +920,7 @@ async fn create_project_rejects_unknown_context_with_invalid_params() {
             title: "X".to_owned(),
             context: "nonsense".to_owned(),
             core_question: None,
+            vars: None,
         }))
         .await
         .expect_err("unknown context should error");
@@ -906,6 +947,7 @@ async fn create_project_at_the_cap_is_seeded_parked() {
             title: "Sixth".to_owned(),
             context: "work".to_owned(),
             core_question: None,
+            vars: None,
         }))
         .await
         .expect("sixth project is created, just parked");
@@ -923,6 +965,63 @@ async fn create_project_at_the_cap_is_seeded_parked() {
 }
 
 #[tokio::test]
+async fn create_project_with_vars_renders_a_prompted_variable() {
+    // A custom template with a `[variables.prompt]` placeholder resolves
+    // from the handler's `vars` map — the MCP analogue of the CLI's `--var`.
+    let (server, store) =
+        server_with_config(config_with_prompt("ticket", "Ticket?"), |_v, store| {
+            store
+                .write_file(&vp(".cuaderno/templates/project.md"), PROJECT_WITH_TICKET)
+                .unwrap();
+        });
+
+    let mut vars = std::collections::HashMap::new();
+    vars.insert("ticket".to_owned(), "ABC-1".to_owned());
+
+    let result = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Widget".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: Some(vars),
+        }))
+        .await
+        .expect("create_project with vars");
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    let body = store.read_file(&vp(&path)).unwrap();
+    assert!(body.contains("ticket: ABC-1"), "body:\n{body}");
+    assert!(
+        !body.contains("{{ticket}}"),
+        "placeholder unresolved:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn create_project_without_vars_surfaces_unresolved_prompts() {
+    // Omitting a required prompted variable must fail with a clear error
+    // (the domain's `UnresolvedPrompts`, mapped to INTERNAL_ERROR) rather
+    // than leaving a literal `{{ticket}}` in the note.
+    let (server, _store) =
+        server_with_config(config_with_prompt("ticket", "Ticket?"), |_v, store| {
+            store
+                .write_file(&vp(".cuaderno/templates/project.md"), PROJECT_WITH_TICKET)
+                .unwrap();
+        });
+
+    let err = server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Widget".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+        }))
+        .await
+        .expect_err("missing prompted var should error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    assert!(err.message.contains("ticket"), "message: {}", err.message);
+}
+
+#[tokio::test]
 async fn create_question_creates_a_note_and_rejects_unknown_domain() {
     let (server, store) = server_with(|_v, _s| {});
 
@@ -930,6 +1029,7 @@ async fn create_question_creates_a_note_and_rejects_unknown_domain() {
         .create_question(Parameters(CreateQuestionInput {
             domain: "research".to_owned(),
             text: "What is the best benchmark?".to_owned(),
+            vars: None,
         }))
         .await
         .expect("create_question");
@@ -946,6 +1046,7 @@ async fn create_question_creates_a_note_and_rejects_unknown_domain() {
         .create_question(Parameters(CreateQuestionInput {
             domain: "philosophy".to_owned(),
             text: "?".to_owned(),
+            vars: None,
         }))
         .await
         .expect_err("unknown domain should error");
@@ -961,6 +1062,7 @@ async fn create_portfolio_creates_an_index() {
         .create_portfolio(Parameters(CreatePortfolioInput {
             question: "Reference material".to_owned(),
             project: None,
+            vars: None,
         }))
         .await
         .expect("create_portfolio");
@@ -983,6 +1085,7 @@ async fn create_stewardship_honours_the_expanded_flag() {
             name: "Finances".to_owned(),
             context: "personal".to_owned(),
             expanded: false,
+            vars: None,
         }))
         .await
         .expect("flat stewardship");
@@ -994,6 +1097,7 @@ async fn create_stewardship_honours_the_expanded_flag() {
             name: "Health".to_owned(),
             context: "personal".to_owned(),
             expanded: true,
+            vars: None,
         }))
         .await
         .expect("expanded stewardship");
@@ -1191,6 +1295,7 @@ async fn file_to_portfolio_attaches_a_non_markdown_artefact() {
             origin: "projects/surrogate".to_owned(),
             content: "Sketch of the attention sparsity pattern.".to_owned(),
             attach: Some(artefact.to_string_lossy().into_owned()),
+            vars: None,
         }))
         .await
         .expect("attach via MCP");

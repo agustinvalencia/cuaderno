@@ -15,6 +15,8 @@
 //! hygiene resolves `::schemars::...` paths, so the re-export at
 //! `rmcp::schemars` alone isn't enough.
 
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -81,6 +83,13 @@ pub struct FileToPortfolioInput {
     /// real, descriptive one, since it's the only thing search and other
     /// agents will ever see of the artefact.
     pub attach: Option<String>,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Ignored when `attach` is set (the
+    /// attachment stub is not templated). Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `update_project_state`.
@@ -100,14 +109,40 @@ pub struct AddActionInput {
     pub energy: String,
     #[serde(default)]
     pub with_note: bool,
+    /// Values for the action-note template's prompted variables
+    /// (`[variables.prompt]`), as a name -> value map. Mirrors the CLI's
+    /// repeatable `--var name=value`. Only used when `with_note: true`; the
+    /// inline-bullet form is not templated. Supply an entry for each prompted
+    /// variable the template uses that has no static `[variables]` default;
+    /// otherwise creation fails with an "unresolved prompts" error.
+    /// Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
-/// Input for the substring-match action verbs (`promote_action`,
-/// `complete_action`). `query` is matched against the bullet text.
+/// Input for `complete_action`. `query` is matched against the bullet
+/// text. (`promote_action` uses [`PromoteActionInput`], which adds `vars`;
+/// completing a bullet is not templated, so it stays vars-free.)
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ActionQueryInput {
     pub project: String,
+    /// Case-insensitive substring of the bullet to complete.
     pub query: String,
+}
+
+/// Input for `promote_action` — like [`ActionQueryInput`] but carries the
+/// template `vars` the action-note template may prompt for.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PromoteActionInput {
+    pub project: String,
+    /// Case-insensitive substring of the bullet to promote.
+    pub query: String,
+    /// Values for the action-note template's prompted variables
+    /// (`[variables.prompt]`), as a name -> value map. Mirrors the CLI's
+    /// repeatable `--var name=value`. Supply an entry for each prompted
+    /// variable the template uses that has no static `[variables]` default;
+    /// otherwise promotion fails with an "unresolved prompts" error.
+    /// Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `create_commitment`.
@@ -129,6 +164,12 @@ pub struct CreateCommitmentInput {
     /// commitments. Loose pointer — not validated against existing
     /// stewardships.
     pub stewardship: Option<String>,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `complete_commitment` — commitment slug.
@@ -147,6 +188,15 @@ pub struct CreateTrackingEntryInput {
     pub routine: Option<String>,
     #[serde(default)]
     pub content: String,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// The template variant is derived from `activity` (e.g. `weight training`
+    /// -> `tracking-weight-training`), so a variant with prompted variables
+    /// needs them supplied here. Supply an entry for each prompted variable the
+    /// effective template uses that has no static `[variables]` default;
+    /// otherwise creation fails with an "unresolved prompts" error.
+    /// Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `read_daily_note` (GH #158). `date` defaults to today
@@ -208,6 +258,12 @@ pub struct CreateProjectInput {
     /// (kebab-case: `work`, `household`, `personal`, …).
     pub context: String,
     pub core_question: Option<String>,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `create_portfolio` (GH #162). `project` optionally links
@@ -217,6 +273,12 @@ pub struct CreatePortfolioInput {
     /// The question or topic the portfolio gathers evidence for.
     pub question: String,
     pub project: Option<String>,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `get_commitments` (GH #204). `lookahead_weeks` mirrors
@@ -319,6 +381,12 @@ pub struct CreateQuestionInput {
     /// `research` or `life`.
     pub domain: String,
     pub text: String,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 /// Input for `create_stewardship` (GH #162). `expanded` makes a folder
@@ -331,6 +399,12 @@ pub struct CreateStewardshipInput {
     pub context: String,
     #[serde(default)]
     pub expanded: bool,
+    /// Values for the template's prompted variables (`[variables.prompt]`),
+    /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
+    /// Supply an entry for each prompted variable the note's effective template
+    /// uses that has no static `[variables]` default; otherwise creation fails
+    /// with an "unresolved prompts" error. Omitted = none.
+    pub vars: Option<HashMap<String, String>>,
 }
 
 // `park_project` / `activate_project` (GH #166) reuse [`ProjectSlugInput`].

@@ -4,6 +4,23 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+MCP parity for prompted template variables — agents can now supply `[variables.prompt]` values.
+
+### Added
+
+- **`vars` on the MCP create tools** (#238) — the templated create handlers now accept an optional
+  `vars` object (a `name -> value` map, the MCP analogue of the CLI's repeatable `--var name=value`),
+  threaded to the domain's `*_with_vars` methods. Covers `create_project`, `create_portfolio`,
+  `create_question`, `create_stewardship`, `create_commitment`, `create_tracking_entry`,
+  `file_to_portfolio` (markdown path), `add_action` (`with_note: true`), and `promote_action`. An MCP
+  agent can now create a note whose template uses a prompted variable; omitting a required one still
+  surfaces `UnresolvedPrompts` via normal MCP error mapping. The paths that don't gather prompted
+  variables (`capture`, `complete_action`, `file_to_portfolio --attach`, inline `add_action`) are
+  unchanged, matching the CLI. The `UnresolvedPrompts` message is reworded to name both the CLI
+  `--var` flag and the MCP `vars` parameter, so the guidance fits whichever surface hit it.
+
 ## [0.1.26] - 2026-06-30
 
 Interactive `[variables.prompt]` template variables, with a `--var name=value` flag (#238 tier 4) — completes #238.
@@ -28,7 +45,8 @@ Interactive `[variables.prompt]` template variables, with a `--var name=value` f
   (`file --attach`, plain `action add`) don't gather prompted values — a `[variables.prompt]`
   placeholder in one of those templates surfaces `UnresolvedPrompts`; give it a static default.
 - MCP create handlers don't supply prompted values, so an MCP-created note whose template uses a
-  prompted variable surfaces the same error via normal MCP error mapping.
+  prompted variable surfaces the same error via normal MCP error mapping. (Resolved in the next
+  release — see the Unreleased `vars` entry above.)
 
 ## [0.1.25] - 2026-06-30
 
