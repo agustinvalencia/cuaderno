@@ -625,7 +625,7 @@ pub struct TrackingEntryDto {
     pub activity: String,
     pub date: NaiveDate,
     pub duration_min: Option<u32>,
-    /// Raw wikilink string when present (gym/swim templates only).
+    /// Raw wikilink string, present only on templates with a `routine:` field.
     pub routine: Option<String>,
     /// First non-blank body line after the H1, capped at 200 chars.
     pub body_excerpt: String,

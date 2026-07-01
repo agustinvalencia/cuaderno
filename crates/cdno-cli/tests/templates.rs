@@ -70,15 +70,18 @@ fn templates_vars_surfaces_config_and_prompt_vars() {
 }
 
 #[test]
-fn templates_vars_resolves_a_tracking_variant() {
+fn templates_vars_tracking_has_no_builtin_variants() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
+    // No tracking variant ships built-in, so `--variant gym` falls back to the
+    // generic tracking template (no `routine`, which only a custom variant adds).
     let ph = templates::placeholders(dir.path(), "tracking", Some("gym")).expect("placeholders");
     let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"activity_title"), "generic set: {names:?}");
     assert!(
-        names.contains(&"routine"),
-        "gym variant supplies routine: {names:?}"
+        !names.contains(&"routine"),
+        "no built-in gym variant: {names:?}"
     );
 }
 
@@ -98,7 +101,7 @@ fn templates_eject_materialises_the_builtin() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let path = templates::eject(dir.path(), "project", None, false).expect("eject");
+    let path = templates::eject(dir.path(), "project", false).expect("eject");
     assert_eq!(path, ".cuaderno/templates/project.md");
     let content = fs::read_to_string(dir.path().join(&path)).unwrap();
     // Byte-identical to the built-in — the guarantee the docs make (a note
@@ -118,7 +121,7 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
     let target = dir.path().join(".cuaderno/templates/project.md");
     fs::write(&target, "# mine\n").unwrap();
 
-    let err = templates::eject(dir.path(), "project", None, false).expect_err("should refuse");
+    let err = templates::eject(dir.path(), "project", false).expect_err("should refuse");
     assert!(err.to_string().contains("already exists"), "msg: {err}");
     assert_eq!(
         fs::read_to_string(&target).unwrap(),
@@ -126,7 +129,7 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
         "left untouched"
     );
 
-    templates::eject(dir.path(), "project", None, true).expect("force eject");
+    templates::eject(dir.path(), "project", true).expect("force eject");
     assert!(
         fs::read_to_string(&target)
             .unwrap()
@@ -135,15 +138,14 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
 }
 
 #[test]
-fn templates_eject_variant_and_unknown_variant_error() {
+fn templates_eject_tracking_writes_the_generic_template() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let path = templates::eject(dir.path(), "tracking", Some("gym"), false).expect("gym");
-    assert_eq!(path, ".cuaderno/templates/tracking-gym.md");
+    // Only base note-type templates eject (no `--variant` flag): the generic
+    // tracking template is written. Activity variants are authored in the
+    // vault, not ejected.
+    let path = templates::eject(dir.path(), "tracking", false).expect("base tracking");
+    assert_eq!(path, ".cuaderno/templates/tracking.md");
     assert!(dir.path().join(&path).exists());
-
-    let err =
-        templates::eject(dir.path(), "tracking", Some("deadlift"), false).expect_err("no builtin");
-    assert!(err.to_string().contains("variant 'deadlift'"), "msg: {err}");
 }

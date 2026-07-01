@@ -232,10 +232,11 @@ enum Commands {
     },
 
     /// File a tracking note under an expanded stewardship. Activity
-    /// is positional (e.g. `cdno track gym`); built-in templates for
-    /// gym/body/swim plus a generic fallback.
+    /// is positional (e.g. `cdno track gym`). Uses a vault template
+    /// `.cuaderno/templates/tracking-<activity>.md` if present, else a
+    /// generic fallback (see `examples/templates/tracking/`).
     Track {
-        /// Activity (gym, body, swim, or a user-defined slug).
+        /// Activity slug (e.g. gym, swim, reading — anything you track).
         activity: String,
         /// Stewardship slug. Defaults to the only expanded
         /// stewardship if there's exactly one; otherwise required.
@@ -243,7 +244,9 @@ enum Commands {
         stewardship: Option<String>,
         /// Bare slug of a routine doc — wrapped into
         /// `[[stewardships/<stewardship>/routines/<routine>]]` and
-        /// substituted into the template's `routine:` field.
+        /// substituted into the template's `routine:` field. Only takes
+        /// effect on a template that has a `routine:` field; the generic
+        /// default has none, so this no-ops unless you use a variant template.
         #[arg(long)]
         routine: Option<String>,
         /// Inline body. Optional; defaults to empty so the user can

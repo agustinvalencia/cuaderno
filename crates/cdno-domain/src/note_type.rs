@@ -65,10 +65,14 @@ impl NoteType {
     /// Since #212 the normaliser does *not* read this directly — it
     /// derives a note's canonical order from the note's *effective*
     /// template (a custom `.cuaderno/templates/` override, else the
-    /// built-in). On a vault with no custom templates the effective
-    /// template is the built-in, whose order equals this list (per the
-    /// sync test), so the two agree; this remains the built-in reference
-    /// and the drift guard for the code-based scaffolds.
+    /// built-in). For the single-file types a sync test pins this list to
+    /// the built-in template order, so on an un-customised vault the two
+    /// agree. `Daily` and `Tracking` are excluded from that sync test:
+    /// `Tracking`'s list is a superset that also carries the optional
+    /// variant-shape fields (`duration_min`, `routine`) which the generic
+    /// built-in template doesn't reference (only a vault variant would),
+    /// so it stays a field-vocabulary reference rather than a
+    /// built-in-order guard for tracking.
     pub fn frontmatter_order(self) -> &'static [&'static str] {
         match self {
             NoteType::Daily => &["type", "date"],

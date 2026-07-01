@@ -731,19 +731,33 @@ fn template_placeholders_omits_a_config_name_shadowed_by_a_supplied_key() {
 }
 
 #[test]
-fn template_placeholders_resolves_a_tracking_variant() {
-    // The gym variant's built-in template wraps a routine wikilink, so its
-    // supplied set includes `routine` — proving variant resolution.
+fn template_placeholders_tracking_uses_the_generic_builtin() {
+    // No tracking variant ships built-in, so a `--variant` arg falls back to
+    // the generic `tracking` template — the placeholder set is the generic
+    // one either way (no `routine`, which only a custom variant would add).
     let (vault, _store) = vault_with(&[]);
-    let gym = vault
+    let base: Vec<String> = vault
+        .template_placeholders("tracking", None)
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    let variant: Vec<String> = vault
         .template_placeholders("tracking", Some("gym"))
-        .unwrap();
-    let names: Vec<&str> = gym.iter().map(|p| p.name.as_str()).collect();
-    assert!(
-        names.contains(&"routine"),
-        "gym variant supplies routine: {names:?}"
+        .unwrap()
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+    assert_eq!(
+        base, variant,
+        "a variant with no built-in falls back to base"
     );
-    assert!(names.contains(&"stewardship"));
+    assert!(base.contains(&"stewardship".to_owned()));
+    assert!(base.contains(&"activity_title".to_owned()));
+    assert!(
+        !base.contains(&"routine".to_owned()),
+        "generic tracking has no routine field: {base:?}"
+    );
 }
 
 #[test]
@@ -816,13 +830,19 @@ fn eject_template_writes_the_builtin_into_the_vault() {
 }
 
 #[test]
-fn eject_template_writes_a_variant_key() {
+fn eject_template_writes_the_generic_tracking_template() {
+    // Only the generic tracking template ships built-in (no variants), so the
+    // base `tracking` type ejects; a `--variant` would error (covered below).
     let (vault, store) = vault_with(&[]);
     let path = vault
-        .eject_template("tracking", Some("gym"), false)
-        .expect("eject variant");
-    assert_eq!(path.to_string(), ".cuaderno/templates/tracking-gym.md");
-    assert!(store.exists(&path).unwrap());
+        .eject_template("tracking", None, false)
+        .expect("eject tracking");
+    assert_eq!(path.to_string(), ".cuaderno/templates/tracking.md");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.contains("# {{activity_title}}"),
+        "content:\n{content}"
+    );
 }
 
 #[test]

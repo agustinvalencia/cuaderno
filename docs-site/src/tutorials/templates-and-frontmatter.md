@@ -15,12 +15,15 @@ keeps your notes consistent. This tutorial walks through both, hands-on.
 Templates live in `.cuaderno/templates/`, one Markdown file per note type (e.g. `project.md`,
 `evidence.md`). `cdno` resolves the **effective** template at creation time:
 
-1. a custom **variant** file — `<type>-<variant>.md` (only `tracking` has variants: `gym`, `body`, `swim`), then
+1. a custom **variant** file — `<type>-<variant>.md` (`tracking` uses this: the variant is the
+   activity slug, e.g. `tracking-gym.md`), then
 2. a custom **type** file — `<type>.md`, then
 3. the built-in **variant** default, then
 4. the built-in **type** default.
 
-So a custom file in `.cuaderno/templates/` always wins over the built-in.
+So a custom file in `.cuaderno/templates/` always wins over the built-in. No activity-specific
+variants ship built-in (tier 3 is empty today) — `tracking` variants are entirely yours to add;
+see [Tracking variants](#tracking-variants) below.
 
 > `cdno init` writes just one starter template — `.cuaderno/templates/daily.md`. Every other type
 > uses its built-in default until you add a file for it. The quickest way to get an editable copy of
@@ -117,10 +120,17 @@ created, but eject saves the guesswork.)
 
 ### Tracking variants
 
-`tracking` is the one type with variants. A custom `.cuaderno/templates/tracking-gym.md` overrides
-the gym template specifically, while `.cuaderno/templates/tracking.md` overrides the generic fallback
-used for every other activity. So you can give `cdno track gym` a bespoke layout without touching
-`cdno track swim`.
+`tracking` is the one type whose template is chosen per **activity**. `cdno track <activity>`
+slugifies the activity and looks for `.cuaderno/templates/tracking-<activity>.md`, falling back to
+the generic `tracking` template when there's none. So a custom `.cuaderno/templates/tracking-gym.md`
+gives `cdno track gym` a bespoke layout without touching `cdno track swim`, and
+`.cuaderno/templates/tracking.md` overrides the generic fallback for everything else.
+
+Only the neutral generic template ships built-in — **no activity-specific variants are baked into
+the product**. Ready-made `gym`, `body`, and `swim` variants (exercise table, body-metrics table,
+swim-set table) live in the repo under
+[`examples/templates/tracking/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/templates/tracking);
+copy one to `.cuaderno/templates/tracking-<activity>.md` to use it, or start your own from it.
 
 ## Template variables
 
@@ -152,7 +162,7 @@ You can use any subset, in any order, and add as much static Markdown around the
 
 > **Discover them from the CLI.** `cdno templates vars <type>` lists a type's placeholders derived
 > live from its built-in template, and folds in any `[variables]` / `[variables.prompt]` names your
-> config adds. For example `cdno templates vars tracking --variant gym`. It reads the built-in
+> config adds. For example `cdno templates vars tracking`. It reads the built-in
 > template, so it shows exactly what an ejected/custom template contains — for a couple of types
 > that's a subset of this table (e.g. it won't list `daily`'s `weekday`, which the default template
 > doesn't reference); this table remains the complete fillable set. See the

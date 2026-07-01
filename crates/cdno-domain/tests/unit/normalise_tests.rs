@@ -221,12 +221,17 @@ fn normalise_follows_a_custom_templates_field_order() {
 
 #[test]
 fn normalise_tracking_uses_the_variant_template_order() {
-    // A tracking note's order is derived from its *variant* template,
-    // keyed by `activity`: a gym note follows tracking-gym's order
-    // (which includes duration_min/routine), not the generic order.
+    // A tracking note's order is derived from its *variant* template, keyed by
+    // `activity`. Variants are vault-provided (none ship built-in), so seed a
+    // custom `tracking-gym.md` whose order includes duration_min/routine — a
+    // gym note follows it, not the generic order.
+    let gym_tmpl = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: gym\ndate: {{date}}\nduration_min: null\nroutine: {{routine}}\n---\n# Gym — {{date_long}}\n";
     let scrambled = "---\ndate: 2026-04-26\ntype: tracking\nactivity: gym\nroutine: null\nstewardship: health\nduration_min: null\n---\n# Gym\n";
     let p = "stewardships/health/tracking/2026-04-26-gym.md";
-    let (vault, store) = vault_with_notes(&[(p, scrambled)]);
+    let (vault, store) = vault_with_notes(&[
+        (".cuaderno/templates/tracking-gym.md", gym_tmpl),
+        (p, scrambled),
+    ]);
 
     let report = vault.normalise_notes(false).expect("normalise");
     assert_eq!(report.changed, vec![vp(p)]);

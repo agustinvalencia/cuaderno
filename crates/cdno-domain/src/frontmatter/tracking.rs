@@ -18,9 +18,10 @@ use chrono::NaiveDate;
 /// is the activity slug (`gym`, `body`, `swim`, or a user-defined
 /// one), and `date` is when the activity happened.
 ///
-/// `duration_min` and `routine` are activity-shape fields: only gym
-/// and swim templates carry them, body doesn't. Optional so a body
-/// note that omits them parses cleanly.
+/// `duration_min` and `routine` are optional activity-shape fields that a
+/// template may include (e.g. the example gym/swim variants) or omit (the
+/// generic default, a body-metrics variant). Optional here so a note that
+/// omits them parses cleanly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackingFrontmatter {
     pub stewardship: String,

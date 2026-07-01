@@ -6,17 +6,33 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-MCP parity for prompted template variables, and a `cdno templates` command group to discover a type's placeholders and eject its built-in for customisation.
+MCP parity for prompted template variables, a `cdno templates` command group to discover a type's placeholders and eject its built-in, and config-driven tracking variants.
+
+### Changed
+
+- **Tracking variants are config-driven** — the built-in `gym`, `body`, and `swim` tracking
+  templates no longer ship in the binary; only the neutral `generic` `tracking` template is built in.
+  An activity now uses a vault's `.cuaderno/templates/tracking-<activity>.md` when present, else the
+  generic template (the resolver is unchanged — slugify the activity, look up `tracking-<slug>`,
+  fall back to generic). Ready-made gym/body/swim variants moved to
+  [`examples/templates/tracking/`](examples/templates/tracking); copy one into a vault to use it.
+  **Behaviour change:** without a custom template, `cdno track gym` (and the `create_tracking_entry`
+  MCP tool) now produce the generic shape rather than the old exercise/metrics/set tables — add the
+  matching example template to keep the old shape. To preserve the frontmatter order too, install the
+  example template *before* running `cdno normalise` (a gym note normalised without it reorders its
+  `duration_min`/`routine` keys to the end — cosmetic, no data loss). Since no variant templates now
+  ship built-in, `cdno templates eject` no longer takes `--variant` (base note-type templates only;
+  `tracking` variants are authored in the vault, not ejected).
 
 ### Added
 
 - **`cdno templates eject <type>`** (#270) — copy a built-in template into
   `.cuaderno/templates/<type>.md` as an editable starting point, so customising a type no longer
-  means copying from the source tree or hand-reconstructing from a created note. `--variant` ejects a
-  variant template (e.g. `gym` for `tracking`, written to `<type>-<variant>.md`; the variant must have
-  its own built-in — no fallback). Refuses to overwrite an existing custom template unless `--force`.
-  The written file is byte-identical to the built-in, so behaviour is unchanged until you edit it.
-  Backed by a new `Vault::eject_template`.
+  means copying from the source tree or hand-reconstructing from a created note. Refuses to overwrite
+  an existing custom template unless `--force`. The written file is byte-identical to the built-in, so
+  behaviour is unchanged until you edit it. Backed by a new `Vault::eject_template`. (Only base
+  note-type templates ship built-in, so there's no `--variant` — `tracking` activity variants are
+  authored in the vault; see `examples/templates/tracking/`.)
 - **`cdno templates vars <type>`** (#271) — list the `{{placeholders}}` a note type's template
   supports, so you know what a custom `.cuaderno/templates/` override may reference without reading
   the source. The supplied set is **derived** from the type's built-in template — every entry is a
@@ -25,7 +41,8 @@ MCP parity for prompted template variables, and a `cdno templates` command group
   `daily` also provides `{{weekday}}` — so treat it as the built-in template's set plus config vars;
   the templates tutorial lists the complete fillable set per type.) Config `[variables]` /
   `[variables.prompt]` names are folded in and classified by source (`supplied` / `config` /
-  `prompt`). A `--variant` flag selects a variant template (e.g. `gym` for `tracking`); `--json`
+  `prompt`). A `--variant` flag selects a `<type>-<variant>` built-in when one exists (none ship
+  today, so it falls back to the base type); `--json`
   emits a `{ name, source }` array. A new public `Vault::template_placeholders` and
   `cdno_core::template::placeholder_names` back it.
 - **`vars` on the MCP create tools** (#238) — the templated create handlers now accept an optional
