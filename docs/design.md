@@ -1155,8 +1155,9 @@ get_active_questions(domain?)
 append_to_log(text)
   → appends to today's daily entry, creating it if needed
 
-file_to_portfolio(portfolio, source, content, vars?)
+file_to_portfolio(portfolio, source, origin, content?, attach?, vars?)
   → creates evidence note in the portfolio folder
+  → with attach, files a non-markdown artefact + a linked stub instead
 
 update_project_state(project, new_state)
   → reads old state, logs to daily, writes new state
@@ -1182,7 +1183,7 @@ create_commitment(title, due, context, project?, stewardship?, vars?)
 complete_commitment(commitment)
   → moves to _done/
 
-create_tracking_entry(stewardship, activity, vars?)
+create_tracking_entry(stewardship, activity, routine?, content?, vars?)
   → scaffolds tracking note, returns path for editing
 
 triage_inbox()
