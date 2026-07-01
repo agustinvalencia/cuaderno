@@ -81,11 +81,15 @@ cdno templates eject [OPTIONS] <TYPE>
 
 | Flag | Description |
 |------|-------------|
-| `--variant <VARIANT>` | Eject a `<type>-<variant>` built-in, written to `.cuaderno/templates/<type>-<variant>.md`. The variant must have its own built-in — there's no fallback to the base type. **No variant templates ship built-in today, so this currently always errors** (kept for future built-in variants). To create a `tracking` variant, copy one from `examples/templates/tracking/` instead. |
 | `--force` | Overwrite an existing custom template. Without it, an existing file is left untouched and the command errors. |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits the
 `{ path, message }` write result.
+
+Only base note-type templates eject — no `<type>-<variant>` template ships
+built-in. To create a `tracking` activity variant, copy one from
+[`examples/templates/tracking/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/templates/tracking)
+to `.cuaderno/templates/tracking-<activity>.md` instead.
 
 ### Examples
 

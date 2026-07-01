@@ -244,7 +244,9 @@ enum Commands {
         stewardship: Option<String>,
         /// Bare slug of a routine doc — wrapped into
         /// `[[stewardships/<stewardship>/routines/<routine>]]` and
-        /// substituted into the template's `routine:` field.
+        /// substituted into the template's `routine:` field. Only takes
+        /// effect on a template that has a `routine:` field; the generic
+        /// default has none, so this no-ops unless you use a variant template.
         #[arg(long)]
         routine: Option<String>,
         /// Inline body. Optional; defaults to empty so the user can

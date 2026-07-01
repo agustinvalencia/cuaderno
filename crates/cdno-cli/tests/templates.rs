@@ -101,7 +101,7 @@ fn templates_eject_materialises_the_builtin() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let path = templates::eject(dir.path(), "project", None, false).expect("eject");
+    let path = templates::eject(dir.path(), "project", false).expect("eject");
     assert_eq!(path, ".cuaderno/templates/project.md");
     let content = fs::read_to_string(dir.path().join(&path)).unwrap();
     // Byte-identical to the built-in — the guarantee the docs make (a note
@@ -121,7 +121,7 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
     let target = dir.path().join(".cuaderno/templates/project.md");
     fs::write(&target, "# mine\n").unwrap();
 
-    let err = templates::eject(dir.path(), "project", None, false).expect_err("should refuse");
+    let err = templates::eject(dir.path(), "project", false).expect_err("should refuse");
     assert!(err.to_string().contains("already exists"), "msg: {err}");
     assert_eq!(
         fs::read_to_string(&target).unwrap(),
@@ -129,7 +129,7 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
         "left untouched"
     );
 
-    templates::eject(dir.path(), "project", None, true).expect("force eject");
+    templates::eject(dir.path(), "project", true).expect("force eject");
     assert!(
         fs::read_to_string(&target)
             .unwrap()
@@ -138,16 +138,14 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
 }
 
 #[test]
-fn templates_eject_tracking_base_works_but_variants_error() {
+fn templates_eject_tracking_writes_the_generic_template() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    // The base tracking (generic) template ejects...
-    let path = templates::eject(dir.path(), "tracking", None, false).expect("base tracking");
+    // Only base note-type templates eject (no `--variant` flag): the generic
+    // tracking template is written. Activity variants are authored in the
+    // vault, not ejected.
+    let path = templates::eject(dir.path(), "tracking", false).expect("base tracking");
     assert_eq!(path, ".cuaderno/templates/tracking.md");
     assert!(dir.path().join(&path).exists());
-
-    // ...but no tracking variant ships built-in, so any --variant errors.
-    let err = templates::eject(dir.path(), "tracking", Some("gym"), false).expect_err("no builtin");
-    assert!(err.to_string().contains("variant 'gym'"), "msg: {err}");
 }

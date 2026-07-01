@@ -22,7 +22,7 @@ Templates live in `.cuaderno/templates/`, one Markdown file per note type (e.g. 
 4. the built-in **type** default.
 
 So a custom file in `.cuaderno/templates/` always wins over the built-in. No activity-specific
-variants ship built-in (tiers 3 is empty today) — `tracking` variants are entirely yours to add;
+variants ship built-in (tier 3 is empty today) — `tracking` variants are entirely yours to add;
 see [Tracking variants](#tracking-variants) below.
 
 > `cdno init` writes just one starter template — `.cuaderno/templates/daily.md`. Every other type

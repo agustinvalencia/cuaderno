@@ -2,8 +2,8 @@
 
 Cuaderno's `tracking` note type ships **one** built-in template — a neutral `generic` shape (an H1
 plus a `## Notes` section). Activity-specific variants are entirely **per-vault**: drop a file at
-`<vault>/.cuaderno/templates/tracking-<activity>.md` and any `cdno track --activity <activity>` (or
-the `create_tracking_entry` MCP tool) picks it up automatically. The resolver slugifies the activity
+`<vault>/.cuaderno/templates/tracking-<activity>.md` and any `cdno track <activity>` (or the
+`create_tracking_entry` MCP tool) picks it up automatically. The resolver slugifies the activity
 and looks up `tracking-<slug>`, falling back to `generic` when there's no match — nothing about
 specific activities is baked into the binary.
 
@@ -23,11 +23,13 @@ mkdir -p .cuaderno/templates
 cp <path-to-cuaderno>/examples/templates/tracking/gym.md .cuaderno/templates/tracking-gym.md
 ```
 
-Then `cdno track --stewardship <expanded-stewardship> --activity gym` renders the exercise table.
+Then `cdno track gym --stewardship <expanded-stewardship>` renders the exercise table.
 Edit the copied file freely — a custom template always wins over the built-in.
 
 ## Roll your own
 
 Copy `gym.md` to `tracking-<your-activity>.md`, change `activity:` and the H1, and reshape the table
-for what you track. `cdno templates vars tracking` lists the `{{placeholders}}` the create path
-supplies (`stewardship`, `activity`, `activity_title`, `date`, `date_long`, `content`, `routine`).
+for what you track. The create path supplies `stewardship`, `activity`, `activity_title`, `date`,
+`date_long`, `content`, and `routine` — reference any as `{{placeholder}}`. (`cdno templates vars
+tracking` lists the set the generic built-in references; `routine` is fillable but only shown once a
+template that uses it is the effective one.)

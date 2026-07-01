@@ -43,11 +43,6 @@ pub enum TemplatesCommands {
         /// Note type to eject (same set as `templates vars`).
         #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
         note_type: String,
-        /// Template variant. The variant must have its own built-in — there's
-        /// no fallback to the base type. (No variant templates ship today, so
-        /// this currently always errors; kept for future built-in variants.)
-        #[arg(long)]
-        variant: Option<String>,
         /// Overwrite an existing custom template.
         #[arg(long)]
         force: bool,
@@ -68,12 +63,8 @@ pub fn run(root: &Path, command: TemplatesCommands, json: bool) -> Result<()> {
             }
             Ok(())
         }
-        TemplatesCommands::Eject {
-            note_type,
-            variant,
-            force,
-        } => {
-            let path = eject(root, &note_type, variant.as_deref(), force)?;
+        TemplatesCommands::Eject { note_type, force } => {
+            let path = eject(root, &note_type, force)?;
             crate::output::emit_write_result(json, &path, &format!("Ejected template to {path}"))
         }
     }
@@ -95,10 +86,15 @@ fn validate_note_type(note_type: &str) -> Result<()> {
 
 /// Write seam: eject a built-in template, returning the written path. Its own
 /// function so tests assert on the path/side effect (house pattern).
-pub fn eject(root: &Path, note_type: &str, variant: Option<&str>, force: bool) -> Result<String> {
+///
+/// Only base note-type templates are ejectable: no `<type>-<variant>` template
+/// ships built-in, so there is nothing to eject for a variant (a `tracking`
+/// variant is authored in the vault, not ejected). The domain
+/// `eject_template` still takes a `variant`; the CLI always passes `None`.
+pub fn eject(root: &Path, note_type: &str, force: bool) -> Result<String> {
     validate_note_type(note_type)?;
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let path = vault.eject_template(note_type, variant, force)?;
+    let path = vault.eject_template(note_type, None, force)?;
     Ok(path.to_string())
 }
 
