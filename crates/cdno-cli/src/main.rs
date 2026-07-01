@@ -232,10 +232,11 @@ enum Commands {
     },
 
     /// File a tracking note under an expanded stewardship. Activity
-    /// is positional (e.g. `cdno track gym`); built-in templates for
-    /// gym/body/swim plus a generic fallback.
+    /// is positional (e.g. `cdno track gym`). Uses a vault template
+    /// `.cuaderno/templates/tracking-<activity>.md` if present, else a
+    /// generic fallback (see `examples/templates/tracking/`).
     Track {
-        /// Activity (gym, body, swim, or a user-defined slug).
+        /// Activity slug (e.g. gym, swim, reading — anything you track).
         activity: String,
         /// Stewardship slug. Defaults to the only expanded
         /// stewardship if there's exactly one; otherwise required.

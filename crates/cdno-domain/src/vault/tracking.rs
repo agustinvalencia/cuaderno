@@ -8,11 +8,12 @@
 //! variant they're working with, or use `list_stewardships()` to
 //! check).
 //!
-//! Activity-specific templates ship for `gym`, `body`, and `swim`
-//! (matching the design's worked examples); anything else falls back
-//! to the generic template. The user fleshes out the table or notes
-//! after the file is created — this op writes the scaffold and gets
-//! out of the way.
+//! Only the neutral `generic` template ships built-in; activity-specific
+//! variants are per-vault — a `.cuaderno/templates/tracking-<activity>.md`
+//! file is picked up automatically, else the activity falls back to the
+//! generic template. The user fleshes out the table or notes after the file
+//! is created — this op writes the scaffold and gets out of the way.
+//! (Ready-made gym/body/swim variants live in `examples/templates/tracking/`.)
 
 use std::collections::HashMap;
 
@@ -35,10 +36,10 @@ impl Vault {
     ///
     /// The path is
     /// `stewardships/<stewardship>/tracking/<YYYY-MM-DD>-<activity-slug>.md`.
-    /// Built-in templates for `gym`, `body`, and `swim` carry the
-    /// design's structured shape (rep table, metrics table, swim
-    /// set table); any other activity slug uses the generic template
-    /// with an empty Notes section the user fills in.
+    /// The activity slug selects the template: a vault's
+    /// `.cuaderno/templates/tracking-<slug>.md` if present, else the built-in
+    /// generic template (an empty Notes section the user fills in). No
+    /// activity-specific templates ship built-in.
     ///
     /// `content` becomes the body of the `## Notes` section. Pass
     /// `""` to leave it blank — the file is intended to be edited
@@ -47,10 +48,10 @@ impl Vault {
     /// `routine` is an optional bare wikilink target (e.g.
     /// `"upper-body-a"`) that the domain wraps into
     /// `[[stewardships/<stewardship>/routines/<routine>]]` and
-    /// substitutes for the template's `routine: null`. Only the
-    /// gym and swim templates carry a `routine:` field; passing
-    /// `Some(...)` on `body` or `generic` is allowed but silently
-    /// no-ops (the field doesn't exist in those templates).
+    /// substitutes for a template's `routine: null`. It only takes effect
+    /// when the resolved template carries a `routine:` field (e.g. the
+    /// example gym/swim variants); on a template without one — including the
+    /// generic default — passing `Some(...)` is allowed but silently no-ops.
     ///
     /// Errors:
     /// - [`DomainError::EmptyField`] — `activity` is whitespace-only.
@@ -146,10 +147,10 @@ impl Vault {
 impl Vault {
     /// Render the tracking template for `activity_slug` (custom or
     /// built-in). The engine resolves `tracking-<activity>` for the
-    /// known activities (gym/body/swim) and falls back to the generic
-    /// `tracking` template otherwise. `routine` becomes a quoted
-    /// routine wikilink when present, else `null`; only templates with a
-    /// `routine:` field (gym) consume it.
+    /// a vault-provided `tracking-<activity>` template if present and falls
+    /// back to the generic `tracking` template otherwise. `routine` becomes a
+    /// quoted routine wikilink when present, else `null`; only templates with a
+    /// `routine:` field consume it.
     #[allow(clippy::too_many_arguments)] // thin gather→render passthrough
     fn render_tracking(
         &self,

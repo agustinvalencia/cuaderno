@@ -70,15 +70,18 @@ fn templates_vars_surfaces_config_and_prompt_vars() {
 }
 
 #[test]
-fn templates_vars_resolves_a_tracking_variant() {
+fn templates_vars_tracking_has_no_builtin_variants() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
+    // No tracking variant ships built-in, so `--variant gym` falls back to the
+    // generic tracking template (no `routine`, which only a custom variant adds).
     let ph = templates::placeholders(dir.path(), "tracking", Some("gym")).expect("placeholders");
     let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"activity_title"), "generic set: {names:?}");
     assert!(
-        names.contains(&"routine"),
-        "gym variant supplies routine: {names:?}"
+        !names.contains(&"routine"),
+        "no built-in gym variant: {names:?}"
     );
 }
 
@@ -135,15 +138,16 @@ fn templates_eject_refuses_to_clobber_then_force_overwrites() {
 }
 
 #[test]
-fn templates_eject_variant_and_unknown_variant_error() {
+fn templates_eject_tracking_base_works_but_variants_error() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let path = templates::eject(dir.path(), "tracking", Some("gym"), false).expect("gym");
-    assert_eq!(path, ".cuaderno/templates/tracking-gym.md");
+    // The base tracking (generic) template ejects...
+    let path = templates::eject(dir.path(), "tracking", None, false).expect("base tracking");
+    assert_eq!(path, ".cuaderno/templates/tracking.md");
     assert!(dir.path().join(&path).exists());
 
-    let err =
-        templates::eject(dir.path(), "tracking", Some("deadlift"), false).expect_err("no builtin");
-    assert!(err.to_string().contains("variant 'deadlift'"), "msg: {err}");
+    // ...but no tracking variant ships built-in, so any --variant errors.
+    let err = templates::eject(dir.path(), "tracking", Some("gym"), false).expect_err("no builtin");
+    assert!(err.to_string().contains("variant 'gym'"), "msg: {err}");
 }

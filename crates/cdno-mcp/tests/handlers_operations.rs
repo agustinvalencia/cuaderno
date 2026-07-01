@@ -634,7 +634,8 @@ async fn create_tracking_entry_writes_under_expanded_stewardship() {
         "path: {path}"
     );
     let body = store.read_file(&vp(path)).unwrap();
-    assert!(body.contains("routine: \"[[stewardships/health/routines/upper-body-a]]\""));
+    // Generic tracking template (no variant ships built-in): `routine` has no
+    // field to land in and no-ops; the Notes body carries the content.
     assert!(body.contains("Felt strong."));
 }
 

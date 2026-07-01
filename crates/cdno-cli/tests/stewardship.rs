@@ -270,8 +270,11 @@ fn track_writes_gym_note_under_expanded_stewardship() {
             .join("stewardships/health/tracking/2026-04-06-gym.md"),
     )
     .unwrap();
+    // Uses the generic tracking template (no variant ships built-in): the
+    // title-cased H1 and the Notes body. `routine` has no field to land in on
+    // the generic template, so it silently no-ops (routine substitution on a
+    // variant template is covered in the domain tracking tests).
     assert!(raw.contains("# Gym \u{2014} 6 April 2026"));
-    assert!(raw.contains("routine: \"[[stewardships/health/routines/upper-body-a]]\""));
     assert!(raw.contains("Energy was good."));
 }
 

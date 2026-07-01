@@ -922,9 +922,9 @@ Templates can include a `{{cursor}}` placeholder to indicate where the editor cu
 
 When scaffolding a note, the tool selects the template in this order:
 
-1. **Activity-specific template** if it exists: `templates/tracking-gym.md` for `cdno track gym`, `templates/tracking-body.md` for `cdno track body`. This allows different tracking types to have different table structures.
+1. **Activity-specific template** if it exists: a vault-provided `templates/tracking-gym.md` for `cdno track gym`, `templates/tracking-body.md` for `cdno track body`. This lets different tracking activities have different table structures. These are user-authored — no activity-specific template ships built-in (ready-made gym/body/swim variants live in `examples/templates/tracking/`).
 2. **Custom type template** if it exists: `templates/evidence.md`, `templates/project.md`, etc.
-3. **Built-in default** compiled into the binary. Always available as fallback.
+3. **Built-in default** compiled into the binary — one per note type (the `tracking` default is the neutral generic template). Always available as fallback.
 
 ### No conditionals, no logic
 

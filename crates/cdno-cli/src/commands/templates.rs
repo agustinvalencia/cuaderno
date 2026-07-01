@@ -30,8 +30,8 @@ pub enum TemplatesCommands {
         /// `weekly`, or `inbox`.
         #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
         note_type: String,
-        /// Template variant (e.g. `gym` for `tracking`) — selects the
-        /// variant's built-in template when one exists.
+        /// Template variant — selects a `<type>-<variant>` built-in when
+        /// one exists (none ship today), else falls back to the base type.
         #[arg(long)]
         variant: Option<String>,
     },
@@ -43,8 +43,9 @@ pub enum TemplatesCommands {
         /// Note type to eject (same set as `templates vars`).
         #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
         note_type: String,
-        /// Template variant (e.g. `gym` for `tracking`). The variant must
-        /// have its own built-in — there's no fallback to the base type.
+        /// Template variant. The variant must have its own built-in — there's
+        /// no fallback to the base type. (No variant templates ship today, so
+        /// this currently always errors; kept for future built-in variants.)
         #[arg(long)]
         variant: Option<String>,
         /// Overwrite an existing custom template.

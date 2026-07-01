@@ -56,16 +56,18 @@ const PORTFOLIO_TEMPLATE: &str = include_str!("../../templates/portfolio.md");
 const EVIDENCE_TEMPLATE: &str = include_str!("../../templates/evidence.md");
 const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
 const TRACKING_GENERIC_TEMPLATE: &str = include_str!("../../templates/tracking/generic.md");
-const TRACKING_GYM_TEMPLATE: &str = include_str!("../../templates/tracking/gym.md");
-const TRACKING_BODY_TEMPLATE: &str = include_str!("../../templates/tracking/body.md");
-const TRACKING_SWIM_TEMPLATE: &str = include_str!("../../templates/tracking/swim.md");
 const DAILY_TEMPLATE: &str = include_str!("../../templates/daily.md");
 const WEEKLY_TEMPLATE: &str = include_str!("../../templates/weekly.md");
 const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
 
 /// Built-in default templates, keyed as the engine expects: `<type>` for
-/// the type-level default and `<type>-<variant>` for a variant default
-/// (so `tracking-gym` overrides `tracking` for the gym activity).
+/// the type-level default and `<type>-<variant>` for a variant default.
+///
+/// Only the neutral `tracking` (generic) template ships built in — no
+/// activity-specific variants. A vault supplies its own via
+/// `.cuaderno/templates/tracking-<activity>.md`, which the resolver picks up
+/// (slugify the activity → look up `tracking-<slug>` → fall back to generic).
+/// See `examples/templates/tracking/` for ready-made gym/body/swim variants.
 fn builtin_defaults() -> HashMap<String, &'static str> {
     HashMap::from([
         ("project".to_owned(), PROJECT_TEMPLATE),
@@ -76,9 +78,6 @@ fn builtin_defaults() -> HashMap<String, &'static str> {
         ("evidence".to_owned(), EVIDENCE_TEMPLATE),
         ("commitment".to_owned(), COMMITMENT_TEMPLATE),
         ("tracking".to_owned(), TRACKING_GENERIC_TEMPLATE),
-        ("tracking-gym".to_owned(), TRACKING_GYM_TEMPLATE),
-        ("tracking-body".to_owned(), TRACKING_BODY_TEMPLATE),
-        ("tracking-swim".to_owned(), TRACKING_SWIM_TEMPLATE),
         ("daily".to_owned(), DAILY_TEMPLATE),
         ("weekly".to_owned(), WEEKLY_TEMPLATE),
         ("inbox".to_owned(), INBOX_TEMPLATE),
@@ -241,8 +240,11 @@ impl Vault {
     /// custom-template loader will later pick up.
     ///
     /// Unlike scaffolding, a `variant` is *not* resolved with a fallback: it
-    /// must have its own built-in (only `tracking` has `gym`/`body`/`swim`),
-    /// otherwise there's nothing distinct to eject — `UnknownTemplateVariant`.
+    /// must have its own built-in, otherwise there's nothing distinct to eject
+    /// — `UnknownTemplateVariant`. (No variant templates ship built-in today,
+    /// so `variant` currently always errors here; the arg is kept for when a
+    /// future type ships one. Activity variants for `tracking` are authored in
+    /// the vault, not ejected — see `examples/templates/tracking/`.)
     /// Refuses to overwrite an existing custom template unless `force`
     /// (`TemplateAlreadyExists`). Returns the written path.
     pub fn eject_template(

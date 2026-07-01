@@ -42,8 +42,9 @@ or `every N months`.
 ## Tracking entries
 
 For habits and metrics on an expanded stewardship, file a tracking note. The **activity** is
-positional; there are built-in templates for `gym`, `body`, and `swim`, plus a generic fallback for
-any name you choose:
+positional and selects the template — a vault's `.cuaderno/templates/tracking-<activity>.md` if you
+have one, else a generic fallback. (Ready-made `gym`/`body`/`swim` variants live in the repo's
+`examples/templates/tracking/`; see [Customising templates](templates-and-frontmatter.md#tracking-variants).)
 
 ```bash
 cdno track gym --stewardship health --content "Upper body A; RDL up to 25kg"

@@ -1,7 +1,9 @@
 # `cdno track`
 
-File a tracking note under an **expanded** stewardship. The activity is positional; there are
-built-in templates for `gym`, `body`, and `swim`, plus a generic fallback for any name you choose.
+File a tracking note under an **expanded** stewardship. The activity is positional and selects the
+template: a vault's `.cuaderno/templates/tracking-<activity>.md` if present, else the generic
+built-in. No activity-specific templates ship built-in — ready-made `gym`/`body`/`swim` variants are
+in [`examples/templates/tracking/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/templates/tracking).
 
 ```text
 cdno track [OPTIONS] <ACTIVITY>
@@ -11,7 +13,7 @@ cdno track [OPTIONS] <ACTIVITY>
 
 | Argument | Description |
 |----------|-------------|
-| `<ACTIVITY>` | Activity name — `gym`, `body`, `swim`, or a user-defined slug. |
+| `<ACTIVITY>` | Activity slug — anything you track (e.g. `gym`, `swim`, `reading`). Selects `tracking-<activity>.md` if present, else the generic template. |
 
 ## Options
 

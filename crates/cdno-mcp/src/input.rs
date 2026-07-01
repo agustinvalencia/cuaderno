@@ -179,8 +179,8 @@ pub struct CompleteCommitmentInput {
 }
 
 /// Input for `create_tracking_entry`. `routine` is the bare slug of
-/// a routine doc (gym/swim templates only); domain wraps the
-/// wikilink.
+/// a routine doc; domain wraps the wikilink and it only takes effect on
+/// a template with a `routine:` field (not the generic default).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateTrackingEntryInput {
     pub stewardship: String,

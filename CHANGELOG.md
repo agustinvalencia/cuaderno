@@ -6,7 +6,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-MCP parity for prompted template variables, and a `cdno templates` command group to discover a type's placeholders and eject its built-in for customisation.
+MCP parity for prompted template variables, a `cdno templates` command group to discover a type's placeholders and eject its built-in, and config-driven tracking variants.
+
+### Changed
+
+- **Tracking variants are config-driven** — the built-in `gym`, `body`, and `swim` tracking
+  templates no longer ship in the binary; only the neutral `generic` `tracking` template is built in.
+  An activity now uses a vault's `.cuaderno/templates/tracking-<activity>.md` when present, else the
+  generic template (the resolver is unchanged — slugify the activity, look up `tracking-<slug>`,
+  fall back to generic). Ready-made gym/body/swim variants moved to
+  [`examples/templates/tracking/`](examples/templates/tracking); copy one into a vault to use it.
+  **Behaviour change:** without a custom template, `cdno track gym` (and the `create_tracking_entry`
+  MCP tool) now produce the generic shape rather than the old exercise/metrics/set tables — add the
+  matching example template to keep the old shape. Since no variant templates now ship built-in,
+  `cdno templates eject --variant` currently always errors (the flag is kept for forward-compat).
 
 ### Added
 

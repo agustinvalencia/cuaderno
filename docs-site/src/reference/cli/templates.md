@@ -23,7 +23,7 @@ cdno templates vars [OPTIONS] <TYPE>
 
 | Flag | Description |
 |------|-------------|
-| `--variant <VARIANT>` | Template variant (e.g. `gym` for `tracking`) — selects the variant's built-in template when one exists. |
+| `--variant <VARIANT>` | Selects a `<type>-<variant>` built-in template when one exists (none ship today), else falls back to the base type. |
 
 Plus the [global options](overview.md#global-options).
 
@@ -55,7 +55,7 @@ also carry `message`).
 
 ```bash
 cdno templates vars project
-cdno templates vars tracking --variant gym
+cdno templates vars tracking
 cdno templates vars question --json | jq -r '.[].name'
 ```
 
@@ -81,7 +81,7 @@ cdno templates eject [OPTIONS] <TYPE>
 
 | Flag | Description |
 |------|-------------|
-| `--variant <VARIANT>` | Eject a variant template (e.g. `gym` for `tracking`), written to `.cuaderno/templates/<type>-<variant>.md`. The variant must have its own built-in — there's no fallback to the base type. |
+| `--variant <VARIANT>` | Eject a `<type>-<variant>` built-in, written to `.cuaderno/templates/<type>-<variant>.md`. The variant must have its own built-in — there's no fallback to the base type. **No variant templates ship built-in today, so this currently always errors** (kept for future built-in variants). To create a `tracking` variant, copy one from `examples/templates/tracking/` instead. |
 | `--force` | Overwrite an existing custom template. Without it, an existing file is left untouched and the command errors. |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits the
@@ -91,7 +91,7 @@ Plus the [global options](overview.md#global-options). With `--json`, emits the
 
 ```bash
 cdno templates eject project              # → .cuaderno/templates/project.md
-cdno templates eject tracking --variant gym
+cdno templates eject tracking             # → the generic tracking template
 cdno templates eject project --force      # overwrite an earlier customisation
 ```
 

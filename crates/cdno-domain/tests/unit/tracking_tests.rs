@@ -46,84 +46,59 @@ fn read_body(store: &Arc<dyn VaultStore>, path: &VaultPath) -> String {
 }
 
 // ---------------------------------------------------------------------
-// activity-specific templates
+// activity templates: generic built-in + per-vault variants
 // ---------------------------------------------------------------------
 
+/// A vault-authored variant template with the shape a user might want (the
+/// `examples/templates/tracking/gym.md` starter): a `routine:` field and an
+/// exercise table. No such template ships built-in.
+const CUSTOM_GYM_TEMPLATE: &str = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: gym\ndate: {{date}}\nduration_min: null\nroutine: {{routine}}\n---\n\n# Gym \u{2014} {{date_long}}\n\n| Exercise | Sets | Reps | Weight (kg) | Notes |\n|----------|------|------|-------------|-------|\n|          |      |      |             |       |\n\n## Notes\n{{content}}\n";
+
 #[test]
-fn add_tracking_gym_uses_gym_template_with_exercise_table() {
+fn add_tracking_uses_a_vault_variant_template_when_present() {
+    // A vault supplies its own variant at
+    // `.cuaderno/templates/tracking-<activity>.md`; the create path resolves
+    // it (structured table renders) and its `routine:` field is substituted.
     let (vault, store) = empty_vault();
+    store
+        .write_file(
+            &vp(".cuaderno/templates/tracking-gym.md"),
+            CUSTOM_GYM_TEMPLATE,
+        )
+        .unwrap();
     vault
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
+
     let path = vault
         .add_tracking_entry(
             dt(2026, 4, 6, 19, 0),
             "health",
             "gym",
-            None,
+            Some("upper-body-a"),
             "Energy was good.",
         )
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-04-06-gym.md"));
     let fm = read_tracking_fm(&store, &path);
-    assert_eq!(fm.stewardship, "health");
     assert_eq!(fm.activity, "gym");
-    assert_eq!(fm.date, NaiveDate::from_ymd_opt(2026, 4, 6).unwrap());
-    // duration_min and routine present in template as null -> None on parse.
-    assert_eq!(fm.duration_min, None);
-    assert_eq!(fm.routine, None);
-
-    let body = read_body(&store, &path);
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("# Gym \u{2014} 6 April 2026"), "raw:\n{raw}");
     assert!(
-        body.contains("# Gym \u{2014} 6 April 2026"),
-        "body:\n{body}"
+        raw.contains("| Exercise | Sets | Reps | Weight (kg) | Notes |"),
+        "raw:\n{raw}"
     );
-    assert!(body.contains("| Exercise | Sets | Reps | Weight (kg) | Notes |"));
-    assert!(body.contains("Energy was good."));
+    assert!(raw.contains("Energy was good."));
+    // The template carries a `routine:` field, so the wikilink substitutes.
+    assert!(
+        raw.contains("routine: \"[[stewardships/health/routines/upper-body-a]]\""),
+        "raw:\n{raw}"
+    );
 }
 
 #[test]
-fn add_tracking_body_uses_body_template_with_metric_table() {
-    let (vault, store) = empty_vault();
-    vault
-        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
-        .unwrap();
-    let path = vault
-        .add_tracking_entry(dt(2026, 3, 30, 9, 0), "health", "body", None, "")
-        .unwrap();
-
-    assert_eq!(path, vp("stewardships/health/tracking/2026-03-30-body.md"));
-    let fm = read_tracking_fm(&store, &path);
-    assert_eq!(fm.activity, "body");
-    // body template has no duration_min / routine fields at all.
-    assert_eq!(fm.duration_min, None);
-    assert_eq!(fm.routine, None);
-
-    let body = read_body(&store, &path);
-    assert!(body.contains("# Body \u{2014} 30 March 2026"));
-    assert!(body.contains("| Weight"));
-    assert!(body.contains("| Waist"));
-}
-
-#[test]
-fn add_tracking_swim_uses_swim_template_with_set_table() {
-    let (vault, store) = empty_vault();
-    vault
-        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
-        .unwrap();
-    let path = vault
-        .add_tracking_entry(dt(2026, 4, 12, 7, 30), "health", "swim", None, "")
-        .unwrap();
-
-    let body = read_body(&store, &path);
-    assert!(body.contains("# Swim \u{2014} 12 April 2026"));
-    assert!(body.contains("| Distance (m)"));
-    assert!(body.contains("Stroke"));
-}
-
-#[test]
-fn add_tracking_unknown_activity_falls_back_to_generic_template() {
+fn add_tracking_falls_back_to_generic_without_a_variant_template() {
     let (vault, store) = empty_vault();
     vault
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
@@ -231,29 +206,6 @@ fn add_tracking_errors_on_same_day_same_activity_duplicate() {
         err,
         DomainError::Store(StoreError::AlreadyExists(_))
     ));
-}
-
-#[test]
-fn add_tracking_gym_substitutes_routine_wikilink() {
-    let (vault, store) = empty_vault();
-    vault
-        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
-        .unwrap();
-    let path = vault
-        .add_tracking_entry(
-            dt(2026, 4, 6, 19, 0),
-            "health",
-            "gym",
-            Some("upper-body-a"),
-            "",
-        )
-        .unwrap();
-
-    let raw = store.read_file(&path).unwrap();
-    assert!(
-        raw.contains("routine: \"[[stewardships/health/routines/upper-body-a]]\""),
-        "raw:\n{raw}"
-    );
 }
 
 #[test]
