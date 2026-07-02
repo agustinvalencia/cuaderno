@@ -21,7 +21,7 @@ fn generic_template_hint_fires_without_a_custom_template() {
 }
 
 #[test]
-fn generic_template_hint_suppressed_by_a_matching_variant_template() {
+fn generic_template_hint_silenced_once_any_tracking_template_exists() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).unwrap();
     fs::write(
@@ -30,13 +30,14 @@ fn generic_template_hint_suppressed_by_a_matching_variant_template() {
     )
     .unwrap();
 
+    // A user who has authored any tracking template knows the mechanism, so the
+    // nudge goes quiet — for that activity AND for others (no per-activity nag).
     assert!(track::generic_template_hint(dir.path(), "gym").is_none());
-    // A different activity with no template of its own still gets the hint.
-    assert!(track::generic_template_hint(dir.path(), "swim").is_some());
+    assert!(track::generic_template_hint(dir.path(), "swim").is_none());
 }
 
 #[test]
-fn generic_template_hint_suppressed_by_a_base_override() {
+fn generic_template_hint_silenced_by_a_base_override() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).unwrap();
     fs::write(
@@ -45,7 +46,16 @@ fn generic_template_hint_suppressed_by_a_base_override() {
     )
     .unwrap();
 
-    // A base `tracking.md` override applies to every activity, so no activity
-    // falls back to the built-in generic — no hint.
     assert!(track::generic_template_hint(dir.path(), "deadlift").is_none());
+}
+
+#[test]
+fn generic_template_hint_uses_the_slugified_activity_in_the_filename() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).unwrap();
+    // Multi-word activity → slug in the hint matches the file the resolver
+    // looks for (both use `cdno_domain::slugify`).
+    let slug = cdno_domain::slugify("Weight Training");
+    let hint = track::generic_template_hint(dir.path(), &slug).expect("hint");
+    assert!(hint.contains("tracking-weight-training.md"), "hint: {hint}");
 }
