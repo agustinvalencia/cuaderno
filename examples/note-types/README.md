@@ -23,8 +23,9 @@ without a bespoke CRM.
 Reference a person from your daily logs, meeting notes, and action notes with
 `[[people/jane-smith]]`. Then:
 
-- **Last interaction** — `cdno search "people/jane-smith" --type daily` (most recent dated mentions),
-  or read the person note's `## Log`.
+- **Last interaction** — read the top line of the person note's `## Log` (kept most-recent-first);
+  or `cdno search "people/jane-smith" --type daily --from <date>` to find mentions (relevance-ranked,
+  so read the dates rather than the order).
 - **Who asked whom** — note the direction in the prose (the template's `## Log` comment shows the
   convention); search surfaces the lines, you read the direction.
 

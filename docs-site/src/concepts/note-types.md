@@ -1,7 +1,7 @@
 # Note types
 
 Every note in a vault has a `type:` in its frontmatter. Cuaderno parses that frontmatter into a
-typed structure — if it parses, it's valid. There are **ten** note types.
+typed structure — if it parses, it's valid. There are **eleven** note types.
 
 | Type | Lives in | Mutability | Purpose |
 |------|----------|------------|---------|
@@ -69,7 +69,8 @@ A standalone promise with a hard `due:` date and a `context`. On fulfilment it m
 
 These eleven are a closed set with built-in behaviour. For an entity they don't cover (people,
 books, clients), you can declare a **schema-only** [custom note type](../reference/custom-note-types.md)
-in `config.toml` — a folder, field rules, and a template, with no recompile.
+in `config.toml` — a folder, field rules, and a template, with no recompile (see the worked
+[Tracking people](../tutorials/tracking-people.md) recipe).
 
 For the exact frontmatter fields of each type, see [Frontmatter fields](../reference/frontmatter.md).
 Next: [Vault structure](vault-structure.md).

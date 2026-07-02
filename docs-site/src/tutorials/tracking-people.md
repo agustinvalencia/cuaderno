@@ -51,14 +51,16 @@ text is full-text searchable.
 
 ## 4. Answer the questions
 
-**"What was my last interaction with Jane?"** — search her slug, newest dated notes first:
+**"What was my last interaction with Jane?"** — the reliable answer is the top line of her person
+note's `## Log`, which you keep most-recent-first. To scan across the vault, search her slug:
 
 ```bash
-cdno search "people/jane-smith" --type daily
+cdno search "people/jane-smith" --type daily --from 2026-06-01
 ```
 
-Filter with `--from` / `--to` to bound the window, or drop `--type` to include meetings and action
-notes. Read the top hit.
+Search ranks by relevance, **not date**, so bound the window with `--from` / `--to` and read the
+dates on the hits (daily notes carry their date in the filename) rather than trusting the order.
+Drop `--type` to include meetings and action notes.
 
 **"What did Jane ask me — and what did I ask her?"** — this is *direction*, which lives in your
 prose, not in structure. Write the log line so the direction is explicit ("Jane asked me…", "I asked

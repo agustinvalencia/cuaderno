@@ -76,3 +76,8 @@ From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, t
 `extra_required` fields. They are separate tables with separate purposes — a name under
 `[note_types]` may not be a built-in, and `[schemas.<custom>]` has no effect (a custom type's
 required fields come from its own `required` list).
+
+## A worked example
+
+[Tracking people](../tutorials/tracking-people.md) walks a `person` type end to end — declaring it,
+creating people, and linking them from your notes to answer "what was my last interaction with X?".
