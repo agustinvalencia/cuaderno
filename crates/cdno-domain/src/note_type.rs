@@ -121,13 +121,18 @@ impl NoteType {
     /// supplies — the authoritative "what a custom template may reference"
     /// list, in a sensible display order.
     ///
-    /// Unlike [`Self::frontmatter_order`] (frontmatter keys only) this includes
-    /// body placeholders (`title`/`heading`/`content`/`activity_title`/…) and
-    /// keys a type supplies but its *default* template happens not to reference
-    /// (e.g. `daily`'s `weekday`, `tracking`'s `routine`). It's the source of
-    /// truth for `cdno templates vars`; a drift test asserts every built-in
-    /// template only references names from this set, so a template can never
-    /// use a placeholder the create path doesn't fill.
+    /// This overlaps [`Self::frontmatter_order`] but neither contains the
+    /// other: this list drops non-placeholder frontmatter (`type`, and keys the
+    /// template hardcodes or writes from the typed struct like `status`/
+    /// `duration_min`) and adds body placeholders (`title`/`heading`/`content`/
+    /// `activity_title`/…) plus keys the *default* template happens not to
+    /// reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`).
+    ///
+    /// It is the source of truth for `cdno templates vars` and mirrors the
+    /// per-type `set_contextual` calls in each create path. A drift test asserts
+    /// every built-in template only references names from this set (so a
+    /// template can't reference a key that would render literally); the handful
+    /// of keys no built-in template uses are covered by dedicated resolve tests.
     pub fn supplied_placeholders(self) -> &'static [&'static str] {
         match self {
             NoteType::Daily => &["date", "heading", "weekday"],

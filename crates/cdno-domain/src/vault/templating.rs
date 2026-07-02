@@ -153,11 +153,13 @@ impl Vault {
     /// The "supplied" set is the type's full create-path key set
     /// ([`NoteType::supplied_placeholders`]) — every key the scaffold fills,
     /// including body placeholders and keys the *default* template happens not
-    /// to reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`). So the
-    /// list is exhaustive and never advertises a placeholder that would render
-    /// literally (a drift test pins built-in templates to this set). Variant
-    /// is irrelevant: a type's create path supplies the same keys regardless of
-    /// which template resolves.
+    /// to reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`), so the
+    /// list is exhaustive. It mirrors the create path's `set_contextual` calls,
+    /// so a custom template using any of these names renders rather than leaving
+    /// a literal `{{…}}` (a drift test guards the converse — no built-in
+    /// template references a name outside this set). Variant is irrelevant: a
+    /// type's create path supplies the same keys regardless of which template
+    /// resolves.
     ///
     /// Config-level variables available to every template are appended:
     /// `[variables]` as `Config`, `[variables.prompt]` as `Prompt`. A config

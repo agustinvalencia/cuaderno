@@ -11,7 +11,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **`cdno templates vars <type>` now reports the complete supplied set** (#279) — the `supplied`
   placeholders come from the type's full create-path key set (`NoteType::supplied_placeholders`)
   rather than being scanned from the built-in template, so it no longer under-reports keys a default
-  template happens not to reference (`daily`'s `weekday`, `tracking`'s `routine` / `activity_title`).
+  template happens not to reference (`daily`'s `weekday`, `tracking`'s `routine`).
   A drift test pins every built-in template to only reference names from that set. Because the set is
   per-type (variants supply the same keys), the now-inert `--variant` flag is dropped from `templates
   vars`. Closes the subset caveat #271 shipped with.

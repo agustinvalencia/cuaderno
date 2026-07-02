@@ -733,8 +733,9 @@ fn template_placeholders_omits_a_config_name_shadowed_by_a_supplied_key() {
 #[test]
 fn template_placeholders_tracking_lists_the_complete_supplied_set() {
     // #279: the supplied set is the type's full create-path key set, so it
-    // includes `routine` and `activity_title` even though the generic built-in
-    // template references neither.
+    // includes `routine` (which the generic built-in template doesn't
+    // reference). Exact ordered vec — also guards against the registry
+    // *over*-reporting a key the create path doesn't fill.
     let (vault, _store) = vault_with(&[]);
     let names: Vec<String> = vault
         .template_placeholders("tracking")
@@ -742,18 +743,18 @@ fn template_placeholders_tracking_lists_the_complete_supplied_set() {
         .into_iter()
         .map(|p| p.name)
         .collect();
-    for expected in [
-        "stewardship",
-        "activity",
-        "activity_title",
-        "routine",
-        "date_long",
-    ] {
-        assert!(
-            names.contains(&expected.to_owned()),
-            "tracking should supply {expected}: {names:?}"
-        );
-    }
+    assert_eq!(
+        names,
+        vec![
+            "stewardship",
+            "activity",
+            "activity_title",
+            "routine",
+            "content",
+            "date",
+            "date_long"
+        ]
+    );
 }
 
 #[test]
@@ -894,12 +895,9 @@ fn template_placeholders_reports_keys_the_default_template_omits() {
         .into_iter()
         .map(|p| p.name)
         .collect();
-    assert!(names.contains(&"date".to_owned()));
-    assert!(names.contains(&"heading".to_owned()));
-    assert!(
-        names.contains(&"weekday".to_owned()),
-        "weekday is create-path-supplied and now reported even though daily.md omits it: {names:?}"
-    );
+    // Exact vec: `weekday` is present (create-path-supplied though daily.md
+    // omits it), and no key is over-reported.
+    assert_eq!(names, vec!["date", "heading", "weekday"]);
 }
 
 #[test]
