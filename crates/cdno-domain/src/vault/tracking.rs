@@ -21,7 +21,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
 use cdno_core::path::VaultPath;
-use cdno_core::template::VariableContext;
+use cdno_core::template::{TemplateSource, VariableContext};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -80,10 +80,16 @@ impl Vault {
             content,
             &HashMap::new(),
         )
+        .map(|(path, _source)| path)
     }
 
     /// As [`add_tracking_entry`](Self::add_tracking_entry), with caller-supplied
     /// prompted-variable values (`[variables.prompt]`, #238).
+    ///
+    /// Returns the written path plus the [`TemplateSource`] the entry was
+    /// rendered from, so a caller can react to the actual resolution — the
+    /// `cdno track` newcomer hint fires only for [`TemplateSource::BuiltinDefault`]
+    /// (the generic template) rather than re-deriving that from the filesystem.
     #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
     pub fn add_tracking_entry_with_vars(
         &self,
@@ -93,7 +99,7 @@ impl Vault {
         routine: Option<&str>,
         content: &str,
         prompted: &HashMap<String, String>,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<(VaultPath, TemplateSource), DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let activity = activity.trim();
         if activity.is_empty() {
@@ -126,7 +132,7 @@ impl Vault {
             )));
         }
 
-        let body = self.render_tracking(
+        let (body, source) = self.render_tracking(
             stewardship,
             &activity_slug,
             date,
@@ -140,7 +146,7 @@ impl Vault {
         tx.upsert_note(entry);
         tx.commit()?;
 
-        Ok(path)
+        Ok((path, source))
     }
 }
 
@@ -160,7 +166,7 @@ impl Vault {
         routine: Option<&str>,
         content: &str,
         prompted: &HashMap<String, String>,
-    ) -> Result<String, DomainError> {
+    ) -> Result<(String, TemplateSource), DomainError> {
         let date_long = format!(
             "{day} {month} {year}",
             day = date.day(),
@@ -182,7 +188,7 @@ impl Vault {
         for (k, v) in prompted {
             ctx.set_prompted(k, v);
         }
-        self.scaffold("tracking", Some(activity_slug), &mut ctx)
+        self.scaffold_with_source("tracking", Some(activity_slug), &mut ctx)
     }
 }
 

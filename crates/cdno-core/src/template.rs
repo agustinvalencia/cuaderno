@@ -10,6 +10,24 @@ pub struct Template {
     pub content: String,
 }
 
+/// Which rung of [`TemplateEngine::load_template`]'s precedence a template came
+/// from. Reported alongside the loaded template so a caller can act on the
+/// *actual* resolution rather than re-deriving the precedence itself (e.g. the
+/// `cdno track` newcomer hint, which fires only for [`Self::BuiltinDefault`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemplateSource {
+    /// A custom `.cuaderno/templates/<type>-<variant>.md`.
+    CustomVariant,
+    /// A custom `.cuaderno/templates/<type>.md`.
+    CustomBase,
+    /// A built-in `<type>-<variant>` default. None ship today, but the rung
+    /// exists so a future bundled variant is reported distinctly.
+    BuiltinVariant,
+    /// The built-in plain `<type>` default — for `tracking`, the generic
+    /// template used when no variant-specific one resolves.
+    BuiltinDefault,
+}
+
 /// The output of rendering a template.
 #[derive(Debug, Clone)]
 pub struct RenderedNote {
@@ -147,17 +165,17 @@ impl TemplateEngine {
         &self,
         note_type: &str,
         variant: Option<&str>,
-    ) -> Result<Template, TemplateError> {
+    ) -> Result<(Template, TemplateSource), TemplateError> {
         // 1. Custom variant-specific template (e.g. `tracking-gym.md`)
         if let Some(variant) = variant
             && let Some(content) = (self.loader)(&format!("{note_type}-{variant}.md"))?
         {
-            return Ok(Template { content });
+            return Ok((Template { content }, TemplateSource::CustomVariant));
         }
 
         // 2. Custom type-level template (e.g. `project.md`)
         if let Some(content) = (self.loader)(&format!("{note_type}.md"))? {
-            return Ok(Template { content });
+            return Ok((Template { content }, TemplateSource::CustomBase));
         }
 
         // 3. Fall back to built-in default
@@ -166,19 +184,35 @@ impl TemplateEngine {
             None => note_type.to_string(),
         };
 
-        // Try variant-specific default first, then plain type default
+        // Try variant-specific default first, then plain type default. `key` is
+        // `{type}-{variant}` only when a variant was asked for — so a hit here
+        // with `variant.is_some()` is a genuine built-in variant, while a hit
+        // with no variant is the plain type default.
         if let Some(content) = self.defaults.get(&key) {
-            return Ok(Template {
-                content: (*content).to_string(),
-            });
+            let source = if variant.is_some() {
+                TemplateSource::BuiltinVariant
+            } else {
+                TemplateSource::BuiltinDefault
+            };
+            return Ok((
+                Template {
+                    content: (*content).to_string(),
+                },
+                source,
+            ));
         }
 
+        // A variant was requested but has no built-in — fall back to the plain
+        // type default (for `tracking`, the generic template).
         if variant.is_some()
             && let Some(content) = self.defaults.get(note_type)
         {
-            return Ok(Template {
-                content: (*content).to_string(),
-            });
+            return Ok((
+                Template {
+                    content: (*content).to_string(),
+                },
+                TemplateSource::BuiltinDefault,
+            ));
         }
 
         Err(TemplateError::NotFound {

@@ -337,7 +337,7 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let vars = input.vars.unwrap_or_default();
-        let path = self
+        let (path, _source) = self
             .vault
             .add_tracking_entry_with_vars(
                 at,

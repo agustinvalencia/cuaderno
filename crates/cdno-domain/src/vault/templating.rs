@@ -19,7 +19,7 @@ use std::sync::Arc;
 use cdno_core::error::TemplateError;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
-use cdno_core::template::{CustomTemplateLoader, TemplateEngine, VariableContext};
+use cdno_core::template::{CustomTemplateLoader, TemplateEngine, TemplateSource, VariableContext};
 
 use super::Vault;
 use crate::error::DomainError;
@@ -110,9 +110,24 @@ impl Vault {
         variant: Option<&str>,
         ctx: &mut VariableContext,
     ) -> Result<String, DomainError> {
+        self.scaffold_with_source(note_type, variant, ctx)
+            .map(|(content, _source)| content)
+    }
+
+    /// As [`scaffold`](Self::scaffold), but also reports which
+    /// [`TemplateSource`] rung the effective template came from. Only paths
+    /// that surface the resolution to the user (the `cdno track` hint) need
+    /// this; `scaffold` is the discard-the-source wrapper the other create
+    /// paths call.
+    pub(in crate::vault) fn scaffold_with_source(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+        ctx: &mut VariableContext,
+    ) -> Result<(String, TemplateSource), DomainError> {
         let engine = self.template_engine();
         ctx.load_from_config(self.config());
-        let template = engine.load_template(note_type, variant)?;
+        let (template, source) = engine.load_template(note_type, variant)?;
         let rendered = engine.render(&template, ctx, &self.config().variables.prompt);
         if !rendered.unresolved_prompts.is_empty() {
             return Err(DomainError::UnresolvedPrompts {
@@ -124,7 +139,7 @@ impl Vault {
                     .collect(),
             });
         }
-        Ok(rendered.content)
+        Ok((rendered.content, source))
     }
 
     /// The prompt-defined variables (`[variables.prompt]`) a note's effective
@@ -139,7 +154,7 @@ impl Vault {
         variant: Option<&str>,
     ) -> Result<Vec<(String, String)>, DomainError> {
         let engine = self.template_engine();
-        let template = engine.load_template(note_type, variant)?;
+        let (template, _source) = engine.load_template(note_type, variant)?;
         let mut ctx = VariableContext::new();
         ctx.load_from_config(self.config());
         let rendered = engine.render(&template, &ctx, &self.config().variables.prompt);
@@ -283,6 +298,7 @@ impl Vault {
         Ok(self
             .template_engine()
             .load_template(note_type, variant)?
+            .0
             .content)
     }
 

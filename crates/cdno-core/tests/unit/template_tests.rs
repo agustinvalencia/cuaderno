@@ -1,5 +1,7 @@
 use cdno_core::config::VaultConfig;
-use cdno_core::template::{Template, TemplateEngine, VariableContext, placeholder_names};
+use cdno_core::template::{
+    Template, TemplateEngine, TemplateSource, VariableContext, placeholder_names,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -33,15 +35,17 @@ fn write_custom_template(vault_root: &Path, filename: &str, content: &str) {
 #[test]
 fn load_builtin_default_template() {
     let engine = engine_with_defaults(None);
-    let template = engine.load_template("project", None).unwrap();
+    let (template, source) = engine.load_template("project", None).unwrap();
     assert!(template.content.contains("type: project"));
+    assert_eq!(source, TemplateSource::BuiltinDefault);
 }
 
 #[test]
 fn load_builtin_variant_template() {
     let engine = engine_with_defaults(None);
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("routine: {{routine}}"));
+    assert_eq!(source, TemplateSource::BuiltinVariant);
 }
 
 #[test]
@@ -71,8 +75,9 @@ fn custom_template_overrides_builtin() {
     );
 
     let engine = engine_with_defaults(Some(dir.path()));
-    let template = engine.load_template("project", None).unwrap();
+    let (template, source) = engine.load_template("project", None).unwrap();
     assert!(template.content.contains("custom: true"));
+    assert_eq!(source, TemplateSource::CustomBase);
 }
 
 #[test]
@@ -85,8 +90,9 @@ fn custom_variant_template_overrides_builtin() {
     );
 
     let engine = engine_with_defaults(Some(dir.path()));
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("custom_gym: true"));
+    assert_eq!(source, TemplateSource::CustomVariant);
 }
 
 #[test]
@@ -101,8 +107,37 @@ fn custom_type_template_used_when_variant_custom_missing() {
 
     let engine = engine_with_defaults(Some(dir.path()));
     // Asking for variant "gym": no custom variant → falls to custom base type
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("generic_custom: true"));
+    assert_eq!(source, TemplateSource::CustomBase);
+}
+
+#[test]
+fn variant_request_falls_back_to_plain_builtin_default() {
+    // The second built-in fallback rung: a variant was requested, no
+    // `tracking-<variant>` default exists, so it falls to the plain `tracking`
+    // default and must report `BuiltinDefault` (the generic) — NOT
+    // `BuiltinVariant`. Production ships only the plain `tracking` generic, so
+    // this is the rung every real `cdno track` of a fresh activity hits. The
+    // shared `engine_with_defaults` helper is inverted (a `tracking-gym`, no
+    // plain `tracking`), so pin this rung with a bespoke engine carrying both.
+    let mut defaults = HashMap::new();
+    defaults.insert(
+        "tracking-gym".to_string(),
+        "---\ntype: tracking\nroutine: {{routine}}\n---\n# Gym\n",
+    );
+    defaults.insert(
+        "tracking".to_string(),
+        "---\ntype: tracking\n---\n# {{activity_title}}\n",
+    );
+    let engine = TemplateEngine::new(None, defaults);
+
+    // A bundled variant resolves to itself.
+    let (_t, source) = engine.load_template("tracking", Some("gym")).unwrap();
+    assert_eq!(source, TemplateSource::BuiltinVariant);
+    // An activity with no bundled variant falls back to the plain generic.
+    let (_t, source) = engine.load_template("tracking", Some("body")).unwrap();
+    assert_eq!(source, TemplateSource::BuiltinDefault);
 }
 
 // --- Variable resolution ---

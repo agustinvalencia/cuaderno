@@ -16,7 +16,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 
-use cdno_domain::{StewardshipVariant, Vault};
+use cdno_domain::{StewardshipVariant, TemplateSource, Vault};
 
 use crate::bootstrap;
 use crate::prompt;
@@ -82,7 +82,7 @@ pub fn run(
         return Ok(());
     }
 
-    let path = vault
+    let (path, source) = vault
         .add_tracking_entry_with_vars(
             at,
             &stewardship,
@@ -97,25 +97,31 @@ pub fn run(
     // Point-of-use nudge (#282): a one-time-ish discovery hint for the
     // ready-made structured templates. Suppressed under `--json`, and printed
     // to stderr so it never pollutes a human-mode capture of the result line.
-    if !json && let Some(hint) = generic_template_hint(root, &activity_variant) {
+    //
+    // Gated on the domain's actual resolution (#287): the note used the generic
+    // built-in iff `source` is `BuiltinDefault`. This replaces re-deriving that
+    // from the vault filesystem — airtight if a `tracking-<variant>` default is
+    // ever bundled (it'd report `BuiltinVariant`, so no false nudge).
+    if !json
+        && source == TemplateSource::BuiltinDefault
+        && let Some(hint) = newcomer_template_hint(root, &activity_variant)
+    {
         eprintln!("{hint}");
     }
     Ok(())
 }
 
-/// The discovery hint to show after a `cdno track` that used the built-in
-/// **generic** template. Returns `None` once the vault has *any* tracking
-/// template — a user who has authored one already knows the mechanism, so the
-/// nudge would just be noise on this high-frequency command; it's only for the
-/// newcomer who has never customised tracking.
+/// The newcomer discovery hint for the ready-made structured templates, shown
+/// after a `cdno track` that rendered the built-in generic (the caller gates on
+/// [`TemplateSource::BuiltinDefault`], so *that* decision is the domain's, not
+/// this function's — #287).
 ///
-/// When no tracking template exists, the create path necessarily resolved the
-/// generic built-in (there is no `tracking-<variant>` built-in — only the plain
-/// `tracking` generic ships; see `builtin_defaults`), so the hint is accurate.
-/// It checks the vault filesystem rather than asking the domain which template
-/// resolved; that's correct while no built-in variant ships (a follow-up would
-/// have the domain report the resolved-template source to make it airtight).
-pub fn generic_template_hint(root: &Path, activity_slug: &str) -> Option<String> {
+/// Returns `None` once the vault has *any* tracking template — a user who has
+/// authored one already knows the mechanism, so the nudge would just be noise on
+/// this high-frequency command; it's only for the newcomer who has never
+/// customised tracking. This is a UX gate ("has the user ever customised
+/// tracking"), distinct from the per-entry resolution the caller already has.
+pub fn newcomer_template_hint(root: &Path, activity_slug: &str) -> Option<String> {
     if vault_has_a_tracking_template(&root.join(cdno_core::paths::TEMPLATES_DIR)) {
         return None;
     }
