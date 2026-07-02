@@ -934,3 +934,156 @@ fn built_in_templates_only_reference_supplied_placeholders() {
         }
     }
 }
+
+#[test]
+fn every_supplied_placeholder_is_filled_by_the_create_path() {
+    // #285 — the complement of the drift guard: create a note of every type
+    // from a custom template that references *every* `supplied_placeholders()`
+    // key, and assert nothing renders as a literal `{{...}}`. This proves the
+    // registry never over-advertises — every key it lists is genuinely
+    // `set_contextual`'d by the create path (a future registry key with no
+    // matching `set_contextual` would survive as a literal and fail here).
+    use cdno_domain::WeeklySection;
+    use cdno_domain::frontmatter::{EnergyLevel, QuestionDomain};
+    use cdno_domain::note_type::NoteType;
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+    // A custom template = the built-in with an HTML comment inserted right after
+    // the frontmatter that references every supplied key. The comment sits
+    // before the H1/sections, so it never disturbs the section-append logic
+    // (daily `## Logs`, weekly `## Wins`); its `{{key}}`s still substitute.
+    let custom = |nt: NoteType, file: &str| -> String {
+        let builtin = std::fs::read_to_string(format!("{dir}/{file}"))
+            .unwrap_or_else(|e| panic!("read template {file}: {e}"));
+        let keys = nt
+            .supplied_placeholders()
+            .iter()
+            .map(|k| format!("{{{{{k}}}}}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (front, body) = builtin
+            .split_once("\n---\n")
+            .expect("template has a frontmatter block");
+        format!("{front}\n---\n<!-- every supplied key: {keys} -->\n{body}")
+    };
+
+    let (vault, store) = vault_with(&[
+        (
+            ".cuaderno/templates/project.md",
+            &custom(NoteType::Project, "project.md"),
+        ),
+        (
+            ".cuaderno/templates/action.md",
+            &custom(NoteType::Action, "action.md"),
+        ),
+        (
+            ".cuaderno/templates/question.md",
+            &custom(NoteType::Question, "question.md"),
+        ),
+        (
+            ".cuaderno/templates/portfolio.md",
+            &custom(NoteType::Portfolio, "portfolio.md"),
+        ),
+        (
+            ".cuaderno/templates/evidence.md",
+            &custom(NoteType::Evidence, "evidence.md"),
+        ),
+        (
+            ".cuaderno/templates/stewardship.md",
+            &custom(NoteType::Stewardship, "stewardship.md"),
+        ),
+        (
+            ".cuaderno/templates/tracking-gym.md",
+            &custom(NoteType::Tracking, "tracking/generic.md"),
+        ),
+        (
+            ".cuaderno/templates/commitment.md",
+            &custom(NoteType::Commitment, "commitment.md"),
+        ),
+        (
+            ".cuaderno/templates/daily.md",
+            &custom(NoteType::Daily, "daily.md"),
+        ),
+        (
+            ".cuaderno/templates/weekly.md",
+            &custom(NoteType::Weekly, "weekly.md"),
+        ),
+        (
+            ".cuaderno/templates/inbox.md",
+            &custom(NoteType::Inbox, "inbox.md"),
+        ),
+    ]);
+
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+    let mut paths = Vec::new();
+    // project first — prerequisite for action/commitment; stewardship + portfolio
+    // for tracking/evidence.
+    paths.push(
+        vault
+            .create_project(today(), "Proj", Context::Work, Some("questions/q"))
+            .expect("project"),
+    );
+    paths.push(
+        vault
+            .add_action_with_note(at, "proj", "Do the thing", EnergyLevel::Deep)
+            .expect("action"),
+    );
+    paths.push(
+        vault
+            .create_question(at, QuestionDomain::Research, "Does it hold?")
+            .expect("question"),
+    );
+    paths.push(
+        vault
+            .create_portfolio(at, "Sparse vs dense", None)
+            .expect("portfolio"),
+    );
+    paths.push(
+        vault
+            .file_evidence(at, "sparse-vs-dense", "Chen 2025", "projects/proj", "Body.")
+            .expect("evidence"),
+    );
+    paths.push(
+        vault
+            .create_stewardship_expanded(at, "Health", Context::Personal)
+            .expect("stewardship"),
+    );
+    paths.push(
+        vault
+            .add_tracking_entry(
+                today().and_hms_opt(19, 0, 0).unwrap(),
+                "health",
+                "gym",
+                Some("upper-body-a"),
+                "Session.",
+            )
+            .expect("tracking"),
+    );
+    paths.push(
+        vault
+            .create_commitment(
+                at,
+                "Promise",
+                today(),
+                Context::Work,
+                Some("proj"),
+                Some("health"),
+            )
+            .expect("commitment"),
+    );
+    paths.push(vault.log_to_daily_note(at, "entry").expect("daily"));
+    paths.push(
+        vault
+            .upsert_weekly_section(today(), WeeklySection::Wins, "shipped", false)
+            .expect("weekly"),
+    );
+    paths.push(vault.capture_to_inbox(at, "thought").expect("inbox"));
+
+    for path in paths {
+        let content = store.read_file(&path).unwrap();
+        assert!(
+            !content.contains("{{") && !content.contains("}}"),
+            "unsubstituted placeholder in {path} — a supplied key isn't filled by the create path:\n{content}"
+        );
+    }
+}
