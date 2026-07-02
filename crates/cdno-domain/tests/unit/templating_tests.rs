@@ -934,3 +934,140 @@ fn built_in_templates_only_reference_supplied_placeholders() {
         }
     }
 }
+
+#[test]
+fn every_supplied_placeholder_is_filled_by_the_create_path() {
+    // #285 — the complement of the drift guard: create a note of every type
+    // from a custom template that references *every* `supplied_placeholders()`
+    // key, and assert nothing renders as a literal `{{...}}`. This proves the
+    // registry never over-advertises — every key it lists is genuinely
+    // `set_contextual`'d by the create path (a future registry key with no
+    // matching `set_contextual` would survive as a literal and fail here).
+    use cdno_domain::WeeklySection;
+    use cdno_domain::frontmatter::{EnergyLevel, QuestionDomain};
+    use cdno_domain::note_type::NoteType;
+
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+    // A custom template = the built-in with an HTML comment inserted right after
+    // the frontmatter that references every supplied key. The comment sits
+    // before the H1/sections, so it never disturbs the section-append logic
+    // (daily `## Logs`, weekly `## Wins`); its `{{key}}`s still substitute.
+    let custom = |nt: NoteType, file: &str| -> String {
+        let builtin = std::fs::read_to_string(format!("{dir}/{file}"))
+            .unwrap_or_else(|e| panic!("read template {file}: {e}"));
+        let keys = nt
+            .supplied_placeholders()
+            .iter()
+            .map(|k| format!("{{{{{k}}}}}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let (front, body) = builtin
+            .split_once("\n---\n")
+            .expect("template has a frontmatter block");
+        format!("{front}\n---\n<!-- every supplied key: {keys} -->\n{body}")
+    };
+
+    // (seed filename under `.cuaderno/templates/`, built-in source file). An
+    // exhaustive match so adding a note type is a compile error here — the
+    // guard can't silently skip a new type. `tracking` seeds its `gym` variant
+    // because the create call below tracks activity "gym"; every other type
+    // seeds its base `<key>.md`.
+    let seed_spec = |nt: NoteType| -> (String, &'static str) {
+        match nt {
+            NoteType::Project => ("project.md".into(), "project.md"),
+            NoteType::Action => ("action.md".into(), "action.md"),
+            NoteType::Question => ("question.md".into(), "question.md"),
+            NoteType::Portfolio => ("portfolio.md".into(), "portfolio.md"),
+            NoteType::Evidence => ("evidence.md".into(), "evidence.md"),
+            NoteType::Stewardship => ("stewardship.md".into(), "stewardship.md"),
+            NoteType::Tracking => ("tracking-gym.md".into(), "tracking/generic.md"),
+            NoteType::Commitment => ("commitment.md".into(), "commitment.md"),
+            NoteType::Daily => ("daily.md".into(), "daily.md"),
+            NoteType::Weekly => ("weekly.md".into(), "weekly.md"),
+            NoteType::Inbox => ("inbox.md".into(), "inbox.md"),
+        }
+    };
+    let customs: Vec<(String, String)> = NoteType::ALL
+        .iter()
+        .map(|&nt| {
+            let (seed, src) = seed_spec(nt);
+            (format!(".cuaderno/templates/{seed}"), custom(nt, src))
+        })
+        .collect();
+    let custom_refs: Vec<(&str, &str)> = customs
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    // `vault_with` seeds an empty config: no `[variables]`, so a supplied key
+    // can never be masked by a static config var of the same name filling the
+    // placeholder in its stead — the only paths that resolve a key here are the
+    // create paths' `set_contextual` calls, which is exactly what we're guarding.
+    let (vault, store) = vault_with(&custom_refs);
+
+    let at = today().and_hms_opt(9, 0, 0).unwrap();
+    // Created in dependency order (a `vec!` evaluates left-to-right): project
+    // before action/commitment; expanded stewardship before tracking; portfolio
+    // before evidence. Each `.expect` reaches the real create path — a missing
+    // prerequisite panics loudly rather than silently skipping a type.
+    let paths = vec![
+        vault
+            .create_project(today(), "Proj", Context::Work, Some("questions/q"))
+            .expect("project"),
+        vault
+            .add_action_with_note(at, "proj", "Do the thing", EnergyLevel::Deep)
+            .expect("action"),
+        vault
+            .create_question(at, QuestionDomain::Research, "Does it hold?")
+            .expect("question"),
+        vault
+            .create_portfolio(at, "Sparse vs dense", None)
+            .expect("portfolio"),
+        vault
+            .file_evidence(at, "sparse-vs-dense", "Chen 2025", "projects/proj", "Body.")
+            .expect("evidence"),
+        vault
+            .create_stewardship_expanded(at, "Health", Context::Personal)
+            .expect("stewardship"),
+        vault
+            .add_tracking_entry(
+                today().and_hms_opt(19, 0, 0).unwrap(),
+                "health",
+                "gym",
+                Some("upper-body-a"),
+                "Session.",
+            )
+            .expect("tracking"),
+        vault
+            .create_commitment(
+                at,
+                "Promise",
+                today(),
+                Context::Work,
+                Some("proj"),
+                Some("health"),
+            )
+            .expect("commitment"),
+        vault.log_to_daily_note(at, "entry").expect("daily"),
+        vault
+            .upsert_weekly_section(today(), WeeklySection::Wins, "shipped", false)
+            .expect("weekly"),
+        vault.capture_to_inbox(at, "thought").expect("inbox"),
+    ];
+
+    // Pair the exhaustive seed match: every type must also be created and
+    // asserted. If a new type is added and seeded but its create call is
+    // forgotten, this trips instead of the type going silently unguarded.
+    assert_eq!(
+        paths.len(),
+        NoteType::ALL.len(),
+        "every note type must be created and asserted — add the new type's create call above"
+    );
+
+    for path in paths {
+        let content = store.read_file(&path).unwrap();
+        assert!(
+            !content.contains("{{") && !content.contains("}}"),
+            "unsubstituted placeholder in {path} — a supplied key isn't filled by the create path:\n{content}"
+        );
+    }
+}
