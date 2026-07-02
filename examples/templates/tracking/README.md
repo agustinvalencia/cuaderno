@@ -31,5 +31,5 @@ Edit the copied file freely — a custom template always wins over the built-in.
 Copy `gym.md` to `tracking-<your-activity>.md`, change `activity:` and the H1, and reshape the table
 for what you track. The create path supplies `stewardship`, `activity`, `activity_title`, `date`,
 `date_long`, `content`, and `routine` — reference any as `{{placeholder}}`. (`cdno templates vars
-tracking` lists the set the generic built-in references; `routine` is fillable but only shown once a
-template that uses it is the effective one.)
+tracking` lists this complete set — including `routine` — since it comes from the create path, not
+from whichever template is effective.)
