@@ -116,6 +116,68 @@ impl NoteType {
             NoteType::Inbox => &["type", "created"],
         }
     }
+
+    /// The complete set of `{{placeholders}}` this note type's create path
+    /// supplies — the authoritative "what a custom template may reference"
+    /// list, in a sensible display order.
+    ///
+    /// This overlaps [`Self::frontmatter_order`] but neither contains the
+    /// other: this list drops non-placeholder frontmatter (`type`, and keys the
+    /// template hardcodes or writes from the typed struct like `status`/
+    /// `duration_min`) and adds body placeholders (`title`/`heading`/`content`/
+    /// `activity_title`/…) plus keys the *default* template happens not to
+    /// reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`).
+    ///
+    /// It is the source of truth for `cdno templates vars` and mirrors the
+    /// per-type `set_contextual` calls in each create path. A drift test asserts
+    /// every built-in template only references names from this set (so a
+    /// template can't reference a key that would render literally); the handful
+    /// of keys no built-in template uses are covered by dedicated resolve tests.
+    pub fn supplied_placeholders(self) -> &'static [&'static str] {
+        match self {
+            NoteType::Daily => &["date", "heading", "weekday"],
+            NoteType::Weekly => &["week", "week_num", "year", "date_start", "date_end"],
+            NoteType::Project => &["title", "context", "status", "created", "core_question"],
+            NoteType::Action => &[
+                "title",
+                "slug",
+                "project",
+                "energy",
+                "status",
+                "created",
+                "due",
+                "completed",
+                "milestone",
+                "criteria",
+                "blocker",
+                "tags",
+            ],
+            NoteType::Portfolio => &["question", "project", "created"],
+            NoteType::Evidence => &["source", "origin", "portfolio", "content", "created"],
+            NoteType::Stewardship => &["name", "context"],
+            NoteType::Tracking => &[
+                "stewardship",
+                "activity",
+                "activity_title",
+                "routine",
+                "content",
+                "date",
+                "date_long",
+            ],
+            NoteType::Question => &["question", "domain", "created", "updated"],
+            NoteType::Commitment => &[
+                "title",
+                "context",
+                "status",
+                "due",
+                "project",
+                "stewardship",
+                "created",
+                "completed",
+            ],
+            NoteType::Inbox => &["body", "created"],
+        }
+    }
 }
 
 impl fmt::Display for NoteType {

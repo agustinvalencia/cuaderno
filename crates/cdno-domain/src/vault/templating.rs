@@ -13,6 +13,7 @@
 //! here so there's one map from note type → default content.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use cdno_core::error::TemplateError;
@@ -145,23 +146,20 @@ impl Vault {
         Ok(rendered.unresolved_prompts)
     }
 
-    /// The `{{placeholders}}` a note type's template supports (#271) — for
-    /// discovery when writing a custom template, so the supported set isn't
-    /// buried in source or docs.
+    /// The complete set of `{{placeholders}}` a note type supports (#271,
+    /// #279) — for discovery when writing a custom template, so the supported
+    /// set isn't buried in source or docs.
     ///
-    /// The "supplied" set is the placeholders the **built-in** template for
-    /// `(note_type, variant)` references (the built-in, not any custom
-    /// override, because the create path supplies the same keys regardless of
-    /// how the template is customised). Every one is genuinely filled by the
-    /// create path, so the list never advertises a placeholder that would
-    /// render literally. It is *not* guaranteed exhaustive, though: a few
-    /// types' create paths set an extra contextual key their default template
-    /// doesn't reference (e.g. `daily` also provides `weekday`; `tracking`
-    /// provides `routine` / `activity_title`), and those aren't derivable
-    /// from the template text. For the complete fillable set see the
-    /// "Customising templates" tutorial. Deriving from the template keeps the
-    /// common case in lock-step with the scaffold and needs no hand-maintained
-    /// registry.
+    /// The "supplied" set is the type's full create-path key set
+    /// ([`NoteType::supplied_placeholders`]) — every key the scaffold fills,
+    /// including body placeholders and keys the *default* template happens not
+    /// to reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`), so the
+    /// list is exhaustive. It mirrors the create path's `set_contextual` calls,
+    /// so a custom template using any of these names renders rather than leaving
+    /// a literal `{{…}}` (a drift test guards the converse — no built-in
+    /// template references a name outside this set). Variant is irrelevant: a
+    /// type's create path supplies the same keys regardless of which template
+    /// resolves.
     ///
     /// Config-level variables available to every template are appended:
     /// `[variables]` as `Config`, `[variables.prompt]` as `Prompt`. A config
@@ -172,23 +170,17 @@ impl Vault {
     pub fn template_placeholders(
         &self,
         note_type: &str,
-        variant: Option<&str>,
     ) -> Result<Vec<TemplatePlaceholder>, DomainError> {
-        let builtins = builtin_defaults();
-        let variant_key = variant.map(|v| format!("{note_type}-{v}"));
-        let content = variant_key
-            .as_ref()
-            .and_then(|k| builtins.get(k))
-            .or_else(|| builtins.get(note_type))
-            .ok_or_else(|| DomainError::UnknownNoteType {
+        let supplied = crate::note_type::NoteType::from_str(note_type)
+            .map_err(|_| DomainError::UnknownNoteType {
                 note_type: note_type.to_owned(),
-            })?;
+            })?
+            .supplied_placeholders();
 
-        let supplied = cdno_core::template::placeholder_names(content);
         let mut out: Vec<TemplatePlaceholder> = supplied
             .iter()
             .map(|name| TemplatePlaceholder {
-                name: name.clone(),
+                name: (*name).to_owned(),
                 source: PlaceholderSource::Supplied,
             })
             .collect();
@@ -200,7 +192,7 @@ impl Vault {
         let mut static_names: Vec<&String> = variables
             .static_vars
             .keys()
-            .filter(|name| !supplied.contains(name))
+            .filter(|name| !supplied.contains(&name.as_str()))
             .collect();
         static_names.sort();
         for name in static_names {
@@ -217,7 +209,7 @@ impl Vault {
             .prompt
             .iter()
             .filter(|(name, _)| {
-                !supplied.contains(*name) && !variables.static_vars.contains_key(*name)
+                !supplied.contains(&name.as_str()) && !variables.static_vars.contains_key(*name)
             })
             .collect();
         prompt_names.sort_by(|a, b| a.0.cmp(b.0));

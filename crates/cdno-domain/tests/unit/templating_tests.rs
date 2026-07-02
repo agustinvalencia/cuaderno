@@ -656,22 +656,22 @@ fn names_with_source(
 
 #[test]
 fn template_placeholders_lists_the_project_supplied_set() {
-    // Derived from the built-in project template — exactly the contextual
-    // keys the create path fills, all classified `Supplied`.
+    // The type's complete create-path key set (#279), in registry order, all
+    // classified `Supplied`.
     let (vault, _store) = vault_with(&[]);
-    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let placeholders = vault.template_placeholders("project").unwrap();
 
     let supplied = names_with_source(&placeholders, &PlaceholderSource::Supplied);
     assert_eq!(
         supplied,
         vec![
+            "title".to_owned(),
             "context".to_owned(),
             "status".to_owned(),
             "created".to_owned(),
-            "core_question".to_owned(),
-            "title".to_owned()
+            "core_question".to_owned()
         ],
-        "project supplies exactly its built-in template's placeholders"
+        "project supplies its complete create-path key set"
     );
     // A default vault has no config vars, so nothing else is listed.
     assert_eq!(placeholders.len(), supplied.len());
@@ -688,7 +688,7 @@ fn template_placeholders_classifies_config_and_prompt_vars() {
         .insert("ticket".to_owned(), "Ticket ID?".to_owned());
     let (vault, _store) = vault_with_config(&[], config);
 
-    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let placeholders = vault.template_placeholders("project").unwrap();
     assert_eq!(
         names_with_source(&placeholders, &PlaceholderSource::Config),
         vec!["author".to_owned()]
@@ -719,7 +719,7 @@ fn template_placeholders_omits_a_config_name_shadowed_by_a_supplied_key() {
         .insert("context".to_owned(), "won't fire".to_owned());
     let (vault, _store) = vault_with_config(&[], config);
 
-    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let placeholders = vault.template_placeholders("project").unwrap();
     // `title` and `context` appear once each, and as Supplied.
     assert_eq!(placeholders.iter().filter(|p| p.name == "title").count(), 1);
     assert!(
@@ -731,32 +731,29 @@ fn template_placeholders_omits_a_config_name_shadowed_by_a_supplied_key() {
 }
 
 #[test]
-fn template_placeholders_tracking_uses_the_generic_builtin() {
-    // No tracking variant ships built-in, so a `--variant` arg falls back to
-    // the generic `tracking` template — the placeholder set is the generic
-    // one either way (no `routine`, which only a custom variant would add).
+fn template_placeholders_tracking_lists_the_complete_supplied_set() {
+    // #279: the supplied set is the type's full create-path key set, so it
+    // includes `routine` (which the generic built-in template doesn't
+    // reference). Exact ordered vec — also guards against the registry
+    // *over*-reporting a key the create path doesn't fill.
     let (vault, _store) = vault_with(&[]);
-    let base: Vec<String> = vault
-        .template_placeholders("tracking", None)
-        .unwrap()
-        .into_iter()
-        .map(|p| p.name)
-        .collect();
-    let variant: Vec<String> = vault
-        .template_placeholders("tracking", Some("gym"))
+    let names: Vec<String> = vault
+        .template_placeholders("tracking")
         .unwrap()
         .into_iter()
         .map(|p| p.name)
         .collect();
     assert_eq!(
-        base, variant,
-        "a variant with no built-in falls back to base"
-    );
-    assert!(base.contains(&"stewardship".to_owned()));
-    assert!(base.contains(&"activity_title".to_owned()));
-    assert!(
-        !base.contains(&"routine".to_owned()),
-        "generic tracking has no routine field: {base:?}"
+        names,
+        vec![
+            "stewardship",
+            "activity",
+            "activity_title",
+            "routine",
+            "content",
+            "date",
+            "date_long"
+        ]
     );
 }
 
@@ -764,27 +761,10 @@ fn template_placeholders_tracking_uses_the_generic_builtin() {
 fn template_placeholders_errors_on_unknown_type() {
     use cdno_domain::error::DomainError;
     let (vault, _store) = vault_with(&[]);
-    match vault.template_placeholders("bogus", None) {
+    match vault.template_placeholders("bogus") {
         Err(DomainError::UnknownNoteType { note_type }) => assert_eq!(note_type, "bogus"),
         other => panic!("expected UnknownNoteType, got {other:?}"),
     }
-}
-
-#[test]
-fn template_placeholders_unknown_variant_falls_back_to_the_base_type() {
-    // A variant with no built-in template (e.g. `tracking --variant deadlift`)
-    // resolves the base type's template — mirroring `scaffold`/`load_template`
-    // — rather than erroring. This is correct: such an activity really does
-    // scaffold from the generic tracking template.
-    let (vault, _store) = vault_with(&[]);
-    let base = vault.template_placeholders("tracking", None).unwrap();
-    let unknown = vault
-        .template_placeholders("tracking", Some("deadlift"))
-        .unwrap();
-    assert_eq!(
-        base, unknown,
-        "an unknown variant falls back to the base set"
-    );
 }
 
 #[test]
@@ -799,7 +779,7 @@ fn template_placeholders_classifies_a_name_in_both_config_sources_as_config() {
         .insert("author".to_owned(), "Author?".to_owned());
     let (vault, _store) = vault_with_config(&[], config);
 
-    let placeholders = vault.template_placeholders("project", None).unwrap();
+    let placeholders = vault.template_placeholders("project").unwrap();
     let author = placeholders
         .iter()
         .find(|p| p.name == "author")
@@ -904,22 +884,53 @@ fn eject_template_unknown_variant_errors_without_falling_back() {
 }
 
 #[test]
-fn template_placeholders_reflects_the_built_in_template_not_every_fillable_key() {
-    // Documented limitation: the supplied set is what the built-in template
-    // *references*. `daily`'s create path also sets `weekday`, but the
-    // default `daily.md` doesn't use it, so it isn't reported here. Pin this
-    // so the (intentional) subset behaviour can't regress silently.
+fn template_placeholders_reports_keys_the_default_template_omits() {
+    // #279: the supplied set is the complete create-path key set, not just what
+    // the built-in template references. `daily`'s create path sets `weekday`
+    // even though the default `daily.md` doesn't use it — it's still reported.
     let (vault, _store) = vault_with(&[]);
     let names: Vec<String> = vault
-        .template_placeholders("daily", None)
+        .template_placeholders("daily")
         .unwrap()
         .into_iter()
         .map(|p| p.name)
         .collect();
-    assert!(names.contains(&"date".to_owned()));
-    assert!(names.contains(&"heading".to_owned()));
-    assert!(
-        !names.contains(&"weekday".to_owned()),
-        "known subset: weekday is supplied by the create path but not referenced by the built-in daily template"
-    );
+    // Exact vec: `weekday` is present (create-path-supplied though daily.md
+    // omits it), and no key is over-reported.
+    assert_eq!(names, vec!["date", "heading", "weekday"]);
+}
+
+#[test]
+fn built_in_templates_only_reference_supplied_placeholders() {
+    // Drift guard (#279): every `{{placeholder}}` a built-in template uses must
+    // be in that type's supplied set, so `supplied_placeholders` can never fall
+    // behind the templates and a template can never reference a key the create
+    // path doesn't fill (which would render literally). Reads the template
+    // files the same way the frontmatter-order sync test does.
+    use cdno_domain::note_type::NoteType;
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
+    let cases = [
+        (NoteType::Project, "project.md"),
+        (NoteType::Action, "action.md"),
+        (NoteType::Question, "question.md"),
+        (NoteType::Stewardship, "stewardship.md"),
+        (NoteType::Portfolio, "portfolio.md"),
+        (NoteType::Evidence, "evidence.md"),
+        (NoteType::Commitment, "commitment.md"),
+        (NoteType::Tracking, "tracking/generic.md"),
+        (NoteType::Daily, "daily.md"),
+        (NoteType::Weekly, "weekly.md"),
+        (NoteType::Inbox, "inbox.md"),
+    ];
+    for (nt, file) in cases {
+        let raw = std::fs::read_to_string(format!("{dir}/{file}"))
+            .unwrap_or_else(|e| panic!("read template {file}: {e}"));
+        let supplied = nt.supplied_placeholders();
+        for name in cdno_core::template::placeholder_names(&raw) {
+            assert!(
+                supplied.contains(&name.as_str()),
+                "template {file} references {{{{{name}}}}} which is not in {nt:?}'s supplied set {supplied:?}"
+            );
+        }
+    }
 }

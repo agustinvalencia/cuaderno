@@ -19,13 +19,7 @@ cdno templates vars [OPTIONS] <TYPE>
 |----------|-------------|
 | `<TYPE>` | Note type: `project`, `action`, `question`, `portfolio`, `evidence`, `stewardship`, `tracking`, `commitment`, `daily`, `weekly`, or `inbox`. |
 
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--variant <VARIANT>` | Selects a `<type>-<variant>` built-in template when one exists (none ship today), else falls back to the base type. |
-
-Plus the [global options](overview.md#global-options).
+Takes only the [global options](overview.md#global-options).
 
 ### Sources
 
@@ -33,20 +27,12 @@ Each placeholder is classified by where its value comes from:
 
 | Source | Meaning |
 |--------|---------|
-| `supplied` | Filled automatically by the note type's create command. Derived from the type's built-in template, so every entry is a real key the scaffold provides. |
+| `supplied` | Filled automatically by the note type's create command. This is the type's **complete** create-path key set — including body placeholders and keys the default template happens not to reference (e.g. `daily`'s `weekday`, `tracking`'s `routine`) — so it matches the per-type table in [Customising templates and frontmatter](../../tutorials/templates-and-frontmatter.md) exactly. |
 | `config` | A static `[variables]` entry in `.cuaderno/config.toml`, available to any template. |
 | `prompt` | A `[variables.prompt]` entry — a value must be provided at creation (via `--var name=value`, the MCP `vars` parameter, or interactively). The prompt message is shown. |
 
 A config or prompt name that collides with a `supplied` key is omitted: the
 supplied value shadows it, so it would never take effect.
-
-> **Scope.** The `supplied` list is what the built-in template *references* — so
-> it never advertises a placeholder that would render literally, but it isn't
-> exhaustive: a few types' create paths set an extra key their default template
-> doesn't use (e.g. `daily` also provides `{{weekday}}`, `tracking` provides
-> `{{routine}}` / `{{activity_title}}`). The per-type table in
-> [Customising templates and frontmatter](../../tutorials/templates-and-frontmatter.md)
-> is the complete fillable set.
 
 With `--json`, emits an array of `{ name, source }` objects (`prompt` entries
 also carry `message`).

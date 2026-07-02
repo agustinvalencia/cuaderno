@@ -17,12 +17,12 @@ fn templates_vars_lists_the_project_supplied_placeholders() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let ph = templates::placeholders(dir.path(), "project").expect("placeholders");
     let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
     // The acceptance set for `project` (#271).
     assert_eq!(
         names,
-        ["context", "status", "created", "core_question", "title"]
+        ["title", "context", "status", "created", "core_question"]
     );
 
     let table = templates::render_table(&ph);
@@ -35,10 +35,10 @@ fn templates_vars_json_rows_are_a_stable_array() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let ph = templates::placeholders(dir.path(), "project").expect("placeholders");
     let rows = templates::json_rows(&ph);
     assert_eq!(rows.len(), 5, "project supplies five placeholders");
-    assert_eq!(rows[0]["name"], "context");
+    assert_eq!(rows[0]["name"], "title");
     assert_eq!(rows[0]["source"], "supplied");
     // `message` is only present on prompt rows.
     assert!(rows[0].get("message").is_none());
@@ -54,7 +54,7 @@ fn templates_vars_surfaces_config_and_prompt_vars() {
     body.push_str("\n[variables]\nauthor = \"A. Researcher\"\n\n[variables.prompt]\nticket = \"Ticket ID?\"\n");
     fs::write(&cfg, body).unwrap();
 
-    let ph = templates::placeholders(dir.path(), "project", None).expect("placeholders");
+    let ph = templates::placeholders(dir.path(), "project").expect("placeholders");
     let rows = templates::json_rows(&ph);
     let author = rows
         .iter()
@@ -70,19 +70,17 @@ fn templates_vars_surfaces_config_and_prompt_vars() {
 }
 
 #[test]
-fn templates_vars_tracking_has_no_builtin_variants() {
+fn templates_vars_tracking_lists_the_complete_supplied_set() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    // No tracking variant ships built-in, so `--variant gym` falls back to the
-    // generic tracking template (no `routine`, which only a custom variant adds).
-    let ph = templates::placeholders(dir.path(), "tracking", Some("gym")).expect("placeholders");
+    // The supplied set is the type's full create-path key set (#279), so it
+    // includes `routine` and `activity_title` even though the generic built-in
+    // template doesn't reference them.
+    let ph = templates::placeholders(dir.path(), "tracking").expect("placeholders");
     let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
-    assert!(names.contains(&"activity_title"), "generic set: {names:?}");
-    assert!(
-        !names.contains(&"routine"),
-        "no built-in gym variant: {names:?}"
-    );
+    assert!(names.contains(&"activity_title"), "supplied set: {names:?}");
+    assert!(names.contains(&"routine"), "supplied set: {names:?}");
 }
 
 #[test]
@@ -90,7 +88,7 @@ fn templates_vars_rejects_an_unknown_type() {
     let dir = tempdir().unwrap();
     seed(dir.path());
 
-    let err = templates::placeholders(dir.path(), "bogus", None).expect_err("should error");
+    let err = templates::placeholders(dir.path(), "bogus").expect_err("should error");
     let msg = err.to_string();
     assert!(msg.contains("unknown note type"), "msg: {msg}");
     assert!(msg.contains("project"), "should list valid types: {msg}");
