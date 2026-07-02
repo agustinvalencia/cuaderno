@@ -4,7 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.2.1] - 2026-07-02
+
+`cdno templates` polish: `vars` now reports the complete supplied set, `eject --all` ejects every built-in at once, and `cdno track` nudges newcomers toward the example templates.
 
 ### Added
 
