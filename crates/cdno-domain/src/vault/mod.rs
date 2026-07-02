@@ -100,6 +100,9 @@ impl Vault {
         // reconciliation. A malformed pattern surfaces here, at vault
         // open, rather than silently skipping the rule.
         let ignore = config.ignore_set()?;
+        // Validate `[note_types.*]` at vault-open so a malformed or built-in-
+        // shadowing custom type fails fast, not mid-operation.
+        crate::type_registry::TypeRegistry::validate(&config)?;
         let report = reconcile(&store, &index, &ignore)?;
         Ok((
             Self {
@@ -113,6 +116,13 @@ impl Vault {
 
     pub fn config(&self) -> &VaultConfig {
         &self.config
+    }
+
+    /// A registry view over this vault's built-in and config-defined note
+    /// types. Cheap to build (borrows the config); the config was validated at
+    /// [`Vault::new`], so callers can treat every resolved descriptor as sound.
+    pub fn type_registry(&self) -> crate::type_registry::TypeRegistry<'_> {
+        crate::type_registry::TypeRegistry::new(&self.config)
     }
 
     /// Start an uncommitted transaction bound to this vault's store

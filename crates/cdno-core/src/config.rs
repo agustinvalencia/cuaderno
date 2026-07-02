@@ -12,6 +12,14 @@ pub struct VaultConfig {
     pub vault: VaultMeta,
     #[serde(default)]
     pub schemas: HashMap<String, SchemaExtension>,
+    /// User-defined note types, declared under `[note_types.<name>]`. Each
+    /// adds a *schema-only* type: a folder, field rules, a template, and
+    /// generic linting/normalisation — but no bespoke behaviour (caps,
+    /// lifecycle, aggregation), which stays exclusive to the built-in
+    /// `NoteType`s. Distinct from `[schemas.*]`, which *extends* a built-in
+    /// type's required fields rather than *defining* a new type.
+    #[serde(default)]
+    pub note_types: HashMap<String, CustomNoteType>,
     #[serde(default)]
     pub variables: Variables,
     /// Glob patterns for files to exclude from the index (and therefore
@@ -60,6 +68,50 @@ impl Default for VaultMeta {
 pub struct SchemaExtension {
     #[serde(default)]
     pub extra_required: Vec<String>,
+}
+
+/// A user-defined note type, declared under `[note_types.<name>]`.
+///
+/// Schema-only by design: the reconciler already stores `type` as an opaque
+/// string, so a custom type indexes, searches, and accrues backlinks like any
+/// note. What this declares is the *rules* — folder, field requirements, a
+/// template, ordering — that lint and normalise enforce. It carries no
+/// behaviour: caps, lifecycle, and cross-type aggregation remain exclusive to
+/// the built-in types (they go through typed frontmatter structs a config type
+/// never satisfies).
+///
+/// This struct holds only what `cdno-core` can validate *structurally* (no
+/// knowledge of the built-in type names lives here); the reserved-name check
+/// against the built-in `NoteType` set is `cdno-domain`'s job.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomNoteType {
+    /// Vault-relative folder its notes live in, e.g. `"people"`.
+    pub folder: String,
+    /// Frontmatter fields that must be present and non-null — lint errors on a
+    /// note of this type that omits one.
+    #[serde(default)]
+    pub required: Vec<String>,
+    /// Frontmatter fields that may be present; included in the canonical
+    /// frontmatter order after the required ones.
+    #[serde(default)]
+    pub optional: Vec<String>,
+    /// Template filename under `.cuaderno/templates/`. Defaults to `<name>.md`
+    /// when omitted (resolved at create time, not here).
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Whether notes of this type are append-only. Accepted and exposed now;
+    /// lint enforcement is deferred (no archival-snapshot machinery exists
+    /// outside actions yet).
+    #[serde(default)]
+    pub append_only: bool,
+    /// Frontmatter field to draw the note's display title from. When omitted,
+    /// the title comes from the body's first `# H1` (matching built-in notes).
+    #[serde(default)]
+    pub title_field: Option<String>,
+    /// Frontmatter field carrying the note's date, used by date-filtered
+    /// search. When omitted, the type has no logical date.
+    #[serde(default)]
+    pub date_field: Option<String>,
 }
 
 /// The `[variables]` and `[variables.prompt]` sections.
@@ -111,6 +163,50 @@ impl VaultConfig {
             .get(note_type)
             .map(|s| s.extra_required.as_slice())
             .unwrap_or_default()
+    }
+
+    /// The user-defined note type named `name`, if declared under
+    /// `[note_types.<name>]`.
+    pub fn custom_type(&self, name: &str) -> Option<&CustomNoteType> {
+        self.note_types.get(name)
+    }
+
+    /// Structural validation of the `[note_types.*]` table — the checks that
+    /// need no knowledge of the built-in type set (that lives in `cdno-domain`,
+    /// which layers the reserved-name check on top of this). Surfaced at
+    /// vault-open so a malformed declaration fails fast rather than silently
+    /// mis-shaping notes. Rejects: an empty `folder`, a `folder` that escapes
+    /// the vault (absolute or containing `..`), two custom types sharing a
+    /// `folder`, and a `template` filename that contains a path separator.
+    pub fn validate_note_types(&self) -> Result<(), ConfigError> {
+        let mut folders: HashMap<&str, &str> = HashMap::new();
+        for (name, def) in &self.note_types {
+            let folder = def.folder.trim();
+            if folder.is_empty() {
+                return Err(ConfigError::InvalidNoteType(format!(
+                    "note type `{name}` has an empty `folder`"
+                )));
+            }
+            if folder.starts_with('/') || folder.split('/').any(|seg| seg == "..") {
+                return Err(ConfigError::InvalidNoteType(format!(
+                    "note type `{name}` has a `folder` that escapes the vault: `{folder}`"
+                )));
+            }
+            if let Some(prev) = folders.insert(folder, name) {
+                return Err(ConfigError::InvalidNoteType(format!(
+                    "note types `{prev}` and `{name}` both declare folder `{folder}`"
+                )));
+            }
+            if let Some(template) = &def.template
+                && (template.contains('/') || template.contains('\\'))
+            {
+                return Err(ConfigError::InvalidNoteType(format!(
+                    "note type `{name}` template `{template}` must be a bare filename \
+                     under .cuaderno/templates/, not a path"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Resolve a variable by name. Checks static variables only.

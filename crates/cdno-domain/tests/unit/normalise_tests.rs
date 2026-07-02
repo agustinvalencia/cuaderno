@@ -310,3 +310,62 @@ fn normalise_memoises_order_per_variant_not_per_type() {
         "swim note must follow tracking-swim's order"
     );
 }
+
+// --- Config-defined custom note types ---
+
+fn vault_with_config(notes: &[(&str, &str)], config: VaultConfig) -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in notes {
+        store.write_file(&vp(path), body).unwrap();
+    }
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    (vault, store)
+}
+
+fn config_with_person() -> VaultConfig {
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec!["name".to_owned()],
+            optional: vec!["role".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+}
+
+#[test]
+fn normalise_reorders_a_custom_type_to_its_declared_order() {
+    // A custom type's canonical order is `type`, then required, then optional
+    // (from config) — no template file needed. Unknown keys keep their tail.
+    let scrambled = "---\nrole: advisor\nname: Ada\nextra: keepme\ntype: person\n---\n# Ada\n";
+    let (vault, store) = vault_with_config(&[("people/ada.md", scrambled)], config_with_person());
+
+    let report = vault.normalise_notes(false).expect("normalise");
+    assert_eq!(report.changed, vec![vp("people/ada.md")]);
+
+    let out = store.read_file(&vp("people/ada.md")).unwrap();
+    assert_eq!(
+        frontmatter_keys(&out),
+        vec!["type", "name", "role", "extra"]
+    );
+}
+
+#[test]
+fn normalise_skips_an_unregistered_type() {
+    // A type that is neither built-in nor a registered custom type is counted
+    // as skipped (lint reports it), not reordered.
+    let body = "---\nname: Ada\ntype: persn\n---\n# Ada\n";
+    let (vault, _store) = vault_with_config(&[("people/ada.md", body)], config_with_person());
+
+    let report = vault.normalise_notes(false).expect("normalise");
+    assert_eq!(report.skipped, 1);
+    assert!(report.changed.is_empty());
+}

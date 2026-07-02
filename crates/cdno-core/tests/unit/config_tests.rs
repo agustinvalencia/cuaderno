@@ -108,3 +108,127 @@ fn extra_required_fields_returns_empty_for_unknown_type() {
     let config = VaultConfig::default();
     assert!(config.extra_required_fields("project").is_empty());
 }
+
+#[test]
+fn absent_note_types_table_is_empty_and_valid() {
+    // Back-compat: a vault with no `[note_types]` deserialises to an empty map
+    // and passes structural validation, so nothing changes for existing vaults.
+    let config = VaultConfig::default();
+    assert!(config.note_types.is_empty());
+    assert!(config.custom_type("person").is_none());
+    assert!(config.validate_note_types().is_ok());
+}
+
+#[test]
+fn parses_a_custom_note_type() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[note_types.person]
+folder = "people"
+required = ["name"]
+optional = ["role", "org"]
+template = "person.md"
+append_only = false
+title_field = "name"
+date_field = "created"
+"#,
+    );
+
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let person = config.custom_type("person").expect("person type");
+    assert_eq!(person.folder, "people");
+    assert_eq!(person.required, vec!["name"]);
+    assert_eq!(person.optional, vec!["role", "org"]);
+    assert_eq!(person.template.as_deref(), Some("person.md"));
+    assert!(!person.append_only);
+    assert_eq!(person.title_field.as_deref(), Some("name"));
+    assert_eq!(person.date_field.as_deref(), Some("created"));
+    assert!(config.validate_note_types().is_ok());
+}
+
+#[test]
+fn custom_note_type_defaults_are_lenient() {
+    // Only `folder` is required; everything else defaults.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[note_types.book]
+folder = "library"
+"#,
+    );
+
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let book = config.custom_type("book").expect("book type");
+    assert_eq!(book.folder, "library");
+    assert!(book.required.is_empty());
+    assert!(book.optional.is_empty());
+    assert!(book.template.is_none());
+    assert!(!book.append_only);
+    assert!(book.title_field.is_none());
+    assert!(book.date_field.is_none());
+}
+
+#[test]
+fn validate_rejects_empty_folder() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[note_types.person]
+folder = ""
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_rejects_vault_escaping_folder() {
+    for folder in ["/etc", "../escape", "a/../../b"] {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            &format!("[note_types.person]\nfolder = \"{folder}\"\n"),
+        );
+        let config = VaultConfig::load(dir.path()).unwrap();
+        assert!(
+            config.validate_note_types().is_err(),
+            "folder `{folder}` should be rejected"
+        );
+    }
+}
+
+#[test]
+fn validate_rejects_two_types_sharing_a_folder() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[note_types.person]
+folder = "people"
+
+[note_types.contact]
+folder = "people"
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_rejects_template_with_path_separator() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[note_types.person]
+folder = "people"
+template = "sub/person.md"
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}

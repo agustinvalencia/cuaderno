@@ -95,6 +95,11 @@ pub enum DomainError {
     #[error("unknown note type '{note_type}'")]
     UnknownNoteType { note_type: String },
 
+    #[error(
+        "custom note type '{name}' shadows a built-in type — pick a different name in [note_types]"
+    )]
+    ReservedTypeName { name: String },
+
     #[error("no built-in template for variant '{variant}' of '{note_type}'")]
     UnknownTemplateVariant { note_type: String, variant: String },
 

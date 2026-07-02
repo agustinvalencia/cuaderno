@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cdno_core::config::{SchemaExtension, VaultConfig};
+use cdno_core::config::{CustomNoteType, SchemaExtension, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -8,6 +8,25 @@ use cdno_domain::Vault;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
+}
+
+/// A config registering a `person` custom type (folder `people`, required
+/// `name`, optional `role`) for the custom-type lint tests.
+fn config_with_person() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec!["name".to_owned()],
+            optional: vec!["role".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
 }
 
 /// Build a vault containing the given `(path, body)` notes. Reconciliation
@@ -782,4 +801,71 @@ fn lint_order_flags_agree_with_normalise_check() {
         "lint's order flags must match normalise --check"
     );
     assert_eq!(lint_flagged, vec![vp("journal/2026/daily/2026-04-19.md")]);
+}
+
+// --- Config-defined custom note types (schema-only) ---
+
+#[test]
+fn lint_accepts_a_valid_custom_type_note() {
+    // A registered custom type with all declared required fields present
+    // lints clean — no "unknown note type", no missing-field error.
+    let body = "---\ntype: person\nname: Ada\nrole: advisor\n---\n# Ada\n";
+    let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_flags_a_custom_type_missing_a_required_field() {
+    // `name` is declared required for `person`; omitting it is an error.
+    let body = "---\ntype: person\nrole: advisor\n---\n# Someone\n";
+    let vault = vault_with_notes(&[("people/x.md", body)], config_with_person());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("missing required field `name`")),
+        "expected a missing-required-field error, got: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_still_flags_an_unregistered_type_as_unknown() {
+    // The typo-guard survives: a type that is neither built-in nor a registered
+    // custom type is still a hard error (here `persn` while `person` is
+    // registered), so a stray `type:` typo can't silently mint a type.
+    let body = "---\ntype: persn\nname: Ada\n---\n# Ada\n";
+    let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("unknown note type: `persn`")),
+        "expected unknown-type error, got: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_flags_custom_type_frontmatter_out_of_order() {
+    // Custom types get the same frontmatter-order warning as built-ins,
+    // against the config-declared order (`type`, `name`, `role`).
+    let body = "---\nrole: advisor\nname: Ada\ntype: person\n---\n# Ada\n";
+    let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "expected a frontmatter-order warning, got: {:?}",
+        report.issues
+    );
 }

@@ -8,11 +8,13 @@ pub mod frontmatter;
 pub mod lint;
 pub mod note_type;
 pub mod recurrence;
+pub mod type_registry;
 pub mod vault;
 
 pub use cdno_core::template::TemplateSource;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
+pub use type_registry::{NoteTypeDescriptor, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
