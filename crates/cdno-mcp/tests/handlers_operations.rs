@@ -20,11 +20,11 @@ use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AddMilestoneInput, AddPeriodicCommitmentInput,
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
-    CompleteMilestoneInput, CreateCommitmentInput, CreatePortfolioInput, CreateProjectInput,
-    CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput, DiscardInboxItemInput,
-    FileToPortfolioInput, LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput,
-    ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput, ReadWeeklyNoteInput,
-    ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
+    CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
+    CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
+    DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
+    LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
+    ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
     UpsertDailySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -1465,4 +1465,84 @@ async fn discard_inbox_item_removes_the_capture() {
         !store.exists(&vp("inbox/2026-04-26-ephemeral.md")).unwrap(),
         "the inbox note is deleted"
     );
+}
+
+// ---------------------------------------------------------------------
+// create_custom_note (config-defined custom types)
+// ---------------------------------------------------------------------
+
+fn config_with_person() -> VaultConfig {
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec!["name".to_owned()],
+            optional: vec!["role".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+}
+
+#[tokio::test]
+async fn create_custom_note_creates_a_custom_type_note() {
+    let (server, store) = server_with_config(config_with_person(), |_v, _s| {});
+    let result = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "person".to_owned(),
+            title: "Ada Lovelace".to_owned(),
+            fields: std::collections::HashMap::from([
+                ("name".to_owned(), "Ada".to_owned()),
+                ("role".to_owned(), "advisor".to_owned()),
+            ]),
+            vars: None,
+        }))
+        .await
+        .expect("create_custom_note");
+
+    let payload = decode_json(&result);
+    assert!(
+        payload["path"]
+            .as_str()
+            .unwrap()
+            .contains("people/ada-lovelace.md"),
+        "payload: {payload}"
+    );
+    let content = store.read_file(&vp("people/ada-lovelace.md")).unwrap();
+    assert!(content.contains("type: person"), "{content}");
+    assert!(content.contains("name: Ada"), "{content}");
+}
+
+#[tokio::test]
+async fn create_custom_note_rejects_an_unknown_type() {
+    let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
+    let result = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "gadget".to_owned(),
+            title: "Widget".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars: None,
+        }))
+        .await;
+    // A domain error maps to an MCP error (Err), not an error-result payload.
+    assert!(result.is_err(), "unknown type should error");
+}
+
+#[tokio::test]
+async fn create_custom_note_rejects_a_missing_required_field() {
+    let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
+    let result = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "person".to_owned(),
+            title: "Nameless".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars: None,
+        }))
+        .await;
+    assert!(result.is_err(), "missing required field should error");
 }

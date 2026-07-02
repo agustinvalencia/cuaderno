@@ -7,6 +7,7 @@ pub mod init;
 pub mod lint;
 pub mod log;
 pub mod normalise;
+pub mod note;
 pub mod orient;
 pub mod portfolio;
 pub mod project;

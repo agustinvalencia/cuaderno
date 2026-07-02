@@ -42,6 +42,15 @@ impl<'a> NoteTypeDescriptor<'a> {
         matches!(self, NoteTypeDescriptor::Custom { .. })
     }
 
+    /// The underlying [`CustomNoteType`] if this is a config type, else `None`
+    /// (built-in types have bespoke create paths, not a config declaration).
+    pub fn as_custom(&self) -> Option<&'a CustomNoteType> {
+        match self {
+            NoteTypeDescriptor::Custom { def, .. } => Some(def),
+            NoteTypeDescriptor::Builtin(_) => None,
+        }
+    }
+
     /// The vault-relative folder a custom type's notes live in. `None` for
     /// built-in types (whose folder placement is bespoke per create path).
     pub fn folder(&self) -> Option<&'a str> {

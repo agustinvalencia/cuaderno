@@ -128,6 +128,25 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — every `required` field must be present, and each key must be a declared `required`/`optional` field. The valid types and their fields come from the vault's config, not this schema."
+    )]
+    pub async fn create_custom_note(
+        &self,
+        Parameters(input): Parameters<CreateCustomNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let vars = input.vars.unwrap_or_default();
+        let path = self
+            .vault
+            .create_custom_note_with_vars(at, &input.type_name, &input.title, &input.fields, &vars)
+            .map_err(into_mcp_error)?;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Created {} note at {}", input.type_name, path),
+        ))
+    }
+
+    #[tool(
         description = "Create a stewardship. With `expanded: true` it's a folder stewardship (`stewardships/<slug>/_index.md` with a lazy `tracking/`); otherwise a flat file. `context` is a kebab-case Context."
     )]
     pub async fn create_stewardship(

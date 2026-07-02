@@ -100,6 +100,20 @@ pub enum DomainError {
     )]
     ReservedTypeName { name: String },
 
+    #[error(
+        "'{note_type}' is a built-in note type — create it with its own command \
+         (e.g. `cdno {note_type} create`); `note`/`create_note` is for config-defined custom types"
+    )]
+    BuiltinTypeNotCustom { note_type: String },
+
+    #[error("note type '{note_type}' requires field '{field}'")]
+    MissingRequiredField { note_type: String, field: String },
+
+    #[error(
+        "note type '{note_type}' has no field '{field}' — declare it under [note_types.{note_type}]"
+    )]
+    UnknownField { note_type: String, field: String },
+
     #[error("no built-in template for variant '{variant}' of '{note_type}'")]
     UnknownTemplateVariant { note_type: String, variant: String },
 
