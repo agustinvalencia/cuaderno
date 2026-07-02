@@ -11,7 +11,6 @@ use rmcp::{tool, tool_router};
 use cdno_core::path::VaultPath;
 use cdno_domain::SearchFilters;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
-use cdno_domain::note_type::NoteType;
 
 use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
@@ -344,14 +343,20 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<SearchNotesInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let note_types = match input.note_type.as_deref() {
-            Some(t) => vec![
-                NoteType::from_str(t).map_err(|e| invalid_argument("note_type", &e.to_string()))?,
-            ],
-            None => Vec::new(),
-        };
+        // Any built-in or config-defined custom type name. Validate against the
+        // registry so a typo is a clear INVALID_PARAMS rather than a silent
+        // empty result (an LLM client has no tab-completion to catch it).
+        if let Some(t) = input.note_type.as_deref()
+            && !self.vault.type_registry().is_known(t)
+        {
+            return Err(invalid_argument(
+                "note_type",
+                &format!("unknown note type '{t}'"),
+            ));
+        }
+        let note_type_names = input.note_type.into_iter().collect();
         let filters = SearchFilters {
-            note_types,
+            note_type_names,
             date_from: input.from,
             date_to: input.to,
             portfolio: input.portfolio,

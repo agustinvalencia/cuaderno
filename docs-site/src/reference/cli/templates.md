@@ -17,7 +17,7 @@ cdno templates vars [OPTIONS] <TYPE>
 
 | Argument | Description |
 |----------|-------------|
-| `<TYPE>` | Note type: `project`, `action`, `question`, `portfolio`, `evidence`, `stewardship`, `tracking`, `commitment`, `daily`, `weekly`, or `inbox`. |
+| `<TYPE>` | Note type: `project`, `action`, `question`, `portfolio`, `evidence`, `stewardship`, `tracking`, `commitment`, `daily`, `weekly`, `inbox`, or a [config-defined custom type](../custom-note-types.md). |
 
 Takes only the [global options](overview.md#global-options).
 
@@ -61,7 +61,7 @@ cdno templates eject [OPTIONS] <TYPE>
 
 | Argument | Description |
 |----------|-------------|
-| `<TYPE>` | Note type to eject (same set as `templates vars`). Omit when using `--all`. |
+| `<TYPE>` | Built-in note type to eject. Omit when using `--all`. A [config-defined custom type](../custom-note-types.md) has no built-in template to eject (author `.cuaderno/templates/<type>.md` by hand), so it is refused here — unlike `templates vars`, which does accept custom types. |
 
 ### Options
 

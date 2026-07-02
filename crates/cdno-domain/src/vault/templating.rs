@@ -13,7 +13,6 @@
 //! here so there's one map from note type → default content.
 
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use cdno_core::error::TemplateError;
@@ -188,8 +187,13 @@ impl Vault {
         &self,
         note_type: &str,
     ) -> Result<Vec<TemplatePlaceholder>, DomainError> {
-        let supplied = crate::note_type::NoteType::from_str(note_type)
-            .map_err(|_| DomainError::UnknownNoteType {
+        // Registry-aware: a built-in yields its static supplied set; a
+        // config-defined custom type yields its create-path built-ins plus its
+        // declared fields. A truly unknown type errors.
+        let supplied = self
+            .type_registry()
+            .resolve(note_type)
+            .ok_or_else(|| DomainError::UnknownNoteType {
                 note_type: note_type.to_owned(),
             })?
             .supplied_placeholders();
@@ -197,7 +201,7 @@ impl Vault {
         let mut out: Vec<TemplatePlaceholder> = supplied
             .iter()
             .map(|name| TemplatePlaceholder {
-                name: (*name).to_owned(),
+                name: name.clone(),
                 source: PlaceholderSource::Supplied,
             })
             .collect();
@@ -209,7 +213,7 @@ impl Vault {
         let mut static_names: Vec<&String> = variables
             .static_vars
             .keys()
-            .filter(|name| !supplied.contains(&name.as_str()))
+            .filter(|name| !supplied.iter().any(|s| s.as_str() == name.as_str()))
             .collect();
         static_names.sort();
         for name in static_names {
@@ -226,7 +230,8 @@ impl Vault {
             .prompt
             .iter()
             .filter(|(name, _)| {
-                !supplied.contains(&name.as_str()) && !variables.static_vars.contains_key(*name)
+                !supplied.iter().any(|s| s.as_str() == name.as_str())
+                    && !variables.static_vars.contains_key(*name)
             })
             .collect();
         prompt_names.sort_by(|a, b| a.0.cmp(b.0));

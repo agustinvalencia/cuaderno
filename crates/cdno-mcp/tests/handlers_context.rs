@@ -835,6 +835,9 @@ async fn search_notes_filters_by_note_type() {
 
 #[tokio::test]
 async fn search_notes_rejects_unknown_note_type() {
+    // `note_type` accepts a built-in or config-defined custom type; an unknown
+    // name is a clear INVALID_PARAMS rather than a silent empty result (an LLM
+    // client has no tab-completion to catch a typo).
     let server = server_with(search_seed);
     let err = server
         .search_notes(Parameters(SearchNotesInput {

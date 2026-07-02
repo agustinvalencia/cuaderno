@@ -40,7 +40,8 @@ collaborators = "Who are the collaborators?"
 | `vault.name` | string | `"My Vault"` | A human label for the vault. |
 | `vault.max_active_projects` | integer | `5` | The active-project cap. |
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. |
-| `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that note type, enforced by `cdno lint`. |
+| `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that **built-in** note type, enforced by `cdno lint`. |
+| `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
 
@@ -67,3 +68,4 @@ static default) — see the
 - [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md) — the tutorial.
 - [Configuration](../concepts/configuration.md) — the conceptual overview.
 - [Frontmatter fields](frontmatter.md) — what `extra_required` extends.
+- [Custom note types](custom-note-types.md) — the `[note_types.*]` table in full.

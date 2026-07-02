@@ -7,14 +7,13 @@
 //! custom template may reference (#271).
 
 use std::path::Path;
-use std::str::FromStr;
 
 use anyhow::{Result, bail};
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::note_type::NoteType;
-use cdno_domain::{PlaceholderSource, TemplatePlaceholder};
+use cdno_domain::{PlaceholderSource, TemplatePlaceholder, Vault};
 
 use crate::bootstrap;
 use crate::completions;
@@ -149,15 +148,13 @@ fn emit_eject_all(json: bool, report: &EjectAllReport) -> Result<()> {
     Ok(())
 }
 
-/// Validate `note_type` against the known set, returning a friendly error
-/// listing the valid types (richer than the domain's terser variant).
-fn validate_note_type(note_type: &str) -> Result<()> {
-    if NoteType::from_str(note_type).is_err() {
-        let valid = NoteType::ALL
-            .iter()
-            .map(|t| t.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+/// Validate `note_type` against the vault's known set (built-ins + config
+/// custom types), returning a friendly error listing the valid names (richer
+/// than the domain's terser variant).
+fn validate_known_type(vault: &Vault, note_type: &str) -> Result<()> {
+    let registry = vault.type_registry();
+    if !registry.is_known(note_type) {
+        let valid = registry.all_names().join(", ");
         bail!("unknown note type '{note_type}' — valid types: {valid}");
     }
     Ok(())
@@ -171,8 +168,20 @@ fn validate_note_type(note_type: &str) -> Result<()> {
 /// variant is authored in the vault, not ejected). The domain
 /// `eject_template` still takes a `variant`; the CLI always passes `None`.
 pub fn eject(root: &Path, note_type: &str, force: bool) -> Result<String> {
-    validate_note_type(note_type)?;
     let (vault, _report) = bootstrap::open_vault(root)?;
+    validate_known_type(&vault, note_type)?;
+    // A config-defined custom type has no built-in template to materialise —
+    // its template is authored by hand.
+    if vault
+        .type_registry()
+        .resolve(note_type)
+        .is_some_and(|d| d.is_custom())
+    {
+        bail!(
+            "`{note_type}` is a config-defined custom type — it has no built-in template to \
+             eject; author `.cuaderno/templates/{note_type}.md` by hand"
+        );
+    }
     let path = vault.eject_template(note_type, None, force)?;
     Ok(path.to_string())
 }
@@ -181,10 +190,10 @@ pub fn eject(root: &Path, note_type: &str, force: bool) -> Result<String> {
 /// placeholders. Tests assert on this `Vec` directly (house pattern, cf.
 /// `search::search_hits`).
 pub fn placeholders(root: &Path, note_type: &str) -> Result<Vec<TemplatePlaceholder>> {
-    // Validate the type here so the user gets the full valid set, rather
-    // than the domain's terser `unknown note type` error.
-    validate_note_type(note_type)?;
     let (vault, _report) = bootstrap::open_vault(root)?;
+    // Validate here so the user gets the full valid set (built-ins + custom
+    // types) rather than the domain's terser `unknown note type` error.
+    validate_known_type(&vault, note_type)?;
     Ok(vault.template_placeholders(note_type)?)
 }
 

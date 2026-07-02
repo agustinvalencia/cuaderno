@@ -10,10 +10,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
-use cdno_domain::note_type::NoteType;
 use cdno_domain::{SearchFilters, SearchResultEntry};
 
 use crate::bootstrap;
@@ -38,11 +37,10 @@ pub fn run(
         portfolio,
         ..Default::default()
     };
+    // Any built-in or config-defined custom type name (validated in
+    // `search_hits`, where the vault is open; tab-completion offers them).
     if let Some(raw) = note_type {
-        let parsed: NoteType = raw
-            .parse()
-            .map_err(|e| anyhow!("invalid --type `{raw}`: {e}"))?;
-        filters.note_types.push(parsed);
+        filters.note_type_names.push(raw);
     }
 
     if json {
@@ -65,6 +63,16 @@ fn search_hits(
     limit: usize,
 ) -> Result<Vec<SearchResultEntry>> {
     let (vault, _report) = bootstrap::open_vault(root)?;
+    // A `--type` naming neither a built-in nor a config-defined custom type is
+    // almost always a typo — error with the valid set rather than silently
+    // returning nothing (the vault is already open, so this is near-free).
+    let registry = vault.type_registry();
+    for name in &filters.note_type_names {
+        if !registry.is_known(name) {
+            let valid = registry.all_names().join(", ");
+            anyhow::bail!("unknown --type '{name}' — valid types: {valid}");
+        }
+    }
     vault
         .search(query, filters, limit)
         .context("searching the vault")

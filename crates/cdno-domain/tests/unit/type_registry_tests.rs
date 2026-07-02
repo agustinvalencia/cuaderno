@@ -202,3 +202,55 @@ fn all_names_orders_custom_types_deterministically() {
     let last_builtin = names.iter().position(|n| *n == "inbox").unwrap();
     assert!(apple > last_builtin);
 }
+
+#[test]
+fn supplied_placeholders_for_custom_is_builtins_plus_declared() {
+    let config = config_with_person();
+    let reg = TypeRegistry::new(&config);
+    let desc = reg.resolve("person").unwrap();
+    assert_eq!(
+        desc.supplied_placeholders(),
+        vec!["title", "slug", "created", "date", "name", "role"]
+    );
+}
+
+#[test]
+fn supplied_placeholders_for_builtin_matches_the_registry_list() {
+    let config = VaultConfig::default();
+    let reg = TypeRegistry::new(&config);
+    let desc = reg.resolve("project").unwrap();
+    let via_descriptor = desc.supplied_placeholders();
+    let direct: Vec<String> = NoteType::Project
+        .supplied_placeholders()
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    assert_eq!(via_descriptor, direct);
+}
+
+#[test]
+fn supplied_placeholders_dedupes_a_field_colliding_with_a_builtin() {
+    // A custom type declaring `created`/`date` (which the create path already
+    // supplies) must not double-list them.
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "event".to_owned(),
+        custom("events", &["created"], &["date", "venue"]),
+    );
+    let reg = TypeRegistry::new(&config);
+    let ph = reg.resolve("event").unwrap().supplied_placeholders();
+    assert_eq!(ph, vec!["title", "slug", "created", "date", "venue"]);
+}
+
+#[test]
+fn supplied_placeholders_for_a_fieldless_custom_type_is_just_the_builtins() {
+    let mut config = VaultConfig::default();
+    config
+        .note_types
+        .insert("bookmark".to_owned(), custom("bookmarks", &[], &[]));
+    let reg = TypeRegistry::new(&config);
+    assert_eq!(
+        reg.resolve("bookmark").unwrap().supplied_placeholders(),
+        vec!["title", "slug", "created", "date"]
+    );
+}

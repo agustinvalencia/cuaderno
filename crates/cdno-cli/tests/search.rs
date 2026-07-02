@@ -7,7 +7,6 @@ use std::path::Path;
 
 use cdno_cli::commands::{init, search};
 use cdno_core::path::VaultPath;
-use cdno_domain::note_type::NoteType;
 use cdno_domain::{SearchFilters, SearchResultEntry};
 use chrono::NaiveDate;
 use tempfile::tempdir;
@@ -60,7 +59,7 @@ fn search_respects_the_note_type_filter() {
     seed(dir.path());
 
     let filters = SearchFilters {
-        note_types: vec![NoteType::Project],
+        note_type_names: vec!["project".to_owned()],
         ..Default::default()
     };
     let out =

@@ -225,3 +225,47 @@ fn templates_eject_all_force_overwrites_a_customised_template() {
         "project.md overwritten"
     );
 }
+
+/// Init a vault and register a `person` custom type.
+fn seed_with_person(root: &Path) {
+    init::run(root).expect("init");
+    let cfg = root.join(".cuaderno/config.toml");
+    let mut content = fs::read_to_string(&cfg).unwrap_or_default();
+    content.push_str(
+        "\n[note_types.person]\nfolder = \"people\"\nrequired = [\"name\"]\noptional = [\"role\"]\n",
+    );
+    fs::write(&cfg, content).unwrap();
+}
+
+#[test]
+fn templates_vars_lists_a_custom_type_supplied_set() {
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    let ph = templates::placeholders(dir.path(), "person").expect("placeholders");
+    let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["title", "slug", "created", "date", "name", "role"]);
+}
+
+#[test]
+fn templates_eject_refuses_a_custom_type() {
+    // A custom type has no built-in template to eject.
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    let err = templates::eject(dir.path(), "person", false).expect_err("should refuse");
+    assert!(
+        err.to_string().contains("no built-in template to eject"),
+        "err: {err}"
+    );
+}
+
+#[test]
+fn templates_vars_unknown_type_lists_custom_names() {
+    // The friendly error's valid set now includes registered custom types.
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    let err = templates::placeholders(dir.path(), "gadget").expect_err("should error");
+    assert!(err.to_string().contains("person"), "err: {err}");
+}

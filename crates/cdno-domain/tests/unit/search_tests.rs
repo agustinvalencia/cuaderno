@@ -11,7 +11,6 @@ use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::note_type::NoteType;
 use cdno_domain::{SearchFilters, Vault};
 use chrono::NaiveDate;
 
@@ -169,7 +168,7 @@ fn note_type_filter_restricts_results() {
     ]);
 
     let filters = SearchFilters {
-        note_types: vec![NoteType::Question],
+        note_type_names: vec!["question".to_owned()],
         ..Default::default()
     };
     let hits = vault.search("alpha", &filters, 10).unwrap();
@@ -313,4 +312,67 @@ fn date_range_uses_the_daily_note_filename_date() {
     let hits = vault.search("alpha", &filters, 10).unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].path, vp("journal/2026/daily/2026-02-15.md"));
+}
+
+#[test]
+fn note_type_filter_matches_a_config_custom_type() {
+    // The string filter matches config-defined custom types too.
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec![],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let vault = vault_with_config(
+        &[
+            ("people/ada.md", note("person", "Ada", "sparse alpha")),
+            ("projects/p.md", note("project", "P", "sparse alpha")),
+        ],
+        config,
+    );
+
+    let filters = SearchFilters {
+        note_type_names: vec!["person".to_owned()],
+        ..Default::default()
+    };
+    let hits = vault.search("sparse", &filters, 10).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].note_type, "person");
+}
+
+#[test]
+fn custom_type_filter_with_no_matching_notes_is_empty() {
+    // A registered custom type with no notes of that type returns no hits
+    // (the domain filter is lenient; the CLI/MCP validate the name).
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec![],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let vault = vault_with_config(
+        &[("projects/p.md", note("project", "P", "sparse alpha"))],
+        config,
+    );
+    let filters = SearchFilters {
+        note_type_names: vec!["person".to_owned()],
+        ..Default::default()
+    };
+    assert!(vault.search("sparse", &filters, 10).unwrap().is_empty());
 }

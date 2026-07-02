@@ -941,6 +941,9 @@ fn search_runs_and_reports_no_matches_on_an_empty_vault() {
 
 #[test]
 fn search_rejects_an_unknown_note_type() {
+    // `--type` accepts any built-in or config-defined custom type; a name that
+    // is neither errors with the valid set (a typo shouldn't read as "no such
+    // notes"). Custom-type filtering is covered in the domain search tests.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
 
@@ -949,7 +952,7 @@ fn search_rejects_an_unknown_note_type() {
         .args(["search", "anything", "--type", "bogus"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("invalid --type"));
+        .stderr(predicate::str::contains("unknown --type 'bogus'"));
 }
 
 #[test]
