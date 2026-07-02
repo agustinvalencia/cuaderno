@@ -10,6 +10,7 @@ pub mod note_type;
 pub mod recurrence;
 pub mod vault;
 
+pub use cdno_core::template::TemplateSource;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
 pub use vault::slug::slugify;

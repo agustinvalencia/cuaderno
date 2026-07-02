@@ -1,5 +1,7 @@
 use cdno_core::config::VaultConfig;
-use cdno_core::template::{Template, TemplateEngine, VariableContext, placeholder_names};
+use cdno_core::template::{
+    Template, TemplateEngine, TemplateSource, VariableContext, placeholder_names,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -33,15 +35,17 @@ fn write_custom_template(vault_root: &Path, filename: &str, content: &str) {
 #[test]
 fn load_builtin_default_template() {
     let engine = engine_with_defaults(None);
-    let template = engine.load_template("project", None).unwrap();
+    let (template, source) = engine.load_template("project", None).unwrap();
     assert!(template.content.contains("type: project"));
+    assert_eq!(source, TemplateSource::BuiltinDefault);
 }
 
 #[test]
 fn load_builtin_variant_template() {
     let engine = engine_with_defaults(None);
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("routine: {{routine}}"));
+    assert_eq!(source, TemplateSource::BuiltinVariant);
 }
 
 #[test]
@@ -71,8 +75,9 @@ fn custom_template_overrides_builtin() {
     );
 
     let engine = engine_with_defaults(Some(dir.path()));
-    let template = engine.load_template("project", None).unwrap();
+    let (template, source) = engine.load_template("project", None).unwrap();
     assert!(template.content.contains("custom: true"));
+    assert_eq!(source, TemplateSource::CustomBase);
 }
 
 #[test]
@@ -85,8 +90,9 @@ fn custom_variant_template_overrides_builtin() {
     );
 
     let engine = engine_with_defaults(Some(dir.path()));
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("custom_gym: true"));
+    assert_eq!(source, TemplateSource::CustomVariant);
 }
 
 #[test]
@@ -101,8 +107,9 @@ fn custom_type_template_used_when_variant_custom_missing() {
 
     let engine = engine_with_defaults(Some(dir.path()));
     // Asking for variant "gym": no custom variant → falls to custom base type
-    let template = engine.load_template("tracking", Some("gym")).unwrap();
+    let (template, source) = engine.load_template("tracking", Some("gym")).unwrap();
     assert!(template.content.contains("generic_custom: true"));
+    assert_eq!(source, TemplateSource::CustomBase);
 }
 
 // --- Variable resolution ---

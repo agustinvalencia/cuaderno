@@ -9,7 +9,7 @@ use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::frontmatter::Context;
-use cdno_domain::{PlaceholderSource, Vault};
+use cdno_domain::{PlaceholderSource, TemplateSource, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -568,7 +568,7 @@ fn add_tracking_entry_with_vars_renders_a_prompted_variable_from_a_variant_templ
         vec![("ticket".to_owned(), "Ticket?".to_owned())]
     );
     // ...and the create path renders the supplied value.
-    let path = vault
+    let (path, source) = vault
         .add_tracking_entry_with_vars(
             today().and_hms_opt(19, 0, 0).unwrap(),
             "health",
@@ -582,6 +582,46 @@ fn add_tracking_entry_with_vars_renders_a_prompted_variable_from_a_variant_templ
         store.read_file(&path).unwrap().contains("ticket: GYM-1"),
         "tracking-variant prompted value should render"
     );
+    // A custom `tracking-gym.md` override resolves as a custom variant (#287).
+    assert_eq!(source, TemplateSource::CustomVariant);
+}
+
+#[test]
+fn add_tracking_entry_reports_the_resolved_template_source() {
+    // #287 — the create path reports which template rung it resolved, so the
+    // CLI hint keys off the real outcome instead of re-deriving it. Three rungs
+    // reachable today: no custom template → the generic built-in
+    // (`BuiltinDefault`, the only case the newcomer hint fires); a custom base
+    // `tracking.md` → `CustomBase`; a custom `tracking-<activity>.md` →
+    // `CustomVariant`. (`BuiltinVariant` needs a bundled variant default, which
+    // none ship — covered at the engine level in `template_tests.rs`.)
+    let at = today().and_hms_opt(19, 0, 0).unwrap();
+    let steward = |vault: &Vault| {
+        vault
+            .create_stewardship_expanded(
+                today().and_hms_opt(9, 0, 0).unwrap(),
+                "Health",
+                Context::Personal,
+            )
+            .expect("stewardship");
+    };
+
+    // No custom template → the generic built-in (the only case the hint fires).
+    let (vault, _store) = vault_with(&[]);
+    steward(&vault);
+    let (_p, source) = vault
+        .add_tracking_entry_with_vars(at, "health", "gym", None, "Session.", &prompted(&[]))
+        .expect("tracking");
+    assert_eq!(source, TemplateSource::BuiltinDefault);
+
+    // A custom base `tracking.md` (no variant-specific file) → CustomBase.
+    let base = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: {{activity}}\ndate: {{date}}\n---\n# {{activity_title}}\n";
+    let (vault, _store) = vault_with(&[(".cuaderno/templates/tracking.md", base)]);
+    steward(&vault);
+    let (_p, source) = vault
+        .add_tracking_entry_with_vars(at, "health", "gym", None, "Session.", &prompted(&[]))
+        .expect("tracking");
+    assert_eq!(source, TemplateSource::CustomBase);
 }
 
 #[test]
