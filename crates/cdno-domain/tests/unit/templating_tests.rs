@@ -967,88 +967,67 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
         format!("{front}\n---\n<!-- every supplied key: {keys} -->\n{body}")
     };
 
-    let (vault, store) = vault_with(&[
-        (
-            ".cuaderno/templates/project.md",
-            &custom(NoteType::Project, "project.md"),
-        ),
-        (
-            ".cuaderno/templates/action.md",
-            &custom(NoteType::Action, "action.md"),
-        ),
-        (
-            ".cuaderno/templates/question.md",
-            &custom(NoteType::Question, "question.md"),
-        ),
-        (
-            ".cuaderno/templates/portfolio.md",
-            &custom(NoteType::Portfolio, "portfolio.md"),
-        ),
-        (
-            ".cuaderno/templates/evidence.md",
-            &custom(NoteType::Evidence, "evidence.md"),
-        ),
-        (
-            ".cuaderno/templates/stewardship.md",
-            &custom(NoteType::Stewardship, "stewardship.md"),
-        ),
-        (
-            ".cuaderno/templates/tracking-gym.md",
-            &custom(NoteType::Tracking, "tracking/generic.md"),
-        ),
-        (
-            ".cuaderno/templates/commitment.md",
-            &custom(NoteType::Commitment, "commitment.md"),
-        ),
-        (
-            ".cuaderno/templates/daily.md",
-            &custom(NoteType::Daily, "daily.md"),
-        ),
-        (
-            ".cuaderno/templates/weekly.md",
-            &custom(NoteType::Weekly, "weekly.md"),
-        ),
-        (
-            ".cuaderno/templates/inbox.md",
-            &custom(NoteType::Inbox, "inbox.md"),
-        ),
-    ]);
+    // (seed filename under `.cuaderno/templates/`, built-in source file). An
+    // exhaustive match so adding a note type is a compile error here — the
+    // guard can't silently skip a new type. `tracking` seeds its `gym` variant
+    // because the create call below tracks activity "gym"; every other type
+    // seeds its base `<key>.md`.
+    let seed_spec = |nt: NoteType| -> (String, &'static str) {
+        match nt {
+            NoteType::Project => ("project.md".into(), "project.md"),
+            NoteType::Action => ("action.md".into(), "action.md"),
+            NoteType::Question => ("question.md".into(), "question.md"),
+            NoteType::Portfolio => ("portfolio.md".into(), "portfolio.md"),
+            NoteType::Evidence => ("evidence.md".into(), "evidence.md"),
+            NoteType::Stewardship => ("stewardship.md".into(), "stewardship.md"),
+            NoteType::Tracking => ("tracking-gym.md".into(), "tracking/generic.md"),
+            NoteType::Commitment => ("commitment.md".into(), "commitment.md"),
+            NoteType::Daily => ("daily.md".into(), "daily.md"),
+            NoteType::Weekly => ("weekly.md".into(), "weekly.md"),
+            NoteType::Inbox => ("inbox.md".into(), "inbox.md"),
+        }
+    };
+    let customs: Vec<(String, String)> = NoteType::ALL
+        .iter()
+        .map(|&nt| {
+            let (seed, src) = seed_spec(nt);
+            (format!(".cuaderno/templates/{seed}"), custom(nt, src))
+        })
+        .collect();
+    let custom_refs: Vec<(&str, &str)> = customs
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    // `vault_with` seeds an empty config: no `[variables]`, so a supplied key
+    // can never be masked by a static config var of the same name filling the
+    // placeholder in its stead — the only paths that resolve a key here are the
+    // create paths' `set_contextual` calls, which is exactly what we're guarding.
+    let (vault, store) = vault_with(&custom_refs);
 
     let at = today().and_hms_opt(9, 0, 0).unwrap();
-    let mut paths = Vec::new();
-    // project first — prerequisite for action/commitment; stewardship + portfolio
-    // for tracking/evidence.
-    paths.push(
+    // Created in dependency order (a `vec!` evaluates left-to-right): project
+    // before action/commitment; expanded stewardship before tracking; portfolio
+    // before evidence. Each `.expect` reaches the real create path — a missing
+    // prerequisite panics loudly rather than silently skipping a type.
+    let paths = vec![
         vault
             .create_project(today(), "Proj", Context::Work, Some("questions/q"))
             .expect("project"),
-    );
-    paths.push(
         vault
             .add_action_with_note(at, "proj", "Do the thing", EnergyLevel::Deep)
             .expect("action"),
-    );
-    paths.push(
         vault
             .create_question(at, QuestionDomain::Research, "Does it hold?")
             .expect("question"),
-    );
-    paths.push(
         vault
             .create_portfolio(at, "Sparse vs dense", None)
             .expect("portfolio"),
-    );
-    paths.push(
         vault
             .file_evidence(at, "sparse-vs-dense", "Chen 2025", "projects/proj", "Body.")
             .expect("evidence"),
-    );
-    paths.push(
         vault
             .create_stewardship_expanded(at, "Health", Context::Personal)
             .expect("stewardship"),
-    );
-    paths.push(
         vault
             .add_tracking_entry(
                 today().and_hms_opt(19, 0, 0).unwrap(),
@@ -1058,8 +1037,6 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
                 "Session.",
             )
             .expect("tracking"),
-    );
-    paths.push(
         vault
             .create_commitment(
                 at,
@@ -1070,14 +1047,21 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
                 Some("health"),
             )
             .expect("commitment"),
-    );
-    paths.push(vault.log_to_daily_note(at, "entry").expect("daily"));
-    paths.push(
+        vault.log_to_daily_note(at, "entry").expect("daily"),
         vault
             .upsert_weekly_section(today(), WeeklySection::Wins, "shipped", false)
             .expect("weekly"),
+        vault.capture_to_inbox(at, "thought").expect("inbox"),
+    ];
+
+    // Pair the exhaustive seed match: every type must also be created and
+    // asserted. If a new type is added and seeded but its create call is
+    // forgotten, this trips instead of the type going silently unguarded.
+    assert_eq!(
+        paths.len(),
+        NoteType::ALL.len(),
+        "every note type must be created and asserted — add the new type's create call above"
     );
-    paths.push(vault.capture_to_inbox(at, "thought").expect("inbox"));
 
     for path in paths {
         let content = store.read_file(&path).unwrap();
