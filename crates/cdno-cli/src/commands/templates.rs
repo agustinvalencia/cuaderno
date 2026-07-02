@@ -30,10 +30,6 @@ pub enum TemplatesCommands {
         /// `weekly`, or `inbox`.
         #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
         note_type: String,
-        /// Template variant — selects a `<type>-<variant>` built-in when
-        /// one exists (none ship today), else falls back to the base type.
-        #[arg(long)]
-        variant: Option<String>,
     },
 
     /// Copy a built-in template into `.cuaderno/templates/<type>.md` as an
@@ -51,8 +47,8 @@ pub enum TemplatesCommands {
 
 pub fn run(root: &Path, command: TemplatesCommands, json: bool) -> Result<()> {
     match command {
-        TemplatesCommands::Vars { note_type, variant } => {
-            let placeholders = placeholders(root, &note_type, variant.as_deref())?;
+        TemplatesCommands::Vars { note_type } => {
+            let placeholders = placeholders(root, &note_type)?;
             if json {
                 println!(
                     "{}",
@@ -101,16 +97,12 @@ pub fn eject(root: &Path, note_type: &str, force: bool) -> Result<String> {
 /// Data seam: validate the type, open the vault, and gather the supported
 /// placeholders. Tests assert on this `Vec` directly (house pattern, cf.
 /// `search::search_hits`).
-pub fn placeholders(
-    root: &Path,
-    note_type: &str,
-    variant: Option<&str>,
-) -> Result<Vec<TemplatePlaceholder>> {
+pub fn placeholders(root: &Path, note_type: &str) -> Result<Vec<TemplatePlaceholder>> {
     // Validate the type here so the user gets the full valid set, rather
     // than the domain's terser `unknown note type` error.
     validate_note_type(note_type)?;
     let (vault, _report) = bootstrap::open_vault(root)?;
-    Ok(vault.template_placeholders(note_type, variant)?)
+    Ok(vault.template_placeholders(note_type)?)
 }
 
 /// Text seam: render the placeholder table.
