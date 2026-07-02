@@ -834,9 +834,12 @@ async fn search_notes_filters_by_note_type() {
 }
 
 #[tokio::test]
-async fn search_notes_rejects_unknown_note_type() {
+async fn search_notes_unknown_note_type_returns_no_matches() {
+    // The `note_type` filter is a lenient string (so config-defined custom
+    // types filter too); an unknown name simply matches nothing rather than
+    // erroring.
     let server = server_with(search_seed);
-    let err = server
+    let result = server
         .search_notes(Parameters(SearchNotesInput {
             query: "sparse".to_owned(),
             note_type: Some("bogus".to_owned()),
@@ -846,9 +849,13 @@ async fn search_notes_rejects_unknown_note_type() {
             limit: 20,
         }))
         .await
-        .unwrap_err();
-    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-    assert!(err.message.contains("note_type"), "msg: {}", err.message);
+        .expect("search succeeds");
+    let payload = decode_json(&result);
+    assert_eq!(
+        payload.as_array().map(|a| a.len()),
+        Some(0),
+        "unknown type should match nothing: {payload}"
+    );
 }
 
 #[tokio::test]

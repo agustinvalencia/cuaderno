@@ -940,7 +940,9 @@ fn search_runs_and_reports_no_matches_on_an_empty_vault() {
 }
 
 #[test]
-fn search_rejects_an_unknown_note_type() {
+fn search_unknown_note_type_returns_no_matches() {
+    // `--type` is a lenient string filter (so config-defined custom types
+    // work); an unknown name matches nothing rather than erroring.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
 
@@ -948,8 +950,8 @@ fn search_rejects_an_unknown_note_type() {
         .current_dir(dir.path())
         .args(["search", "anything", "--type", "bogus"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("invalid --type"));
+        .success()
+        .stdout(predicate::str::contains("(no matches)"));
 }
 
 #[test]

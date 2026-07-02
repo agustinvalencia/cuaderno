@@ -22,7 +22,6 @@ use cdno_core::index::SearchHit;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::note_type::NoteType;
 
 /// Upper bound on hits pulled from the index when a filter is active.
 ///
@@ -66,8 +65,10 @@ impl From<SearchHit> for SearchResultEntry {
 /// (the default) means "no filtering — just the ranked text matches".
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilters {
-    /// Restrict to these note types. Empty = any type.
-    pub note_types: Vec<NoteType>,
+    /// Restrict to these note types, by name. Empty = any type. Strings (not
+    /// the `NoteType` enum) so config-defined custom types filter too; an
+    /// unknown name simply matches nothing.
+    pub note_type_names: Vec<String>,
     /// Inclusive lower bound on the note's date. `None` = no lower bound.
     pub date_from: Option<NaiveDate>,
     /// Inclusive upper bound on the note's date. `None` = no upper bound.
@@ -79,7 +80,7 @@ pub struct SearchFilters {
 
 impl SearchFilters {
     fn is_empty(&self) -> bool {
-        self.note_types.is_empty()
+        self.note_type_names.is_empty()
             && self.date_from.is_none()
             && self.date_to.is_none()
             && self.portfolio.is_none()
@@ -128,11 +129,8 @@ impl super::Vault {
             }
 
             // Cheapest filter first: note_type lives on the hit, no I/O.
-            if !filters.note_types.is_empty()
-                && !filters
-                    .note_types
-                    .iter()
-                    .any(|nt| nt.as_str() == hit.note_type)
+            if !filters.note_type_names.is_empty()
+                && !filters.note_type_names.iter().any(|n| n == &hit.note_type)
             {
                 continue;
             }

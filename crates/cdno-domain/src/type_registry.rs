@@ -51,6 +51,33 @@ impl<'a> NoteTypeDescriptor<'a> {
         }
     }
 
+    /// The `{{placeholders}}` this type's create path supplies — what a custom
+    /// template for it may reference. For a built-in, its static registry list
+    /// ([`NoteType::supplied_placeholders`]). For a config type, the create-path
+    /// built-ins (`title`, `slug`, `created`, `date`) plus its declared
+    /// `required`/`optional` fields, de-duplicated in a stable order.
+    pub fn supplied_placeholders(&self) -> Vec<String> {
+        match self {
+            NoteTypeDescriptor::Builtin(nt) => nt
+                .supplied_placeholders()
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
+            NoteTypeDescriptor::Custom { def, .. } => {
+                let mut names: Vec<String> = ["title", "slug", "created", "date"]
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect();
+                for f in def.required.iter().chain(def.optional.iter()) {
+                    if !names.contains(f) {
+                        names.push(f.clone());
+                    }
+                }
+                names
+            }
+        }
+    }
+
     /// The vault-relative folder a custom type's notes live in. `None` for
     /// built-in types (whose folder placement is bespoke per create path).
     pub fn folder(&self) -> Option<&'a str> {

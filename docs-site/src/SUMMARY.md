@@ -72,5 +72,6 @@
 - [JSON output](reference/json-output.md)
 - [Frontmatter fields](reference/frontmatter.md)
 - [Configuration reference](reference/configuration.md)
+- [Custom note types](reference/custom-note-types.md)
 - [Recurrence syntax](reference/recurrence.md)
 - [Troubleshooting](reference/troubleshooting.md)

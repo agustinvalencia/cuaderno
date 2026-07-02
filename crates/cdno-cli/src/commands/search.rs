@@ -10,10 +10,9 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
-use cdno_domain::note_type::NoteType;
 use cdno_domain::{SearchFilters, SearchResultEntry};
 
 use crate::bootstrap;
@@ -38,11 +37,11 @@ pub fn run(
         portfolio,
         ..Default::default()
     };
+    // Any built-in or config-defined custom type name; an unknown name simply
+    // matches nothing (search is lenient — no error). Tab-completion offers the
+    // vault's known types.
     if let Some(raw) = note_type {
-        let parsed: NoteType = raw
-            .parse()
-            .map_err(|e| anyhow!("invalid --type `{raw}`: {e}"))?;
-        filters.note_types.push(parsed);
+        filters.note_type_names.push(raw);
     }
 
     if json {
