@@ -62,6 +62,10 @@ experiment_id = "Experiment identifier?"
     let evidence_schema = config.schema_for("evidence").unwrap();
     assert!(evidence_schema.extra_required.is_empty());
 
+    // Real TOML with no `[note_types]` deserialises to an empty map (back-compat).
+    assert!(config.note_types.is_empty());
+    assert!(config.validate_note_types().is_ok());
+
     assert_eq!(config.resolve_variable("author"), Some("A. Researcher"));
     assert_eq!(
         config.resolve_variable("institution"),
@@ -128,7 +132,7 @@ fn parses_a_custom_note_type() {
 [note_types.person]
 folder = "people"
 required = ["name"]
-optional = ["role", "org"]
+optional = ["role", "org", "created"]
 template = "person.md"
 append_only = false
 title_field = "name"
@@ -140,7 +144,7 @@ date_field = "created"
     let person = config.custom_type("person").expect("person type");
     assert_eq!(person.folder, "people");
     assert_eq!(person.required, vec!["name"]);
-    assert_eq!(person.optional, vec!["role", "org"]);
+    assert_eq!(person.optional, vec!["role", "org", "created"]);
     assert_eq!(person.template.as_deref(), Some("person.md"));
     assert!(!person.append_only);
     assert_eq!(person.title_field.as_deref(), Some("name"));
@@ -231,4 +235,76 @@ template = "sub/person.md"
     );
     let config = VaultConfig::load(dir.path()).unwrap();
     assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_rejects_folder_with_surrounding_whitespace() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[note_types.person]\nfolder = \" people \"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_rejects_backslash_folder() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.person]\nfolder = \"people\\\\..\\\\..\\\\etc\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_rejects_folder_colliding_with_a_builtin() {
+    // A custom type may not claim a built-in top-level folder (it would drop
+    // notes alongside built-in notes) — checked for the folder and a nested path.
+    for folder in ["projects", "questions", "journal", "projects/vip"] {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            &format!("[note_types.custom]\nfolder = \"{folder}\"\n"),
+        );
+        let config = VaultConfig::load(dir.path()).unwrap();
+        assert!(
+            config.validate_note_types().is_err(),
+            "folder `{folder}` should collide with a built-in"
+        );
+    }
+}
+
+#[test]
+fn validate_rejects_title_or_date_field_not_declared() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.person]\nfolder = \"people\"\nrequired = [\"name\"]\ntitle_field = \"naem\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_err());
+}
+
+#[test]
+fn validate_accepts_title_and_date_fields_that_are_declared() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.person]\nfolder = \"people\"\nrequired = [\"name\"]\noptional = [\"met_on\"]\ntitle_field = \"name\"\ndate_field = \"met_on\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_note_types().is_ok());
+}
+
+#[test]
+fn validate_accepts_append_only_true() {
+    // The flag is accepted; enforcement is deferred to a later phase.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.log]\nfolder = \"logs\"\nappend_only = true\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.custom_type("log").unwrap().append_only);
+    assert!(config.validate_note_types().is_ok());
 }

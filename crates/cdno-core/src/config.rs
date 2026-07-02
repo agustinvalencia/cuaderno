@@ -12,12 +12,9 @@ pub struct VaultConfig {
     pub vault: VaultMeta,
     #[serde(default)]
     pub schemas: HashMap<String, SchemaExtension>,
-    /// User-defined note types, declared under `[note_types.<name>]`. Each
-    /// adds a *schema-only* type: a folder, field rules, a template, and
-    /// generic linting/normalisation — but no bespoke behaviour (caps,
-    /// lifecycle, aggregation), which stays exclusive to the built-in
-    /// `NoteType`s. Distinct from `[schemas.*]`, which *extends* a built-in
-    /// type's required fields rather than *defining* a new type.
+    /// User-defined note types, declared under `[note_types.<name>]` — see
+    /// [`CustomNoteType`]. Distinct from `[schemas.*]`, which *extends* a
+    /// built-in type rather than *defining* a new one.
     #[serde(default)]
     pub note_types: HashMap<String, CustomNoteType>,
     #[serde(default)]
@@ -172,38 +169,70 @@ impl VaultConfig {
     }
 
     /// Structural validation of the `[note_types.*]` table — the checks that
-    /// need no knowledge of the built-in type set (that lives in `cdno-domain`,
-    /// which layers the reserved-name check on top of this). Surfaced at
+    /// need no knowledge of the built-in *type* set (that reserved-name check
+    /// lives in `cdno-domain`, which layers it on top of this). Surfaced at
     /// vault-open so a malformed declaration fails fast rather than silently
-    /// mis-shaping notes. Rejects: an empty `folder`, a `folder` that escapes
-    /// the vault (absolute or containing `..`), two custom types sharing a
-    /// `folder`, and a `template` filename that contains a path separator.
+    /// mis-shaping notes. Rejects a custom type whose:
+    /// - `folder` is empty, has leading/trailing whitespace, or escapes the
+    ///   vault (absolute, contains `..`, or uses a `\` separator);
+    /// - `folder` collides with another custom type's, or with a built-in
+    ///   top-level folder ([`crate::paths::RESERVED_TOP_LEVEL_FOLDERS`]);
+    /// - `template` filename contains a path separator;
+    /// - `title_field`/`date_field` names a field not in `required`/`optional`.
     pub fn validate_note_types(&self) -> Result<(), ConfigError> {
+        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidNoteType(msg));
         let mut folders: HashMap<&str, &str> = HashMap::new();
         for (name, def) in &self.note_types {
-            let folder = def.folder.trim();
+            let folder = def.folder.as_str();
             if folder.is_empty() {
-                return Err(ConfigError::InvalidNoteType(format!(
-                    "note type `{name}` has an empty `folder`"
-                )));
+                return invalid(format!("note type `{name}` has an empty `folder`"));
             }
-            if folder.starts_with('/') || folder.split('/').any(|seg| seg == "..") {
-                return Err(ConfigError::InvalidNoteType(format!(
+            if folder != folder.trim() {
+                return invalid(format!(
+                    "note type `{name}` `folder` has leading/trailing whitespace: `{folder}`"
+                ));
+            }
+            if folder.starts_with('/')
+                || folder.contains('\\')
+                || folder.split('/').any(|seg| seg == "..")
+            {
+                return invalid(format!(
                     "note type `{name}` has a `folder` that escapes the vault: `{folder}`"
-                )));
+                ));
+            }
+            let top = folder.split('/').next().unwrap_or(folder);
+            if crate::paths::RESERVED_TOP_LEVEL_FOLDERS.contains(&top) {
+                return invalid(format!(
+                    "note type `{name}` `folder` `{folder}` collides with the built-in \
+                     `{top}` folder — pick a different one"
+                ));
             }
             if let Some(prev) = folders.insert(folder, name) {
-                return Err(ConfigError::InvalidNoteType(format!(
+                return invalid(format!(
                     "note types `{prev}` and `{name}` both declare folder `{folder}`"
-                )));
+                ));
             }
             if let Some(template) = &def.template
                 && (template.contains('/') || template.contains('\\'))
             {
-                return Err(ConfigError::InvalidNoteType(format!(
+                return invalid(format!(
                     "note type `{name}` template `{template}` must be a bare filename \
                      under .cuaderno/templates/, not a path"
-                )));
+                ));
+            }
+            for (label, field) in [
+                ("title_field", &def.title_field),
+                ("date_field", &def.date_field),
+            ] {
+                if let Some(field) = field
+                    && !def.required.contains(field)
+                    && !def.optional.contains(field)
+                {
+                    return invalid(format!(
+                        "note type `{name}` `{label}` names `{field}`, which is not in its \
+                         `required` or `optional` fields"
+                    ));
+                }
             }
         }
         Ok(())

@@ -369,3 +369,31 @@ fn normalise_skips_an_unregistered_type() {
     assert_eq!(report.skipped, 1);
     assert!(report.changed.is_empty());
 }
+
+#[test]
+fn normalise_handles_a_custom_and_builtin_note_in_one_pass() {
+    // Both share one `order_cache` keyed by the type *string* — the case the
+    // (NoteType,_)->(String,_) change exists for. Each must get its own order.
+    let person = "---\nrole: advisor\nname: Ada\ntype: person\n---\n# Ada\n";
+    let project = "---\nstatus: active\ncreated: 2026-04-01\ntype: project\ncontext: work\n---\n# Foo\n\n## Current State\n";
+    let (vault, store) = vault_with_config(
+        &[("people/ada.md", person), ("projects/foo.md", project)],
+        config_with_person(),
+    );
+
+    let report = vault.normalise_notes(false).expect("normalise");
+    let mut changed: Vec<String> = report.changed.iter().map(|p| p.to_string()).collect();
+    changed.sort();
+    assert_eq!(changed, vec!["people/ada.md", "projects/foo.md"]);
+
+    // Custom type → config-declared order.
+    assert_eq!(
+        frontmatter_keys(&store.read_file(&vp("people/ada.md")).unwrap()),
+        vec!["type", "name", "role"]
+    );
+    // Built-in → template-derived order, unaffected by sharing the cache.
+    assert_eq!(
+        frontmatter_keys(&store.read_file(&vp("projects/foo.md")).unwrap()),
+        vec!["type", "context", "status", "created"]
+    );
+}

@@ -169,3 +169,36 @@ fn required_fields_reads_custom_declaration_and_builtin_schema() {
     let project = reg.resolve("project").unwrap();
     assert!(project.required_fields(&config).is_empty());
 }
+
+#[test]
+fn validate_rejects_a_case_variant_of_a_builtin() {
+    // `[note_types.Project]` must be rejected: `from_str` is exact-match, so
+    // without a case-insensitive guard it would resolve as a distinct type from
+    // the lowercase `project` every tool writes.
+    let mut config = VaultConfig::default();
+    config
+        .note_types
+        .insert("Project".to_owned(), custom("my-projects", &[], &[]));
+    assert!(TypeRegistry::validate(&config).is_err());
+}
+
+#[test]
+fn all_names_orders_custom_types_deterministically() {
+    // Custom names are sorted so the completion list is stable regardless of
+    // the config map's iteration order.
+    let mut config = VaultConfig::default();
+    config
+        .note_types
+        .insert("zebra".to_owned(), custom("zebras", &[], &[]));
+    config
+        .note_types
+        .insert("apple".to_owned(), custom("apples", &[], &[]));
+    let reg = TypeRegistry::new(&config);
+    let names = reg.all_names();
+    let apple = names.iter().position(|n| *n == "apple").unwrap();
+    let zebra = names.iter().position(|n| *n == "zebra").unwrap();
+    assert!(apple < zebra, "custom names should be sorted: {names:?}");
+    // Custom names come after every built-in.
+    let last_builtin = names.iter().position(|n| *n == "inbox").unwrap();
+    assert!(apple > last_builtin);
+}

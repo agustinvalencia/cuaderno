@@ -121,7 +121,14 @@ impl<'a> TypeRegistry<'a> {
     pub fn validate(config: &VaultConfig) -> Result<(), DomainError> {
         config.validate_note_types()?;
         for name in config.note_types.keys() {
-            if NoteType::from_str(name).is_ok() {
+            // Case-insensitive: `from_str` is exact-match, so `[note_types.Project]`
+            // would otherwise slip past and resolve as a *distinct* type from the
+            // lowercase `project` every tool writes — a silent divergence. Reject
+            // any case-variant of a built-in name.
+            if NoteType::ALL
+                .iter()
+                .any(|t| t.as_str().eq_ignore_ascii_case(name))
+            {
                 return Err(DomainError::ReservedTypeName { name: name.clone() });
             }
         }
@@ -152,13 +159,14 @@ impl<'a> TypeRegistry<'a> {
     }
 
     /// Every known type name — the 11 built-ins plus every config type — for
-    /// shell completions and the `--type` filter. Built-ins first, then config
-    /// types in declaration-map order.
+    /// shell completions and the `--type` filter. Built-ins first (in
+    /// [`NoteType::ALL`] order), then config types sorted alphabetically so the
+    /// completion list is stable across runs (the config map is unordered).
     pub fn all_names(&self) -> Vec<&'a str> {
         let mut names: Vec<&str> = NoteType::ALL.iter().map(|t| t.as_str()).collect();
-        for name in self.config.note_types.keys() {
-            names.push(name.as_str());
-        }
+        let mut custom: Vec<&str> = self.config.note_types.keys().map(String::as_str).collect();
+        custom.sort_unstable();
+        names.extend(custom);
         names
     }
 }

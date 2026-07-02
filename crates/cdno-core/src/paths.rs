@@ -52,6 +52,23 @@ pub const QUESTIONS_LIFE: &str = "questions/life";
 // Uncategorised captures.
 pub const INBOX: &str = "inbox";
 
+/// Top-level folders owned by the built-in note types (plus the `.cuaderno/`
+/// meta dir). A config-defined custom type may not claim one of these as its
+/// `folder` — it would drop notes alongside built-in notes. `questions` has no
+/// top-level note itself (only `questions/research` + `questions/life`) but is
+/// reserved so a custom type can't mix into that tree.
+pub const RESERVED_TOP_LEVEL_FOLDERS: &[&str] = &[
+    JOURNAL,
+    PROJECTS,
+    PORTFOLIOS,
+    STEWARDSHIPS,
+    COMMITMENTS,
+    ACTIONS,
+    "questions",
+    INBOX,
+    CUADERNO_DIR,
+];
+
 // `.cuaderno/` meta directory and its contents.
 pub const CUADERNO_DIR: &str = ".cuaderno";
 pub const CONFIG_FILE: &str = ".cuaderno/config.toml";
