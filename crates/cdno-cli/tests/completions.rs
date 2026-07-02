@@ -318,3 +318,33 @@ fn intercept_emits_no_candidates_outside_a_vault() {
         "expected no slug candidates outside a vault, got:\n{stdout}"
     );
 }
+
+#[test]
+fn intercept_note_type_completion_includes_custom_types() {
+    // `complete_note_type` (used by `templates vars <type>` and `search --type`)
+    // is vault-aware: it offers the built-ins plus any config-defined custom
+    // types.
+    let vault = init_vault();
+    let cfg = vault.path().join(".cuaderno/config.toml");
+    let mut content = std::fs::read_to_string(&cfg).unwrap_or_default();
+    content.push_str("\n[note_types.person]\nfolder = \"people\"\n");
+    std::fs::write(&cfg, content).unwrap();
+
+    // Words: [cdno, templates, vars, ""] — cursor on the note_type positional.
+    let output = cdno()
+        .current_dir(vault.path())
+        .env("COMPLETE", "zsh")
+        .env("_CLAP_COMPLETE_INDEX", "3")
+        .args(["--", "cdno", "templates", "vars", ""])
+        .assert()
+        .success();
+    let stdout = std::str::from_utf8(&output.get_output().stdout).unwrap();
+    assert!(
+        stdout.contains("project"),
+        "built-in type in completions:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("person"),
+        "custom type in completions:\n{stdout}"
+    );
+}

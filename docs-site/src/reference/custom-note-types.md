@@ -50,7 +50,7 @@ cdno note list person
 
 `--field name=value` is repeatable; each key must be a declared `required`/`optional` field, and
 every `required` field must be supplied. `--var name=value` supplies a template's
-[prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables).
+[prompted variables](../tutorials/templates-and-frontmatter.md#prompted-variables).
 
 The note is written to `<folder>/<slug(title)>.md`. If the type has a template
 (`.cuaderno/templates/person.md`), it is rendered; otherwise Cuaderno **synthesises** a minimal note
@@ -67,7 +67,8 @@ From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, t
 - `cdno templates eject person` does **not** apply — a custom type has no built-in template to
   materialise; author `.cuaderno/templates/person.md` by hand.
 - `cdno search <query> --type person` filters results to that type. `--type` accepts any built-in or
-  custom name; an unknown name simply matches nothing. Shell completion offers your vault's types.
+  custom name; a name that is neither errors with the valid set. Shell completion offers your
+  vault's types.
 
 ## Relationship to `[schemas.*]`
 

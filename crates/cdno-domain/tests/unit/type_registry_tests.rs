@@ -227,3 +227,30 @@ fn supplied_placeholders_for_builtin_matches_the_registry_list() {
         .collect();
     assert_eq!(via_descriptor, direct);
 }
+
+#[test]
+fn supplied_placeholders_dedupes_a_field_colliding_with_a_builtin() {
+    // A custom type declaring `created`/`date` (which the create path already
+    // supplies) must not double-list them.
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "event".to_owned(),
+        custom("events", &["created"], &["date", "venue"]),
+    );
+    let reg = TypeRegistry::new(&config);
+    let ph = reg.resolve("event").unwrap().supplied_placeholders();
+    assert_eq!(ph, vec!["title", "slug", "created", "date", "venue"]);
+}
+
+#[test]
+fn supplied_placeholders_for_a_fieldless_custom_type_is_just_the_builtins() {
+    let mut config = VaultConfig::default();
+    config
+        .note_types
+        .insert("bookmark".to_owned(), custom("bookmarks", &[], &[]));
+    let reg = TypeRegistry::new(&config);
+    assert_eq!(
+        reg.resolve("bookmark").unwrap().supplied_placeholders(),
+        vec!["title", "slug", "created", "date"]
+    );
+}

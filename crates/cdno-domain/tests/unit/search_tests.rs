@@ -347,3 +347,32 @@ fn note_type_filter_matches_a_config_custom_type() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].note_type, "person");
 }
+
+#[test]
+fn custom_type_filter_with_no_matching_notes_is_empty() {
+    // A registered custom type with no notes of that type returns no hits
+    // (the domain filter is lenient; the CLI/MCP validate the name).
+    use cdno_core::config::CustomNoteType;
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec![],
+            optional: vec![],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let vault = vault_with_config(
+        &[("projects/p.md", note("project", "P", "sparse alpha"))],
+        config,
+    );
+    let filters = SearchFilters {
+        note_type_names: vec!["person".to_owned()],
+        ..Default::default()
+    };
+    assert!(vault.search("sparse", &filters, 10).unwrap().is_empty());
+}

@@ -343,8 +343,17 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<SearchNotesInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Any built-in or config-defined custom type name; an unknown name
-        // simply matches nothing (lenient, like the CLI `--type`).
+        // Any built-in or config-defined custom type name. Validate against the
+        // registry so a typo is a clear INVALID_PARAMS rather than a silent
+        // empty result (an LLM client has no tab-completion to catch it).
+        if let Some(t) = input.note_type.as_deref()
+            && !self.vault.type_registry().is_known(t)
+        {
+            return Err(invalid_argument(
+                "note_type",
+                &format!("unknown note type '{t}'"),
+            ));
+        }
         let note_type_names = input.note_type.into_iter().collect();
         let filters = SearchFilters {
             note_type_names,

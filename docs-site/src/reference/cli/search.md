@@ -17,7 +17,7 @@ cdno search [OPTIONS] <QUERY>
 
 | Flag | Description |
 |------|-------------|
-| `--type <TYPE>` | Restrict to one note type (e.g. `daily`, `project`, `evidence`). |
+| `--type <TYPE>` | Restrict to one note type (e.g. `daily`, `project`, `evidence`, or a [config-defined custom type](../custom-note-types.md)). A name that is neither built-in nor a registered custom type errors with the valid set; tab-completion offers your vault's types. |
 | `--from <FROM>` | Inclusive earliest note date (`YYYY-MM-DD`). |
 | `--to <TO>` | Inclusive latest note date (`YYYY-MM-DD`). |
 | `--portfolio <PORTFOLIO>` | Restrict to notes in this portfolio. |
