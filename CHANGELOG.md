@@ -8,6 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno templates eject --all`** — eject every built-in template into `.cuaderno/templates/` in one
+  go, for customising the whole vault at once. Types that already have a custom template are skipped
+  (a summary reports which) unless `--force`. `<type>` and `--all` are mutually exclusive; `--json`
+  emits `{ written, skipped }` (note-type name arrays).
 - **`cdno track` hints at the example templates for newcomers** (#282) — until a vault has any
   tracking template, `cdno track` prints a one-line nudge (on stderr) pointing at
   `examples/templates/tracking/` for a structured layout. It goes quiet once you author any tracking

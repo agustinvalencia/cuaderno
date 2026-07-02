@@ -147,3 +147,59 @@ fn templates_eject_tracking_writes_the_generic_template() {
     assert_eq!(path, ".cuaderno/templates/tracking.md");
     assert!(dir.path().join(&path).exists());
 }
+
+#[test]
+fn templates_eject_all_writes_every_type_skipping_existing() {
+    let dir = tempdir().unwrap();
+    seed(dir.path()); // init seeds daily.md
+
+    let report = templates::eject_all(dir.path(), false).expect("eject all");
+    // All 11 types end up on disk; daily was already seeded, so it's skipped.
+    assert_eq!(report.written.len() + report.skipped.len(), 11);
+    assert_eq!(report.skipped, vec!["daily"]);
+    assert!(report.written.contains(&"project".to_owned()));
+    let templates_dir = dir.path().join(".cuaderno/templates");
+    for t in [
+        "project",
+        "action",
+        "tracking",
+        "commitment",
+        "inbox",
+        "daily",
+    ] {
+        assert!(
+            templates_dir.join(format!("{t}.md")).exists(),
+            "missing {t}.md"
+        );
+    }
+}
+
+#[test]
+fn templates_eject_all_rerun_skips_everything() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    templates::eject_all(dir.path(), false).expect("first");
+    let second = templates::eject_all(dir.path(), false).expect("second");
+    assert!(second.written.is_empty(), "everything already exists");
+    assert_eq!(second.skipped.len(), 11);
+}
+
+#[test]
+fn templates_eject_all_force_overwrites_a_customised_template() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let project = dir.path().join(".cuaderno/templates/project.md");
+    fs::write(&project, "# mine\n").unwrap();
+
+    let report = templates::eject_all(dir.path(), true).expect("force eject all");
+    assert_eq!(report.written.len(), 11, "force writes all, none skipped");
+    assert!(report.skipped.is_empty());
+    // The customised project.md was overwritten with the built-in.
+    assert!(
+        fs::read_to_string(&project)
+            .unwrap()
+            .contains("## Current State"),
+        "project.md overwritten"
+    );
+}

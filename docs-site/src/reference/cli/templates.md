@@ -61,16 +61,18 @@ cdno templates eject [OPTIONS] <TYPE>
 
 | Argument | Description |
 |----------|-------------|
-| `<TYPE>` | Note type to eject (same set as `templates vars`). |
+| `<TYPE>` | Note type to eject (same set as `templates vars`). Omit when using `--all`. |
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Overwrite an existing custom template. Without it, an existing file is left untouched and the command errors. |
+| `--all` | Eject **every** built-in template into `.cuaderno/templates/` at once. Types you've already customised are skipped (a summary reports which), unless `--force`. Mutually exclusive with `<TYPE>` — pass one or the other. |
+| `--force` | Overwrite existing custom template(s). Without it, an existing file is left untouched (and single-type eject errors; `--all` skips it). |
 
-Plus the [global options](overview.md#global-options). With `--json`, emits the
-`{ path, message }` write result.
+Plus the [global options](overview.md#global-options). With `--json`, single-type
+eject emits the `{ path, message }` write result; `--all` emits
+`{ written: [...], skipped: [...] }` (arrays of note-type names).
 
 Only base note-type templates eject — no `<type>-<variant>` template ships
 built-in. To create a `tracking` activity variant, copy one from
@@ -83,6 +85,8 @@ to `.cuaderno/templates/tracking-<activity>.md` instead.
 cdno templates eject project              # → .cuaderno/templates/project.md
 cdno templates eject tracking             # → the generic tracking template
 cdno templates eject project --force      # overwrite an earlier customisation
+cdno templates eject --all                # eject all built-ins, skip customised
+cdno templates eject --all --force        # eject all, overwriting everything
 ```
 
 The written file is exactly the built-in default, so a note created straight
