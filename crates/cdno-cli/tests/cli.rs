@@ -259,6 +259,55 @@ fn capture_creates_an_inbox_file_when_run_from_inside_a_vault() {
 }
 
 #[test]
+fn track_generic_hint_is_on_stderr_and_suppressed_under_json() {
+    // #282: the generic-template nudge goes to stderr (not stdout) in human
+    // mode, and is fully suppressed under `--json` so the JSON result is clean.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .args(["--vault", dir.path().to_str().unwrap()])
+        .args([
+            "stewardship",
+            "create",
+            "--name",
+            "Health",
+            "--context",
+            "personal",
+            "--tracking",
+        ])
+        .assert()
+        .success();
+
+    // Human mode: result on stdout, hint on stderr.
+    cdno()
+        .args(["--vault", dir.path().to_str().unwrap()])
+        .args(["track", "gym", "--stewardship", "health", "--content", "A"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Tracked at"))
+        .stdout(predicate::str::contains("generic template").not())
+        .stderr(predicate::str::contains("generic template"));
+
+    // `--json`: stdout is the clean result, no hint anywhere.
+    cdno()
+        .args(["--vault", dir.path().to_str().unwrap()])
+        .args([
+            "track",
+            "swim",
+            "--stewardship",
+            "health",
+            "--content",
+            "B",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"path\""))
+        .stdout(predicate::str::contains("generic template").not())
+        .stderr(predicate::str::contains("generic template").not());
+}
+
+#[test]
 fn triage_lists_pending_inbox_items_when_not_a_tty() {
     // assert_cmd pipes stdout, so `is_interactive` is false and triage
     // takes the listing path without prompting (#208).

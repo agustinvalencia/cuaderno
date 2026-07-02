@@ -93,7 +93,53 @@ pub fn run(
         )
         .context("filing tracking entry")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
+
+    // Point-of-use nudge (#282): a one-time-ish discovery hint for the
+    // ready-made structured templates. Suppressed under `--json`, and printed
+    // to stderr so it never pollutes a human-mode capture of the result line.
+    if !json && let Some(hint) = generic_template_hint(root, &activity_variant) {
+        eprintln!("{hint}");
+    }
     Ok(())
+}
+
+/// The discovery hint to show after a `cdno track` that used the built-in
+/// **generic** template. Returns `None` once the vault has *any* tracking
+/// template — a user who has authored one already knows the mechanism, so the
+/// nudge would just be noise on this high-frequency command; it's only for the
+/// newcomer who has never customised tracking.
+///
+/// When no tracking template exists, the create path necessarily resolved the
+/// generic built-in (there is no `tracking-<variant>` built-in — only the plain
+/// `tracking` generic ships; see `builtin_defaults`), so the hint is accurate.
+/// It checks the vault filesystem rather than asking the domain which template
+/// resolved; that's correct while no built-in variant ships (a follow-up would
+/// have the domain report the resolved-template source to make it airtight).
+pub fn generic_template_hint(root: &Path, activity_slug: &str) -> Option<String> {
+    if vault_has_a_tracking_template(&root.join(cdno_core::paths::TEMPLATES_DIR)) {
+        return None;
+    }
+    Some(format!(
+        "  (generic template — copy an example from the cuaderno repo's \
+         examples/templates/tracking/ into .cuaderno/templates/tracking-{activity_slug}.md \
+         for a structured layout)"
+    ))
+}
+
+/// Whether the vault has any tracking template — a base `tracking.md` or any
+/// `tracking-<variant>.md`.
+fn vault_has_a_tracking_template(templates_dir: &Path) -> bool {
+    if templates_dir.join("tracking.md").exists() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(templates_dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        name.starts_with("tracking-") && name.ends_with(".md")
+    })
 }
 
 /// Return the only expanded stewardship in the vault, when there's

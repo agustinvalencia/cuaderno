@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno track` hints at the example templates for newcomers** (#282) — until a vault has any
+  tracking template, `cdno track` prints a one-line nudge (on stderr) pointing at
+  `examples/templates/tracking/` for a structured layout. It goes quiet once you author any tracking
+  template (no per-activity nagging on this high-frequency command) and is suppressed under `--json`.
+  Closes the discovery gap raised in the #281 review.
+
 ### Changed
 
 - **`cdno templates vars <type>` now reports the complete supplied set** (#279) — the `supplied`
