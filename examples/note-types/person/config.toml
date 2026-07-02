@@ -1,0 +1,11 @@
+# A `person` custom note type. Merge this table into your vault's
+# `.cuaderno/config.toml` to track the people you work and think with.
+#
+# Minimal on purpose: a person's identity is the note title (which becomes the
+# slug and filename), so no fields are required. Add `required`/`optional`
+# fields if you want enforced frontmatter — see
+# https://agustinvalencia.github.io/cuaderno/reference/custom-note-types.html
+
+[note_types.person]
+folder = "people"
+# optional = ["org", "role"]   # uncomment to enforce these frontmatter fields

@@ -4,6 +4,25 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **Config-defined custom note types** (#293, #294, #295, #296) — declare your own **schema-only**
+  note type under `[note_types.<name>]` in `.cuaderno/config.toml`, for entities the eleven built-in
+  types don't cover (people, books, clients). A custom type gets a folder, enforced
+  `required`/`optional` fields (checked by `cdno lint`), an optional template, canonical
+  frontmatter ordering (`cdno normalise`), and full participation in indexing, search, backlinks,
+  and completions — but **no bespoke behaviour** (caps, lifecycle, aggregation stay exclusive to the
+  built-in types, so a custom type is invisible to `orient`/the cap by design). Create and list with
+  `cdno note create <type> --title … --field k=v` / `cdno note list <type>`, or the MCP
+  `create_custom_note` tool. `cdno templates vars <type>`, `cdno search --type <type>`, and shell
+  completion all recognise custom types. Reserved names (a custom type may not shadow a built-in,
+  case-insensitive), folder collisions, and vault-escaping folders are rejected at vault-open. A
+  worked `person` example ships in [`examples/note-types/person/`](examples/note-types/person/) with
+  a [Tracking people](https://agustinvalencia.github.io/cuaderno/tutorials/tracking-people.html)
+  recipe. `append_only` on a custom type is accepted but not yet lint-enforced.
+
 ## [0.2.1] - 2026-07-02
 
 `cdno templates` polish: `vars` now reports the complete supplied set, `eject --all` ejects every built-in at once, and `cdno track` nudges newcomers toward the example templates.

@@ -30,6 +30,7 @@
 - [Inbox and triage](tutorials/inbox-and-triage.md)
 - [Searching your vault](tutorials/search.md)
 - [Customising templates and frontmatter](tutorials/templates-and-frontmatter.md)
+- [Tracking people](tutorials/tracking-people.md)
 
 # CLI reference
 
