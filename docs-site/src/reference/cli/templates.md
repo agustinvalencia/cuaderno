@@ -67,12 +67,12 @@ cdno templates eject [OPTIONS] <TYPE>
 
 | Flag | Description |
 |------|-------------|
-| `--all` | Eject **every** built-in template into `.cuaderno/templates/` at once. Types you've already customised are skipped (a summary reports which), unless `--force`. Mutually exclusive with `<TYPE>` — pass one or the other. |
+| `--all` | Eject **every** built-in template into `.cuaderno/templates/` at once. Types that already have a template file are skipped (a summary reports which), unless `--force`. Mutually exclusive with `<TYPE>` — pass one or the other. |
 | `--force` | Overwrite existing custom template(s). Without it, an existing file is left untouched (and single-type eject errors; `--all` skips it). |
 
 Plus the [global options](overview.md#global-options). With `--json`, single-type
-eject emits the `{ path, message }` write result; `--all` emits
-`{ written: [...], skipped: [...] }` (arrays of note-type names).
+eject emits the `{ path, message }` write result; `--all` emits an object with
+`written` and `skipped` arrays (note-type names).
 
 Only base note-type templates eject — no `<type>-<variant>` template ships
 built-in. To create a `tracking` activity variant, copy one from

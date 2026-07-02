@@ -150,26 +150,48 @@ fn templates_eject_tracking_writes_the_generic_template() {
 
 #[test]
 fn templates_eject_all_writes_every_type_skipping_existing() {
+    use std::collections::BTreeSet;
+    use std::str::FromStr;
+
+    use cdno_domain::note_type::NoteType;
+
     let dir = tempdir().unwrap();
-    seed(dir.path()); // init seeds daily.md
+    seed(dir.path());
+    let templates_dir = dir.path().join(".cuaderno/templates");
+
+    // Whatever `init` pre-seeds (today just daily.md) is exactly what `--all`
+    // skips — derive it rather than hardcode, so this survives init growing.
+    let preseeded: BTreeSet<String> = std::fs::read_dir(&templates_dir)
+        .unwrap()
+        .flatten()
+        .filter_map(|e| {
+            e.path()
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
+        .filter(|stem| NoteType::from_str(stem).is_ok())
+        .collect();
 
     let report = templates::eject_all(dir.path(), false).expect("eject all");
-    // All 11 types end up on disk; daily was already seeded, so it's skipped.
-    assert_eq!(report.written.len() + report.skipped.len(), 11);
-    assert_eq!(report.skipped, vec!["daily"]);
-    assert!(report.written.contains(&"project".to_owned()));
-    let templates_dir = dir.path().join(".cuaderno/templates");
-    for t in [
-        "project",
-        "action",
-        "tracking",
-        "commitment",
-        "inbox",
-        "daily",
-    ] {
+    let written: BTreeSet<String> = report.written.into_iter().collect();
+    let skipped: BTreeSet<String> = report.skipped.into_iter().collect();
+
+    assert_eq!(skipped, preseeded, "skips exactly the pre-seeded templates");
+    assert!(
+        written.is_disjoint(&skipped),
+        "written and skipped are disjoint"
+    );
+    assert_eq!(
+        written.len() + skipped.len(),
+        11,
+        "every type accounted for"
+    );
+    // Every type now has a template file on disk.
+    for nt in NoteType::ALL {
         assert!(
-            templates_dir.join(format!("{t}.md")).exists(),
-            "missing {t}.md"
+            templates_dir.join(format!("{}.md", nt.as_str())).exists(),
+            "missing {}.md",
+            nt.as_str()
         );
     }
 }

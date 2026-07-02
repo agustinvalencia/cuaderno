@@ -141,7 +141,7 @@ fn emit_eject_all(json: bool, report: &EjectAllReport) -> Result<()> {
     );
     if !report.skipped.is_empty() {
         println!(
-            "Skipped {} already-customised: {} — use --force to overwrite.",
+            "Skipped {} already present: {} — use --force to overwrite.",
             report.skipped.len(),
             report.skipped.join(", ")
         );
