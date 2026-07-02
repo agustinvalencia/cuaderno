@@ -112,6 +112,34 @@ fn custom_type_template_used_when_variant_custom_missing() {
     assert_eq!(source, TemplateSource::CustomBase);
 }
 
+#[test]
+fn variant_request_falls_back_to_plain_builtin_default() {
+    // The second built-in fallback rung: a variant was requested, no
+    // `tracking-<variant>` default exists, so it falls to the plain `tracking`
+    // default and must report `BuiltinDefault` (the generic) — NOT
+    // `BuiltinVariant`. Production ships only the plain `tracking` generic, so
+    // this is the rung every real `cdno track` of a fresh activity hits. The
+    // shared `engine_with_defaults` helper is inverted (a `tracking-gym`, no
+    // plain `tracking`), so pin this rung with a bespoke engine carrying both.
+    let mut defaults = HashMap::new();
+    defaults.insert(
+        "tracking-gym".to_string(),
+        "---\ntype: tracking\nroutine: {{routine}}\n---\n# Gym\n",
+    );
+    defaults.insert(
+        "tracking".to_string(),
+        "---\ntype: tracking\n---\n# {{activity_title}}\n",
+    );
+    let engine = TemplateEngine::new(None, defaults);
+
+    // A bundled variant resolves to itself.
+    let (_t, source) = engine.load_template("tracking", Some("gym")).unwrap();
+    assert_eq!(source, TemplateSource::BuiltinVariant);
+    // An activity with no bundled variant falls back to the plain generic.
+    let (_t, source) = engine.load_template("tracking", Some("body")).unwrap();
+    assert_eq!(source, TemplateSource::BuiltinDefault);
+}
+
 // --- Variable resolution ---
 
 #[test]

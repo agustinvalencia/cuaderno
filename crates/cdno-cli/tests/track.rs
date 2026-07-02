@@ -1,8 +1,9 @@
 //! Tests for `cdno track`'s newcomer-hint gate (#282, #287). The "did this
 //! entry use the generic template" decision now comes from the domain's
-//! resolved `TemplateSource` (see the domain `template_source_*` tests); this
-//! seam is the remaining UX gate — the nudge is silenced once the vault has any
-//! custom `tracking-<slug>.md` or `tracking.md`, so only a true newcomer sees it.
+//! resolved `TemplateSource` (see `add_tracking_entry_reports_the_resolved_template_source`
+//! in the domain suite, and the rung assertions in cdno-core's `template_tests.rs`);
+//! this seam is the remaining UX gate — the nudge is silenced once the vault has
+//! any custom `tracking-<slug>.md` or `tracking.md`, so only a true newcomer sees it.
 
 use std::fs;
 
