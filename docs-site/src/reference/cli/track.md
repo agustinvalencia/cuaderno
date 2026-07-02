@@ -41,6 +41,11 @@ cdno track gym --content "Legs day"
 Tracking entries are [append-only](../../concepts/business-rules.md) and only land in **expanded**
 stewardships (those created with `--tracking`).
 
+When an activity has no `.cuaderno/templates/tracking-<activity>.md` (nor a base `tracking.md`),
+`cdno track` uses the generic template and prints a one-line hint pointing at
+[`examples/templates/tracking/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/templates/tracking)
+for a structured layout. The hint is suppressed under `--json`.
+
 ## Related MCP tool
 
 [`create_tracking_entry`](../mcp/writes.md).

@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno track` hints at the example templates on generic fallback** (#282) — when an activity uses
+  the built-in generic tracking template (no vault `tracking-<activity>.md` or `tracking.md`
+  override), the success output gains a one-line nudge pointing at `examples/templates/tracking/` for
+  a structured layout. Suppressed under `--json`. Closes the discovery gap raised in the #281 review.
+
 ### Changed
 
 - **`cdno templates vars <type>` now reports the complete supplied set** (#279) — the `supplied`

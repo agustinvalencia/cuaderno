@@ -93,7 +93,35 @@ pub fn run(
         )
         .context("filing tracking entry")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
+
+    // Point-of-use nudge (#282): when the note used the built-in generic
+    // template (no custom variant/base override in the vault), tell the user
+    // the ready-made structured templates exist. Suppressed under `--json`.
+    if !json && let Some(hint) = generic_template_hint(root, &activity_variant) {
+        println!("{hint}");
+    }
     Ok(())
+}
+
+/// The hint to show when `cdno track` fell back to the built-in **generic**
+/// tracking template — i.e. the vault has no custom `tracking-<slug>.md` (the
+/// activity variant) and no custom `tracking.md` (base override), so the create
+/// path resolved the plain generic shape. Returns `None` when a custom template
+/// applied (mirrors the resolver's precedence: variant → base → built-in).
+pub fn generic_template_hint(root: &Path, activity_slug: &str) -> Option<String> {
+    let templates = root.join(cdno_core::paths::TEMPLATES_DIR);
+    let has_custom = templates
+        .join(format!("tracking-{activity_slug}.md"))
+        .exists()
+        || templates.join("tracking.md").exists();
+    if has_custom {
+        None
+    } else {
+        Some(format!(
+            "  (generic template — copy an example from examples/templates/tracking/ into \
+             .cuaderno/templates/tracking-{activity_slug}.md for a structured layout)"
+        ))
+    }
 }
 
 /// Return the only expanded stewardship in the vault, when there's
