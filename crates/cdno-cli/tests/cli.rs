@@ -308,6 +308,55 @@ fn track_generic_hint_is_on_stderr_and_suppressed_under_json() {
 }
 
 #[test]
+fn templates_eject_requires_exactly_one_of_type_or_all() {
+    // The clap mutual-exclusion: `required_unless_present = "all"` +
+    // `conflicts_with = "all"`. Guards the `.expect()` in the dispatch.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+
+    // Neither → required-arg error.
+    cdno()
+        .args(["--vault", vault, "templates", "eject"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("required"));
+    // Both → conflict error.
+    cdno()
+        .args(["--vault", vault, "templates", "eject", "project", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn templates_eject_all_json_emits_written_and_skipped_arrays() {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    let assert = cdno()
+        .args([
+            "--vault",
+            dir.path().to_str().unwrap(),
+            "templates",
+            "eject",
+            "--all",
+            "--json",
+        ])
+        .assert()
+        .success();
+    let stdout = &assert.get_output().stdout;
+    let v: serde_json::Value = serde_json::from_slice(stdout).expect("valid JSON");
+    let written = v["written"].as_array().expect("written array");
+    let skipped = v["skipped"].as_array().expect("skipped array");
+    assert_eq!(
+        written.len() + skipped.len(),
+        11,
+        "every type accounted for"
+    );
+}
+
+#[test]
 fn triage_lists_pending_inbox_items_when_not_a_tty() {
     // assert_cmd pipes stdout, so `is_interactive` is false and triage
     // takes the listing path without prompting (#208).

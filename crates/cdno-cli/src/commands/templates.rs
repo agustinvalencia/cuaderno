@@ -34,12 +34,20 @@ pub enum TemplatesCommands {
 
     /// Copy a built-in template into `.cuaderno/templates/<type>.md` as an
     /// editable starting point for customisation. Refuses to overwrite an
-    /// existing custom template unless `--force`.
+    /// existing custom template unless `--force`. Pass `--all` to eject every
+    /// built-in template at once (skipping ones you've already customised).
     Eject {
-        /// Note type to eject (same set as `templates vars`).
-        #[arg(add = ArgValueCompleter::new(completions::complete_note_type))]
-        note_type: String,
-        /// Overwrite an existing custom template.
+        /// Note type to eject (same set as `templates vars`). Omit with `--all`.
+        #[arg(
+            add = ArgValueCompleter::new(completions::complete_note_type),
+            required_unless_present = "all",
+            conflicts_with = "all",
+        )]
+        note_type: Option<String>,
+        /// Eject every built-in template into `.cuaderno/templates/`.
+        #[arg(long)]
+        all: bool,
+        /// Overwrite existing custom templates.
         #[arg(long)]
         force: bool,
     },
@@ -59,11 +67,86 @@ pub fn run(root: &Path, command: TemplatesCommands, json: bool) -> Result<()> {
             }
             Ok(())
         }
-        TemplatesCommands::Eject { note_type, force } => {
-            let path = eject(root, &note_type, force)?;
-            crate::output::emit_write_result(json, &path, &format!("Ejected template to {path}"))
+        TemplatesCommands::Eject {
+            note_type,
+            all,
+            force,
+        } => {
+            if all {
+                let report = eject_all(root, force)?;
+                emit_eject_all(json, &report)
+            } else {
+                // `required_unless_present = "all"` guarantees Some here.
+                let note_type = note_type.expect("clap requires <type> without --all");
+                let path = eject(root, &note_type, force)?;
+                crate::output::emit_write_result(
+                    json,
+                    &path,
+                    &format!("Ejected template to {path}"),
+                )
+            }
         }
     }
+}
+
+/// What `templates eject --all` did: the note types written and the ones
+/// skipped because a custom template already exists.
+pub struct EjectAllReport {
+    pub written: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Write seam for `--all`: eject every built-in template, skipping types that
+/// already have a custom template (unless `force`). Opens the vault once and
+/// reuses the per-type `Vault::eject_template`.
+pub fn eject_all(root: &Path, force: bool) -> Result<EjectAllReport> {
+    use cdno_domain::error::DomainError;
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    let mut written = Vec::new();
+    let mut skipped = Vec::new();
+    for note_type in NoteType::ALL {
+        match vault.eject_template(note_type.as_str(), None, force) {
+            Ok(_path) => written.push(note_type.as_str().to_owned()),
+            Err(DomainError::TemplateAlreadyExists { .. }) => {
+                skipped.push(note_type.as_str().to_owned())
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(EjectAllReport { written, skipped })
+}
+
+/// Render the `--all` result: `{written, skipped}` under `--json`, else a human
+/// summary naming what was written and what was skipped.
+fn emit_eject_all(json: bool, report: &EjectAllReport) -> Result<()> {
+    if json {
+        let payload = serde_json::json!({
+            "written": report.written,
+            "skipped": report.skipped,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+    if report.written.is_empty() {
+        println!(
+            "All {} templates already exist in .cuaderno/templates/ — use --force to overwrite.",
+            report.skipped.len()
+        );
+        return Ok(());
+    }
+    println!(
+        "Ejected {} template(s) to .cuaderno/templates/: {}",
+        report.written.len(),
+        report.written.join(", ")
+    );
+    if !report.skipped.is_empty() {
+        println!(
+            "Skipped {} already present: {} — use --force to overwrite.",
+            report.skipped.len(),
+            report.skipped.join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// Validate `note_type` against the known set, returning a friendly error
