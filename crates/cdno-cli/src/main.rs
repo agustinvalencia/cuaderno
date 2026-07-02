@@ -224,7 +224,7 @@ enum Commands {
     },
 
     /// Create and list notes of config-defined custom types (declared under
-    /// `[note_types.<type>]`). `note new <type> --title … --field k=v` and
+    /// `[note_types.<type>]`). `note create <type> --title … --field k=v` and
     /// `note list <type>`.
     Note {
         #[command(subcommand)]

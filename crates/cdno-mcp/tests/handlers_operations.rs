@@ -20,7 +20,7 @@ use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     ActionQueryInput, AddActionInput, AddMilestoneInput, AddPeriodicCommitmentInput,
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
-    CompleteMilestoneInput, CreateCommitmentInput, CreateNoteInput, CreatePortfolioInput,
+    CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
@@ -1468,7 +1468,7 @@ async fn discard_inbox_item_removes_the_capture() {
 }
 
 // ---------------------------------------------------------------------
-// create_note (config-defined custom types)
+// create_custom_note (config-defined custom types)
 // ---------------------------------------------------------------------
 
 fn config_with_person() -> VaultConfig {
@@ -1490,10 +1490,10 @@ fn config_with_person() -> VaultConfig {
 }
 
 #[tokio::test]
-async fn create_note_creates_a_custom_type_note() {
+async fn create_custom_note_creates_a_custom_type_note() {
     let (server, store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
-        .create_note(Parameters(CreateNoteInput {
+        .create_custom_note(Parameters(CreateCustomNoteInput {
             type_name: "person".to_owned(),
             title: "Ada Lovelace".to_owned(),
             fields: std::collections::HashMap::from([
@@ -1503,7 +1503,7 @@ async fn create_note_creates_a_custom_type_note() {
             vars: None,
         }))
         .await
-        .expect("create_note");
+        .expect("create_custom_note");
 
     let payload = decode_json(&result);
     assert!(
@@ -1519,10 +1519,10 @@ async fn create_note_creates_a_custom_type_note() {
 }
 
 #[tokio::test]
-async fn create_note_rejects_an_unknown_type() {
+async fn create_custom_note_rejects_an_unknown_type() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
-        .create_note(Parameters(CreateNoteInput {
+        .create_custom_note(Parameters(CreateCustomNoteInput {
             type_name: "gadget".to_owned(),
             title: "Widget".to_owned(),
             fields: std::collections::HashMap::new(),
@@ -1534,10 +1534,10 @@ async fn create_note_rejects_an_unknown_type() {
 }
 
 #[tokio::test]
-async fn create_note_rejects_a_missing_required_field() {
+async fn create_custom_note_rejects_a_missing_required_field() {
     let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
     let result = server
-        .create_note(Parameters(CreateNoteInput {
+        .create_custom_note(Parameters(CreateCustomNoteInput {
             type_name: "person".to_owned(),
             title: "Nameless".to_owned(),
             fields: std::collections::HashMap::new(),

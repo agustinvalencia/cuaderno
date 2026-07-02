@@ -225,7 +225,7 @@ fn tools_list_returns_all_advertised_tools() {
     assert_eq!(
         tools.len(),
         42,
-        "expected the full catalogue: 41 prior + create_note (config-defined custom types), got {}",
+        "expected the full catalogue: 41 prior + create_custom_note (config-defined custom types), got {}",
         tools.len()
     );
 }

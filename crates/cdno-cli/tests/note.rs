@@ -31,7 +31,7 @@ fn vault_arg(dir: &Path) -> String {
 }
 
 #[test]
-fn note_new_creates_and_note_list_finds_it() {
+fn note_create_creates_and_note_list_finds_it() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
     let v = vault_arg(dir.path());
@@ -41,7 +41,7 @@ fn note_new_creates_and_note_list_finds_it() {
             "--vault",
             &v,
             "note",
-            "new",
+            "create",
             "person",
             "--title",
             "Ada Lovelace",
@@ -71,14 +71,14 @@ fn note_new_creates_and_note_list_finds_it() {
 }
 
 #[test]
-fn note_new_json_emits_the_write_result() {
+fn note_create_json_emits_the_write_result() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
     let v = vault_arg(dir.path());
 
     cdno()
         .args([
-            "--vault", &v, "--json", "note", "new", "person", "--title", "Ada", "--field",
+            "--vault", &v, "--json", "note", "create", "person", "--title", "Ada", "--field",
             "name=Ada",
         ])
         .assert()
@@ -88,14 +88,14 @@ fn note_new_json_emits_the_write_result() {
 }
 
 #[test]
-fn note_new_rejects_a_missing_required_field() {
+fn note_create_rejects_a_missing_required_field() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
     let v = vault_arg(dir.path());
 
     cdno()
         .args([
-            "--vault", &v, "note", "new", "person", "--title", "Nameless",
+            "--vault", &v, "note", "create", "person", "--title", "Nameless",
         ])
         .assert()
         .failure()
@@ -103,7 +103,7 @@ fn note_new_rejects_a_missing_required_field() {
 }
 
 #[test]
-fn note_new_rejects_an_undeclared_field() {
+fn note_create_rejects_an_undeclared_field() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
     let v = vault_arg(dir.path());
@@ -113,7 +113,7 @@ fn note_new_rejects_an_undeclared_field() {
             "--vault",
             &v,
             "note",
-            "new",
+            "create",
             "person",
             "--title",
             "Ada",
@@ -128,13 +128,15 @@ fn note_new_rejects_an_undeclared_field() {
 }
 
 #[test]
-fn note_new_rejects_an_unregistered_type() {
+fn note_create_rejects_an_unregistered_type() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
     let v = vault_arg(dir.path());
 
     cdno()
-        .args(["--vault", &v, "note", "new", "gadget", "--title", "Widget"])
+        .args([
+            "--vault", &v, "note", "create", "gadget", "--title", "Widget",
+        ])
         .assert()
         .failure()
         .stderr(predicate::str::contains("unknown note type"));

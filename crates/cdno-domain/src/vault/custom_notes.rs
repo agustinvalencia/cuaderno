@@ -72,8 +72,10 @@ impl Vault {
                 note_type: type_name.to_owned(),
             });
         };
+        // A known built-in is a different error from an unknown type: steer the
+        // user to its own create command rather than claiming it's "unknown".
         let Some(def) = descriptor.as_custom() else {
-            return Err(DomainError::UnknownNoteType {
+            return Err(DomainError::BuiltinTypeNotCustom {
                 note_type: type_name.to_owned(),
             });
         };
@@ -142,6 +144,20 @@ impl Vault {
     /// like built-ins, so the structured index title is not surfaced here;
     /// richer display is a later phase.)
     pub fn list_custom_notes(&self, type_name: &str) -> Result<Vec<VaultPath>, DomainError> {
+        // Symmetric with the create side: `list` is for custom types only.
+        match self.type_registry().resolve(type_name) {
+            Some(d) if d.is_custom() => {}
+            Some(_) => {
+                return Err(DomainError::BuiltinTypeNotCustom {
+                    note_type: type_name.to_owned(),
+                });
+            }
+            None => {
+                return Err(DomainError::UnknownNoteType {
+                    note_type: type_name.to_owned(),
+                });
+            }
+        }
         let mut paths: Vec<VaultPath> = self
             .index
             .list_by_type(type_name)?

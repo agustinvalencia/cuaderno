@@ -17,7 +17,7 @@ use crate::bootstrap;
 pub enum NoteCommands {
     /// Create a note of a config-defined custom type (declared under
     /// `[note_types.<type>]` in `.cuaderno/config.toml`).
-    New {
+    Create {
         /// The custom note type, e.g. `person`.
         note_type: String,
         /// The note's title; its slug becomes the filename.
@@ -43,7 +43,7 @@ pub enum NoteCommands {
 pub fn run(root: &Path, at: NaiveDateTime, command: NoteCommands, json: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     match command {
-        NoteCommands::New {
+        NoteCommands::Create {
             note_type,
             title,
             field,

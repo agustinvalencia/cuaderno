@@ -87,7 +87,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "link_portfolio_to_project",
         "create_question",
         "create_stewardship",
-        "create_note",
+        "create_custom_note",
         // Lifecycle (4)
         "park_project",
         "activate_project",

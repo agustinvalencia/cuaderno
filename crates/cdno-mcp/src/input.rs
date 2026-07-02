@@ -92,13 +92,13 @@ pub struct FileToPortfolioInput {
     pub vars: Option<HashMap<String, String>>,
 }
 
-/// Input for `create_note` — a note of a config-defined custom type.
+/// Input for `create_custom_note` — a note of a config-defined custom type.
 ///
 /// The valid `type_name` values and each type's `fields` are defined in the
 /// vault's `[note_types.*]` config, so this schema can't enumerate them; a
 /// client discovers them from the config (or a failed call names the problem).
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct CreateNoteInput {
+pub struct CreateCustomNoteInput {
     /// The custom note type, declared under `[note_types.<type_name>]`. Built-in
     /// types (project, question, …) have their own dedicated create tools.
     pub type_name: String,

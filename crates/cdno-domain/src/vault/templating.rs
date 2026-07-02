@@ -384,25 +384,31 @@ impl Vault {
 /// Build a minimal note for a custom type that ships no template file: a
 /// frontmatter block of `type` plus each field in `field_order` that has a
 /// value in `ctx`, followed by a `# {{title}}` H1 (falling back to the type
-/// name). Values are written as bare scalars — a type that needs richer
-/// frontmatter (quoting, lists, nested keys) authors a template instead.
+/// name).
+///
+/// The frontmatter is serialised through `serde_yaml` (not `format!`), so every
+/// field value is emitted as a properly-quoted **string** — a value with a
+/// colon, `#`, newline, or one that looks like a bool/number/list round-trips
+/// verbatim rather than crashing the parse, being coerced to another YAML type,
+/// or injecting a second document via an embedded `---`.
 fn synthesise_custom_note(
     type_name: &str,
     field_order: &[String],
     ctx: &VariableContext,
 ) -> String {
-    let mut out = String::from("---\n");
-    out.push_str(&format!("type: {type_name}\n"));
+    let mut map = serde_yaml::Mapping::new();
+    map.insert("type".into(), type_name.into());
     for key in field_order {
         if key == "type" {
             continue;
         }
         if let Some(value) = ctx.resolve(key) {
-            out.push_str(&format!("{key}: {value}\n"));
+            map.insert(key.as_str().into(), value.into());
         }
     }
-    out.push_str("---\n\n");
+    // Infallible for a string→string mapping; the empty fallback still yields a
+    // well-formed (if bare) frontmatter block rather than an injection vector.
+    let frontmatter = serde_yaml::to_string(&map).unwrap_or_default();
     let title = ctx.resolve("title").unwrap_or(type_name);
-    out.push_str(&format!("# {title}\n"));
-    out
+    format!("---\n{frontmatter}---\n\n# {title}\n")
 }
