@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        41,
-        "expected the full catalogue: 40 prior + link_portfolio_to_project (portfolio->project linking), got {}",
+        42,
+        "expected the full catalogue: 41 prior + create_note (config-defined custom types), got {}",
         tools.len()
     );
 }

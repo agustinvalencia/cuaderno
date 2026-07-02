@@ -100,6 +100,14 @@ pub enum DomainError {
     )]
     ReservedTypeName { name: String },
 
+    #[error("note type '{note_type}' requires field '{field}'")]
+    MissingRequiredField { note_type: String, field: String },
+
+    #[error(
+        "note type '{note_type}' has no field '{field}' — declare it under [note_types.{note_type}]"
+    )]
+    UnknownField { note_type: String, field: String },
+
     #[error("no built-in template for variant '{variant}' of '{note_type}'")]
     UnknownTemplateVariant { note_type: String, variant: String },
 

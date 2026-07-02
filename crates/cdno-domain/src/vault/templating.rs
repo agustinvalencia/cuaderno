@@ -19,7 +19,9 @@ use std::sync::Arc;
 use cdno_core::error::TemplateError;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
-use cdno_core::template::{CustomTemplateLoader, TemplateEngine, TemplateSource, VariableContext};
+use cdno_core::template::{
+    CustomTemplateLoader, Template, TemplateEngine, TemplateSource, VariableContext,
+};
 
 use super::Vault;
 use crate::error::DomainError;
@@ -302,6 +304,54 @@ impl Vault {
             .content)
     }
 
+    /// Render a config-defined custom type's note.
+    ///
+    /// Unlike [`scaffold`](Self::scaffold) (which errors if a built-in type has
+    /// no template), a custom type commonly has none — you declare the type
+    /// before authoring `.cuaderno/templates/<type>.md`. So this loads the
+    /// type's template file (`template_name`, the configured filename or the
+    /// `<type>.md` default) and renders it with `ctx`; when the file is absent
+    /// it **synthesises** a minimal note from `field_order` (a frontmatter block
+    /// of the declared fields that have values, plus a `# {{title}}` H1).
+    ///
+    /// Errors on an unresolved `[variables.prompt]` reference in a real
+    /// template, matching `scaffold`.
+    pub(in crate::vault) fn scaffold_custom(
+        &self,
+        type_name: &str,
+        template_name: &str,
+        field_order: &[String],
+        ctx: &mut VariableContext,
+    ) -> Result<String, DomainError> {
+        ctx.load_from_config(self.config());
+        let template_path = VaultPath::new(format!(
+            "{}/{template_name}",
+            cdno_core::paths::TEMPLATES_DIR
+        ))?;
+        if self.store.exists(&template_path)? {
+            let raw = self.store.read_file(&template_path)?;
+            let engine = self.template_engine();
+            let rendered = engine.render(
+                &Template { content: raw },
+                ctx,
+                &self.config().variables.prompt,
+            );
+            if !rendered.unresolved_prompts.is_empty() {
+                return Err(DomainError::UnresolvedPrompts {
+                    note_type: type_name.to_owned(),
+                    names: rendered
+                        .unresolved_prompts
+                        .into_iter()
+                        .map(|(name, _msg)| name)
+                        .collect(),
+                });
+            }
+            Ok(rendered.content)
+        } else {
+            Ok(synthesise_custom_note(type_name, field_order, ctx))
+        }
+    }
+
     /// A template engine whose custom-template loader reads
     /// `.cuaderno/templates/` through this vault's store.
     fn template_engine(&self) -> TemplateEngine {
@@ -329,4 +379,30 @@ impl Vault {
         });
         TemplateEngine::with_loader(loader, builtin_defaults())
     }
+}
+
+/// Build a minimal note for a custom type that ships no template file: a
+/// frontmatter block of `type` plus each field in `field_order` that has a
+/// value in `ctx`, followed by a `# {{title}}` H1 (falling back to the type
+/// name). Values are written as bare scalars — a type that needs richer
+/// frontmatter (quoting, lists, nested keys) authors a template instead.
+fn synthesise_custom_note(
+    type_name: &str,
+    field_order: &[String],
+    ctx: &VariableContext,
+) -> String {
+    let mut out = String::from("---\n");
+    out.push_str(&format!("type: {type_name}\n"));
+    for key in field_order {
+        if key == "type" {
+            continue;
+        }
+        if let Some(value) = ctx.resolve(key) {
+            out.push_str(&format!("{key}: {value}\n"));
+        }
+    }
+    out.push_str("---\n\n");
+    let title = ctx.resolve("title").unwrap_or(type_name);
+    out.push_str(&format!("# {title}\n"));
+    out
 }

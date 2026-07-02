@@ -33,6 +33,7 @@ mod actions;
 mod capture;
 mod commitments;
 mod context;
+mod custom_notes;
 mod daily;
 mod index_entry;
 mod lint;

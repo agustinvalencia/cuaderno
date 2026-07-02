@@ -223,6 +223,14 @@ enum Commands {
         subcommand: TemplatesCommands,
     },
 
+    /// Create and list notes of config-defined custom types (declared under
+    /// `[note_types.<type>]`). `note new <type> --title … --field k=v` and
+    /// `note list <type>`.
+    Note {
+        #[command(subcommand)]
+        subcommand: cdno_cli::commands::note::NoteCommands,
+    },
+
     /// Manage stewardship dashboards: create (flat or expanded with
     /// `--tracking`), list, show, and append a periodic commitment
     /// line to the dashboard's `## Periodic Commitments` section.
@@ -451,6 +459,10 @@ fn main() -> Result<()> {
         Commands::Templates { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::templates::run(&root, subcommand, cli.json)
+        }
+        Commands::Note { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::note::run(&root, Local::now().naive_local(), subcommand, cli.json)
         }
         Commands::Stewardship { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
