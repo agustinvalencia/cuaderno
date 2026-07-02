@@ -49,12 +49,14 @@ have one, else a generic fallback. (Ready-made `gym`/`body`/`swim` variants live
 ```bash
 cdno track gym --stewardship health --content "Upper body A; RDL up to 25kg"
 cdno track body --stewardship health --content "Weight 78.4kg, resting HR 54"
-cdno track swim --stewardship health --routine endurance-1
+cdno track swim --stewardship health --content "1500m, 28min"
 ```
 
 - `--stewardship` can be omitted when there's exactly **one** expanded stewardship — Cuaderno
   defaults to it. With more than one, it's required.
-- `--routine` links a reference doc from the stewardship's `routines/` folder into the entry.
+- `--routine` links a reference doc from the stewardship's `routines/` folder into the entry — but
+  only when the resolved template has a `routine:` field (the `gym.md` example variant does; the
+  generic default has none, so it no-ops there).
 - `--content` is optional; leave it empty and fill the entry's tables in afterward.
 
 Tracking entries are [append-only](../concepts/business-rules.md) — they're your historical record.

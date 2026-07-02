@@ -34,8 +34,7 @@ cdno track gym --stewardship health --content "Upper body A; RDL up to 25kg"
 cdno track body --stewardship health --content "Weight 78.4kg, resting HR 54"
 cdno track swim --stewardship health --content "1500m, 28min"
 
-# --routine only lands when the resolved template has a routine: field — the
-# example gym.md variant does; the generic default ignores it:
+# --routine needs a template with a routine: field (the example gym.md has one):
 cdno track gym --routine upper-body-a
 
 # With one expanded stewardship, --stewardship can be omitted:
