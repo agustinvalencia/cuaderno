@@ -21,6 +21,13 @@ pub enum ConfigError {
     /// implementation detail of this crate.
     #[error("invalid ignore glob: {0}")]
     InvalidGlob(String),
+
+    /// A `[note_types.<name>]` declaration is structurally invalid (empty or
+    /// vault-escaping folder, a folder shared with another custom type, or a
+    /// template that isn't a bare filename). Carries a rendered message naming
+    /// the offending type.
+    #[error("invalid custom note type: {0}")]
+    InvalidNoteType(String),
 }
 
 /// Errors from VaultPath construction and validation.

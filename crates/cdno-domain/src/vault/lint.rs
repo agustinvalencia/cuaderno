@@ -2,7 +2,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Component;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
@@ -12,7 +11,6 @@ use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
 use crate::lint::{LintIssue, LintReport};
-use crate::note_type::NoteType;
 
 use super::Vault;
 
@@ -48,8 +46,9 @@ impl Vault {
 
         // Memoise canonical frontmatter order per (type, variant) for this
         // pass so the effective template is resolved once per key, not once
-        // per note (#248).
-        let mut order_cache: HashMap<(NoteType, Option<String>), Vec<String>> = HashMap::new();
+        // per note (#248). Keyed by the type *string* so config-defined custom
+        // types share the cache with built-ins.
+        let mut order_cache: HashMap<(String, Option<String>), Vec<String>> = HashMap::new();
 
         for path in paths {
             // A concurrent writer could remove a note between the
@@ -60,24 +59,23 @@ impl Vault {
                 continue;
             };
 
-            // The reconciler enforces that every indexed note has a
-            // `type` field, but it does not constrain the value to a
-            // known variant. An unknown type means downstream code
-            // can't pick a schema, so don't bother checking
-            // `extra_required` — the report would just compound a
-            // problem the user already needs to fix.
-            let note_type = match NoteType::from_str(&entry.note_type) {
-                Ok(t) => t,
-                Err(_) => {
-                    issues.push(LintIssue::error(
-                        path,
-                        format!("unknown note type: `{}`", entry.note_type),
-                    ));
-                    continue;
-                }
+            // The reconciler enforces that every indexed note has a `type`
+            // field, but it does not constrain the value to a known type. A
+            // type that is neither a built-in variant nor a config-defined
+            // custom type means downstream code can't pick a schema, so flag it
+            // and move on rather than compounding the report.
+            let Some(descriptor) = self.type_registry().resolve(&entry.note_type) else {
+                issues.push(LintIssue::error(
+                    path,
+                    format!("unknown note type: `{}`", entry.note_type),
+                ));
+                continue;
             };
 
-            for required in self.config.extra_required_fields(&entry.note_type) {
+            // Required fields: a built-in type's `[schemas.<type>].extra_required`
+            // additions, or a config type's declared `required`. (A built-in's
+            // *intrinsic* fields are enforced by its typed parse, not here.)
+            for required in descriptor.required_fields(&self.config) {
                 let present = entry
                     .frontmatter
                     .as_object()
@@ -187,7 +185,7 @@ impl Vault {
             // same order `normalise` would apply, so lint and the fixer
             // never disagree. A broken template surfaces as an Error
             // rather than aborting the whole pass.
-            match self.canonical_frontmatter_order(note_type, &content, &mut order_cache) {
+            match self.canonical_frontmatter_order(&entry.note_type, &content, &mut order_cache) {
                 Ok(order) => {
                     if super::normalise::reorder_frontmatter(&content, &order).is_some() {
                         issues.push(LintIssue::warning(

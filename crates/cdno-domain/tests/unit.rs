@@ -18,6 +18,7 @@ mod unit {
     mod stewardships_tests;
     mod templating_tests;
     mod tracking_tests;
+    mod type_registry_tests;
     mod vault_tests;
     mod weekly_tests;
 }
