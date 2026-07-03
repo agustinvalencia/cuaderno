@@ -4,7 +4,9 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-03
+
+Custom note types: define your own schema-only note types in `config.toml`.
 
 ### Added
 
