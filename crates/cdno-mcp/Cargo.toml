@@ -9,14 +9,19 @@ repository.workspace = true
 [lib]
 path = "src/lib.rs"
 
-# The binary's user-facing name (`cdno-mcp`) is decoupled from its
-# source file (`bin/stdio.rs`) so the file name can describe which
-# transport it serves. A future `bin/server.rs` will host the HTTP
-# transport under a `cdno-mcp-server` binary name (design §5.2 / the
-# implementation plan's Phase 6 HTTP section).
+# The binaries' user-facing names are decoupled from their source
+# files so the file names can describe which transport each serves:
+# `cdno-mcp` (bin/stdio.rs) is the local stdio transport Claude
+# Desktop / Claude Code spawn; `cdno-mcp-server` (bin/server.rs) is
+# the Streamable HTTP transport for remote deployment behind an
+# OAuth-terminating proxy (design §5.2, GH #60/#61).
 [[bin]]
 name = "cdno-mcp"
 path = "src/bin/stdio.rs"
+
+[[bin]]
+name = "cdno-mcp-server"
+path = "src/bin/server.rs"
 
 [dependencies]
 cdno-core = { workspace = true }
@@ -24,8 +29,19 @@ cdno-domain = { workspace = true }
 
 # MCP protocol machinery. Provides #[tool] / #[tool_router] macros,
 # the ServerHandler trait, stdio transport, and JSON-RPC framing /
-# error mapping.
-rmcp = { workspace = true }
+# error mapping. `transport-streamable-http-server` adds the tower
+# `StreamableHttpService` that `cdno-mcp-server` mounts (GH #60) —
+# additive, so the stdio binary is unaffected.
+rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
+
+# HTTP scaffolding for `cdno-mcp-server` (GH #60/#61): axum mounts
+# the rmcp tower service at /mcp and later hosts the origin-auth
+# middleware (GH #302). clap parses the server's flags (same derive
+# setup as cdno-cli); the stdio binary stays flagless by design.
+axum = { workspace = true }
+# `env` on top of the workspace's `derive`: the server's flags mirror
+# container conventions (CDNO_MCP_BIND, CUADERNO_VAULT_PATH, ...).
+clap = { workspace = true, features = ["env"] }
 
 # Structured logging on stderr for the cdno-mcp binary. Stdout is
 # the JSON-RPC channel; logging there would corrupt the protocol.
@@ -34,8 +50,10 @@ tracing-subscriber = { workspace = true }
 
 # Async runtime for the rmcp service loop. The domain layer stays
 # synchronous; we call into it from a thread pool when the handler
-# is async (rmcp's ServiceExt is async).
-tokio = { workspace = true }
+# is async (rmcp's ServiceExt is async). `net`/`signal`/`time` are
+# for `cdno-mcp-server` only: the TCP listener, ctrl-c graceful
+# shutdown, and the periodic index-reconciliation interval (GH #60).
+tokio = { workspace = true, features = ["net", "signal", "time"] }
 
 # Serialisation. schemars is pinned to the same major as rmcp 1.7's
 # transitive version so the derive macro's `::schemars::...` paths
@@ -55,3 +73,7 @@ chrono = { workspace = true }
 # cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
 # via `cdno init` before launching cdno-mcp against it.
 cdno-cli = { path = "../cdno-cli" }
+# Drives the e2e HTTP tests against a spawned `cdno-mcp-server`
+# (tests/e2e_http.rs). GH #302 promotes reqwest to a real dependency
+# for the JWKS fetch.
+reqwest = { workspace = true }

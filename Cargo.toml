@@ -103,6 +103,19 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# HTTP scaffolding for the `cdno-mcp-server` binary (GH #60/#61).
+# rmcp's `StreamableHttpService` is a tower `Service`; axum mounts it
+# at `/mcp` (`route_service`) and, later, carries the origin-auth
+# middleware (GH #302). Default features only — no TLS: transport
+# security terminates at the fronting proxy, never at this binary.
+axum = "0.8"
+
+# HTTP client. Today a dev-dependency of cdno-mcp (drives the e2e
+# tests against `cdno-mcp-server`); GH #302 promotes it to a real
+# dependency for the JWKS fetch. rustls so builds never link the
+# system OpenSSL (the server container is a minimal Linux image).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
 cdno-domain = { path = "crates/cdno-domain" }

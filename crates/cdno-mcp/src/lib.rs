@@ -35,6 +35,8 @@ pub mod input;
 mod lifecycle;
 mod operations;
 pub mod server;
+pub mod smoke;
 mod util;
 
 pub use server::CuadernoServer;
+pub use smoke::SmokeServer;
