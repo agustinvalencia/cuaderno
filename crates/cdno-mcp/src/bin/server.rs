@@ -9,16 +9,17 @@
 //!
 //! # Security model (read before changing any default)
 //!
-//! This binary implements **no authentication itself**. The remote
-//! deployment terminates OAuth 2.1 at an identity-aware proxy
-//! (Cloudflare Access with Managed OAuth), and origin-side validation
-//! of the proxy-injected identity JWT arrives with GH #302. Until
-//! that middleware exists, this binary **refuses to bind anything but
-//! loopback**. Three deliberate consequences:
+//! This binary issues **no OAuth of its own**. The remote deployment
+//! terminates OAuth 2.1 at an identity-aware proxy (Cloudflare Access
+//! with Managed OAuth); the binary's job is origin-side validation of
+//! the proxy-injected identity JWT (`Cf-Access-Jwt-Assertion`, GH
+//! #302, [`cdno_mcp::access`]) — defence in depth so the tunnel is
+//! never trusted alone. The deliberate consequences:
 //!
-//! - `--bind` defaults to `127.0.0.1:8787` and non-loopback values
-//!   are rejected at startup (the GH #302 middleware will lift this
-//!   when — and only when — JWT validation is configured).
+//! - `--bind` defaults to `127.0.0.1:8787`, and non-loopback values
+//!   are rejected at startup **unless** JWT validation is configured
+//!   (`CDNO_ACCESS_TEAM_URL` + `CDNO_ACCESS_AUD`, which fail closed:
+//!   the server won't start if the team JWKS can't be fetched).
 //! - `--smoke` serves [`cdno_mcp::SmokeServer`], which holds **no
 //!   vault handle**: infra bring-up is proven with the real binary
 //!   and zero vault exposure.
@@ -129,6 +130,17 @@ struct ServeArgs {
     /// backstop against out-of-band edits). 0 disables the loop.
     #[arg(long, env = "CDNO_MCP_RECONCILE_INTERVAL_SECS", default_value_t = 300)]
     reconcile_interval_secs: u64,
+
+    /// Cloudflare Access team URL (e.g.
+    /// `https://<team>.cloudflareaccess.com`) — the JWT issuer and
+    /// the JWKS host. Setting this (with `--access-aud`) activates
+    /// origin JWT validation and lifts the non-loopback interlock.
+    #[arg(long, env = "CDNO_ACCESS_TEAM_URL", requires = "access_aud")]
+    access_team_url: Option<String>,
+
+    /// The Access application's AUD tag (expected `aud` claim).
+    #[arg(long, env = "CDNO_ACCESS_AUD", requires = "access_team_url")]
+    access_aud: Option<String>,
 }
 
 #[tokio::main]
@@ -136,10 +148,24 @@ async fn main() -> Result<()> {
     init_tracing();
     let args = ServeArgs::parse();
 
+    // Origin authentication (GH #302): both CDNO_ACCESS_* values set
+    // → build the verifier (fail-closed: construction performs the
+    // initial JWKS fetch and errors if it can't). clap's `requires`
+    // pairing rejects setting only one of the two.
+    let verifier = match (&args.access_team_url, &args.access_aud) {
+        (Some(team_url), Some(aud)) => Some(
+            cdno_mcp::access::JwtVerifier::new(team_url, aud)
+                .await
+                .context("initialising Access JWT verification (is the team URL reachable?)")?,
+        ),
+        _ => None,
+    };
+
     // Safety interlock (see module docs): a bare unauthenticated
-    // listener must be impossible to expose by accident. GH #302
-    // replaces this hard refusal with "refused unless JWT validation
-    // is configured".
+    // listener must be impossible to expose by accident. With the
+    // GH #302 verifier active every request is authenticated at the
+    // origin, so non-loopback binds (e.g. 0.0.0.0 inside a container)
+    // become legitimate.
     //
     // NOTE (future-proofing, from the 2026-07-05 security review):
     // this validates `args.bind` — the address WE are about to bind —
@@ -147,11 +173,12 @@ async fn main() -> Result<()> {
     // listener below. If socket activation / fd passing is ever
     // added, the check must move to the *actual* socket's local
     // address or it is silently bypassed.
-    if !args.bind.ip().is_loopback() {
+    if verifier.is_none() && !args.bind.ip().is_loopback() {
         bail!(
-            "refusing to bind non-loopback address {}: cdno-mcp-server has no \
-             origin authentication yet (GH #302). Bind a loopback address and put \
-             an authenticating proxy in front, or wait for the Access-JWT middleware.",
+            "refusing to bind non-loopback address {}: origin authentication is not \
+             configured. Set CDNO_ACCESS_TEAM_URL and CDNO_ACCESS_AUD (GH #302) to \
+             enable Access-JWT validation, or bind a loopback address behind an \
+             authenticating proxy.",
             args.bind
         );
     }
@@ -173,15 +200,18 @@ async fn main() -> Result<()> {
         tracing::info!("smoke mode: serving the echo tool only; the vault is not opened");
         mcp_router(SmokeServer::new(), http_config)
     } else {
-        // The interlock only guards OUR bind address; restate the
-        // operator contract whenever real vault data is served (see
-        // module docs — an unauthenticated tunnel to this port would
-        // expose the vault and we cannot detect it).
-        tracing::warn!(
-            "serving vault tools on loopback WITHOUT origin authentication (GH #302): \
-             never bridge this port (tunnel, SSH forward, container publish) without \
-             an authenticating proxy in front"
-        );
+        if verifier.is_none() {
+            // The interlock only guards OUR bind address; restate the
+            // operator contract whenever real vault data is served
+            // unauthenticated (see module docs — an unauthenticated
+            // tunnel to this port would expose the vault and we
+            // cannot detect it).
+            tracing::warn!(
+                "serving vault tools on loopback WITHOUT origin authentication (GH #302): \
+                 never bridge this port (tunnel, SSH forward, container publish) without \
+                 an authenticating proxy in front"
+            );
+        }
 
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
@@ -219,10 +249,21 @@ async fn main() -> Result<()> {
         mcp_router(server, http_config)
     };
 
+    // Auth outermost: an unauthenticated request is rejected before
+    // it can consume body-buffer or concurrency budget, and before
+    // rmcp ever parses it. (`.layer` wraps everything added earlier.)
+    let router = match &verifier {
+        Some(v) => router.layer(axum::middleware::from_fn_with_state(
+            v.clone(),
+            cdno_mcp::access::require_access_jwt,
+        )),
+        None => router,
+    };
+
     let listener = tokio::net::TcpListener::bind(args.bind)
         .await
         .with_context(|| format!("binding {}", args.bind))?;
-    tracing::info!(bind = %args.bind, "listening (endpoint: /mcp)");
+    tracing::info!(bind = %args.bind, auth = verifier.is_some(), "listening (endpoint: /mcp)");
 
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
