@@ -133,12 +133,16 @@ async fn full_catalogue_and_tool_call_over_http() {
     let client = reqwest::Client::new();
 
     let names = list_tool_names(&client, server.port).await;
-    // The authoritative catalogue pin lives in tests/server.rs; here
-    // we only assert the HTTP surface serves the same *kind* of
-    // catalogue: reads and writes both present.
+    // Same pin as e2e_stdio.rs / tests/server.rs: the HTTP transport
+    // must serve the identical catalogue, not a subset that happens
+    // to look plausible.
+    assert_eq!(
+        names.len(),
+        42,
+        "HTTP catalogue diverged from the stdio pin: {names:?}"
+    );
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
     assert!(names.iter().any(|n| n == "append_to_log"), "{names:?}");
-    assert!(names.len() > 30, "unexpectedly small catalogue: {names:?}");
 
     // A real tools/call round-trip through the vault.
     let (status, resp) = post_mcp(
@@ -162,6 +166,8 @@ async fn read_only_mode_hides_every_mutating_tool() {
     let client = reqwest::Client::new();
 
     let names = list_tool_names(&client, server.port).await;
+    // The read-only surface is exactly the 14 context-router tools.
+    assert_eq!(names.len(), 14, "read-only catalogue drifted: {names:?}");
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
     assert!(names.iter().any(|n| n == "search_notes"), "{names:?}");
     for mutating in [
@@ -177,6 +183,24 @@ async fn read_only_mode_hides_every_mutating_tool() {
             "read-only catalogue must not advertise `{mutating}`: {names:?}"
         );
     }
+
+    // Hidden means undispatchable, not merely unadvertised: calling a
+    // mutating tool by name must be rejected by the router (rmcp maps
+    // an unknown tool to an invalid-params JSON-RPC error).
+    let (status, resp) = post_mcp(
+        &client,
+        server.port,
+        &json!({
+            "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": { "name": "append_to_log", "arguments": { "text": "must not land" } }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200, "JSON-RPC errors still ride a 200: {resp}");
+    assert!(
+        resp.get("error").is_some(),
+        "calling a mutating tool in read-only mode must error: {resp}"
+    );
 }
 
 #[tokio::test]
@@ -205,6 +229,74 @@ async fn smoke_mode_serves_echo_and_never_opens_a_vault() {
         json!("auth pipeline live"),
         "{resp}"
     );
+}
+
+/// Send a raw HTTP/1.1 request with full control over the `Host`
+/// header (HTTP clients normally overwrite it), returning the status
+/// line. Used for the DNS-rebinding-protection assertions.
+fn raw_request(port: u16, method: &str, host_header: &str, body: Option<&str>) -> String {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+    let body = body.unwrap_or("");
+    let req = format!(
+        "{method} /mcp HTTP/1.1\r\nHost: {host_header}\r\n\
+         Accept: application/json, text/event-stream\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\
+         Connection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(req.as_bytes()).expect("write request");
+    let mut response = String::new();
+    stream.read_to_string(&mut response).expect("read response");
+    response.lines().next().unwrap_or("").to_string()
+}
+
+const TOOLS_LIST: &str = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+
+#[tokio::test]
+async fn foreign_host_header_is_rejected_unless_allowed() {
+    // Default allowlist (loopback names only): a rebound hostname is
+    // refused — this is rmcp's DNS-rebinding protection doing its job.
+    let server = HttpServer::spawn(None, &["--smoke"]);
+    let status = raw_request(server.port, "POST", "evil.example:8787", Some(TOOLS_LIST));
+    assert!(
+        status.contains("403"),
+        "foreign Host must be rejected by default: {status}"
+    );
+
+    // The same hostname passed via --allowed-host is admitted —
+    // extending, not replacing, the loopback defaults.
+    let allowed = HttpServer::spawn(None, &["--smoke", "--allowed-host", "evil.example:8787"]);
+    let status = raw_request(allowed.port, "POST", "evil.example:8787", Some(TOOLS_LIST));
+    assert!(
+        status.contains("200"),
+        "--allowed-host must admit the listed hostname: {status}"
+    );
+    // ... and loopback still works (extend semantics).
+    let status = raw_request(
+        allowed.port,
+        "POST",
+        &format!("127.0.0.1:{}", allowed.port),
+        Some(TOOLS_LIST),
+    );
+    assert!(
+        status.contains("200"),
+        "loopback must stay allowed: {status}"
+    );
+}
+
+#[tokio::test]
+async fn get_and_delete_are_rejected_in_stateless_mode() {
+    // No sessions exist in stateless mode: GET (SSE resume) and
+    // DELETE (session teardown) must be 405, not a hang or panic.
+    let server = HttpServer::spawn(None, &["--smoke"]);
+    for method in ["GET", "DELETE"] {
+        let status = raw_request(server.port, method, "127.0.0.1", None);
+        assert!(
+            status.contains("405"),
+            "{method} must be 405 in stateless mode: {status}"
+        );
+    }
 }
 
 #[test]

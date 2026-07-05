@@ -708,7 +708,7 @@ The MCP crate is built on the official [`rmcp`](https://github.com/modelcontextp
 - **Tool I/O types** — `derive(Deserialize, JsonSchema)` structs for each tool's input. Output goes through the DTO mirrors below. Lives in `src/server.rs`.
 - **The `CuadernoServer` type** — an `Arc<Vault>` wrapper annotated with `#[tool_router]`. One `#[tool]`-annotated async method per tool name; the macro builds the dispatch table at compile time. The `ServerHandler` trait is wired in via `#[tool_handler]`.
 - **DTOs** — JSON-Schema-friendly mirror types for every domain summary (`PortfolioSummaryDto`, `CommitmentEntryDto`, `OrientationContextDto`, …) with `From<DomainType>` converters. Lives in `src/dto.rs` so `cdno-domain` stays free of `schemars`.
-- **Binary entry points** — `src/bin/stdio.rs` for the stdio binary (the `cdno-mcp` user-facing name comes from the `[[bin]]` table); a future `src/bin/server.rs` will host HTTP under `cdno-mcp-server`.
+- **Binary entry points** — `src/bin/stdio.rs` for the stdio binary (the `cdno-mcp` user-facing name comes from the `[[bin]]` table); `src/bin/server.rs` hosts the Streamable HTTP transport under `cdno-mcp-server` (GH #60/#61).
 
 **Tool definition example.** Each tool is one async method on `CuadernoServer`. `Parameters<T>` is rmcp's extractor — it deserialises the incoming JSON against `T`'s `JsonSchema` and hands the typed value to the body.
 
@@ -742,9 +742,9 @@ The `#[tool]` macro generates the JSON Schema from `GetOrientationInput`, regist
 
 **Enum inputs use `String`.** `EnergyLevel`, `Context`, `QuestionDomain`, etc. don't derive `JsonSchema` (they live in the domain crate). The MCP boundary takes them as `String` and the handler parses via `FromStr`. Matches the wire format anyway.
 
-**Transports.** `rmcp::transport::stdio()` is the canonical stdio transport; `cdno-mcp` serves it via `server.serve(stdio()).await`. The HTTP/SSE transport (Phase 6) uses `rmcp`'s `transport-streamable-http-server` feature and lands as the separate `cdno-mcp-server` binary under `src/bin/server.rs`. Both go through the same `CuadernoServer` — choosing the transport is the binary's responsibility, not the server's.
+**Transports.** `rmcp::transport::stdio()` is the canonical stdio transport; `cdno-mcp` serves it via `server.serve(stdio()).await`. The HTTP transport (shipped, GH #60/#61) uses `rmcp`'s `transport-streamable-http-server` feature in **stateless JSON mode** (not SSE) as the separate `cdno-mcp-server` binary under `src/bin/server.rs`. Both go through the same `CuadernoServer` — choosing the transport is the binary's responsibility, not the server's.
 
-**Concurrency.** `Vault` is synchronous (§4). Tool methods are async because `ServerHandler` is async. For stdio (one request at a time) each tool calls `self.vault.method()` directly. For HTTP, calls should be wrapped in `tokio::task::spawn_blocking` so the event loop never stalls on disk I/O.
+**Concurrency.** `Vault` is synchronous (§4). Tool methods are async because `ServerHandler` is async, and each calls `self.vault.method()` directly on the runtime worker — a **recorded decision** for the single-operator deployment (GH #303 tracks moving tool calls onto `spawn_blocking`). The HTTP binary bounds the damage in the meantime: a transport-level concurrency cap plus a request-body size limit, and its reconciliation loop already runs on `spawn_blocking`.
 
 **`schemars` version pinning.** `schemars` is pinned directly to the same major as rmcp's transitive version (1.x). The derive macro generates code referencing `::schemars::...` paths, so a top-level `schemars` crate must be in the dependency tree — the `rmcp::schemars` re-export alone is not enough.
 
@@ -991,7 +991,7 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 **Stewardship Detail.** Tracking charts (using Tremor’s charting components or Recharts), recent entries.
 
-**HTTP transport.** Implement the Axum server with SSE. Add token-based authentication. Add the periodic reconciliation background task. Deploy and test remote access.
+**HTTP transport.** Shipped (GH #60/#61, PR #304): axum + rmcp Streamable HTTP (stateless JSON, not SSE) with the periodic reconciliation background task. Authentication pivoted away from static tokens (not spec-legal for remote MCP): OAuth 2.1 terminates at an identity-aware proxy and the origin validates the proxy-injected JWT — GH #302. Until #302, the binary refuses non-loopback binds.
 
 ### Phase 7: Migration (estimated: 1-2 weeks)
 
@@ -1034,7 +1034,7 @@ A few decisions deferred to implementation time:
 
 **Template hot-reloading.** Should the tool detect changes to templates in `.cuaderno/templates/` and reload them without restarting? This is a nice-to-have for iterating on templates but adds complexity. Initially, require a restart; add hot-reloading later if it proves annoying.
 
-**Concurrency model for the HTTP transport.** The current design wraps `Vault` in `Arc<Mutex<...>>`, which serialises all requests. For a personal tool this is fine, but it becomes a bottleneck if the HTTP transport ever serves multiple users (the "multi-vault" future extension). Consider `RwLock` instead of `Mutex` to allow concurrent reads — most MCP tools are read-heavy (context gathering). Write operations still serialise, but reads (which dominate) can proceed in parallel. Decide during Phase 6 based on actual usage patterns.
+**Concurrency model for the HTTP transport — resolved (PR #304).** The server shares a bare `Arc<Vault>`: `Vault` is `Send + Sync`, the SQLite index serialises itself behind its own connection mutex, and cross-process write exclusion is the store's vault write lock — so an outer `Mutex`/`RwLock` around `Vault` adds nothing for a single operator. In-flight requests are bounded at the transport layer instead. Revisit only for multi-user serving, together with GH #303 (`spawn_blocking`) and the r2d2 read-pool note in `cdno-core/src/index.rs`.
 
 -----
 

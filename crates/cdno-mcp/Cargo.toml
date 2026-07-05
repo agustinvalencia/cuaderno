@@ -39,6 +39,12 @@ rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
 # middleware (GH #302). clap parses the server's flags (same derive
 # setup as cdno-cli); the stdio binary stays flagless by design.
 axum = { workspace = true }
+# Transport guardrails for cdno-mcp-server: request-body size cap
+# (rmcp reads the raw body, bypassing axum's extractor-gated default
+# limit) and an in-flight concurrency bound (tool handlers block on
+# the sync domain until GH #303). From the PR #304 security review.
+tower = { workspace = true }
+tower-http = { workspace = true }
 # `env` on top of the workspace's `derive`: the server's flags mirror
 # container conventions (CDNO_MCP_BIND, CUADERNO_VAULT_PATH, ...).
 clap = { workspace = true, features = ["env"] }

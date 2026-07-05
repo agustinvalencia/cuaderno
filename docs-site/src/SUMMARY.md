@@ -64,6 +64,7 @@
 # MCP server reference
 
 - [Overview](reference/mcp/overview.md)
+- [The HTTP server](reference/mcp/http-server.md)
 - [Context-gathering tools](reference/mcp/reads.md)
 - [Write tools](reference/mcp/writes.md)
 - [Creation and lifecycle tools](reference/mcp/creation-and-lifecycle.md)

@@ -7,9 +7,13 @@ Markdown files. To wire it up, see [Connect to Claude](../../getting-started/con
 
 ## Transport and vault selection
 
-The server speaks JSON-RPC over **stdio** — the client launches `cdno-mcp` as a subprocess. It opens
-the vault named by `CUADERNO_VAULT_PATH`, or, if that's unset, discovers one from its working
-directory (the same rule as the CLI).
+Two binaries serve the same tool catalogue:
+
+- **`cdno-mcp`** speaks JSON-RPC over **stdio** — the client launches it as a subprocess. It opens
+  the vault named by `CUADERNO_VAULT_PATH`, or, if that's unset, discovers one from its working
+  directory (the same rule as the CLI).
+- **`cdno-mcp-server`** speaks MCP **Streamable HTTP** for remote clients — see
+  [The HTTP server](http-server.md) for its flags and security model.
 
 ## The tool surface
 

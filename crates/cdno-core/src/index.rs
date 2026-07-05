@@ -59,6 +59,23 @@ impl std::fmt::Debug for SqliteIndex {
 }
 
 impl SqliteIndex {
+    /// Acquire the connection guard, **recovering from poisoning**.
+    ///
+    /// In a long-running host (`cdno-mcp-server`) a panic on one
+    /// request while the guard is held would otherwise poison the
+    /// mutex and turn every subsequent index call into a panic — a
+    /// permanent all-500s zombie that no health check restarts. The
+    /// connection state itself is sound after such a panic: rusqlite
+    /// rolls back any transaction whose guard is dropped mid-panic,
+    /// so the poison flag is the only residue and recovering it is
+    /// safe. (Short-lived stdio/CLI processes never noticed — they
+    /// exit and respawn.)
+    fn lock_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Open or create the index at `path`, creating missing parent
     /// directories and applying any pending migrations.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, IndexError> {
@@ -122,7 +139,7 @@ impl SqliteIndex {
     /// If any routine query elsewhere returns a corruption-shaped
     /// error, the recovery path is to drop the index and reconcile.
     pub fn check_integrity(&self) -> Result<bool, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let result: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
         Ok(result == "ok")
     }
@@ -136,7 +153,7 @@ impl SqliteIndex {
     where
         F: FnOnce(&Connection) -> rusqlite::Result<T>,
     {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         f(&conn).map_err(IndexError::from)
     }
 }
@@ -480,7 +497,7 @@ impl VaultIndex for SqliteIndex {
         // silently drop those rows, which would be surprising.
         let frontmatter_json = serde_json::to_string(&entry.frontmatter)
             .map_err(|e| IndexError::Update(format!("failed to serialise frontmatter: {e}")))?;
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO notes (path, note_type, title, content_hash, mtime_ns, size, frontmatter, indexed_at_ns) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
@@ -511,7 +528,7 @@ impl VaultIndex for SqliteIndex {
         // `notes_fts` is a virtual table, so FK cascade doesn't reach it —
         // delete its row explicitly under the same lock to keep search in
         // step with the notes table.
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         conn.execute(
             "DELETE FROM notes WHERE path = ?1",
             params![path.to_string()],
@@ -524,7 +541,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT path, note_type, title, content_hash, mtime_ns, size, frontmatter, indexed_at_ns \
              FROM notes WHERE path = ?1",
@@ -537,7 +554,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT path, note_type, title, content_hash, mtime_ns, size, frontmatter, indexed_at_ns \
              FROM notes WHERE note_type = ?1 ORDER BY path",
@@ -551,7 +568,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare("SELECT path FROM notes ORDER BY path")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
@@ -576,7 +593,7 @@ impl VaultIndex for SqliteIndex {
         // `path` column (an O(n) scan — negligible at vault scale; a
         // path->rowid side-table is the optimisation if a profile ever
         // shows it).
-        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM notes_fts WHERE path = ?1",
@@ -591,7 +608,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         // Column order in `notes_fts` is (path, title, body) => indices
         // (0, 1, 2). bm25 weights mirror that: path contributes nothing
         // (UNINDEXED anyway), a title hit is weighted 10x a body hit so a
@@ -639,7 +656,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare("SELECT path FROM notes_fts ORDER BY path")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
@@ -657,7 +674,7 @@ impl VaultIndex for SqliteIndex {
         path: &VaultPath,
         deadlines: &[DeadlineEntry],
     ) -> Result<(), IndexError> {
-        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM deadlines WHERE note_path = ?1",
@@ -688,7 +705,7 @@ impl VaultIndex for SqliteIndex {
         from: &str,
         to: &str,
     ) -> Result<Vec<(VaultPath, DeadlineEntry)>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT note_path, source, title, due_date, is_hard, context \
              FROM deadlines WHERE due_date BETWEEN ?1 AND ?2 ORDER BY due_date",
@@ -716,7 +733,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError> {
-        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM links WHERE source_path = ?1",
@@ -741,7 +758,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT DISTINCT source_path FROM links WHERE resolved_path = ?1 ORDER BY source_path",
         )?;
@@ -758,7 +775,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT target_raw, resolved_path, label FROM links WHERE source_path = ?1 ORDER BY id",
         )?;
@@ -789,7 +806,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
-        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM note_tags WHERE note_path = ?1",
@@ -807,7 +824,7 @@ impl VaultIndex for SqliteIndex {
     }
 
     fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt =
             conn.prepare("SELECT note_path FROM note_tags WHERE tag = ?1 ORDER BY note_path")?;
         let rows = stmt.query_map(params![tag], |r| r.get::<_, String>(0))?;
@@ -827,7 +844,7 @@ impl VaultIndex for SqliteIndex {
         path: &VaultPath,
         milestones: &[MilestoneEntry],
     ) -> Result<(), IndexError> {
-        let mut conn = self.conn.lock().expect("poisoned mutex");
+        let mut conn = self.lock_conn();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM milestones WHERE note_path = ?1",
@@ -854,7 +871,7 @@ impl VaultIndex for SqliteIndex {
 
     fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
         let [active, parked] = project_path_candidates(slug);
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT name, date, hard_soft, status FROM milestones \
              WHERE note_path = ?1 OR note_path = ?2 ORDER BY id",
@@ -872,7 +889,7 @@ impl VaultIndex for SqliteIndex {
         from: &str,
         to: &str,
     ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT note_path, name, date, hard_soft, status FROM milestones \
              WHERE date IS NOT NULL AND date BETWEEN ?1 AND ?2 ORDER BY date",
@@ -897,7 +914,7 @@ impl VaultIndex for SqliteIndex {
         path: &VaultPath,
         snapshot: &ArchivalSnapshot,
     ) -> Result<(), IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         conn.execute(
             "INSERT INTO archived_action_snapshots (note_path, frozen_size, frozen_hash, archived_at_ns) \
              VALUES (?1, ?2, ?3, ?4) \
@@ -919,7 +936,7 @@ impl VaultIndex for SqliteIndex {
         &self,
         path: &VaultPath,
     ) -> Result<Option<ArchivalSnapshot>, IndexError> {
-        let conn = self.conn.lock().expect("poisoned mutex");
+        let conn = self.lock_conn();
         conn.query_row(
             "SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots \
              WHERE note_path = ?1",
@@ -1080,6 +1097,15 @@ struct MemoryIndexState {
 }
 
 impl MemoryIndex {
+    /// See [`SqliteIndex::lock_conn`]: recover the guard instead of
+    /// panicking on poison, so the test fake matches production
+    /// semantics.
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, MemoryIndexState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -1087,7 +1113,7 @@ impl MemoryIndex {
 
 impl VaultIndex for MemoryIndex {
     fn upsert_note(&self, entry: &NoteEntry) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state.notes.insert(entry.path.clone(), entry.clone());
         Ok(())
     }
@@ -1095,7 +1121,7 @@ impl VaultIndex for MemoryIndex {
     fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError> {
         // No FK engine in memory; mirror `ON DELETE CASCADE` manually
         // by dropping the path from every facet map.
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state.notes.remove(path);
         state.deadlines.remove(path);
         state.links.remove(path);
@@ -1107,12 +1133,12 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         Ok(state.notes.get(path).cloned())
     }
 
     fn list_by_type(&self, note_type: &str) -> Result<Vec<NoteEntry>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<NoteEntry> = state
             .notes
             .values()
@@ -1124,7 +1150,7 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<VaultPath> = state.notes.keys().cloned().collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
         Ok(out)
@@ -1136,7 +1162,7 @@ impl VaultIndex for MemoryIndex {
         title: Option<&str>,
         body: &str,
     ) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state
             .fts
             .insert(path.clone(), (title.map(str::to_owned), body.to_owned()));
@@ -1158,7 +1184,7 @@ impl VaultIndex for MemoryIndex {
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut hits: Vec<SearchHit> = state
             .fts
             .iter()
@@ -1208,7 +1234,7 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn fts_indexed_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<VaultPath> = state.fts.keys().cloned().collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
         Ok(out)
@@ -1219,7 +1245,7 @@ impl VaultIndex for MemoryIndex {
         path: &VaultPath,
         deadlines: &[DeadlineEntry],
     ) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state.deadlines.insert(path.clone(), deadlines.to_vec());
         Ok(())
     }
@@ -1229,7 +1255,7 @@ impl VaultIndex for MemoryIndex {
         from: &str,
         to: &str,
     ) -> Result<Vec<(VaultPath, DeadlineEntry)>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<(VaultPath, DeadlineEntry)> = state
             .deadlines
             .iter()
@@ -1246,13 +1272,13 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state.links.insert(path.clone(), links.to_vec());
         Ok(())
     }
 
     fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         // Distinct source paths where any link resolves to `path`.
         // A note with multiple links to the same target still appears
         // once, matching SqliteIndex's SELECT DISTINCT.
@@ -1271,14 +1297,14 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         // Insertion order preserved, matching SqliteIndex's `ORDER BY id`
         // (rowids are monotonic with insertion).
         Ok(state.links.get(path).cloned().unwrap_or_default())
     }
 
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         // Dedupe in-place to match SqliteIndex's "INSERT OR IGNORE"
         // against the (note_path, tag) primary key. A duplicate tag
         // in the caller's input silently becomes a single entry.
@@ -1293,7 +1319,7 @@ impl VaultIndex for MemoryIndex {
     }
 
     fn find_by_tag(&self, tag: &str) -> Result<Vec<VaultPath>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<VaultPath> = state
             .tags
             .iter()
@@ -1314,14 +1340,14 @@ impl VaultIndex for MemoryIndex {
         path: &VaultPath,
         milestones: &[MilestoneEntry],
     ) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state.milestones.insert(path.clone(), milestones.to_vec());
         Ok(())
     }
 
     fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
         let candidates = project_path_candidates(slug);
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         // Source order within a project is the stored Vec order, which
         // mirrors SqliteIndex's `ORDER BY id`. Active wins over parked
         // if (pathologically) both exist; only one ever should.
@@ -1340,7 +1366,7 @@ impl VaultIndex for MemoryIndex {
         from: &str,
         to: &str,
     ) -> Result<Vec<(VaultPath, MilestoneEntry)>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         let mut out: Vec<(VaultPath, MilestoneEntry)> = state
             .milestones
             .iter()
@@ -1361,7 +1387,7 @@ impl VaultIndex for MemoryIndex {
         path: &VaultPath,
         snapshot: &ArchivalSnapshot,
     ) -> Result<(), IndexError> {
-        let mut state = self.state.lock().expect("poisoned mutex");
+        let mut state = self.lock_state();
         state
             .archival_snapshots
             .insert(path.clone(), snapshot.clone());
@@ -1372,7 +1398,7 @@ impl VaultIndex for MemoryIndex {
         &self,
         path: &VaultPath,
     ) -> Result<Option<ArchivalSnapshot>, IndexError> {
-        let state = self.state.lock().expect("poisoned mutex");
+        let state = self.lock_state();
         Ok(state.archival_snapshots.get(path).cloned())
     }
 }

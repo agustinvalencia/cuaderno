@@ -110,6 +110,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # security terminates at the fronting proxy, never at this binary.
 axum = "0.8"
 
+# Transport-layer guardrails for `cdno-mcp-server` (2026-07-05
+# security review of PR #304). `tower-http`'s RequestBodyLimitLayer
+# wraps the request *body* so rmcp's raw `collect()` hits the cap —
+# axum's extractor-gated default limit does NOT apply on this path.
+# `tower`'s ConcurrencyLimitLayer bounds in-flight requests, since
+# tool handlers still run blocking domain calls on runtime workers
+# (see GH #303).
+tower = { version = "0.5", features = ["limit"] }
+tower-http = { version = "0.6", features = ["limit"] }
+
 # HTTP client. Today a dev-dependency of cdno-mcp (drives the e2e
 # tests against `cdno-mcp-server`); GH #302 promotes it to a real
 # dependency for the JWKS fetch. rustls so builds never link the

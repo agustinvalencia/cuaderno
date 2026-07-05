@@ -14,8 +14,7 @@
 //! (Cloudflare Access with Managed OAuth), and origin-side validation
 //! of the proxy-injected identity JWT arrives with GH #302. Until
 //! that middleware exists, this binary **refuses to bind anything but
-//! loopback** — it must be impossible to expose an unauthenticated
-//! vault listener by accident. Three deliberate consequences:
+//! loopback**. Three deliberate consequences:
 //!
 //! - `--bind` defaults to `127.0.0.1:8787` and non-loopback values
 //!   are rejected at startup (the GH #302 middleware will lift this
@@ -26,8 +25,25 @@
 //! - `--read-only` serves only the context-gathering read tools, for
 //!   the initial exposure soak and permanently scoped deployments.
 //!
-//! rmcp's own `allowed_hosts` check (DNS-rebinding protection) stays
-//! at its loopback default unless `--allowed-host` extends it.
+//! **Be precise about what the interlock guarantees** (2026-07-05
+//! security review): the enforced property is *"this process only
+//! accepts connections arriving on its own loopback interface"* — it
+//! is **not** "impossible to expose unauthenticated". Anything that
+//! bridges the loopback port outward (an ad-hoc `cloudflared tunnel
+//! --url http://localhost:8787` with no Access policy, an SSH
+//! forward, in-container port games) exposes the vault regardless,
+//! and the process cannot observe that. The operator contract is:
+//! never bridge this port without the authenticating proxy in front;
+//! GH #302's origin JWT check is the backstop that makes the bridge
+//! itself safe. A startup warning restates this whenever the vault
+//! (not `--smoke`) is being served.
+//!
+//! Transport guardrails carried by this binary regardless of auth:
+//! rmcp's `allowed_hosts` check (DNS-rebinding protection; extended,
+//! never replaced, by `--allowed-host`), a request-body size cap
+//! (rmcp reads the raw body, so axum's extractor-gated default limit
+//! does not apply), and an in-flight concurrency bound (tool handlers
+//! run blocking domain calls on runtime workers until GH #303).
 //!
 //! # Index freshness
 //!
@@ -40,7 +56,7 @@
 //! the latency but never replaces this loop.
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,15 +64,29 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use cdno_core::config::{IgnoreSet, VaultConfig};
-use cdno_core::index::{SqliteIndex, VaultIndex};
-use cdno_core::paths;
+use cdno_core::config::IgnoreSet;
+use cdno_core::index::VaultIndex;
 use cdno_core::reconcile::reconcile;
-use cdno_core::store::{FsVaultStore, VaultStore};
-use cdno_domain::Vault;
+use cdno_core::store::VaultStore;
+use cdno_mcp::bootstrap::open_vault;
 use cdno_mcp::{CuadernoServer, SmokeServer};
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
+
+/// Request-body cap for `/mcp`. Tool arguments are JSON text — the
+/// largest legitimate payloads are evidence-note bodies filed via
+/// `file_to_portfolio`, comfortably under this. Anything bigger is
+/// hostile or broken. (Enforced with `RequestBodyLimitLayer`, which
+/// wraps the body itself; see the module docs for why axum's default
+/// limit doesn't cover rmcp's raw-body path.)
+const MAX_BODY_BYTES: usize = 1024 * 1024;
+
+/// In-flight request bound. Tool handlers currently execute blocking
+/// domain calls on runtime worker threads (GH #303), all ultimately
+/// serialised on one SQLite connection — beyond a handful in flight,
+/// extra requests only queue harder and buffer more bodies. Eight is
+/// generous for a single-operator server.
+const MAX_IN_FLIGHT: usize = 8;
 
 /// Streamable HTTP MCP server for a Cuaderno vault.
 ///
@@ -110,6 +140,13 @@ async fn main() -> Result<()> {
     // listener must be impossible to expose by accident. GH #302
     // replaces this hard refusal with "refused unless JWT validation
     // is configured".
+    //
+    // NOTE (future-proofing, from the 2026-07-05 security review):
+    // this validates `args.bind` — the address WE are about to bind —
+    // which is sound only because this binary always creates its own
+    // listener below. If socket activation / fd passing is ever
+    // added, the check must move to the *actual* socket's local
+    // address or it is silently bypassed.
     if !args.bind.ip().is_loopback() {
         bail!(
             "refusing to bind non-loopback address {}: cdno-mcp-server has no \
@@ -131,12 +168,21 @@ async fn main() -> Result<()> {
     http_config
         .allowed_hosts
         .extend(args.allowed_hosts.iter().cloned());
-    let cancel = http_config.cancellation_token.clone();
 
     let router = if args.smoke {
         tracing::info!("smoke mode: serving the echo tool only; the vault is not opened");
         mcp_router(SmokeServer::new(), http_config)
     } else {
+        // The interlock only guards OUR bind address; restate the
+        // operator contract whenever real vault data is served (see
+        // module docs — an unauthenticated tunnel to this port would
+        // expose the vault and we cannot detect it).
+        tracing::warn!(
+            "serving vault tools on loopback WITHOUT origin authentication (GH #302): \
+             never bridge this port (tunnel, SSH forward, container publish) without \
+             an authenticating proxy in front"
+        );
+
         let root = vault_root(args.vault.clone())?;
         tracing::info!(vault_root = %root.display(), "starting cdno-mcp-server");
 
@@ -179,12 +225,16 @@ async fn main() -> Result<()> {
     tracing::info!(bind = %args.bind, "listening (endpoint: /mcp)");
 
     axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            // ctrl-c (or container SIGINT) → cancel rmcp's sessions,
-            // then let axum drain in-flight requests.
+        .with_graceful_shutdown(async {
+            // ctrl-c (or container SIGINT) → stop accepting and let
+            // axum drain in-flight requests to completion. We
+            // deliberately do NOT cancel rmcp's CancellationToken:
+            // in stateless mode there are no sessions to tear down,
+            // and cancelling mid-request would turn every in-flight
+            // call into a 500 instead of letting it finish (PR #304
+            // review, correctness finding 4).
             let _ = tokio::signal::ctrl_c().await;
-            tracing::info!("shutdown signal received");
-            cancel.cancel();
+            tracing::info!("shutdown signal received; draining in-flight requests");
         })
         .await
         .context("HTTP server exited with an error")?;
@@ -193,7 +243,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Mount an MCP handler as a Streamable HTTP tower service at `/mcp`.
+/// Mount an MCP handler as a Streamable HTTP tower service at `/mcp`,
+/// wrapped in the transport guardrails (body cap, concurrency bound —
+/// see the constants above).
 ///
 /// The handler is `Clone` (both [`CuadernoServer`] and [`SmokeServer`]
 /// are cheap to clone); in stateless mode the factory is invoked per
@@ -207,18 +259,13 @@ where
         Arc::new(NeverSessionManager::default()),
         config,
     );
-    axum::Router::new().route_service("/mcp", service)
-}
-
-/// Everything `open_vault` produced. The store/index/ignore handles
-/// exist so the reconciliation loop can re-run the pass that
-/// `Vault::new` performs once at open — `Vault` deliberately does not
-/// re-expose them.
-struct OpenedVault {
-    vault: Vault,
-    store: Arc<dyn VaultStore>,
-    index: Arc<dyn VaultIndex>,
-    ignore: Arc<IgnoreSet>,
+    axum::Router::new().route_service("/mcp", service).layer(
+        tower::ServiceBuilder::new()
+            .layer(tower::limit::ConcurrencyLimitLayer::new(MAX_IN_FLIGHT))
+            .layer(tower_http::limit::RequestBodyLimitLayer::new(
+                MAX_BODY_BYTES,
+            )),
+    )
 }
 
 /// Resolve the vault root: `--vault` / `CUADERNO_VAULT_PATH`, else cwd.
@@ -231,52 +278,17 @@ fn vault_root(flag: Option<PathBuf>) -> Result<PathBuf> {
     }
 }
 
-/// Open a vault at `root`. Mirror of the stdio binary's `open_vault`
-/// (itself a mirror of `cdno_cli::bootstrap::open_vault`), except it
-/// also hands back the store/index/ignore handles for the
-/// reconciliation loop.
-fn open_vault(root: &Path) -> Result<OpenedVault> {
-    let cuaderno_dir = root.join(paths::CUADERNO_DIR);
-    if !cuaderno_dir.is_dir() {
-        bail!(
-            "no Cuaderno vault at {} (looked for `.cuaderno/`).\n\
-             Hint: run `cdno init {}` to scaffold one, or set \
-             `CUADERNO_VAULT_PATH` to point at an existing vault.",
-            root.display(),
-            root.display(),
-        );
-    }
-
-    let config = VaultConfig::load(root)
-        .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))?;
-    let ignore = Arc::new(config.ignore_set().context("compiling the ignore set")?);
-    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
-    let index: Arc<dyn VaultIndex> = Arc::new(
-        SqliteIndex::open(root.join(paths::INDEX_DB))
-            .with_context(|| format!("opening {}", root.join(paths::INDEX_DB).display()))?,
-    );
-    let (vault, report) = Vault::new(store.clone(), index.clone(), config)
-        .context("constructing vault and reconciling index")?;
-    tracing::debug!(
-        scanned = report.scanned,
-        added = report.added,
-        updated = report.updated,
-        removed = report.removed,
-        errors = report.errors.len(),
-        "startup reconciliation complete",
-    );
-    Ok(OpenedVault {
-        vault,
-        store,
-        index,
-        ignore,
-    })
-}
-
 /// Periodic index reconciliation — the correctness backstop for a
 /// long-running server whose markdown is mutated by other writers
 /// (CLI, editors, sync). Runs the synchronous pass on the blocking
 /// pool so tool requests keep flowing while it scans.
+///
+/// Known benign race (PR #304 review, correctness finding 2): the
+/// pass reads file state *before* taking the per-note write lock, so
+/// a tool-call write landing in that window can be shadowed by a
+/// stale index row — which the *next* pass heals (mtime mismatch).
+/// Worst case is stale search results for one interval; markdown is
+/// never touched by reconciliation, so no data is at risk.
 fn spawn_reconcile_loop(
     store: Arc<dyn VaultStore>,
     index: Arc<dyn VaultIndex>,
