@@ -73,6 +73,20 @@ impl CuadernoServer {
         Self { vault, tool_router }
     }
 
+    /// Read-only variant: only the context-gathering read tools
+    /// (`context_router` — orientation, the `get_*_context` family,
+    /// reads and search). No operations / creation / lifecycle tools
+    /// are advertised or dispatchable, so a client of this server
+    /// cannot mutate the vault at all. Used by `cdno-mcp-server
+    /// --read-only` for scoped remote deployments and the initial
+    /// exposure soak (GH #61).
+    pub fn read_only(vault: Arc<Vault>) -> Self {
+        Self {
+            vault,
+            tool_router: Self::context_router(),
+        }
+    }
+
     /// Sorted snapshot of every advertised tool. Public so tests (and
     /// any external introspection client wrapping this binary) can
     /// verify the catalogue without going through the MCP protocol.

@@ -678,12 +678,11 @@ cuaderno/
 │   ├── cdno-mcp/           ← MCP server (handlers + transports)
 │   │   └── src/
 │   │       ├── lib.rs      ← tool definitions & handlers (transport-agnostic)
-│   │       ├── transport/
-│   │       │   ├── stdio.rs    ← for Claude Desktop / Claude Code
-│   │       │   └── http.rs     ← for self-hosted (Axum + SSE)
 │   │       └── bin/
-│   │           ├── stdio.rs    ← cdno-mcp binary (default, stdio)
-│   │           └── server.rs   ← cdno-mcp-server binary (HTTP)
+│   │           ├── stdio.rs    ← cdno-mcp binary (rmcp stdio transport)
+│   │           └── server.rs   ← cdno-mcp-server binary (Streamable HTTP,
+│   │                             stateless JSON — rmcp supplies both
+│   │                             transports, so no transport/ module)
 │   └── cdno-tauri/         ← Tauri backend commands for Cuaderno UI
 ├── ui/                     ← React + Tremor frontend (Cuaderno UI)
 └── skills/                 ← Claude skill definitions (markdown)
@@ -727,7 +726,7 @@ graph TD
 
 **cdno-cli**: thin translation layer. Parses command-line arguments, calls domain functions, formats output for the terminal. No business logic.
 
-**cdno-mcp**: thin translation layer. Defines MCP tool schemas (derived from domain types via serde), receives JSON-RPC requests, calls domain functions, returns JSON-RPC responses. The handler layer is transport-agnostic. Two transport implementations (stdio, HTTP/SSE) are separate modules producing separate binaries.
+**cdno-mcp**: thin translation layer. Defines MCP tool schemas (derived from domain types via serde), receives JSON-RPC requests, calls domain functions, returns JSON-RPC responses. The handler layer is transport-agnostic. Two binaries serve it: `cdno-mcp` (stdio, locally spawned) and `cdno-mcp-server` (MCP Streamable HTTP in stateless JSON mode — not SSE, which Claude's remote-connector infrastructure doesn't support).
 
 **cdno-tauri**: thin translation layer. Defines Tauri commands that call domain methods directly (not MCP handler wrappers — Tauri can work with richer Rust types via its own serde bridge, avoiding unnecessary serialisation overhead). Manages the Tauri state (vault path, index handle). The React frontend calls these commands via `invoke()`. The right shared layer between MCP and Tauri is the domain API itself, not the MCP handlers.
 
@@ -1317,13 +1316,17 @@ cdno-mcp                 # launched by Claude Desktop / Claude Code
 ### HTTP (self-hosted)
 
 ```bash
-cdno-mcp serve --port 3000 --vault ~/vault --auth-token $CDNO_TOKEN
+cdno-mcp-server --bind 127.0.0.1:8787 --vault ~/vault
 ```
 
-- Axum server with SSE for MCP streaming
-- Long-running process with persistent index
-- File watching for live index updates
-- Token-based authentication for remote access
+- Axum mounting rmcp's Streamable HTTP service at `/mcp` (stateless JSON mode — SSE is
+  unsupported by Claude's remote-connector infrastructure)
+- Long-running process; periodic index reconciliation (`--reconcile-interval-secs`) is the
+  correctness backstop against out-of-band edits; file watching (#49) is a future latency add-on
+- **No authentication in the binary** — static tokens are not spec-legal for remote MCP.
+  OAuth 2.1 terminates at an identity-aware proxy (Cloudflare Access Managed OAuth); the origin
+  validates the proxy-injected JWT (#302). Until #302 lands the binary refuses non-loopback binds
+- `--smoke` (no-vault echo fixture for proving infra) and `--read-only` (context tools only)
 - Enables: access from any device, mobile Claude usage, multi-machine setups
 
 ### Tauri (direct)

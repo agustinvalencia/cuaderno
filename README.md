@@ -135,7 +135,7 @@ cuaderno/
 │   ├── cdno-core/          ← file I/O, markdown parsing, SQLite indexing, file watching
 │   ├── cdno-domain/        ← note types, business rules, queries, state transitions
 │   ├── cdno-cli/           ← terminal commands (`cdno`)
-│   ├── cdno-mcp/           ← MCP server — stdio shipped, HTTP planned (Phase 6)
+│   ├── cdno-mcp/           ← MCP server — stdio + Streamable HTTP binaries
 │   └── cdno-tauri/         ← Tauri backend for the desktop app (Phase 5, not yet created)
 ├── ui/                     ← React + Tremor frontend (Phase 5, not yet created)
 └── skills/                 ← Claude skill definitions (Phase 4 skill adaptation, not yet created)
@@ -143,8 +143,8 @@ cuaderno/
 
 ```
 cdno-core → cdno-domain → cdno-cli
-                        → cdno-mcp → stdio transport (shipped)
-                                   → HTTP transport (Axum, Phase 6)
+                        → cdno-mcp → stdio transport (`cdno-mcp`, shipped)
+                                   → Streamable HTTP transport (`cdno-mcp-server`, shipped)
                         → cdno-tauri (Phase 5) → React UI
 ```
 
@@ -183,7 +183,7 @@ The tool has four consumers:
 
 - **The researcher** via the CLI in a terminal
 - **The researcher** via the Cuaderno desktop UI (Tauri 2.0)
-- **Claude** via the MCP server (stdio for local, HTTP for self-hosted)
+- **Claude** via the MCP server (stdio for local; Streamable HTTP via `cdno-mcp-server` for self-hosted/remote, behind an OAuth-terminating proxy)
 - **Claude skills** as choreographed workflows combining MCP calls with ADHD-friendly interaction patterns
 
 ## Status

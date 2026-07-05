@@ -4,6 +4,25 @@ All notable changes to Cuaderno are recorded here. The project is pre-release; e
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Each entry links to the merged PR.
 
+## [Unreleased]
+
+### Added
+
+- **`cdno-mcp-server`: Streamable HTTP transport** (#60, #61) — a second binary in the cdno-mcp
+  crate serving the same tool catalogue as the stdio `cdno-mcp`, over the MCP Streamable HTTP
+  transport (stateless JSON mode, mounted at `/mcp`), for remote deployment behind an
+  OAuth-terminating proxy. Deliberately **implements no authentication itself** and therefore
+  **refuses to bind non-loopback addresses** until the origin-auth middleware lands (#302) — an
+  unauthenticated vault listener must be impossible to expose by accident. Flags: `--bind`
+  (default `127.0.0.1:8787`), `--allowed-host` (extends rmcp's DNS-rebinding allowlist),
+  `--smoke` (a one-tool echo server holding **no vault handle**, for proving tunnel/auth
+  infrastructure with zero vault exposure), `--read-only` (advertises only the context-gathering
+  read tools), and `--reconcile-interval-secs` (default 300). Because this server is long-running
+  while other writers (CLI, editors, sync) mutate the markdown underneath it, it re-runs the
+  index reconciliation pass on that interval as the correctness backstop — the #49 file watcher
+  can later reduce latency but never replaces it. `CuadernoServer::read_only()` and the
+  `SmokeServer` are exposed from the library for tests and future transports.
+
 ## [0.3.0] - 2026-07-03
 
 Custom note types: define your own schema-only note types in `config.toml`.

@@ -6,8 +6,8 @@
 //!
 //! The file name (`stdio.rs`) describes the transport; the binary's
 //! user-facing name (`cdno-mcp`) is set in `Cargo.toml`'s `[[bin]]`
-//! table. A future `bin/server.rs` will host the HTTP transport
-//! under a separate binary name.
+//! table. The HTTP transport lives in `bin/server.rs` as the
+//! `cdno-mcp-server` binary (GH #60/#61).
 //!
 //! # Logging
 //!
@@ -19,16 +19,12 @@
 //! freshly-launched server logs its vault path and any startup
 //! failure without further configuration.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use cdno_core::config::VaultConfig;
-use cdno_core::index::{SqliteIndex, VaultIndex};
-use cdno_core::paths;
-use cdno_core::store::{FsVaultStore, VaultStore};
-use cdno_domain::Vault;
+use anyhow::{Context, Result};
 use cdno_mcp::CuadernoServer;
+use cdno_mcp::bootstrap::open_vault;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use tracing_subscriber::EnvFilter;
@@ -40,11 +36,14 @@ async fn main() -> Result<()> {
     let root = vault_root_from_env()?;
     tracing::info!(vault_root = %root.display(), "starting cdno-mcp");
 
-    let vault = open_vault(&root).inspect_err(|e| {
+    // A stdio session is short-lived, so only the `vault` is kept;
+    // the store/index/ignore handles (used by the HTTP binary's
+    // reconciliation loop) are dropped.
+    let opened = open_vault(&root).inspect_err(|e| {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
 
-    let server = CuadernoServer::new(Arc::new(vault));
+    let server = CuadernoServer::new(Arc::new(opened.vault));
     // Derive the count from the merged router rather than hardcoding it,
     // so the startup log can't drift out of sync as tools are added.
     tracing::info!(
@@ -95,39 +94,4 @@ fn vault_root_from_env() -> Result<PathBuf> {
             std::env::current_dir().context("could not determine the current working directory")
         }
     }
-}
-
-/// Open a vault at `root`. Mirror of [`cdno_cli::bootstrap::open_vault`]
-/// — duplicated here so cdno-mcp doesn't depend on the CLI crate. If
-/// this drift becomes painful, lift both into a shared core helper.
-fn open_vault(root: &Path) -> Result<Vault> {
-    let cuaderno_dir = root.join(paths::CUADERNO_DIR);
-    if !cuaderno_dir.is_dir() {
-        bail!(
-            "no Cuaderno vault at {} (looked for `.cuaderno/`).\n\
-             Hint: run `cdno init {}` to scaffold one, or set \
-             `CUADERNO_VAULT_PATH` to point at an existing vault.",
-            root.display(),
-            root.display(),
-        );
-    }
-
-    let config = VaultConfig::load(root)
-        .with_context(|| format!("loading {}", root.join(paths::CONFIG_FILE).display()))?;
-    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(root));
-    let index: Arc<dyn VaultIndex> = Arc::new(
-        SqliteIndex::open(root.join(paths::INDEX_DB))
-            .with_context(|| format!("opening {}", root.join(paths::INDEX_DB).display()))?,
-    );
-    let (vault, report) =
-        Vault::new(store, index, config).context("constructing vault and reconciling index")?;
-    tracing::debug!(
-        scanned = report.scanned,
-        added = report.added,
-        updated = report.updated,
-        removed = report.removed,
-        errors = report.errors.len(),
-        "reconciliation complete",
-    );
-    Ok(vault)
 }

@@ -22,12 +22,19 @@
 //! # Concurrency note
 //!
 //! `Vault` is synchronous (see `docs/implementation-plan.md` §4).
-//! Tool methods are async because `rmcp::ServerHandler` is async.
-//! Each tool calls `vault.method()` directly — fine for stdio, which
-//! handles one request at a time. The HTTP transport (later phase)
-//! should wrap each call in `tokio::task::spawn_blocking` so the
-//! event loop never stalls on disk I/O.
+//! Tool methods are async because `rmcp::ServerHandler` is async, and
+//! each tool calls `vault.method()` directly on the runtime worker —
+//! **a recorded decision, not an oversight** (GH #303 tracks the
+//! hardening). For stdio this is moot (one request at a time). For
+//! the HTTP binary it means a blocking domain call occupies a worker
+//! thread per in-flight request; acceptable for the single-operator
+//! deployment because `cdno-mcp-server` caps concurrent requests at
+//! the transport layer, and its reconciliation loop — the only
+//! long-running scan — does run on `spawn_blocking`. Before any
+//! multi-user or high-concurrency use, #303 moves the per-tool domain
+//! calls onto the blocking pool too.
 
+pub mod bootstrap;
 mod context;
 mod creation;
 pub mod dto;
@@ -35,6 +42,8 @@ pub mod input;
 mod lifecycle;
 mod operations;
 pub mod server;
+pub mod smoke;
 mod util;
 
 pub use server::CuadernoServer;
+pub use smoke::SmokeServer;
