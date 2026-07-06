@@ -119,7 +119,17 @@ impl CuadernoServer {
         tokio::task::spawn_blocking(move || f(&vault))
             .await
             .map_err(|e| {
-                rmcp::model::ErrorData::internal_error(format!("blocking task failed: {e}"), None)
+                // A JoinError here almost always means the closure
+                // panicked. Containing it as an error response (rather
+                // than unwinding the runtime) is deliberate — but the
+                // JoinError's Display embeds the panic payload, which
+                // must not reach the client (PR #307 audit note). Log
+                // the detail server-side; return a generic message.
+                tracing::error!(error = %e, "tool handler panicked on the blocking pool");
+                rmcp::model::ErrorData::internal_error(
+                    "internal error while executing the tool".to_string(),
+                    None,
+                )
             })
     }
 }
