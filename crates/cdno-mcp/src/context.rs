@@ -10,6 +10,7 @@ use rmcp::{tool, tool_router};
 
 use cdno_core::path::VaultPath;
 use cdno_domain::SearchFilters;
+use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 
 use crate::dto::{
@@ -43,8 +44,8 @@ impl CuadernoServer {
         // `commands/orient.rs::suggestion`).
         let today = chrono::Local::now().date_naive();
         let ctx = self
-            .vault
-            .orientation_context(today)
+            .with_vault(move |vault| vault.orientation_context(today))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(OrientationContextDto::from(ctx))
     }
@@ -60,16 +61,16 @@ impl CuadernoServer {
         let monday = monday_of_iso_week(today);
         let sunday = monday + chrono::Duration::days(6);
 
-        let logs = self.vault.weekly_logs(today).map_err(into_mcp_error)?;
-        let completed = self
-            .vault
-            .completed_actions_between(monday, sunday)
+        let (logs, completed, state_changes, commitments) = self
+            .with_vault(move |vault| {
+                let logs = vault.weekly_logs(today)?;
+                let completed = vault.completed_actions_between(monday, sunday)?;
+                let state_changes = vault.project_state_changes_between(monday, sunday)?;
+                let commitments = vault.commitments(today, 14)?;
+                Ok::<_, DomainError>((logs, completed, state_changes, commitments))
+            })
+            .await?
             .map_err(into_mcp_error)?;
-        let state_changes = self
-            .vault
-            .project_state_changes_between(monday, sunday)
-            .map_err(into_mcp_error)?;
-        let commitments = self.vault.commitments(today, 14).map_err(into_mcp_error)?;
 
         json_result(WeeklyContextDto {
             week_of: monday,
@@ -90,25 +91,40 @@ impl CuadernoServer {
         let today = chrono::Local::now().date_naive();
         let since = today - chrono::Duration::days(30);
 
-        let completed = self
-            .vault
-            .completed_actions_between(since, today)
+        let (
+            completed,
+            active_questions,
+            portfolios,
+            stuck,
+            stewardships,
+            commitments,
+            active_count,
+            cap,
+        ) = self
+            .with_vault(move |vault| {
+                let completed = vault.completed_actions_between(since, today)?;
+                let active_questions = vault.active_questions()?;
+                let portfolios = vault.list_portfolios(today)?;
+                // Design §11: "project stuck-check, unchanged >2 weeks" — 14 days.
+                let stuck = vault.stuck_projects(today, 14)?;
+                let stewardships = vault.list_stewardships(today)?;
+                // Six-week (42-day) lookahead per design §11.
+                let commitments = vault.commitments(today, 42)?;
+                let active_count = vault.active_projects()?.len();
+                let cap = vault.config().vault.max_active_projects;
+                Ok::<_, DomainError>((
+                    completed,
+                    active_questions,
+                    portfolios,
+                    stuck,
+                    stewardships,
+                    commitments,
+                    active_count,
+                    cap,
+                ))
+            })
+            .await?
             .map_err(into_mcp_error)?;
-        let active_questions = self.vault.active_questions().map_err(into_mcp_error)?;
-        let portfolios = self.vault.list_portfolios(today).map_err(into_mcp_error)?;
-        // Design §11: "project stuck-check, unchanged >2 weeks" — 14 days.
-        let stuck = self
-            .vault
-            .stuck_projects(today, 14)
-            .map_err(into_mcp_error)?;
-        let stewardships = self
-            .vault
-            .list_stewardships(today)
-            .map_err(into_mcp_error)?;
-        // Six-week (42-day) lookahead per design §11.
-        let commitments = self.vault.commitments(today, 42).map_err(into_mcp_error)?;
-        let active_count = self.vault.active_projects().map_err(into_mcp_error)?.len();
-        let cap = self.vault.config().vault.max_active_projects;
 
         json_result(MonthlyContextDto {
             since,
@@ -132,9 +148,15 @@ impl CuadernoServer {
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let active = self.vault.active_projects().map_err(into_mcp_error)?;
-        let parked = self.vault.parked_projects().map_err(into_mcp_error)?;
-        let cap = self.vault.config().vault.max_active_projects;
+        let (active, parked, cap) = self
+            .with_vault(move |vault| {
+                let active = vault.active_projects()?;
+                let parked = vault.parked_projects()?;
+                let cap = vault.config().vault.max_active_projects;
+                Ok::<_, DomainError>((active, parked, cap))
+            })
+            .await?
+            .map_err(into_mcp_error)?;
         let slots = ProjectSlotsDto {
             active: active.len(),
             cap,
@@ -157,8 +179,8 @@ impl CuadernoServer {
         let weeks = input.lookahead_weeks.unwrap_or(2);
         let lookahead_days = i64::from(weeks) * 7;
         let entries = self
-            .vault
-            .commitments(today, lookahead_days)
+            .with_vault(move |vault| vault.commitments(today, lookahead_days))
+            .await?
             .map_err(into_mcp_error)?;
         let dtos: Vec<CommitmentEntryDto> = entries.into_iter().map(Into::into).collect();
         json_result(dtos)
@@ -171,7 +193,10 @@ impl CuadernoServer {
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let report = self.vault.lint_all_notes().map_err(into_mcp_error)?;
+        let report = self
+            .with_vault(|vault| vault.lint_all_notes())
+            .await?
+            .map_err(into_mcp_error)?;
         json_result(LintReportDto::from(report))
     }
 
@@ -182,7 +207,10 @@ impl CuadernoServer {
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let items = self.vault.list_inbox().map_err(into_mcp_error)?;
+        let items = self
+            .with_vault(|vault| vault.list_inbox())
+            .await?
+            .map_err(into_mcp_error)?;
         let dtos: Vec<InboxItemDto> = items.into_iter().map(Into::into).collect();
         json_result(dtos)
     }
@@ -197,38 +225,35 @@ impl CuadernoServer {
         let today = chrono::Local::now().date_naive();
         let since = today - chrono::Duration::days(30);
 
-        let (fm, body) = self
-            .vault
-            .get_project_full(&input.project)
-            .map_err(into_mcp_error)?;
-        let mentions = self
-            .vault
-            .daily_log_mentions(&input.project, since)
-            .map_err(into_mcp_error)?;
-        let backlinks = self
-            .vault
-            .project_backlinks(&input.project)
-            .map_err(into_mcp_error)?;
+        let project = input.project.clone();
+        let (fm, body, mentions, backlinks, core_question) = self
+            .with_vault(move |vault| {
+                let (fm, body) = vault.get_project_full(&project)?;
+                let mentions = vault.daily_log_mentions(&project, since)?;
+                let backlinks = vault.project_backlinks(&project)?;
 
-        // Resolve core_question when present. Parse the wikilink
-        // target out of `"[[questions/<domain>/<slug>]]"`, look it
-        // up in the full question list (active OR otherwise), and
-        // include the summary. Quietly silent on any parse / lookup
-        // failure — better to return None than to surface a "broken
-        // wikilink" error from a read-only context query. Lint is
-        // where that surfaces.
-        let core_question = if let Some(link) = fm.core_question.as_deref() {
-            parse_question_slug_from_wikilink(link)
-                .and_then(|slug| {
-                    self.vault
-                        .list_questions()
-                        .ok()
-                        .and_then(|qs| qs.into_iter().find(|q| q.slug == slug))
-                })
-                .map(QuestionSummaryDto::from)
-        } else {
-            None
-        };
+                // Resolve core_question when present. Parse the wikilink
+                // target out of `"[[questions/<domain>/<slug>]]"`, look it
+                // up in the full question list (active OR otherwise), and
+                // include the summary. Quietly silent on any parse / lookup
+                // failure — better to return None than to surface a "broken
+                // wikilink" error from a read-only context query. Lint is
+                // where that surfaces.
+                let core_question = if let Some(link) = fm.core_question.as_deref() {
+                    parse_question_slug_from_wikilink(link).and_then(|slug| {
+                        vault
+                            .list_questions()
+                            .ok()
+                            .and_then(|qs| qs.into_iter().find(|q| q.slug == slug))
+                    })
+                } else {
+                    None
+                };
+
+                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question))
+            })
+            .await?
+            .map_err(into_mcp_error)?;
 
         json_result(ProjectContextDto {
             slug: input.project,
@@ -236,7 +261,7 @@ impl CuadernoServer {
             body_markdown: body,
             recent_mentions: mentions.into_iter().map(Into::into).collect(),
             backlinks: backlinks.into(),
-            core_question,
+            core_question: core_question.map(QuestionSummaryDto::from),
         })
     }
 
@@ -247,13 +272,14 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<PortfolioSlugInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let fm = self
-            .vault
-            .get_portfolio(&input.portfolio)
-            .map_err(into_mcp_error)?;
-        let evidence = self
-            .vault
-            .get_portfolio_contents(&input.portfolio)
+        let portfolio = input.portfolio.clone();
+        let (fm, evidence) = self
+            .with_vault(move |vault| {
+                let fm = vault.get_portfolio(&portfolio)?;
+                let evidence = vault.get_portfolio_contents(&portfolio)?;
+                Ok::<_, DomainError>((fm, evidence))
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(PortfolioDetailDto::new(input.portfolio, fm, evidence))
     }
@@ -272,9 +298,13 @@ impl CuadernoServer {
             }
             None => today - chrono::Duration::days(90),
         };
+        let stewardship = input.stewardship.clone();
+        let activity = input.activity.clone();
         let entries = self
-            .vault
-            .list_tracking(&input.stewardship, Some(&input.activity), from, today)
+            .with_vault(move |vault| {
+                vault.list_tracking(&stewardship, Some(&activity), from, today)
+            })
+            .await?
             .map_err(into_mcp_error)?;
 
         json_result(StewardshipTrackingDto {
@@ -300,7 +330,10 @@ impl CuadernoServer {
             ),
             None => None,
         };
-        let mut active = self.vault.active_questions().map_err(into_mcp_error)?;
+        let mut active = self
+            .with_vault(|vault| vault.active_questions())
+            .await?
+            .map_err(into_mcp_error)?;
         if let Some(d) = filter {
             active.retain(|q| q.domain == d);
         }
@@ -318,7 +351,10 @@ impl CuadernoServer {
         let date = input
             .date
             .unwrap_or_else(|| chrono::Local::now().date_naive());
-        let view = self.vault.read_daily_note(date).map_err(into_mcp_error)?;
+        let view = self
+            .with_vault(move |vault| vault.read_daily_note(date))
+            .await?
+            .map_err(into_mcp_error)?;
         json_result(DailyNoteViewDto::from(view))
     }
 
@@ -332,7 +368,10 @@ impl CuadernoServer {
         let date = input
             .date
             .unwrap_or_else(|| chrono::Local::now().date_naive());
-        let view = self.vault.read_weekly_note(date).map_err(into_mcp_error)?;
+        let view = self
+            .with_vault(move |vault| vault.read_weekly_note(date))
+            .await?
+            .map_err(into_mcp_error)?;
         json_result(WeeklyNoteViewDto::from(view))
     }
 
@@ -343,27 +382,29 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<SearchNotesInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        // Any built-in or config-defined custom type name. Validate against the
-        // registry so a typo is a clear INVALID_PARAMS rather than a silent
-        // empty result (an LLM client has no tab-completion to catch it).
-        if let Some(t) = input.note_type.as_deref()
-            && !self.vault.type_registry().is_known(t)
-        {
-            return Err(invalid_argument(
-                "note_type",
-                &format!("unknown note type '{t}'"),
-            ));
-        }
-        let note_type_names = input.note_type.into_iter().collect();
-        let filters = SearchFilters {
-            note_type_names,
-            date_from: input.from,
-            date_to: input.to,
-            portfolio: input.portfolio,
-        };
         let results = self
-            .vault
-            .search(&input.query, &filters, input.limit)
+            .with_vault(move |vault| {
+                // Any built-in or config-defined custom type name. Validate against the
+                // registry so a typo is a clear INVALID_PARAMS rather than a silent
+                // empty result (an LLM client has no tab-completion to catch it).
+                if let Some(t) = input.note_type.as_deref()
+                    && !vault.type_registry().is_known(t)
+                {
+                    return Err(invalid_argument(
+                        "note_type",
+                        &format!("unknown note type '{t}'"),
+                    ));
+                }
+                let note_type_names = input.note_type.into_iter().collect();
+                let filters = SearchFilters {
+                    note_type_names,
+                    date_from: input.from,
+                    date_to: input.to,
+                    portfolio: input.portfolio,
+                };
+                Ok(vault.search(&input.query, &filters, input.limit))
+            })
+            .await??
             .map_err(into_mcp_error)?;
         let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
         json_result(dtos)

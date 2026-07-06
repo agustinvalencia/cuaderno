@@ -32,8 +32,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .park_project(at, &input.project)
+            .with_vault(move |vault| vault.park_project(at, &input.project))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -50,8 +50,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .activate_project(at, &input.project)
+            .with_vault(move |vault| vault.activate_project(at, &input.project))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -70,8 +70,8 @@ impl CuadernoServer {
         let status = QuestionStatus::from_str(&input.status)
             .map_err(|e| invalid_argument("status", &e.to_string()))?;
         let path = self
-            .vault
-            .set_question_status(at, &input.question, status)
+            .with_vault(move |vault| vault.set_question_status(at, &input.question, status))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -90,14 +90,16 @@ impl CuadernoServer {
         let recurrence = Recurrence::from_str(&input.recurrence)
             .map_err(|e| invalid_argument("recurrence", &e.to_string()))?;
         let path = self
-            .vault
-            .add_periodic_commitment(
-                at,
-                &input.stewardship,
-                &input.title,
-                recurrence,
-                input.next_date,
-            )
+            .with_vault(move |vault| {
+                vault.add_periodic_commitment(
+                    at,
+                    &input.stewardship,
+                    &input.title,
+                    recurrence,
+                    input.next_date,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
