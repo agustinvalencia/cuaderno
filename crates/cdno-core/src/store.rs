@@ -16,6 +16,13 @@ use crate::path::VaultPath;
 /// death, so a crashed holder never deadlocks the next writer.
 const WRITE_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Filename prefix for the in-progress temp file that atomic writes
+/// stage next to their target. Stable and recognisable so the git
+/// checkpoint (GH #303) can exclude it via `.git/info/exclude` — an
+/// in-flight temp must never enter the recovery history, independent
+/// of any lock. Exposed for the checkpoint to build its exclude rule.
+pub const WIP_TEMP_PREFIX: &str = ".cdno-wip-";
+
 /// Guard for the vault write lock (#196). For [`FsVaultStore`] it holds an
 /// OS advisory lock on `.cuaderno/.lock`; for in-memory stores it is a
 /// no-op. The lock releases when this guard drops — and, being tied to an
@@ -508,8 +515,10 @@ impl FsVaultStore {
             .parent()
             .expect("resolved path always has a parent (root is a prefix)");
         fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
-        let mut tmp =
-            tempfile::NamedTempFile::new_in(parent).map_err(|e| io_to_store_error(e, path))?;
+        let mut tmp = tempfile::Builder::new()
+            .prefix(WIP_TEMP_PREFIX)
+            .tempfile_in(parent)
+            .map_err(|e| io_to_store_error(e, path))?;
         tmp.write_all(content.as_bytes())
             .map_err(|e| io_to_store_error(e, path))?;
         tmp.as_file()

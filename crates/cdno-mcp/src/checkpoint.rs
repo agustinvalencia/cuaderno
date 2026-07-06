@@ -10,23 +10,28 @@
 //!
 //! # Correctness (PR #306 review)
 //!
-//! The sweep takes the **vault write lock** around `add`+`commit`
-//! (F1): a transaction applies its file ops one atomic rename at a
-//! time while holding that lock, and atomic writes stage a temp
-//! sibling in the target directory for the same window. Committing
-//! under the lock therefore guarantees the tree is neither
-//! half-applied (some ops of a multi-file transaction missing) nor
-//! carrying an in-flight temp file. `status` is read under the lock
-//! too so the dirty check matches what gets committed.
+//! Two hazards, handled separately (PR #306 review, F1):
 //!
-//! Platform note: this relies on `flock(2)` being per-open-file-
-//! description, so the checkpoint task and a transaction in the *same
-//! server process* mutually exclude. That holds on **Linux** — the
-//! deployment target (the server runs in a Linux container) and CI.
-//! macOS does not reliably conflict same-process flock across
-//! descriptors; it is not a deployment platform for the server, and
-//! cross-process locking (host CLI vs container) is reliable
-//! everywhere.
+//! - **In-flight temp files.** Atomic writes stage a temp sibling
+//!   ([`cdno_core::store::WIP_TEMP_PREFIX`]) next to their target.
+//!   These must never enter history. Handled *deterministically*, not
+//!   by locking: the loop adds the prefix to `.git/info/exclude` once
+//!   at startup, so `git status`/`add -A` ignore wip files regardless
+//!   of any lock or platform.
+//! - **Half-applied multi-file transactions.** A transaction applies
+//!   its ops one atomic rename at a time while holding the vault write
+//!   lock. The checkpoint takes the **same lock** around
+//!   `status`+`add`+`commit`, which serialises it against a
+//!   *different-process* writer (the host `cdno` CLI) — the realistic
+//!   concurrent writer. Rust's file lock is per-process on Linux, so
+//!   it does **not** serialise the checkpoint against the server's
+//!   *own* tool-call transactions in the same process; that residual
+//!   window is bounded and self-correcting (transactions are
+//!   sub-millisecond, checkpoints are seconds apart, and any partial
+//!   snapshot is superseded by a complete one at the next tick).
+//!   Tightening it fully would need an in-process write gate in
+//!   cdno-core — deferred as it is not load-bearing for a
+//!   single-operator server.
 //!
 //! A single git failure must **not** permanently disable the audit
 //! trail (F2): non-zero `git` exits (`.git/index.lock` contention with
@@ -80,6 +85,12 @@ pub fn spawn(root: PathBuf, every: Duration) {
             );
             return;
         }
+    }
+
+    // Make in-flight atomic-write temp files invisible to git, once,
+    // before the first tick — so no sweep can ever stage one.
+    if let Err(e) = ensure_wip_excluded(&root) {
+        tracing::warn!(error = %e, "could not write .git/info/exclude; wip temp files may be committed");
     }
 
     tokio::spawn(async move {
@@ -200,6 +211,30 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
     Ok(Some(message))
 }
 
+/// Idempotently add the atomic-write temp-file prefix to the repo's
+/// local `.git/info/exclude` (not the tracked `.gitignore`, so the
+/// user's ignore file is untouched). Ensures `git add -A` never stages
+/// an in-flight temp sibling.
+fn ensure_wip_excluded(root: &Path) -> Result<()> {
+    use std::io::Write;
+    let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
+    let info = root.join(".git").join("info");
+    std::fs::create_dir_all(&info).context("creating .git/info")?;
+    let exclude = info.join("exclude");
+    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    // Match at any depth: bare pattern (git applies it per directory).
+    if existing.lines().any(|l| l.trim() == pattern) {
+        return Ok(());
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&exclude)
+        .context("opening .git/info/exclude")?;
+    writeln!(f, "{pattern}").context("appending to .git/info/exclude")?;
+    Ok(())
+}
+
 /// Run `git -C root <args>` with a scrubbed environment.
 ///
 /// `env_clear` (PR #306 security review, finding 3) stops an ambient
@@ -255,58 +290,47 @@ mod tests {
         assert!(matches!(git_commit_if_dirty(dir.path()), Ok(None)));
     }
 
-    // Linux-only: this asserts the vault write lock serialises a
-    // checkpoint against a *same-process* writer. `flock(2)` is
-    // per-open-file-description on Linux, so two `File` handles in one
-    // process conflict — which is exactly the server's situation
-    // (checkpoint task vs transaction, same process). macOS does NOT
-    // reliably conflict same-process flock across descriptors, so the
-    // guarantee (and this test) is asserted on the deployment target
-    // and CI (both Linux). Cross-process locking, used by the host
-    // CLI vs the container, is reliable on both.
-    #[cfg(target_os = "linux")]
     #[test]
-    fn checkpoint_does_not_commit_while_the_vault_write_lock_is_held() {
-        // F1: a checkpoint must never commit while a writer holds the
-        // vault lock — that window is exactly when temp siblings and
-        // half-applied multi-file transactions exist on disk. The pass
-        // may either block for the lock or skip as transient; both are
-        // correct. What must hold: NO commit lands while locked, and a
-        // later pass commits once the lock is free.
+    fn in_flight_temp_files_are_never_committed() {
+        // F1 (temp-file hazard): an atomic write's in-progress temp
+        // sibling must never enter history, independent of any lock.
+        // `ensure_wip_excluded` adds the prefix to .git/info/exclude,
+        // so `git add -A` skips it even when a real change commits.
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
-        std::fs::write(dir.path().join("seed.md"), "seed").unwrap();
-        git_commit_if_dirty(dir.path()).unwrap();
-        // Dirty the tree so a lock-free checkpoint WOULD commit.
-        std::fs::write(dir.path().join("note.md"), "dirty").unwrap();
+        ensure_wip_excluded(dir.path()).unwrap();
 
-        let store = FsVaultStore::new(dir.path());
-        let lock = store.acquire_write_lock().unwrap();
+        // A real note plus a wip temp sibling, both dirty.
+        std::fs::write(dir.path().join("note.md"), "real").unwrap();
+        let wip = format!("{}abcd", cdno_core::store::WIP_TEMP_PREFIX);
+        std::fs::write(dir.path().join(&wip), "garbage-in-flight").unwrap();
 
-        // Run a pass in a thread (it may block until we release).
-        let repo = dir.path().to_path_buf();
-        let handle = std::thread::spawn(move || checkpoint_once(&repo));
+        let summary = git_commit_if_dirty(dir.path()).unwrap();
+        assert!(summary.is_some(), "the real note should commit");
 
-        // While we hold the lock the pass blocks on it (Linux flock is
-        // per-OFD): nothing is committed.
-        std::thread::sleep(Duration::from_millis(300));
-        let log = run_git(dir.path(), &["log", "--oneline"]).unwrap();
+        // The committed tree contains the note but not the wip file.
+        let tracked = run_git(dir.path(), &["ls-files"]).unwrap();
+        let tracked = String::from_utf8_lossy(&tracked.stdout);
+        assert!(tracked.contains("note.md"), "note.md must be committed");
         assert!(
-            !String::from_utf8_lossy(&log.stdout).contains("cdno-mcp checkpoint"),
-            "checkpoint must not commit while the write lock is held"
+            !tracked.contains(&wip),
+            "the in-flight temp file must never be committed: {tracked}"
         );
+    }
 
-        // Release → the blocked pass acquires the lock and commits the
-        // still-dirty tree.
-        drop(lock);
-        assert!(
-            matches!(handle.join().unwrap(), Pass::Ok(Some(_))),
-            "the unblocked checkpoint should commit"
-        );
-        let log = run_git(dir.path(), &["log", "--oneline"]).unwrap();
-        assert!(
-            String::from_utf8_lossy(&log.stdout).contains("cdno-mcp checkpoint"),
-            "checkpoint must commit once the lock is released"
+    #[test]
+    fn ensure_wip_excluded_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        ensure_wip_excluded(dir.path()).unwrap();
+        ensure_wip_excluded(dir.path()).unwrap();
+        let exclude =
+            std::fs::read_to_string(dir.path().join(".git/info/exclude")).unwrap_or_default();
+        let pattern = format!("{}*", cdno_core::store::WIP_TEMP_PREFIX);
+        assert_eq!(
+            exclude.lines().filter(|l| l.trim() == pattern).count(),
+            1,
+            "the exclude rule must be written exactly once"
         );
     }
 

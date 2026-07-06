@@ -25,7 +25,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     diffable and revertible — the only meaningful damage limit for prompt-injected writes.
     Deliberately a sweep rather than a per-tool hook: zero handler changes, and out-of-band edits
     join the audit trail too; per-write attribution already lives in the daily-note log lines.
-    Warns and disables when the vault isn't a git repo or `git` is missing.
+    In-flight atomic-write temp files are excluded from history via `.git/info/exclude` (never
+    committed, independent of any lock); the sweep holds the vault write lock so it never
+    snapshots a cross-process writer's half-applied transaction; a single transient `git` failure
+    (e.g. `.git/index.lock` contention with the operator's own git use) is retried, not fatal.
+    Runs `git` with a scrubbed environment; warns and disables when the vault isn't a git repo
+    (a `.git` file/worktree pointer is refused too) or `git` is missing.
   - `create_tracking_entry`'s tool description now warns that entries are always dated today
     (no override) so remote callers don't try to backfill past sessions through it.
 
