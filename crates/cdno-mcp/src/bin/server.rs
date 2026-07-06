@@ -131,6 +131,17 @@ struct ServeArgs {
     #[arg(long, env = "CDNO_MCP_RECONCILE_INTERVAL_SECS", default_value_t = 300)]
     reconcile_interval_secs: u64,
 
+    /// Seconds between git checkpoints of the vault (commit-if-dirty;
+    /// the recoverability layer for remote writes — GH #303). 0
+    /// disables. No-op with a warning when the vault is not a git
+    /// repository or `git` is not on PATH.
+    #[arg(
+        long,
+        env = "CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS",
+        default_value_t = 60
+    )]
+    git_checkpoint_interval_secs: u64,
+
     /// Cloudflare Access team URL (e.g.
     /// `https://<team>.cloudflareaccess.com`) — the JWT issuer and
     /// the JWKS host. Setting this (with `--access-aud`) activates
@@ -231,6 +242,18 @@ async fn main() -> Result<()> {
             tracing::warn!(
                 "periodic reconciliation disabled (--reconcile-interval-secs 0); \
                  out-of-band edits will not appear in the index until restart"
+            );
+        }
+
+        if args.git_checkpoint_interval_secs > 0 {
+            spawn_git_checkpoint_loop(
+                root.clone(),
+                Duration::from_secs(args.git_checkpoint_interval_secs),
+            );
+        } else {
+            tracing::warn!(
+                "git checkpoints disabled (--git-checkpoint-interval-secs 0); \
+                 remote writes will have no commit-level recovery trail"
             );
         }
 
@@ -369,6 +392,105 @@ fn spawn_reconcile_loop(
             }
         }
     });
+}
+
+/// Periodic git checkpoint of the vault — the recoverability layer
+/// for remote writes (GH #303): every mutation a prompt-injected or
+/// buggy session could make becomes diffable and revertible, which
+/// is the only meaningful damage limit once write tools are exposed.
+///
+/// Deliberately a commit-if-dirty *sweep*, not a per-tool-call hook:
+/// it needs zero changes to the 42 handlers, it also captures
+/// out-of-band edits (CLI, editors, sync) into the audit trail, and
+/// attribution still exists in-content because every cdno write
+/// already logs a line to the daily note. Runs `git` as a
+/// subprocess on the blocking pool; identity is forced per-commit so
+/// no global git config is required in the container.
+///
+/// First pass runs immediately (captures drift that accumulated
+/// while the server was down); disabled with a warning when the
+/// vault is not a git repo or `git` is unavailable.
+fn spawn_git_checkpoint_loop(root: std::path::PathBuf, every: Duration) {
+    if !root.join(".git").exists() {
+        tracing::warn!(
+            vault_root = %root.display(),
+            "vault is not a git repository — checkpoints disabled; \
+             remote writes will have NO commit-level recovery trail"
+        );
+        return;
+    }
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(every);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            interval.tick().await;
+            let repo = root.clone();
+            let done = tokio::task::spawn_blocking(move || git_checkpoint(&repo)).await;
+            match done {
+                Ok(Ok(Some(summary))) => tracing::info!(%summary, "git checkpoint committed"),
+                Ok(Ok(None)) => tracing::debug!("git checkpoint: vault clean"),
+                Ok(Err(e)) => {
+                    // Missing binary / repo corruption: warn and stop
+                    // rather than log-spamming every tick — the
+                    // operator must intervene either way.
+                    tracing::warn!(error = %e, "git checkpoint failed; stopping checkpoint loop");
+                    return;
+                }
+                Err(e) => tracing::warn!(error = %e, "git checkpoint task panicked"),
+            }
+        }
+    });
+}
+
+/// One checkpoint pass: commit everything if the tree is dirty.
+/// Returns the one-line commit summary, or `None` when clean.
+fn git_checkpoint(root: &std::path::Path) -> anyhow::Result<Option<String>> {
+    let git = |args: &[&str]| -> anyhow::Result<std::process::Output> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .context("running git (is it installed in this environment?)")?;
+        Ok(out)
+    };
+
+    let status = git(&["status", "--porcelain"])?;
+    anyhow::ensure!(
+        status.status.success(),
+        "git status failed: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    if status.stdout.is_empty() {
+        return Ok(None);
+    }
+    let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
+
+    let add = git(&["add", "-A"])?;
+    anyhow::ensure!(
+        add.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+
+    let message = format!("cdno-mcp checkpoint ({dirty_paths} path(s))");
+    let commit = git(&[
+        "-c",
+        "user.name=cdno-mcp",
+        "-c",
+        "user.email=cdno-mcp@localhost",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        &message,
+    ])?;
+    anyhow::ensure!(
+        commit.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
+    Ok(Some(message))
 }
 
 /// Same tracing setup as the stdio binary: stderr, `info` default,

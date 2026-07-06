@@ -8,6 +8,27 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Write safety for concurrent writers** (#303) — three layers, sized for the remote-serving era:
+  - **Atomic content writes in cdno-core**: `FsVaultStore`'s `write_file`/`append_to_file`/
+    `import_external` now materialise content in a temp file in the target's directory, fsync it,
+    and `rename(2)` it over the destination — a reader never observes a half-written note and a
+    crash never truncates one. Appends become read-concat-rewrite so they inherit the same
+    all-or-nothing guarantee; imports gain a no-clobber atomic persist. Benefits every writer
+    (CLI, stdio MCP, HTTP server) identically.
+  - **Filesystem-level path confinement**: `VaultPath` already rejected `..`/absolute paths
+    lexically; the store now also canonicalises against the vault root per operation, refusing —
+    fail closed, `StoreError::OutsideVault` — any path that escapes through a symlink (or whose
+    confinement can't be verified, e.g. dangling symlinks). Legitimate intra-vault symlinks still
+    work.
+  - **Git checkpoints in `cdno-mcp-server`**: a commit-if-dirty sweep
+    (`--git-checkpoint-interval-secs`, default 60, 0 disables) makes every remote mutation
+    diffable and revertible — the only meaningful damage limit for prompt-injected writes.
+    Deliberately a sweep rather than a per-tool hook: zero handler changes, and out-of-band edits
+    join the audit trail too; per-write attribution already lives in the daily-note log lines.
+    Warns and disables when the vault isn't a git repo or `git` is missing.
+  - `create_tracking_entry`'s tool description now warns that entries are always dated today
+    (no override) so remote callers don't try to backfill past sessions through it.
+
 - **Origin-side Access-JWT validation for `cdno-mcp-server`** (#302) — the server now verifies the
   `Cf-Access-Jwt-Assertion` header Cloudflare Access injects after Managed OAuth: RS256 against
   the team JWKS (fetched fail-closed at startup, refreshed on unknown `kid` behind an

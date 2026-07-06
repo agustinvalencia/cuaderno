@@ -63,6 +63,13 @@ pub enum StoreError {
 
     #[error("timed out after {0:?} waiting for the vault write lock")]
     LockTimeout(std::time::Duration),
+
+    /// The path escapes the vault root once symlinks are resolved —
+    /// or its confinement could not be verified (fail closed).
+    /// `VaultPath` already rejects `..`/absolute lexically; this
+    /// variant is the filesystem-level backstop (GH #303).
+    #[error("path resolves outside the vault: {0}")]
+    OutsideVault(String),
 }
 
 /// Errors from the vault index (VaultIndex).

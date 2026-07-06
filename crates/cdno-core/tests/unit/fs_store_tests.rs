@@ -298,3 +298,122 @@ fn import_external_refuses_to_overwrite_an_existing_dest() {
         "the original copy is untouched"
     );
 }
+
+// ---------------------------------------------------------------------
+// GH #303: atomic writes + filesystem-level confinement
+// ---------------------------------------------------------------------
+
+#[test]
+fn write_and_append_leave_no_temp_siblings() {
+    let (dir, store) = store();
+    store.write_file(&vp("notes/a.md"), "one").unwrap();
+    store.write_file(&vp("notes/a.md"), "two").unwrap();
+    store.append_to_file(&vp("notes/a.md"), " three").unwrap();
+
+    assert_eq!(store.read_file(&vp("notes/a.md")).unwrap(), "two three");
+    // The atomic path goes through NamedTempFile siblings; a leak
+    // would leave `.tmpXXXX` files next to the note.
+    let leftovers: Vec<_> = fs::read_dir(dir.path().join("notes"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name != "a.md")
+        .collect();
+    assert!(leftovers.is_empty(), "temp leftovers: {leftovers:?}");
+}
+
+#[test]
+fn append_creates_missing_file_like_before() {
+    let (_dir, store) = store();
+    store.append_to_file(&vp("fresh.md"), "hello").unwrap();
+    assert_eq!(store.read_file(&vp("fresh.md")).unwrap(), "hello");
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_write_leaves_existing_content_untouched() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, store) = store();
+    store.write_file(&vp("keep/note.md"), "precious").unwrap();
+
+    // Make the parent unwritable: the temp file can't be created, so
+    // the write fails BEFORE touching the destination.
+    let parent = dir.path().join("keep");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+    let err = store.write_file(&vp("keep/note.md"), "clobber");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(err.is_err(), "write into a read-only dir must fail");
+    assert_eq!(
+        store.read_file(&vp("keep/note.md")).unwrap(),
+        "precious",
+        "failed write must not damage the existing note"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_escaping_the_vault_is_refused_for_reads_and_writes() {
+    let (dir, store) = store();
+    let outside = tempfile::TempDir::new().unwrap();
+    fs::write(outside.path().join("secret.txt"), "outside").unwrap();
+
+    // dir-level escape: vault/leak -> <outside tempdir>
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("leak")).unwrap();
+    let read = store.read_file(&vp("leak/secret.txt"));
+    assert!(
+        matches!(read, Err(StoreError::OutsideVault(_))),
+        "read through an escaping dir symlink must be refused: {read:?}"
+    );
+    let write = store.write_file(&vp("leak/planted.md"), "x");
+    assert!(
+        matches!(write, Err(StoreError::OutsideVault(_))),
+        "write through an escaping dir symlink must be refused: {write:?}"
+    );
+
+    // file-level escape: vault/alias.md -> <outside>/secret.txt
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.txt"),
+        dir.path().join("alias.md"),
+    )
+    .unwrap();
+    let read = store.read_file(&vp("alias.md"));
+    assert!(
+        matches!(read, Err(StoreError::OutsideVault(_))),
+        "read through an escaping file symlink must be refused: {read:?}"
+    );
+    let write = store.write_file(&vp("alias.md"), "x");
+    assert!(
+        matches!(write, Err(StoreError::OutsideVault(_))),
+        "write through an escaping file symlink must be refused: {write:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(outside.path().join("secret.txt")).unwrap(),
+        "outside",
+        "the outside file must be untouched"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_within_the_vault_is_allowed() {
+    let (dir, store) = store();
+    store.write_file(&vp("real/target.md"), "content").unwrap();
+    std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("view")).unwrap();
+
+    // Canonical target stays inside the vault: legitimate.
+    assert_eq!(store.read_file(&vp("view/target.md")).unwrap(), "content");
+    store.write_file(&vp("view/target.md"), "updated").unwrap();
+    assert_eq!(store.read_file(&vp("real/target.md")).unwrap(), "updated");
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_is_refused_fail_closed() {
+    let (dir, store) = store();
+    std::os::unix::fs::symlink("/nonexistent/nowhere", dir.path().join("dangling.md")).unwrap();
+    let write = store.write_file(&vp("dangling.md"), "x");
+    assert!(
+        matches!(write, Err(StoreError::OutsideVault(_))),
+        "confinement of a dangling symlink cannot be verified — must refuse: {write:?}"
+    );
+}

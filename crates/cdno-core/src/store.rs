@@ -355,11 +355,26 @@ impl VaultStore for MemoryVaultStore {
 /// as-is without validation — callers that need "root must exist" or
 /// "root must be a directory" semantics should check upstream.
 ///
-/// Operations use the standard `std::fs` API. Writes create parent
-/// directories as needed. `move_file` checks destination presence
-/// manually before calling `fs::rename` so the trait's
-/// [`StoreError::AlreadyExists`] contract holds on Unix, where
-/// `rename` otherwise silently overwrites.
+/// Two hardening layers added for remote serving (GH #303):
+///
+/// - **Confinement**: [`VaultPath`] already rejects `..` and absolute
+///   paths lexically; `resolve` additionally verifies, per operation,
+///   that the target — after following any symlinks that exist on the
+///   way — stays under the (canonicalised) vault root. A symlink
+///   *inside* the vault pointing *outside* is refused with
+///   [`StoreError::OutsideVault`], as is anything whose confinement
+///   cannot be verified (fail closed).
+/// - **Atomic content writes**: `write_file`, `append_to_file` and
+///   `import_external` materialise content in a temp file in the
+///   target's directory and `rename(2)` it over the destination, so a
+///   reader never observes a half-written note and a crash never
+///   truncates one. (`append_to_file` is a read-concat-rewrite under
+///   the hood — appends gain the same all-or-nothing guarantee at the
+///   cost of rewriting the file, negligible at note scale.)
+///
+/// `move_file` checks destination presence manually before calling
+/// `fs::rename` so the trait's [`StoreError::AlreadyExists`] contract
+/// holds on Unix, where `rename` otherwise silently overwrites.
 #[derive(Debug, Clone)]
 pub struct FsVaultStore {
     root: PathBuf,
@@ -370,9 +385,72 @@ impl FsVaultStore {
         Self { root: root.into() }
     }
 
-    /// Resolve a vault-relative path to an absolute filesystem path.
-    fn resolve(&self, path: &VaultPath) -> PathBuf {
-        self.root.join(path.as_path())
+    /// Resolve a vault-relative path to an absolute filesystem path,
+    /// enforcing confinement (see the type docs).
+    fn resolve(&self, path: &VaultPath) -> Result<PathBuf, StoreError> {
+        let full = self.root.join(path.as_path());
+        self.check_confinement(&full, path)?;
+        Ok(full)
+    }
+
+    /// Filesystem-level confinement check: canonicalise the deepest
+    /// existing ancestor of `full` (which follows symlinks) and
+    /// require it to remain under the canonicalised root.
+    ///
+    /// - Root missing/un-canonicalisable ⇒ nothing on disk to escape
+    ///   through; the lexically-validated join is safe as-is.
+    /// - A dangling symlink on the path ⇒ refused: its confinement
+    ///   cannot be verified, and fail-closed beats guessing.
+    fn check_confinement(&self, full: &Path, path: &VaultPath) -> Result<(), StoreError> {
+        let Ok(root_canon) = self.root.canonicalize() else {
+            return Ok(());
+        };
+        // Deepest component of `full` that exists (symlink_metadata
+        // so a dangling symlink itself counts as "existing" and gets
+        // canonicalised — and refused — rather than skipped).
+        let mut probe: &Path = full;
+        let existing = loop {
+            if fs::symlink_metadata(probe).is_ok() {
+                break probe;
+            }
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                // Walked past the filesystem root without finding
+                // anything: nothing exists to traverse through.
+                None => return Ok(()),
+            }
+        };
+        let canon = existing
+            .canonicalize()
+            .map_err(|_| StoreError::OutsideVault(path.to_string()))?;
+        if !canon.starts_with(&root_canon) {
+            return Err(StoreError::OutsideVault(path.to_string()));
+        }
+        Ok(())
+    }
+
+    /// Write `content` atomically: temp file in the target's
+    /// directory, flushed to disk, then renamed over `full`.
+    /// Same-directory placement keeps the `rename(2)` on one
+    /// filesystem, which is what makes it atomic.
+    fn atomic_write(&self, full: &Path, content: &str, path: &VaultPath) -> Result<(), StoreError> {
+        use std::io::Write;
+        let parent = full
+            .parent()
+            .expect("resolved path always has a parent (root is a prefix)");
+        fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
+        let mut tmp =
+            tempfile::NamedTempFile::new_in(parent).map_err(|e| io_to_store_error(e, path))?;
+        tmp.write_all(content.as_bytes())
+            .map_err(|e| io_to_store_error(e, path))?;
+        // Durability before visibility: the rename must never expose
+        // a file whose bytes are still in flight.
+        tmp.as_file()
+            .sync_all()
+            .map_err(|e| io_to_store_error(e, path))?;
+        tmp.persist(full)
+            .map_err(|e| io_to_store_error(e.error, path))?;
+        Ok(())
     }
 }
 
@@ -393,38 +471,33 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        fs::read_to_string(self.resolve(path)).map_err(|e| io_to_store_error(e, path))
+        fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))
     }
 
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        let full = self.resolve(path);
-        // Ensure the parent tree exists before the write. `parent()`
-        // is `None` only when `full` has no parent segment, which
-        // cannot happen because `self.root` is always a prefix.
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
-        }
-        fs::write(&full, content).map_err(|e| io_to_store_error(e, path))
+        let full = self.resolve(path)?;
+        self.atomic_write(&full, content, path)
     }
 
     fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        use std::io::Write;
-        let full = self.resolve(path);
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, path))?;
-        }
-        let mut file = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&full)
-            .map_err(|e| io_to_store_error(e, path))?;
-        file.write_all(content.as_bytes())
-            .map_err(|e| io_to_store_error(e, path))
+        // Read-concat-rewrite so the append inherits atomic_write's
+        // all-or-nothing guarantee: a crash mid-append can no longer
+        // leave a torn tail on the note. Cost: rewriting the file —
+        // negligible at note scale. The read-modify window is covered
+        // by the vault write lock for all transactional callers.
+        let full = self.resolve(path)?;
+        let existing = match fs::read_to_string(&full) {
+            Ok(content) => content,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(io_to_store_error(e, path)),
+        };
+        let combined = format!("{existing}{content}");
+        self.atomic_write(&full, &combined, path)
     }
 
     fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
-        let src_full = self.resolve(src);
-        let dest_full = self.resolve(dest);
+        let src_full = self.resolve(src)?;
+        let dest_full = self.resolve(dest)?;
 
         // Preflight the destination manually: `fs::rename` on Unix
         // silently overwrites the target, which violates the trait's
@@ -444,7 +517,7 @@ impl VaultStore for FsVaultStore {
     }
 
     fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
-        let full = self.resolve(path);
+        let full = self.resolve(path)?;
         // `fs::remove_file` errors with NotFound if the path doesn't
         // exist; let io_to_store_error translate that into the trait's
         // contract variant.
@@ -452,11 +525,11 @@ impl VaultStore for FsVaultStore {
     }
 
     fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
-        Ok(self.resolve(path).exists())
+        Ok(self.resolve(path)?.exists())
     }
 
     fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        let full = self.resolve(path);
+        let full = self.resolve(path)?;
         // Non-existent paths return empty rather than erroring, so
         // callers can treat "no such dir" and "empty dir" uniformly
         // and match MemoryVaultStore's semantics.
@@ -481,7 +554,7 @@ impl VaultStore for FsVaultStore {
     }
 
     fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        let full = self.resolve(path);
+        let full = self.resolve(path)?;
         if !full.exists() {
             return Ok(Vec::new());
         }
@@ -517,7 +590,7 @@ impl VaultStore for FsVaultStore {
     }
 
     fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
-        let std_meta = fs::metadata(self.resolve(path)).map_err(|e| io_to_store_error(e, path))?;
+        let std_meta = fs::metadata(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))?;
         FileMeta::try_from(std_meta).map_err(|e| io_to_store_error(e, path))
     }
 
@@ -530,7 +603,7 @@ impl VaultStore for FsVaultStore {
                 src.display()
             )));
         }
-        let full = self.resolve(dest);
+        let full = self.resolve(dest)?;
         // Create-only: refuse to overwrite an existing file, so the
         // transaction's import rollback (delete-the-created-file) is sound
         // and can never delete something that pre-existed. Mirrors
@@ -538,10 +611,22 @@ impl VaultStore for FsVaultStore {
         if full.exists() {
             return Err(StoreError::AlreadyExists(dest.to_string()));
         }
-        if let Some(parent) = full.parent() {
-            fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
-        }
-        fs::copy(src, &full).map_err(|e| io_to_store_error(e, dest))?;
+        let parent = full
+            .parent()
+            .expect("resolved path always has a parent (root is a prefix)");
+        fs::create_dir_all(parent).map_err(|e| io_to_store_error(e, dest))?;
+        // Copy into a temp sibling, then no-clobber persist: the
+        // destination appears atomically and never half-copied
+        // (attachments can be large), and a TOCTOU race on the
+        // exists() preflight can't silently overwrite.
+        let tmp =
+            tempfile::NamedTempFile::new_in(parent).map_err(|e| io_to_store_error(e, dest))?;
+        fs::copy(src, tmp.path()).map_err(|e| io_to_store_error(e, dest))?;
+        tmp.as_file()
+            .sync_all()
+            .map_err(|e| io_to_store_error(e, dest))?;
+        tmp.persist_noclobber(&full)
+            .map_err(|e| io_to_store_error(e.error, dest))?;
         Ok(())
     }
 
