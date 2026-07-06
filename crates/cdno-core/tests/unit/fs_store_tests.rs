@@ -475,3 +475,29 @@ fn escaping_symlink_is_refused_through_list_and_walk_too() {
         "metadata through an escaping symlink must be refused"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn confinement_recovers_when_the_root_appears_after_first_use() {
+    // Regression (PR #306 verification): a store built BEFORE its root
+    // exists must not cache the failed root-canonicalisation forever —
+    // that would leave the symlink layer permanently fail-open.
+    let holder = TempDir::new().unwrap();
+    let root = holder.path().join("vault-to-be");
+    let store = FsVaultStore::new(&root);
+
+    // First op while the root is missing: confinement is skipped
+    // (nothing on disk to escape through) and must not poison the cache.
+    assert!(!store.exists(&vp("anything.md")).unwrap());
+
+    // Root materialises, with an escaping symlink inside it.
+    fs::create_dir_all(&root).unwrap();
+    let outside = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join("leak")).unwrap();
+
+    let write = store.write_file(&vp("leak/planted.md"), "x");
+    assert!(
+        matches!(write, Err(StoreError::OutsideVault(_))),
+        "confinement must engage once the root exists: {write:?}"
+    );
+}

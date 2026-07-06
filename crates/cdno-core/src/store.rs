@@ -413,11 +413,13 @@ impl VaultStore for MemoryVaultStore {
 #[derive(Debug)]
 pub struct FsVaultStore {
     root: PathBuf,
-    /// Canonicalised root, memoised on first confinement check so the
-    /// per-op `canonicalize` of the root is not repeated on every
-    /// call (the root is fixed for the store's lifetime). `None` while
-    /// the root does not yet exist on disk — see `check_confinement`.
-    root_canon: std::sync::OnceLock<Option<PathBuf>>,
+    /// Canonicalised root, memoised on the first SUCCESSFUL
+    /// canonicalisation (the root is fixed for the store's lifetime,
+    /// so a success never changes). Failure — root not yet on disk —
+    /// is deliberately NOT cached: caching it would leave the symlink
+    /// confinement layer permanently fail-open for a store built
+    /// before its root exists (PR #306 verification finding).
+    root_canon: std::sync::OnceLock<PathBuf>,
 }
 
 impl Clone for FsVaultStore {
@@ -466,12 +468,16 @@ impl FsVaultStore {
             return Err(StoreError::OutsideVault(path.to_string()));
         }
 
-        // Layer 2: symlink escape. Root canonicalisation memoised.
-        let root_canon = self
-            .root_canon
-            .get_or_init(|| self.root.canonicalize().ok());
-        let Some(root_canon) = root_canon else {
-            return Ok(());
+        // Layer 2: symlink escape. Root canonicalisation memoised on
+        // success only — failure is re-probed next call (see field).
+        let root_canon = match self.root_canon.get() {
+            Some(canon) => canon,
+            None => match self.root.canonicalize() {
+                Ok(canon) => self.root_canon.get_or_init(|| canon),
+                // Root not on disk yet: nothing exists to escape
+                // through, and the lexically-validated join is safe.
+                Err(_) => return Ok(()),
+            },
         };
         // Deepest component of `full` that exists (symlink_metadata
         // so a dangling symlink itself counts as "existing" and gets
@@ -700,15 +706,25 @@ impl VaultStore for FsVaultStore {
         // Copy into a temp sibling, then no-clobber persist: the
         // destination appears atomically and never half-copied
         // (attachments can be large), and a TOCTOU race on the
-        // exists() preflight can't silently overwrite.
-        let tmp =
-            tempfile::NamedTempFile::new_in(parent).map_err(|e| io_to_store_error(e, dest))?;
+        // exists() preflight can't silently overwrite. Same WIP
+        // prefix as `atomic_write` so the git checkpoint's exclude
+        // rule covers in-flight import temps too (PR #306
+        // verification finding — this path was originally missed).
+        let tmp = tempfile::Builder::new()
+            .prefix(WIP_TEMP_PREFIX)
+            .tempfile_in(parent)
+            .map_err(|e| io_to_store_error(e, dest))?;
         fs::copy(src, tmp.path()).map_err(|e| io_to_store_error(e, dest))?;
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, dest))?;
         tmp.persist_noclobber(&full)
             .map_err(|e| io_to_store_error(e.error, dest))?;
+        // Same durability posture as `atomic_write`: make the rename
+        // itself survive a crash (best-effort — see there).
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
         Ok(())
     }
 
