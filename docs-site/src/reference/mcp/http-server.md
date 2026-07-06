@@ -37,6 +37,7 @@ inside a container).
 | `--smoke` | — | off | Serve a single `echo` tool holding **no vault handle** — prove tunnel/auth infrastructure end-to-end with zero vault exposure |
 | `--read-only` | — | off | Advertise only the context-gathering read tools; mutating tools are absent from the dispatch table entirely |
 | `--reconcile-interval-secs <n>` | `CDNO_MCP_RECONCILE_INTERVAL_SECS` | `300` | Periodic index reconciliation; `0` disables |
+| `--git-checkpoint-interval-secs <n>` | `CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS` | `60` | Commit-if-dirty git sweep of the vault — makes every remote write diffable and revertible. `0` disables; warns and no-ops when the vault isn't a git repo |
 | `--access-team-url <url>` | `CDNO_ACCESS_TEAM_URL` | — | Cloudflare Access team URL (JWT issuer + JWKS host). Requires `--access-aud`; activates origin JWT validation and lifts the loopback-only restriction |
 | `--access-aud <tag>` | `CDNO_ACCESS_AUD` | — | The Access application's AUD tag (expected `aud` claim). Requires `--access-team-url` |
 

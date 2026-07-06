@@ -36,6 +36,7 @@
 
 pub mod access;
 pub mod bootstrap;
+pub mod checkpoint;
 mod context;
 mod creation;
 pub mod dto;

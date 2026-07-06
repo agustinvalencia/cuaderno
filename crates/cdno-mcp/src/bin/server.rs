@@ -131,6 +131,17 @@ struct ServeArgs {
     #[arg(long, env = "CDNO_MCP_RECONCILE_INTERVAL_SECS", default_value_t = 300)]
     reconcile_interval_secs: u64,
 
+    /// Seconds between git checkpoints of the vault (commit-if-dirty;
+    /// the recoverability layer for remote writes — GH #303). 0
+    /// disables. No-op with a warning when the vault is not a git
+    /// repository or `git` is not on PATH.
+    #[arg(
+        long,
+        env = "CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS",
+        default_value_t = 60
+    )]
+    git_checkpoint_interval_secs: u64,
+
     /// Cloudflare Access team URL (e.g.
     /// `https://<team>.cloudflareaccess.com`) — the JWT issuer and
     /// the JWKS host. Setting this (with `--access-aud`) activates
@@ -231,6 +242,18 @@ async fn main() -> Result<()> {
             tracing::warn!(
                 "periodic reconciliation disabled (--reconcile-interval-secs 0); \
                  out-of-band edits will not appear in the index until restart"
+            );
+        }
+
+        if args.git_checkpoint_interval_secs > 0 {
+            cdno_mcp::checkpoint::spawn(
+                root.clone(),
+                Duration::from_secs(args.git_checkpoint_interval_secs),
+            );
+        } else {
+            tracing::warn!(
+                "git checkpoints disabled (--git-checkpoint-interval-secs 0); \
+                 remote writes will have no commit-level recovery trail"
             );
         }
 

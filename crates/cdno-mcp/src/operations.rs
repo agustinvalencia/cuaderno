@@ -329,7 +329,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Scaffold a tracking note under an expanded stewardship. `stewardship` must be the slug of an existing expanded stewardship — do not invent one (there is no generic `fitness`; gym sessions go under `gym`); on a miss the error lists the valid slugs. The `activity` selects the template: a vault's `.cuaderno/templates/tracking-<activity>.md` if present, else the built-in generic template (no activity-specific templates ship built-in). `routine` is the bare slug of a routine doc (e.g. `upper-body-a`); the server wraps it into the template's `routine:` wikilink, taking effect only when the resolved template has a `routine:` field. Returns the new path for the user to flesh out."
+        description = "Scaffold a tracking note under an expanded stewardship. `stewardship` must be the slug of an existing expanded stewardship — do not invent one (there is no generic `fitness`; gym sessions go under `gym`); on a miss the error lists the valid slugs. The `activity` selects the template: a vault's `.cuaderno/templates/tracking-<activity>.md` if present, else the built-in generic template (no activity-specific templates ship built-in). `routine` is the bare slug of a routine doc (e.g. `upper-body-a`); the server wraps it into the template's `routine:` wikilink, taking effect only when the resolved template has a `routine:` field. Returns the new path for the user to flesh out. NOTE: the entry is always dated TODAY (server date) — there is no date override, so never use this tool to backfill a past session; file retrospective entries by other means."
     )]
     pub async fn create_tracking_entry(
         &self,

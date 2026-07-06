@@ -17,7 +17,10 @@ pulldown-cmark.workspace = true
 globset.workspace = true
 rusqlite.workspace = true
 xxhash-rust.workspace = true
+# Runtime dependency since GH #303: FsVaultStore materialises every
+# content write in a NamedTempFile in the target's directory and
+# renames it over the destination — atomic, crash-safe writes.
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
 rusqlite.workspace = true
