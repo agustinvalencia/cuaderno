@@ -417,3 +417,61 @@ fn dangling_symlink_is_refused_fail_closed() {
         "confinement of a dangling symlink cannot be verified — must refuse: {write:?}"
     );
 }
+
+#[test]
+fn git_control_plane_is_refused_even_inside_the_vault() {
+    let (dir, store) = store();
+    // A real .git dir exists (as in the deployed vault).
+    fs::create_dir_all(dir.path().join(".git")).unwrap();
+
+    for p in [".git/config", ".git/hooks/pre-commit", "notes/.git/x"] {
+        let vp = VaultPath::new(p).unwrap();
+        assert!(
+            matches!(store.write_file(&vp, "x"), Err(StoreError::OutsideVault(_))),
+            "writing {p} into the git control plane must be refused"
+        );
+        assert!(
+            matches!(store.read_file(&vp), Err(StoreError::OutsideVault(_))),
+            "reading {p} from the git control plane must be refused"
+        );
+    }
+    // Sibling dotfiles that are NOT the git plane stay writable
+    // (e.g. legitimate .cuaderno/templates content).
+    store
+        .write_file(
+            &VaultPath::new(".cuaderno/templates/daily.md").unwrap(),
+            "t",
+        )
+        .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn escaping_symlink_is_refused_through_list_and_walk_too() {
+    let (dir, store) = store();
+    let outside = tempfile::TempDir::new().unwrap();
+    fs::write(outside.path().join("secret.txt"), "x").unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("leak")).unwrap();
+
+    assert!(
+        matches!(
+            store.list_dir(&vp("leak")),
+            Err(StoreError::OutsideVault(_))
+        ),
+        "list_dir through an escaping symlink must be refused"
+    );
+    assert!(
+        matches!(
+            store.walk_dir(&vp("leak")),
+            Err(StoreError::OutsideVault(_))
+        ),
+        "walk_dir through an escaping symlink must be refused"
+    );
+    assert!(
+        matches!(
+            store.metadata(&vp("leak/secret.txt")),
+            Err(StoreError::OutsideVault(_))
+        ),
+        "metadata through an escaping symlink must be refused"
+    );
+}

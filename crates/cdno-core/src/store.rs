@@ -49,9 +49,16 @@ impl Drop for VaultWriteLock {
 /// added later), in-memory for tests ([`MemoryVaultStore`]), or any
 /// other backing medium.
 ///
-/// All paths are [`VaultPath`]s — absolute paths and `..` components
-/// are rejected at construction time, so implementations never need to
-/// defend against vault-escape bugs.
+/// All paths are [`VaultPath`]s, which guarantee only *lexical*
+/// safety: absolute paths and `..` components are rejected at
+/// construction. That is **not** sufficient for a real filesystem —
+/// a symlink inside the vault can still point outside it — so
+/// filesystem-backed implementations must enforce confinement
+/// themselves and may reject a path with [`StoreError::OutsideVault`].
+/// [`FsVaultStore`](struct.FsVaultStore.html) does this (canonicalise
+/// against the root; also deny the `.git` control plane). Consequently
+/// **any** method taking a `VaultPath` — reads included — may return
+/// `OutsideVault` if the path escapes on disk.
 ///
 /// Text content only: the markdown notes that make up a vault are
 /// UTF-8. Attachments (PDFs, `.ipynb`, images) are discoverable via
@@ -61,14 +68,24 @@ impl Drop for VaultWriteLock {
 /// read through this trait.
 pub trait VaultStore: Send + Sync {
     /// Read a text file. Fails with [`StoreError::NotFound`] if the
-    /// file does not exist.
+    /// file does not exist (or [`StoreError::OutsideVault`] if the
+    /// path escapes confinement — see the trait docs).
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError>;
 
     /// Overwrite a file with the given text content, creating parent
-    /// directories as needed.
+    /// directories as needed. Filesystem implementations write
+    /// atomically (temp file + rename) so a reader never sees a
+    /// partial note and a crash never truncates one.
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError>;
 
     /// Append text to an existing file, or create it if absent.
+    ///
+    /// **Concurrency contract:** filesystem implementations achieve
+    /// this as a read-concat-atomic-rewrite (not `O_APPEND`), so the
+    /// caller must hold the vault write lock
+    /// ([`acquire_write_lock`](Self::acquire_write_lock)) across the
+    /// call — as every transactional caller does — or a concurrent
+    /// non-cdno writer's append can be lost rather than interleaved.
     fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError>;
 
     /// Move a file from `src` to `dest`. Fails with
@@ -372,17 +389,44 @@ impl VaultStore for MemoryVaultStore {
 ///   the hood — appends gain the same all-or-nothing guarantee at the
 ///   cost of rewriting the file, negligible at note scale.)
 ///
+/// - **Control-plane deny-list**: even *inside* the root, a `.git`
+///   component is refused (GH #303 security review) — the git audit
+///   repository and a `.git` gitfile are never legitimate targets of
+///   a store operation, and letting one through would let a write
+///   corrupt or redirect the very recovery trail #303 exists to
+///   provide. `VaultPath`'s slugging already prevents the MCP tools
+///   from producing such a path; this makes the guarantee fail-closed
+///   at the store rather than relying on that upstream convention.
+///   (`.cuaderno/templates/` and `.cuaderno/config.toml` stay
+///   writable — they are legitimate CLI targets.)
+///
 /// `move_file` checks destination presence manually before calling
 /// `fs::rename` so the trait's [`StoreError::AlreadyExists`] contract
 /// holds on Unix, where `rename` otherwise silently overwrites.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FsVaultStore {
     root: PathBuf,
+    /// Canonicalised root, memoised on first confinement check so the
+    /// per-op `canonicalize` of the root is not repeated on every
+    /// call (the root is fixed for the store's lifetime). `None` while
+    /// the root does not yet exist on disk — see `check_confinement`.
+    root_canon: std::sync::OnceLock<Option<PathBuf>>,
+}
+
+impl Clone for FsVaultStore {
+    fn clone(&self) -> Self {
+        // Don't copy the memoised canonical root: a clone is cheap and
+        // re-memoises lazily, keeping the OnceLock semantics simple.
+        Self::new(self.root.clone())
+    }
 }
 
 impl FsVaultStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            root_canon: std::sync::OnceLock::new(),
+        }
     }
 
     /// Resolve a vault-relative path to an absolute filesystem path,
@@ -393,16 +437,33 @@ impl FsVaultStore {
         Ok(full)
     }
 
-    /// Filesystem-level confinement check: canonicalise the deepest
-    /// existing ancestor of `full` (which follows symlinks) and
-    /// require it to remain under the canonicalised root.
+    /// Filesystem-level confinement check. Two layers:
     ///
-    /// - Root missing/un-canonicalisable ⇒ nothing on disk to escape
-    ///   through; the lexically-validated join is safe as-is.
-    /// - A dangling symlink on the path ⇒ refused: its confinement
-    ///   cannot be verified, and fail-closed beats guessing.
+    /// 1. **Control-plane deny-list** (lexical, always on): any `.git`
+    ///    path component is refused outright.
+    /// 2. **Symlink escape** (filesystem): canonicalise the deepest
+    ///    existing ancestor of `full` (which follows symlinks) and
+    ///    require it under the canonicalised root.
+    ///    - Root missing/un-canonicalisable ⇒ nothing on disk to
+    ///      escape through; the lexically-validated join is safe.
+    ///    - A dangling symlink on the path ⇒ refused: its confinement
+    ///      cannot be verified, and fail-closed beats guessing.
+    ///
+    /// Cost: the deepest-ancestor `canonicalize` is one `realpath`
+    /// syscall per op (acceptable at note scale — this store never
+    /// runs hot loops of single-file ops); the root `canonicalize` is
+    /// memoised so it is paid once, not per call.
     fn check_confinement(&self, full: &Path, path: &VaultPath) -> Result<(), StoreError> {
-        let Ok(root_canon) = self.root.canonicalize() else {
+        // Layer 1: never touch the git control plane, even in-root.
+        if path.as_path().components().any(|c| c.as_os_str() == ".git") {
+            return Err(StoreError::OutsideVault(path.to_string()));
+        }
+
+        // Layer 2: symlink escape. Root canonicalisation memoised.
+        let root_canon = self
+            .root_canon
+            .get_or_init(|| self.root.canonicalize().ok());
+        let Some(root_canon) = root_canon else {
             return Ok(());
         };
         // Deepest component of `full` that exists (symlink_metadata
@@ -423,16 +484,24 @@ impl FsVaultStore {
         let canon = existing
             .canonicalize()
             .map_err(|_| StoreError::OutsideVault(path.to_string()))?;
-        if !canon.starts_with(&root_canon) {
+        if !canon.starts_with(root_canon) {
             return Err(StoreError::OutsideVault(path.to_string()));
         }
         Ok(())
     }
 
-    /// Write `content` atomically: temp file in the target's
-    /// directory, flushed to disk, then renamed over `full`.
-    /// Same-directory placement keeps the `rename(2)` on one
-    /// filesystem, which is what makes it atomic.
+    /// Write `content` atomically and durably: temp file in the
+    /// target's directory, fsync'd, renamed over `full`, then the
+    /// directory itself fsync'd. Same-directory placement keeps the
+    /// `rename(2)` on one filesystem, which is what makes it atomic.
+    ///
+    /// Both fsyncs matter (PR #306 review, F5): the file fsync means a
+    /// crash never exposes half-written bytes; the *directory* fsync
+    /// means the rename itself survives a crash, so a write this
+    /// function returns `Ok` for cannot silently roll back to the old
+    /// content on power loss. Without the directory fsync the file
+    /// fsync would be nearly wasted — durable data blocks orphaned by
+    /// a non-durable rename.
     fn atomic_write(&self, full: &Path, content: &str, path: &VaultPath) -> Result<(), StoreError> {
         use std::io::Write;
         let parent = full
@@ -443,13 +512,17 @@ impl FsVaultStore {
             tempfile::NamedTempFile::new_in(parent).map_err(|e| io_to_store_error(e, path))?;
         tmp.write_all(content.as_bytes())
             .map_err(|e| io_to_store_error(e, path))?;
-        // Durability before visibility: the rename must never expose
-        // a file whose bytes are still in flight.
         tmp.as_file()
             .sync_all()
             .map_err(|e| io_to_store_error(e, path))?;
         tmp.persist(full)
             .map_err(|e| io_to_store_error(e.error, path))?;
+        // Make the rename durable. Best-effort: a filesystem that
+        // rejects a directory fsync (rare) shouldn't fail an otherwise
+        // successful write, and atomicity already held regardless.
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
         Ok(())
     }
 }

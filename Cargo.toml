@@ -69,7 +69,8 @@ comfy-table = "7.2"
 # translates structured errors into human-readable output here.
 anyhow = "1"
 
-# Test fixtures shared across crates.
+# Atomic-write temp files (cdno-core runtime, GH #303) + test fixtures
+# shared across crates.
 tempfile = "3"
 
 # CLI integration testing.
