@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Origin-side Access-JWT validation for `cdno-mcp-server`** (#302) — the server now verifies the
+  `Cf-Access-Jwt-Assertion` header Cloudflare Access injects after Managed OAuth: RS256 against
+  the team JWKS (fetched fail-closed at startup, refreshed on unknown `kid` behind an
+  anti-stampede cooldown), strict `iss`/`aud`/`exp`, every failure a bare 401 with the reason
+  logged server-side only. Configured via `CDNO_ACCESS_TEAM_URL` + `CDNO_ACCESS_AUD` (paired
+  flags/env; setting one without the other is a startup error). **Configuring auth is exactly
+  what lifts the non-loopback bind interlock** — e.g. `0.0.0.0` inside a container becomes legal
+  once every request is authenticated at the origin. The middleware sits outermost, so
+  unauthenticated requests never consume body-buffer or concurrency budget.
+
 - **`cdno-mcp-server`: Streamable HTTP transport** (#60, #61) — a second binary in the cdno-mcp
   crate serving the same tool catalogue as the stdio `cdno-mcp`, over the MCP Streamable HTTP
   transport (stateless JSON mode, mounted at `/mcp`), for remote deployment behind an

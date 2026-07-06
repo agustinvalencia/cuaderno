@@ -45,6 +45,12 @@ axum = { workspace = true }
 # the sync domain until GH #303). From the PR #304 security review.
 tower = { workspace = true }
 tower-http = { workspace = true }
+# Origin-side validation of the Cloudflare Access identity JWT
+# (GH #302): reqwest fetches the team JWKS, jsonwebtoken verifies
+# RS256 + iss + aud on every request. Setting both CDNO_ACCESS_* env
+# vars is what lifts cdno-mcp-server's non-loopback interlock.
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
 # `env` on top of the workspace's `derive`: the server's flags mirror
 # container conventions (CDNO_MCP_BIND, CUADERNO_VAULT_PATH, ...).
 clap = { workspace = true, features = ["env"] }
@@ -79,7 +85,3 @@ chrono = { workspace = true }
 # cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
 # via `cdno init` before launching cdno-mcp against it.
 cdno-cli = { path = "../cdno-cli" }
-# Drives the e2e HTTP tests against a spawned `cdno-mcp-server`
-# (tests/e2e_http.rs). GH #302 promotes reqwest to a real dependency
-# for the JWKS fetch.
-reqwest = { workspace = true }

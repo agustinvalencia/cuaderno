@@ -120,11 +120,15 @@ axum = "0.8"
 tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["limit"] }
 
-# HTTP client. Today a dev-dependency of cdno-mcp (drives the e2e
-# tests against `cdno-mcp-server`); GH #302 promotes it to a real
-# dependency for the JWKS fetch. rustls so builds never link the
-# system OpenSSL (the server container is a minimal Linux image).
+# HTTP client for cdno-mcp-server's JWKS fetch (GH #302) and the e2e
+# tests. rustls so builds never link the system OpenSSL (the server
+# container is a minimal Linux image).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Validation of the identity JWT Cloudflare Access injects toward the
+# origin (`Cf-Access-Jwt-Assertion`, GH #302). RS256 against the team
+# JWKS; the server never issues tokens, only verifies.
+jsonwebtoken = "9" 
 
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }

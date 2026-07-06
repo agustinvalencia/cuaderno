@@ -34,6 +34,7 @@
 //! multi-user or high-concurrency use, #303 moves the per-tool domain
 //! calls onto the blocking pool too.
 
+pub mod access;
 pub mod bootstrap;
 mod context;
 mod creation;
