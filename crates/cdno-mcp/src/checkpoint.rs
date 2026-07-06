@@ -287,8 +287,8 @@ mod tests {
         let repo = dir.path().to_path_buf();
         let handle = std::thread::spawn(move || checkpoint_once(&repo));
 
-        // Give the pass time to either skip or reach the lock, then
-        // assert nothing was committed while we hold it.
+        // While we hold the lock the pass blocks on it (Linux flock is
+        // per-OFD): nothing is committed.
         std::thread::sleep(Duration::from_millis(300));
         let log = run_git(dir.path(), &["log", "--oneline"]).unwrap();
         assert!(
@@ -296,11 +296,13 @@ mod tests {
             "checkpoint must not commit while the write lock is held"
         );
 
+        // Release → the blocked pass acquires the lock and commits the
+        // still-dirty tree.
         drop(lock);
-        let _ = handle.join().unwrap();
-
-        // With the lock free, a fresh pass commits the still-dirty tree.
-        assert!(matches!(checkpoint_once(dir.path()), Pass::Ok(Some(_))));
+        assert!(
+            matches!(handle.join().unwrap(), Pass::Ok(Some(_))),
+            "the unblocked checkpoint should commit"
+        );
         let log = run_git(dir.path(), &["log", "--oneline"]).unwrap();
         assert!(
             String::from_utf8_lossy(&log.stdout).contains("cdno-mcp checkpoint"),
