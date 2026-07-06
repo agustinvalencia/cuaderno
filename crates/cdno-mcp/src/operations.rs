@@ -30,8 +30,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .log_to_daily_note(at, &input.text)
+            .with_vault(move |vault| vault.log_to_daily_note(at, &input.text))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -48,8 +48,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .capture_to_inbox(at, &input.text)
+            .with_vault(move |vault| vault.capture_to_inbox(at, &input.text))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -66,8 +66,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .discard_inbox_item(at, &input.slug)
+            .with_vault(move |vault| vault.discard_inbox_item(at, &input.slug))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -84,14 +84,16 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .add_milestone(
-                at,
-                &input.project,
-                &input.title,
-                input.target_date,
-                input.hard,
-            )
+            .with_vault(move |vault| {
+                vault.add_milestone(
+                    at,
+                    &input.project,
+                    &input.title,
+                    input.target_date,
+                    input.hard,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -108,8 +110,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .complete_milestone(at, &input.project, &input.query)
+            .with_vault(move |vault| vault.complete_milestone(at, &input.project, &input.query))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -126,8 +128,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .add_waiting_on(at, &input.project, &input.description)
+            .with_vault(move |vault| vault.add_waiting_on(at, &input.project, &input.description))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -144,8 +146,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .resolve_waiting_on(at, &input.project, &input.query)
+            .with_vault(move |vault| vault.resolve_waiting_on(at, &input.project, &input.query))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -161,32 +163,36 @@ impl CuadernoServer {
         Parameters(input): Parameters<FileToPortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        // With `attach`, file the artefact (copy + linked stub); otherwise
-        // write a plain markdown evidence note. `content` is the body /
-        // abstract respectively. Only the markdown path is templated, so
-        // `vars` is gathered inside that arm (the attach stub ignores it).
-        let path = match input.attach.as_deref() {
-            Some(artefact) => self.vault.file_attachment(
-                at,
-                &input.portfolio,
-                std::path::Path::new(artefact),
-                &input.source,
-                &input.origin,
-                &input.content,
-            ),
-            None => {
-                let vars = input.vars.unwrap_or_default();
-                self.vault.file_evidence_with_vars(
-                    at,
-                    &input.portfolio,
-                    &input.source,
-                    &input.origin,
-                    &input.content,
-                    &vars,
-                )
-            }
-        }
-        .map_err(into_mcp_error)?;
+        let path = self
+            .with_vault(move |vault| {
+                // With `attach`, file the artefact (copy + linked stub); otherwise
+                // write a plain markdown evidence note. `content` is the body /
+                // abstract respectively. Only the markdown path is templated, so
+                // `vars` is gathered inside that arm (the attach stub ignores it).
+                match input.attach.as_deref() {
+                    Some(artefact) => vault.file_attachment(
+                        at,
+                        &input.portfolio,
+                        std::path::Path::new(artefact),
+                        &input.source,
+                        &input.origin,
+                        &input.content,
+                    ),
+                    None => {
+                        let vars = input.vars.unwrap_or_default();
+                        vault.file_evidence_with_vars(
+                            at,
+                            &input.portfolio,
+                            &input.source,
+                            &input.origin,
+                            &input.content,
+                            &vars,
+                        )
+                    }
+                }
+            })
+            .await?
+            .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Filed evidence at {}", path),
@@ -202,8 +208,10 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .update_project_state(at, &input.project, &input.new_state)
+            .with_vault(move |vault| {
+                vault.update_project_state(at, &input.project, &input.new_state)
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -221,19 +229,27 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let energy = EnergyLevel::from_str(&input.energy)
             .map_err(|e| invalid_argument("energy", &e.to_string()))?;
-        let path = if input.with_note {
-            // Only the action-note form is templated; `vars` feeds its
-            // prompted variables. The inline-bullet form below ignores them.
-            let vars = input.vars.unwrap_or_default();
-            self.vault
-                .add_action_with_note_and_vars(at, &input.project, &input.title, energy, &vars)
-                .map_err(into_mcp_error)?
-        } else {
-            self.vault
-                .add_action(at, &input.project, &input.title, energy)
-                .map_err(into_mcp_error)?
-        };
-        let label = if input.with_note {
+        let with_note = input.with_note;
+        let path = self
+            .with_vault(move |vault| {
+                if input.with_note {
+                    // Only the action-note form is templated; `vars` feeds its
+                    // prompted variables. The inline-bullet form below ignores them.
+                    let vars = input.vars.unwrap_or_default();
+                    vault.add_action_with_note_and_vars(
+                        at,
+                        &input.project,
+                        &input.title,
+                        energy,
+                        &vars,
+                    )
+                } else {
+                    vault.add_action(at, &input.project, &input.title, energy)
+                }
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let label = if with_note {
             "Added action with note at"
         } else {
             "Added action bullet to"
@@ -252,10 +268,12 @@ impl CuadernoServer {
         Parameters(input): Parameters<PromoteActionInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        let vars = input.vars.unwrap_or_default();
         let path = self
-            .vault
-            .promote_action_with_vars(at, &input.project, &input.query, &vars)
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.promote_action_with_vars(at, &input.project, &input.query, &vars)
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -272,8 +290,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .complete_action(at, &input.project, &input.query)
+            .with_vault(move |vault| vault.complete_action(at, &input.project, &input.query))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -291,18 +309,20 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
-        let vars = input.vars.unwrap_or_default();
         let path = self
-            .vault
-            .create_commitment_with_vars(
-                at,
-                &input.title,
-                input.due,
-                context,
-                input.project.as_deref(),
-                input.stewardship.as_deref(),
-                &vars,
-            )
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.create_commitment_with_vars(
+                    at,
+                    &input.title,
+                    input.due,
+                    context,
+                    input.project.as_deref(),
+                    input.stewardship.as_deref(),
+                    &vars,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -319,8 +339,8 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let path = self
-            .vault
-            .complete_commitment(at, &input.commitment)
+            .with_vault(move |vault| vault.complete_commitment(at, &input.commitment))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -336,17 +356,19 @@ impl CuadernoServer {
         Parameters(input): Parameters<CreateTrackingEntryInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        let vars = input.vars.unwrap_or_default();
         let (path, _source) = self
-            .vault
-            .add_tracking_entry_with_vars(
-                at,
-                &input.stewardship,
-                &input.activity,
-                input.routine.as_deref(),
-                &input.content,
-                &vars,
-            )
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.add_tracking_entry_with_vars(
+                    at,
+                    &input.stewardship,
+                    &input.activity,
+                    input.routine.as_deref(),
+                    &input.content,
+                    &vars,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -366,15 +388,14 @@ impl CuadernoServer {
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let section = DailySection::from_str(&input.section)
             .map_err(|reason| invalid_argument("section", &reason))?;
+        let append = input.append;
         let path = self
-            .vault
-            .upsert_daily_section(date, section, &input.content, input.append)
+            .with_vault(move |vault| {
+                vault.upsert_daily_section(date, section, &input.content, input.append)
+            })
+            .await?
             .map_err(into_mcp_error)?;
-        let verb = if input.append {
-            "Appended to"
-        } else {
-            "Updated"
-        };
+        let verb = if append { "Appended to" } else { "Updated" };
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("{verb} {} on {}", section.heading(), path),
@@ -393,15 +414,14 @@ impl CuadernoServer {
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let section = WeeklySection::from_str(&input.section)
             .map_err(|reason| invalid_argument("section", &reason))?;
+        let append = input.append;
         let path = self
-            .vault
-            .upsert_weekly_section(date, section, &input.content, input.append)
+            .with_vault(move |vault| {
+                vault.upsert_weekly_section(date, section, &input.content, input.append)
+            })
+            .await?
             .map_err(into_mcp_error)?;
-        let verb = if input.append {
-            "Appended to"
-        } else {
-            "Updated"
-        };
+        let verb = if append { "Appended to" } else { "Updated" };
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("{verb} {} on {}", section.heading(), path),

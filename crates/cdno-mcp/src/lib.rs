@@ -23,16 +23,16 @@
 //!
 //! `Vault` is synchronous (see `docs/implementation-plan.md` §4).
 //! Tool methods are async because `rmcp::ServerHandler` is async, and
-//! each tool calls `vault.method()` directly on the runtime worker —
-//! **a recorded decision, not an oversight** (GH #303 tracks the
-//! hardening). For stdio this is moot (one request at a time). For
-//! the HTTP binary it means a blocking domain call occupies a worker
-//! thread per in-flight request; acceptable for the single-operator
-//! deployment because `cdno-mcp-server` caps concurrent requests at
-//! the transport layer, and its reconciliation loop — the only
-//! long-running scan — does run on `spawn_blocking`. Before any
-//! multi-user or high-concurrency use, #303 moves the per-tool domain
-//! calls onto the blocking pool too.
+//! every handler routes its domain calls through
+//! `CuadernoServer::with_vault`, which runs the synchronous work on
+//! tokio's blocking pool via `spawn_blocking` (GH #303) — one blocking
+//! task per request, so async workers never block on disk/SQLite and
+//! slow calls queue on the blocking pool instead of starving the
+//! accept loop. For stdio this is belt-and-braces (one request at a
+//! time); for the HTTP binary it's what keeps the runtime responsive
+//! under concurrent requests. The transport-level concurrency cap in
+//! `cdno-mcp-server` remains as backpressure, and its reconciliation
+//! loop — the only long-running scan — also runs on `spawn_blocking`.
 
 pub mod access;
 pub mod bootstrap;

@@ -50,9 +50,10 @@ pub use crate::input::*;
 /// merged [`ToolRouter`] built in [`CuadernoServer::new`].
 #[derive(Clone)]
 pub struct CuadernoServer {
-    // `pub(crate)` so the per-group handler impls in sibling modules
-    // (`context`/`operations`/`creation`/`lifecycle`) can reach the vault.
-    pub(crate) vault: Arc<Vault>,
+    // Private: the per-group handler impls in sibling modules
+    // (`context`/`operations`/`creation`/`lifecycle`) reach the vault
+    // exclusively through [`CuadernoServer::with_vault`] (GH #303).
+    vault: Arc<Vault>,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -95,6 +96,31 @@ impl CuadernoServer {
         let mut tools = self.tool_router.list_all();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         tools
+    }
+
+    /// Run a synchronous domain call on tokio's blocking pool.
+    ///
+    /// Tool handlers are async only because rmcp requires it; the
+    /// domain is deliberately synchronous (implementation-plan §4).
+    /// Routing every vault call through here keeps blocking disk/
+    /// SQLite work off the async workers (GH #303 — flagged by the
+    /// PR #304/#306 reviews), so slow calls queue on the blocking
+    /// pool instead of starving the accept loop. The closure returns
+    /// whatever the call site needs (usually a `Result<T, DomainError>`
+    /// that the caller then maps with `into_mcp_error`).
+    pub(crate) async fn with_vault<R>(
+        &self,
+        f: impl FnOnce(&Vault) -> R + Send + 'static,
+    ) -> Result<R, rmcp::model::ErrorData>
+    where
+        R: Send + 'static,
+    {
+        let vault = Arc::clone(&self.vault);
+        tokio::task::spawn_blocking(move || f(&vault))
+            .await
+            .map_err(|e| {
+                rmcp::model::ErrorData::internal_error(format!("blocking task failed: {e}"), None)
+            })
     }
 }
 

@@ -30,16 +30,18 @@ impl CuadernoServer {
         let today = chrono::Local::now().date_naive();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
-        let vars = input.vars.unwrap_or_default();
         let path = self
-            .vault
-            .create_project_with_vars(
-                today,
-                &input.title,
-                context,
-                input.core_question.as_deref(),
-                &vars,
-            )
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.create_project_with_vars(
+                    today,
+                    &input.title,
+                    context,
+                    input.core_question.as_deref(),
+                    &vars,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -55,10 +57,17 @@ impl CuadernoServer {
         Parameters(input): Parameters<CreatePortfolioInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        let vars = input.vars.unwrap_or_default();
         let path = self
-            .vault
-            .create_portfolio_with_vars(at, &input.question, input.project.as_deref(), &vars)
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.create_portfolio_with_vars(
+                    at,
+                    &input.question,
+                    input.project.as_deref(),
+                    &vars,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -73,9 +82,11 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<LinkPortfolioToQuestionInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        let portfolio = input.portfolio.clone();
+        let question = input.question.clone();
         let path = self
-            .vault
-            .link_portfolio_to_question(&input.portfolio, &input.question)
+            .with_vault(move |vault| vault.link_portfolio_to_question(&portfolio, &question))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -93,9 +104,11 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<LinkPortfolioToProjectInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        let portfolio = input.portfolio.clone();
+        let project = input.project.clone();
         let path = self
-            .vault
-            .link_portfolio_to_project(&input.portfolio, &input.project)
+            .with_vault(move |vault| vault.link_portfolio_to_project(&portfolio, &project))
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -116,10 +129,12 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let domain = QuestionDomain::from_str(&input.domain)
             .map_err(|e| invalid_argument("domain", &e.to_string()))?;
-        let vars = input.vars.unwrap_or_default();
         let path = self
-            .vault
-            .create_question_with_vars(at, domain, &input.text, &vars)
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.create_question_with_vars(at, domain, &input.text, &vars)
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
@@ -135,14 +150,23 @@ impl CuadernoServer {
         Parameters(input): Parameters<CreateCustomNoteInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
-        let vars = input.vars.unwrap_or_default();
+        let type_name = input.type_name.clone();
         let path = self
-            .vault
-            .create_custom_note_with_vars(at, &input.type_name, &input.title, &input.fields, &vars)
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                vault.create_custom_note_with_vars(
+                    at,
+                    &input.type_name,
+                    &input.title,
+                    &input.fields,
+                    &vars,
+                )
+            })
+            .await?
             .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
-            format!("Created {} note at {}", input.type_name, path),
+            format!("Created {} note at {}", type_name, path),
         ))
     }
 
@@ -156,16 +180,17 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
-        let vars = input.vars.unwrap_or_default();
-        let path = if input.expanded {
-            self.vault
-                .create_stewardship_expanded_with_vars(at, &input.name, context, &vars)
-                .map_err(into_mcp_error)?
-        } else {
-            self.vault
-                .create_stewardship_flat_with_vars(at, &input.name, context, &vars)
-                .map_err(into_mcp_error)?
-        };
+        let path = self
+            .with_vault(move |vault| {
+                let vars = input.vars.unwrap_or_default();
+                if input.expanded {
+                    vault.create_stewardship_expanded_with_vars(at, &input.name, context, &vars)
+                } else {
+                    vault.create_stewardship_flat_with_vars(at, &input.name, context, &vars)
+                }
+            })
+            .await?
+            .map_err(into_mcp_error)?;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Created stewardship at {}", path),
