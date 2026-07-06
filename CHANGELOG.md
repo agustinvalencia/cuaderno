@@ -59,6 +59,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   can later reduce latency but never replaces it. `CuadernoServer::read_only()` and the
   `SmokeServer` are exposed from the library for tests and future transports.
 
+- **Tool handlers moved onto the blocking pool** (#303) — every MCP tool call now runs its
+  synchronous domain work via `spawn_blocking` (one task per request), so slow disk/SQLite
+  operations can no longer stall the HTTP server's async workers; the affordance is shared by
+  stdio and HTTP transports.
+
 ## [0.3.0] - 2026-07-03
 
 Custom note types: define your own schema-only note types in `config.toml`.
