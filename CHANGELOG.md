@@ -6,9 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-07
+
+Remote serving: a Streamable HTTP transport for `cdno-mcp`, origin-side Access-JWT validation, and write safety for concurrent writers.
+
 ### Added
 
-- **Write safety for concurrent writers** (#303) — three layers, sized for the remote-serving era:
+- **Write safety for concurrent writers** (#306) — three layers, sized for the remote-serving era:
   - **Atomic content writes in cdno-core**: `FsVaultStore`'s `write_file`/`append_to_file`/
     `import_external` now materialise content in a temp file in the target's directory, fsync it,
     and `rename(2)` it over the destination — a reader never observes a half-written note and a
@@ -34,7 +38,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   - `create_tracking_entry`'s tool description now warns that entries are always dated today
     (no override) so remote callers don't try to backfill past sessions through it.
 
-- **Origin-side Access-JWT validation for `cdno-mcp-server`** (#302) — the server now verifies the
+- **Origin-side Access-JWT validation for `cdno-mcp-server`** (#305) — the server now verifies the
   `Cf-Access-Jwt-Assertion` header Cloudflare Access injects after Managed OAuth: RS256 against
   the team JWKS (fetched fail-closed at startup, refreshed on unknown `kid` behind an
   anti-stampede cooldown), strict `iss`/`aud`/`exp`, every failure a bare 401 with the reason
@@ -44,11 +48,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   once every request is authenticated at the origin. The middleware sits outermost, so
   unauthenticated requests never consume body-buffer or concurrency budget.
 
-- **`cdno-mcp-server`: Streamable HTTP transport** (#60, #61) — a second binary in the cdno-mcp
+- **`cdno-mcp-server`: Streamable HTTP transport** (#304) — a second binary in the cdno-mcp
   crate serving the same tool catalogue as the stdio `cdno-mcp`, over the MCP Streamable HTTP
   transport (stateless JSON mode, mounted at `/mcp`), for remote deployment behind an
   OAuth-terminating proxy. Deliberately **implements no authentication itself** and therefore
-  **refuses to bind non-loopback addresses** until the origin-auth middleware lands (#302) — an
+  **refuses to bind non-loopback addresses** until the origin-auth middleware lands (#305) — an
   unauthenticated vault listener must be impossible to expose by accident. Flags: `--bind`
   (default `127.0.0.1:8787`), `--allowed-host` (extends rmcp's DNS-rebinding allowlist),
   `--smoke` (a one-tool echo server holding **no vault handle**, for proving tunnel/auth
@@ -59,7 +63,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   can later reduce latency but never replaces it. `CuadernoServer::read_only()` and the
   `SmokeServer` are exposed from the library for tests and future transports.
 
-- **Tool handlers moved onto the blocking pool** (#303) — every MCP tool call now runs its
+- **Tool handlers moved onto the blocking pool** (#307) — every MCP tool call now runs its
   synchronous domain work via `spawn_blocking` (one task per request), so slow disk/SQLite
   operations can no longer stall the HTTP server's async workers; the affordance is shared by
   stdio and HTTP transports.
