@@ -18,6 +18,11 @@ use cdno_domain::Vault;
 pub struct AppState {
     pub vault: std::sync::Arc<Vault>,
     pub journal: WriteJournal,
+    /// Absolute vault root, kept so `open_in_editor` can resolve a
+    /// validated vault-relative path to a real file on disk. The
+    /// domain works purely in `VaultPath`s and never needs the root,
+    /// so this lives here rather than on `Vault`.
+    pub root: std::path::PathBuf,
 }
 
 /// Paths this process wrote recently, so the watcher thread can tell

@@ -8,6 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Global capture + inbox drawer (M3, no GH issue — plan delta)** — capture a thought from
+  anywhere with `⌘⇧C` (registered in Rust via `tauri-plugin-global-shortcut`; SUPER+SHIFT maps to
+  Cmd on macOS). The hotkey summons a dedicated undecorated, transparent capture window whose
+  minimal entry never loads the SPA: a single input where **Enter** captures to `inbox/`,
+  **⌘/Ctrl+Enter** logs to today's daily, and **Esc**/blur hides — a sub-second "captured" /
+  "logged" flash confirms, then the window auto-hides. A right-side **inbox drawer** (toggled from
+  the sidebar, with a grey — never red — count badge) is the visible landing place that makes
+  capture trustworthy: each item shows its text and captured date with per-item open-in-editor and
+  optimistic discard; full triage stays a CLI/Claude concern. New commands `capture_quick`,
+  `log_quick`, `list_inbox`, `discard_inbox_item`, and `open_in_editor` follow the established
+  write-command pattern (`WriteJournal` record + `origin: self` emit after commit); `open_in_editor`
+  validates its vault-relative path through `VaultPath` before joining the vault root, the one file
+  access that bypasses the domain layer. `tauri-plugin-single-instance` (registered first) focuses
+  the running window instead of launching a duplicate; `tauri-plugin-opener` backs
+  open-in-editor. `InboxItem` gained `ts-rs` bindings.
+
 - **Home view interactions (closes #54)** — the desktop app is now daily-usable. Energy selector
   (deep/medium/light) filters each card's surfaced action with the no-match rule: a card never
   blanks — it keeps its best-available action behind a muted "smallest step" note. Start logs

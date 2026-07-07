@@ -19,12 +19,24 @@ mod clock;
 
 use std::sync::Arc;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use cdno_domain::bootstrap::open_vault;
 
+use crate::events::CAPTURE_SHOW;
 use crate::state::{AppState, WriteJournal};
 use crate::watcher::WatcherDeps;
+
+/// Bring `label`'s window to the front (show + focus), tolerating a
+/// missing window. Used both by the single-instance guard (main) and
+/// the global capture shortcut (capture).
+fn surface_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 /// Environment variable naming the vault root — same contract as the
 /// CLI and the MCP binaries. Upward discovery and a persisted app
@@ -48,6 +60,15 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
+        // Single-instance MUST be registered first (the plugin's own
+        // requirement): a second launch is intercepted here and focuses
+        // the already-running main window instead of spawning a
+        // duplicate app.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            surface_window(app, "main");
+        }))
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             let root = std::env::var(ENV_VAULT_PATH).map_err(|_| {
                 format!("{ENV_VAULT_PATH} is not set — point it at your vault root")
@@ -70,7 +91,37 @@ pub fn run() {
             app.manage(AppState {
                 vault: Arc::new(opened.vault),
                 journal: WriteJournal::default(),
+                root: root.clone(),
             });
+
+            // Global capture hotkey (⌘⇧C on macOS; SUPER maps to Cmd).
+            // Registered from Rust — JS registration is racy (plan
+            // §3.6). SUPER+SHIFT+C summons the floating capture window:
+            // show + focus, then emit `capture:show` so the window's
+            // input re-focuses even when it was already visible.
+            let capture_shortcut =
+                Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyC);
+            let registration =
+                app.global_shortcut()
+                    .on_shortcut(capture_shortcut, |app, _shortcut, event| {
+                        // The handler fires on both press and release —
+                        // act once, on press.
+                        if event.state != ShortcutState::Pressed {
+                            return;
+                        }
+                        surface_window(app, "capture");
+                        if let Err(err) = app.emit(CAPTURE_SHOW, ()) {
+                            tracing::warn!(error = %err, "failed to emit capture:show");
+                        }
+                    });
+            // A failed registration (the OS refused the hotkey, or it
+            // clashes with another app) must not abort startup — the
+            // app is fully usable without the global shortcut. Surfacing
+            // it as a toast is later polish (plan §3.6); the log
+            // suffices for now.
+            if let Err(err) = registration {
+                tracing::warn!(error = %err, "failed to register the global capture shortcut");
+            }
 
             // Live updates: FsFileWatcher -> mpsc -> watcher thread ->
             // reconcile + emit. The watcher handle must outlive setup,
@@ -100,6 +151,11 @@ pub fn run() {
             commands::actions::start_action,
             commands::actions::complete_action,
             commands::projects::update_project_state,
+            commands::capture::capture_quick,
+            commands::capture::log_quick,
+            commands::capture::list_inbox,
+            commands::capture::discard_inbox_item,
+            commands::capture::open_in_editor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

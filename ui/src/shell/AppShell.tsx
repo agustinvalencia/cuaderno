@@ -1,9 +1,11 @@
+import { useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { getOrientation } from "../api/commands";
+import { getOrientation, listInbox } from "../api/commands";
 import { contextDotClass } from "../lib/contexts";
 import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
+import InboxDrawer from "./InboxDrawer";
 
 const NAV = [
   { to: "/", label: "Today" },
@@ -23,6 +25,12 @@ export default function AppShell() {
   // uses — one cache entry, no extra invoke.
   const orientation = useQuery({ queryKey: ["get_orientation"], queryFn: getOrientation });
   const showMetrics = useMetrics();
+  // The inbox count rides on the same query the drawer uses — one cache
+  // entry, invalidated by the `inbox` area (invalidation.ts).
+  const inbox = useQuery({ queryKey: ["list_inbox"], queryFn: listInbox });
+  const inboxCount = inbox.data?.length ?? 0;
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const inboxButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div className="flex h-screen">
@@ -80,7 +88,26 @@ export default function AppShell() {
           ))}
         </nav>
 
-        <div className="mt-auto flex items-center justify-between px-2 pt-4">
+        <button
+          ref={inboxButtonRef}
+          type="button"
+          aria-expanded={inboxOpen}
+          aria-label={`Inbox, ${inboxCount} waiting`}
+          onClick={() => setInboxOpen((open) => !open)}
+          className={`mt-auto flex items-center justify-between rounded px-2 py-1 text-sm ${
+            inboxOpen ? "bg-bg-surface text-ink" : "text-ink-muted hover:text-ink"
+          }`}
+        >
+          <span>Inbox</span>
+          {inboxCount > 0 && (
+            // Grey, never red — the badge is a count, not an alarm (§1.0).
+            <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-xs text-ink-faint">
+              {inboxCount}
+            </span>
+          )}
+        </button>
+
+        <div className="mt-4 flex items-center justify-between px-2 pt-4">
           <button
             type="button"
             aria-label="Cycle colour theme (system, light, dark)"
@@ -106,6 +133,10 @@ export default function AppShell() {
       <main className="min-w-0 flex-1 overflow-y-auto">
         <Outlet />
       </main>
+
+      {inboxOpen && (
+        <InboxDrawer onClose={() => setInboxOpen(false)} returnFocusRef={inboxButtonRef} />
+      )}
     </div>
   );
 }
