@@ -7,7 +7,7 @@
 //! invalidation map. Recording happens *after* the commit inside the
 //! domain call returned — a failed write must not poison the journal.
 
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use tauri::Emitter;
 
 use crate::error::CmdError;
@@ -26,14 +26,19 @@ pub(crate) fn record_and_emit<R: tauri::Runtime>(
 ) {
     let path_strings = paths.iter().map(|p| p.to_string()).collect();
     state.journal.record(paths);
-    let _ = app.emit(
+    // A dropped invalidation event leaves the frontend showing stale
+    // data until the next reload — rare (the channel is in-process) but
+    // silent, so surface it in the log rather than swallowing the Err.
+    if let Err(err) = app.emit(
         VAULT_CHANGED,
         VaultChanged {
             origin: Origin::SelfWrite,
             areas,
             paths: path_strings,
         },
-    );
+    ) {
+        tracing::warn!(error = %err, "failed to emit vault:changed after a write");
+    }
 }
 
 /// Log that work on `action` is starting (`started [[slug]] — …` in
@@ -66,14 +71,26 @@ pub async fn complete_action<R: tauri::Runtime>(
     action: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
+    // Derive the journalled daily path from the SAME instant the domain
+    // call received, not a fresh `Local::now()` afterwards: a completion
+    // that lands a hair before midnight must journal the day it wrote to,
+    // not the day the read-back happens (the midnight TOCTOU).
+    let date = now.date();
     let slug = project.clone();
     let project_path = with_vault(&state.vault, move |vault| {
         vault.complete_action(now, &slug, &action)
     })
     .await??;
-    // complete_action also stages the daily log line in the same
-    // transaction — both paths are ours.
-    let daily = daily_path_today();
+    // complete_action stages the daily log line in the same transaction,
+    // so the daily is ours to journal. When the completed bullet
+    // wikilinks an action note, the domain ALSO archives
+    // `actions/<slug>.md` to `actions/_done/<year>/<slug>.md` in that
+    // same transaction — those paths are ours too, but the domain
+    // returns only the project path, so we cannot journal them here. The
+    // watcher will echo those archive writes back as external changes and
+    // trigger a redundant refetch. Fixing this needs the domain to return
+    // its full touched-path set — see #315.
+    let daily = daily_path_for(date);
     record_and_emit(
         &app,
         &state,
@@ -83,14 +100,15 @@ pub async fn complete_action<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Today's daily-note path, for journalling writes that log as a side
-/// effect. Mirrors the domain's `journal/<year>/daily/<date>.md` rule
-/// via the shared relpath helper. `#[doc(hidden)] pub` so the IPC
-/// integration tests can locate the note a write was expected to
-/// touch.
+/// The daily-note path for `date`, for journalling writes that log to
+/// the daily as a side effect. Mirrors the domain's
+/// `journal/<year>/daily/<date>.md` rule via the shared relpath helper.
+/// Callers pass the same `date` the domain call used, so the journalled
+/// path can't drift across a midnight boundary between the write and the
+/// path reconstruction. `#[doc(hidden)] pub` so the IPC integration
+/// tests can locate the note a write was expected to touch.
 #[doc(hidden)]
-pub fn daily_path_today() -> VaultPath {
-    let date = Local::now().date_naive();
+pub fn daily_path_for(date: NaiveDate) -> VaultPath {
     VaultPath::new(cdno_core::paths::daily_note_relpath(date))
         .expect("the daily relpath rule always yields a valid vault path")
 }

@@ -1,10 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ActionListEntry } from "../../api/bindings/ActionListEntry";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import type { OrientationProject } from "../../api/bindings/OrientationProject";
 import type { OrientationView } from "../../api/bindings/OrientationView";
-import { completeAction, startAction, updateProjectState } from "../../api/commands";
+import { completeAction, errorMessage, startAction, updateProjectState } from "../../api/commands";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useToast } from "../../shell/Toasts";
@@ -45,12 +45,18 @@ export default function ProjectCard({
 
   const { action, matchedFilter } = surfacedAction(project, energy);
 
+  // The optimistic "started" note is pinned to one surfaced action.
+  // When the energy filter (or a refetch) swaps in a different bullet,
+  // the old note no longer applies — reset so the new action shows its
+  // own Start button rather than a stale "in today's log".
+  useEffect(() => setStarted(false), [action?.text]);
+
   const start = useMutation({
     mutationFn: () => startAction(project.slug, action?.text ?? ""),
     onMutate: () => setStarted(true),
     onError: (error) => {
       setStarted(false);
-      toast(String(error), "attention");
+      toast(errorMessage(error), "attention");
     },
   });
 
@@ -81,7 +87,7 @@ export default function ProjectCard({
       if (context?.previous) {
         client.setQueryData(["get_orientation"], context.previous);
       }
-      toast(String(error), "attention");
+      toast(errorMessage(error), "attention");
     },
     onSuccess: () => toast(`Done: one step further on ${project.slug}.`),
     onSettled: () => client.invalidateQueries({ queryKey: ["get_orientation"] }),
@@ -89,7 +95,7 @@ export default function ProjectCard({
 
   const saveState = useMutation({
     mutationFn: (newState: string) => updateProjectState(project.slug, newState),
-    onError: (error) => toast(String(error), "attention"),
+    onError: (error) => toast(errorMessage(error), "attention"),
     onSuccess: () => setEditing(false),
     onSettled: () => client.invalidateQueries({ queryKey: ["get_orientation"] }),
   });
@@ -171,10 +177,11 @@ export default function ProjectCard({
           </p>
           <div className="mt-3 flex items-center gap-2">
             {started ? (
-              <span className="text-xs text-ink-muted">in today's log ✓</span>
+              <span className="text-xs text-ink-muted">in today's log</span>
             ) : (
               <button
                 type="button"
+                data-start
                 onClick={() => start.mutate()}
                 disabled={start.isPending}
                 className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"

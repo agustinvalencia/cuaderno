@@ -1,7 +1,7 @@
 // Minimal toast surface for command errors and confirmations. Calm
 // by design law: no red, no shake — ink on a bordered surface, amber
 // left-edge only for attention-tier messages, announced politely.
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 export interface Toast {
@@ -21,13 +21,24 @@ const AUTO_DISMISS_MS = 6000;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
+  // Track pending auto-dismiss timers so an unmount mid-flight clears
+  // them — otherwise the callback fires setToasts on a gone component.
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const toast = useCallback((message: string, tone: Toast["tone"] = "info") => {
     const id = nextId.current++;
     setToasts((current) => [...current, { id, message, tone }]);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setToasts((current) => current.filter((t) => t.id !== id));
     }, AUTO_DISMISS_MS);
+    timers.current.push(timer);
+  }, []);
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending) clearTimeout(timer);
+    };
   }, []);
 
   const api = useMemo(() => ({ toast }), [toast]);

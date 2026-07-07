@@ -16,7 +16,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   backed by `update_project_state` (previous state auto-logged). Write commands record their
   touched paths in the `WriteJournal` and emit `origin: self` change events, so the watcher
   suppresses their echoes. Arrow/`j`/`k` keys rove focus across the card grid. A calm toast
-  surface (no red; amber edge for attention) reports errors and completions. The **"show
+  surface (no red; amber edge for attention) reports errors and completions. The commitments
+  strip is colour-coded by context — `CommitmentEntry` now carries the owning note's life
+  context, resolved per source — and renders friendly short dates. The **"show
   metrics" toggle** (plan §3.11) lands default-off next to the theme switch — its first surface
   is an open-actions count pill on project cards. IPC round-trips now cover args marshalling
   (including the `new_state`→`newState` camelCase seam) and the serialised error contract.

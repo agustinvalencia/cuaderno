@@ -18,7 +18,7 @@ use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
 use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
 use tauri::webview::InvokeRequest;
 
-const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n";
+const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Draft the intro (light)\n";
 
 fn memory_vault() -> (Vault, Arc<dyn VaultStore>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
@@ -142,7 +142,7 @@ fn start_action_round_trips_args_and_writes_the_daily_note() {
     }));
     get_ipc_response(&webview, request_with("start_action", body)).expect("command succeeds");
 
-    let daily = cdno_tauri::commands::actions::daily_path_today();
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
     let content = store.read_file(&daily).expect("daily note written");
     assert!(
         content.contains("started [[alpha]] \u{2014} Draft methods"),
@@ -190,4 +190,32 @@ fn complete_action_error_path_serialises_the_cmd_error_contract() {
     // commands.ts pattern-matches on.
     assert_eq!(err["kind"], "not_found", "{err}");
     assert!(err["data"].is_string());
+}
+
+#[test]
+fn complete_action_ambiguous_serialises_candidates() {
+    // "Draft" matches both Next Actions bullets (case-insensitive
+    // substring), so the domain returns AmbiguousAction, which the
+    // command maps to CmdError::Ambiguous — the picker the UI renders.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-ambig", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Draft",
+    }));
+    let err = get_ipc_response(&webview, request_with("complete_action", body))
+        .expect_err("an ambiguous match must fail");
+
+    assert_eq!(err["kind"], "ambiguous", "{err}");
+    let candidates = err["data"]["candidates"]
+        .as_array()
+        .expect("candidates is an array");
+    assert_eq!(
+        candidates.len(),
+        2,
+        "both Draft bullets are candidates: {err}"
+    );
 }

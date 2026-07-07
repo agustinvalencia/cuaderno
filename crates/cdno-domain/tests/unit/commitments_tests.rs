@@ -831,6 +831,7 @@ fn complete_commitment_not_found_lists_open_commitments_excluding_done() {
 
 #[test]
 fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
+    use cdno_domain::frontmatter::Context;
     use cdno_domain::{CommitmentEntry, CommitmentSource};
     use chrono::NaiveDate;
 
@@ -840,12 +841,14 @@ fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
         title: "Ship v1".to_owned(),
         source: CommitmentSource::ProjectMilestone("surrogate".to_owned()),
         is_overdue: false,
+        context: Context::Work,
     };
     let unit = CommitmentEntry {
         date,
         title: "A promise".to_owned(),
         source: CommitmentSource::StandaloneCommitment,
         is_overdue: false,
+        context: Context::Personal,
     };
 
     // Tuple variant: {"kind":"project_milestone","slug":"surrogate"}.

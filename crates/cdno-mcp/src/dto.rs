@@ -118,6 +118,9 @@ pub struct CommitmentEntryDto {
     pub title: String,
     pub source: CommitmentSourceDto,
     pub is_overdue: bool,
+    /// Life-domain of the owning note, kebab-case (`work`,
+    /// `side-project`, …). Mirrors the stewardship DTO's `context`.
+    pub context: String,
 }
 
 impl From<CommitmentEntry> for CommitmentEntryDto {
@@ -127,6 +130,7 @@ impl From<CommitmentEntry> for CommitmentEntryDto {
             title: c.title,
             source: c.source.into(),
             is_overdue: c.is_overdue,
+            context: c.context.as_str().to_owned(),
         }
     }
 }
