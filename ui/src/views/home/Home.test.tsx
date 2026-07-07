@@ -6,6 +6,7 @@ import { afterEach, expect, test } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { ToastProvider } from "../../shell/Toasts";
 import type { OrientationView } from "../../api/bindings/OrientationView";
 import Home from "./Home";
 
@@ -36,7 +37,9 @@ function renderHome() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <Home />
+      <ToastProvider>
+        <Home />
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -82,4 +85,49 @@ test("empty vault renders the warm empty state, not blanks", async () => {
 
   expect(await screen.findByText(/Nothing active/)).toBeDefined();
   expect(screen.queryByText(/quietly lapsed/)).toBeNull();
+});
+
+test("energy filter never blanks a card (no-match rule)", async () => {
+  mockIPC((cmd) => (cmd === "get_orientation" ? FIXTURE : undefined));
+  const { getByRole } = renderHome();
+
+  await screen.findByText("alpha");
+  // The only action is (deep); filtering to light must keep it
+  // visible behind the muted smallest-step note.
+  getByRole("button", { name: "light" }).click();
+
+  expect(await screen.findByText(/no light action here/)).toBeDefined();
+  expect(screen.getByText(/Draft methods/)).toBeDefined();
+});
+
+test("Start invokes start_action and flips to the started note", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_orientation") return FIXTURE;
+    return undefined;
+  });
+  renderHome();
+
+  (await screen.findByRole("button", { name: "Start" })).click();
+
+  expect(await screen.findByText(/in today's log/)).toBeDefined();
+  const started = calls.find((c) => c.cmd === "start_action");
+  expect(started?.args).toMatchObject({ project: "alpha", action: "Draft methods (deep)" });
+});
+
+test("done optimistically removes the action and calls complete_action", async () => {
+  const calls: string[] = [];
+  mockIPC((cmd) => {
+    calls.push(cmd);
+    if (cmd === "get_orientation") return FIXTURE;
+    return undefined;
+  });
+  renderHome();
+
+  (await screen.findByRole("button", { name: /Mark done/ })).click();
+
+  // The success toast confirms the mutation settled.
+  expect(await screen.findByText(/one step further/)).toBeDefined();
+  expect(calls).toContain("complete_action");
 });

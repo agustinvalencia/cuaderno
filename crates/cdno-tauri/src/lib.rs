@@ -97,6 +97,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::orientation::get_orientation,
             commands::orientation::get_today,
+            commands::actions::start_action,
+            commands::actions::complete_action,
+            commands::projects::update_project_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

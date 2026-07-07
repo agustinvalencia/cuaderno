@@ -8,6 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Home view interactions (closes #54)** — the desktop app is now daily-usable. Energy selector
+  (deep/medium/light) filters each card's surfaced action with the no-match rule: a card never
+  blanks — it keeps its best-available action behind a muted "smallest step" note. Start logs
+  `started [[project]] — action` to today's daily note; done completes the bullet with an
+  optimistic cache update (rolled back on error); the Current State snippet is an inline editor
+  backed by `update_project_state` (previous state auto-logged). Write commands record their
+  touched paths in the `WriteJournal` and emit `origin: self` change events, so the watcher
+  suppresses their echoes. Arrow/`j`/`k` keys rove focus across the card grid. A calm toast
+  surface (no red; amber edge for attention) reports errors and completions. The **"show
+  metrics" toggle** (plan §3.11) lands default-off next to the theme switch — its first surface
+  is an open-actions count pill on project cards. IPC round-trips now cover args marshalling
+  (including the `new_state`→`newState` camelCase seam) and the serialised error contract.
+
 - **Desktop app scaffold (closes #53)** — new `cdno-tauri` crate + `ui/` frontend (React 19,
   Vite 7 multi-page, TypeScript, Tailwind v4, Bun as package manager / Node as runtime). The app
   opens the vault named by `CUADERNO_VAULT_PATH`, runs startup reconciliation, registers

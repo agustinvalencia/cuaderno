@@ -1,15 +1,18 @@
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import { getOrientation } from "../../api/commands";
-import { contextDotClass } from "../../lib/contexts";
+import ProjectCard from "./ProjectCard";
 
-// M1 scope: render the live orientation calmly — commitments strip,
-// project cards with state + top action, lapsed line. Interactions
-// (energy selector, Start, ticks, inline edit) land in M2.
+const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
+
 export default function Home() {
   const { data, isPending, isError, error } = useQuery({
     queryKey: ["get_orientation"],
     queryFn: getOrientation,
   });
+  const [energy, setEnergy] = useState<EnergyLevel | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
 
   if (isPending) {
     return <p className="p-8 text-ink-muted">Reading the vault…</p>;
@@ -29,9 +32,48 @@ export default function Home() {
     month: "long",
   });
 
+  // Roving focus across the card grid: arrow keys / j / k move
+  // between cards (operating the content, not Tab-through-everything).
+  function onGridKeyDown(event: React.KeyboardEvent) {
+    const keys: Record<string, number> = {
+      ArrowRight: 1,
+      ArrowDown: 1,
+      j: 1,
+      ArrowLeft: -1,
+      ArrowUp: -1,
+      k: -1,
+    };
+    const delta = keys[event.key];
+    if (!delta || !gridRef.current) return;
+    const cards = Array.from(gridRef.current.querySelectorAll<HTMLElement>("[data-card]"));
+    const current = cards.findIndex((card) => card.contains(document.activeElement));
+    const next = cards[(current + delta + cards.length) % cards.length];
+    next?.focus();
+    event.preventDefault();
+  }
+
   return (
     <div className="mx-auto max-w-4xl p-8">
-      <h1 className="text-xl font-semibold text-ink">{heading}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-ink">{heading}</h1>
+        <div role="group" aria-label="Energy filter" className="flex gap-1">
+          {ENERGIES.map((level) => (
+            <button
+              key={level}
+              type="button"
+              aria-pressed={energy === level}
+              onClick={() => setEnergy(energy === level ? null : level)}
+              className={`rounded px-2 py-1 text-xs ${
+                energy === level
+                  ? "bg-bg-sunken font-medium text-ink"
+                  : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {level}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {data.commitments.length > 0 && (
         <section aria-label="Due soon" className="mt-6">
@@ -61,34 +103,15 @@ export default function Home() {
             Nothing active. Your CLI or Claude can start one when you're ready.
           </p>
         ) : (
-          <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            ref={gridRef}
+            onKeyDown={onGridKeyDown}
+            className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          >
             {data.projects.map((project) => (
-              <article
-                key={project.slug}
-                className="rounded-lg border border-line bg-bg-surface p-4"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden
-                    className={`h-2.5 w-2.5 rounded-full ${contextDotClass(project.context)}`}
-                  />
-                  <h3 className="truncate font-medium text-ink">{project.slug}</h3>
-                </div>
-                <p className="mt-2 line-clamp-2 text-sm text-ink-muted">{project.state_snippet}</p>
-                {project.top_action && (
-                  <p className="mt-3 text-sm text-ink">
-                    <span aria-hidden className="text-ink-faint">
-                      →{" "}
-                    </span>
-                    {project.top_action.text}
-                    {project.top_action.energy && (
-                      <span className="ml-1 text-xs text-ink-faint">
-                        ({project.top_action.energy})
-                      </span>
-                    )}
-                  </p>
-                )}
-              </article>
+              <div key={project.slug} data-card tabIndex={-1} className="rounded-lg">
+                <ProjectCard project={project} energy={energy} />
+              </div>
             ))}
           </div>
         )}
@@ -96,8 +119,8 @@ export default function Home() {
 
       {data.lapsed_habits.length > 0 && (
         <p className="mt-8 text-sm text-ink-faint">
-          quietly lapsed:{" "}
-          {data.lapsed_habits.map((habit) => habit.detail).join(" · ")} — no judgment, just a note
+          quietly lapsed: {data.lapsed_habits.map((habit) => habit.detail).join(" · ")} — no
+          judgment, just a note
         </p>
       )}
     </div>

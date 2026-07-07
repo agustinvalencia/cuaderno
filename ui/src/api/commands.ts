@@ -33,3 +33,17 @@ export function getOrientation(): Promise<OrientationView> {
 export function getToday(): Promise<string> {
   return call("get_today");
 }
+
+export function startAction(project: string, action: string): Promise<void> {
+  return call("start_action", { project, action });
+}
+
+export function completeAction(project: string, action: string): Promise<void> {
+  return call("complete_action", { project, action });
+}
+
+export function updateProjectState(project: string, newState: string): Promise<void> {
+  // Rust `new_state` is `newState` on the wire (Tauri camelCases
+  // command args) — pinned by the backend IPC round-trip test.
+  return call("update_project_state", { project, newState });
+}

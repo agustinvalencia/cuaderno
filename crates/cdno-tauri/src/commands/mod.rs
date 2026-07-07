@@ -3,4 +3,6 @@
 //! function. The split is the test seam: `*_impl` runs under plain
 //! `cargo test` against the Memory doubles, no Tauri runtime needed.
 
+pub mod actions;
 pub mod orientation;
+pub mod projects;
