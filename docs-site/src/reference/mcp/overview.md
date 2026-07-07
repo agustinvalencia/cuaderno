@@ -17,7 +17,7 @@ Two binaries serve the same tool catalogue:
 
 ## The tool surface
 
-The server advertises **41 tools**. This reference groups them by purpose:
+The server advertises **42 tools**. This reference groups them by purpose:
 
 | Group | Page | What's in it |
 |-------|------|--------------|

@@ -52,7 +52,7 @@ Remote serving: a Streamable HTTP transport for `cdno-mcp`, origin-side Access-J
   crate serving the same tool catalogue as the stdio `cdno-mcp`, over the MCP Streamable HTTP
   transport (stateless JSON mode, mounted at `/mcp`), for remote deployment behind an
   OAuth-terminating proxy. Deliberately **implements no authentication itself** and therefore
-  **refuses to bind non-loopback addresses** until the origin-auth middleware lands (#302) — an
+  **refuses to bind non-loopback addresses** until the origin-auth middleware lands (#305) — an
   unauthenticated vault listener must be impossible to expose by accident. Flags: `--bind`
   (default `127.0.0.1:8787`), `--allowed-host` (extends rmcp's DNS-rebinding allowlist),
   `--smoke` (a one-tool echo server holding **no vault handle**, for proving tunnel/auth
