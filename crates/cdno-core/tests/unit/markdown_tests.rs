@@ -456,3 +456,83 @@ notes from the meeting
     );
     assert_eq!(out.matches("## Logs").count(), 1, "heading not duplicated");
 }
+
+// ---------------------------------------------------------------------
+// extract_first_table
+// ---------------------------------------------------------------------
+
+use cdno_core::markdown::extract_first_table;
+
+#[test]
+fn extract_first_table_parses_headers_and_rows() {
+    let body = "\
+# Gym — 6 April 2026
+
+| Exercise | Sets | Reps | Weight (kg) |
+|----------|------|------|-------------|
+| Squat    | 3    | 8    | 80          |
+| Bench    | 3    | 10   | 60          |
+
+## Notes
+felt strong
+";
+    let table = extract_first_table(body).unwrap();
+    assert_eq!(
+        table.headers,
+        vec!["Exercise", "Sets", "Reps", "Weight (kg)"]
+    );
+    assert_eq!(table.rows.len(), 2);
+    assert_eq!(table.rows[0], vec!["Squat", "3", "8", "80"]);
+    assert_eq!(table.rows[1], vec!["Bench", "3", "10", "60"]);
+}
+
+#[test]
+fn extract_first_table_returns_first_of_several() {
+    let body = "\
+| A | B |
+|---|---|
+| 1 | 2 |
+
+| C |
+|---|
+| 3 |
+";
+    let table = extract_first_table(body).unwrap();
+    assert_eq!(table.headers, vec!["A", "B"]);
+    assert_eq!(table.rows, vec![vec!["1", "2"]]);
+}
+
+#[test]
+fn extract_first_table_requires_delimiter_row() {
+    // Two adjacent pipe-prefixed lines without a delimiter row are
+    // prose, not a table.
+    let body = "| not | a table |\n| just | pipes |\n";
+    assert!(extract_first_table(body).is_none());
+}
+
+#[test]
+fn extract_first_table_none_on_tableless_body() {
+    assert!(extract_first_table("# Heading\n\nplain prose\n").is_none());
+}
+
+#[test]
+fn extract_first_table_tolerates_alignment_colons_and_ragged_rows() {
+    let body = "\
+| Metric | Value |
+|:-------|------:|
+| Weight | 82.5  |
+| Resting HR |
+";
+    let table = extract_first_table(body).unwrap();
+    assert_eq!(table.headers, vec!["Metric", "Value"]);
+    // The ragged second row survives with its actual width.
+    assert_eq!(table.rows[0], vec!["Weight", "82.5"]);
+    assert_eq!(table.rows[1], vec!["Resting HR"]);
+}
+
+#[test]
+fn extract_first_table_keeps_interior_empty_cells() {
+    let body = "| A | B | C |\n|---|---|---|\n| 1 |   | 3 |\n";
+    let table = extract_first_table(body).unwrap();
+    assert_eq!(table.rows[0], vec!["1", "", "3"]);
+}

@@ -475,3 +475,93 @@ fn split_trailing_iso_date(s: &str) -> (String, Option<String>) {
     }
     (trimmed.trim().to_owned(), None)
 }
+
+/// One GFM pipe table lifted out of a markdown body: the header cells
+/// and the data rows, all as trimmed strings. Consumers decide what
+/// the cells mean — e.g. the tracking-series query parses numeric
+/// columns out of the rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownTable {
+    pub headers: Vec<String>,
+    /// Data rows in source order. Row widths follow the source — a
+    /// hand-edited row with a missing cell is shorter than `headers`,
+    /// so consumers index with `get`, not `[]`.
+    pub rows: Vec<Vec<String>>,
+}
+
+/// Extract the first GFM pipe table from a markdown body, or `None`
+/// when the body has no table.
+///
+/// A table is the first run of consecutive `|`-prefixed lines whose
+/// second line is a delimiter row (`| --- | :---: | ... |`). Rows
+/// after the delimiter become data rows until the first line that no
+/// longer starts with `|`. This is a line scanner in the same spirit
+/// as the other extractors in this module — it handles the tables our
+/// templates write. Known limits: it does not track ``` fences (a
+/// pipe table inside a code block would be matched first), and an
+/// escaped `\|` still splits the cell — acceptable for tracking-note
+/// bodies, which the templates keep fence-free and plain.
+pub fn extract_first_table(body: &str) -> Option<MarkdownTable> {
+    let mut lines = body.lines().peekable();
+    while let Some(line) = lines.next() {
+        if !is_table_line(line) {
+            continue;
+        }
+        // Candidate header — a table only starts here if the next
+        // line is a delimiter row. No next line at all means no table
+        // can follow, so `?` ends the whole scan.
+        let next = lines.peek()?;
+        if !is_delimiter_row(next) {
+            continue;
+        }
+        lines.next(); // consume the delimiter row
+        let headers = split_table_cells(line);
+        let mut rows = Vec::new();
+        for row_line in lines {
+            if !is_table_line(row_line) {
+                break;
+            }
+            rows.push(split_table_cells(row_line));
+        }
+        return Some(MarkdownTable { headers, rows });
+    }
+    None
+}
+
+/// A line participates in a pipe table when its first non-blank
+/// character is `|`. GFM also allows tables without outer pipes, but
+/// every table our templates emit uses them — keep the scanner strict
+/// so prose containing a stray `a | b` is never misread as a table.
+fn is_table_line(line: &str) -> bool {
+    line.trim_start().starts_with('|')
+}
+
+/// A GFM delimiter row: every cell is dashes with optional leading /
+/// trailing colons (`---`, `:--`, `:-:`), at least one dash, nothing
+/// else. This is what distinguishes a real table from two adjacent
+/// lines that merely start with `|`.
+fn is_delimiter_row(line: &str) -> bool {
+    if !is_table_line(line) {
+        return false;
+    }
+    let cells = split_table_cells(line);
+    !cells.is_empty()
+        && cells.iter().all(|cell| {
+            let inner = cell.trim_start_matches(':').trim_end_matches(':');
+            !inner.is_empty() && inner.chars().all(|c| c == '-')
+        })
+}
+
+/// Split one table line into trimmed cell strings, dropping the empty
+/// fragments produced by the outer pipes: `| a | b |` → `["a", "b"]`.
+/// Interior empty cells (`| a |  | c |`) survive as empty strings —
+/// only the outermost two fragments are structural.
+fn split_table_cells(line: &str) -> Vec<String> {
+    let mut inner = line.trim();
+    inner = inner.strip_prefix('|').unwrap_or(inner);
+    inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner
+        .split('|')
+        .map(|cell| cell.trim().to_owned())
+        .collect()
+}

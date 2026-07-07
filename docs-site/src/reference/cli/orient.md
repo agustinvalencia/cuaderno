@@ -1,7 +1,12 @@
 # `cdno orient`
 
-Daily orientation: the commitments due soon, your active projects, and a single suggested starting
-point.
+Daily orientation: the commitments due soon, your active projects, a single suggested starting
+point, and any stewardship habits that have lapsed.
+
+A habit counts as lapsed when its line in a stewardship dashboard's `## Active Habits` section
+declares it so — a status starting with "lapsed" after the em-dash, e.g.
+`- Swimming 1x/week — lapsed since March`. The dashboard is the source of truth (updated
+during reviews); orientation only surfaces what it says, without judgement.
 
 ```text
 cdno orient [OPTIONS]

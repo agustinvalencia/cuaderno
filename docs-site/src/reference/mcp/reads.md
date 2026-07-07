@@ -5,7 +5,7 @@ anything. Inputs marked optional may be omitted.
 
 | Tool | Inputs | Returns |
 |------|--------|---------|
-| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon, active projects, and a suggested starting point. The MCP form of [`cdno orient`](../cli/orient.md). |
+| `get_orientation` | `energy?` (`deep`\|`medium`\|`light`) | Commitments due soon, active projects, lapsed stewardship habits, and a suggested starting point. The MCP form of [`cdno orient`](../cli/orient.md). |
 | `get_project_context` | `project` (slug) | A project's state, next actions, milestones, waiting-on items, and links. |
 | `get_portfolio_contents` | `portfolio` (slug) | Portfolio metadata plus its evidence inventory. |
 | `get_weekly_context` | `date?` (any day in the week) | The weekly note's sections (Wins, Challenges, One Improvement, This Week's Goal). |

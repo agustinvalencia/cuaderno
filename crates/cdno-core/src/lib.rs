@@ -17,3 +17,4 @@ pub mod reconcile;
 pub mod store;
 pub mod template;
 pub mod transaction;
+pub mod watcher;

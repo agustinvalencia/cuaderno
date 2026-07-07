@@ -51,6 +51,40 @@ pub struct AttachedAction {
 }
 
 impl Vault {
+    /// Record that work on an action is starting: one line in today's
+    /// daily log, `started [[<slug>]] — <action>`.
+    ///
+    /// This is the single home of the "started" log format — CLI,
+    /// MCP, and desktop-Start-button surfaces are expected to call
+    /// this rather than compose their own line, so the trace stays
+    /// greppable. The
+    /// project is resolved first (active projects only) so the logged
+    /// wikilink can't dangle; `action` is free text — typically the
+    /// bullet the caller picked from `list_actions`, but starting
+    /// unplanned work is equally valid.
+    ///
+    /// Returns the daily-note path touched. Errors mirror the other
+    /// action ops: parked → `ProjectNotActive`, missing →
+    /// `Store(NotFound)`, whitespace-only action → `EmptyField`.
+    pub fn start_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let action_text = action.trim();
+        if action_text.is_empty() {
+            return Err(DomainError::EmptyField { field: "action" });
+        }
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        self.resolve_active_project(slug)?;
+
+        let log_entry = format!("started [[{slug}]] \u{2014} {action_text}");
+        let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+        Ok(daily_path)
+    }
+
     /// Append a next action to an active project, also recording the
     /// addition in today's daily log so a planning session leaves a
     /// trace.
