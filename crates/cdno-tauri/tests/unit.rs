@@ -1,4 +1,5 @@
 mod unit {
+    mod commitments_tests;
     mod error_tests;
     mod events_tests;
     mod ipc_tests;

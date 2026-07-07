@@ -73,8 +73,11 @@ pub enum CommitmentSource {
     /// A periodic commitment of the named stewardship, parsed from its
     /// `## Periodic Commitments` section.
     Stewardship(String),
-    /// A standalone `commitments/<slug>.md` note.
-    StandaloneCommitment,
+    /// A standalone `commitments/<slug>.md` note; the payload is the
+    /// commitment's own slug, so a consumer can complete it directly
+    /// via [`Vault::complete_commitment`] without re-deriving the slug
+    /// from the note body (the desktop app's done button needs it).
+    StandaloneCommitment(String),
     /// An action note carrying a self-imposed `due:` that isn't pinned
     /// to a milestone; the payload is the parent project slug.
     ActionNote(String),
@@ -410,7 +413,8 @@ impl Vault {
             entries.push(CommitmentEntry {
                 date: commitment.due,
                 title: body_title_or_slug(&raw, &slug).to_owned(),
-                source: CommitmentSource::StandaloneCommitment,
+                // The title borrows `slug`; move it into the source last.
+                source: CommitmentSource::StandaloneCommitment(slug),
                 is_overdue: commitment.due < today,
                 context: commitment.context,
             });

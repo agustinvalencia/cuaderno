@@ -5,5 +5,6 @@
 
 pub mod actions;
 pub mod capture;
+pub mod commitments;
 pub mod orientation;
 pub mod projects;

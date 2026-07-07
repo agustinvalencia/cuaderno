@@ -604,7 +604,7 @@ fn commitments_aggregates_all_sources_sorted_by_date() {
             (
                 ymd(2026, 5, 30),
                 "Renew passport",
-                &CommitmentSource::StandaloneCommitment,
+                &CommitmentSource::StandaloneCommitment("renew-passport".to_owned()),
             ),
             (
                 ymd(2026, 6, 1),
@@ -843,10 +843,10 @@ fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
         is_overdue: false,
         context: Context::Work,
     };
-    let unit = CommitmentEntry {
+    let standalone = CommitmentEntry {
         date,
         title: "A promise".to_owned(),
-        source: CommitmentSource::StandaloneCommitment,
+        source: CommitmentSource::StandaloneCommitment("a-promise".to_owned()),
         is_overdue: false,
         context: Context::Personal,
     };
@@ -856,12 +856,10 @@ fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
     assert_eq!(tuple_json["source"]["kind"], "project_milestone");
     assert_eq!(tuple_json["source"]["slug"], "surrogate");
 
-    // Unit variant: {"kind":"standalone_commitment"} -- same `kind`
-    // tag, no `slug` (homogeneous, not a bare string).
-    let unit_json = serde_json::to_value(&unit).unwrap();
-    assert_eq!(unit_json["source"]["kind"], "standalone_commitment");
-    assert!(
-        unit_json["source"].get("slug").is_none(),
-        "unit variant carries no slug: {unit_json}"
-    );
+    // Standalone now carries its own slug so a consumer can complete it
+    // directly: {"kind":"standalone_commitment","slug":"a-promise"} —
+    // still the homogeneous `kind`+`slug` shape, not a bare string.
+    let standalone_json = serde_json::to_value(&standalone).unwrap();
+    assert_eq!(standalone_json["source"]["kind"], "standalone_commitment");
+    assert_eq!(standalone_json["source"]["slug"], "a-promise");
 }

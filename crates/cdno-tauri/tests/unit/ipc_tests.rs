@@ -20,19 +20,29 @@ use tauri::webview::InvokeRequest;
 
 const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Draft the intro (light)\n";
 
-fn memory_vault() -> (Vault, Arc<dyn VaultStore>) {
+fn memory_vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     store
         .write_file(&VaultPath::new("projects/alpha.md").unwrap(), ALPHA)
         .unwrap();
+    for (path, body) in notes {
+        store
+            .write_file(&VaultPath::new(path).unwrap(), body)
+            .unwrap();
+    }
     let (vault, _report) =
         Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
     (vault, store)
 }
 
-fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
-    let (vault, store) = memory_vault();
+/// A mock app seeded with `notes` on top of the baseline ALPHA
+/// project — the commitments round-trips need dated fixtures relative
+/// to today, which the static ALPHA can't carry.
+fn mock_app_with(
+    notes: &[(&str, &str)],
+) -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
+    let (vault, store) = memory_vault_with(notes);
     let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             cdno_tauri::commands::orientation::get_orientation,
@@ -40,6 +50,9 @@ fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
             cdno_tauri::commands::actions::start_action,
             cdno_tauri::commands::actions::complete_action,
             cdno_tauri::commands::projects::update_project_state,
+            cdno_tauri::commands::commitments::get_commitments,
+            cdno_tauri::commands::commitments::complete_commitment,
+            cdno_tauri::commands::commitments::complete_milestone,
             cdno_tauri::commands::capture::capture_quick,
             cdno_tauri::commands::capture::log_quick,
             cdno_tauri::commands::capture::list_inbox,
@@ -54,6 +67,10 @@ fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
         .build(mock_context(noop_assets()))
         .expect("mock app builds");
     (app, store)
+}
+
+fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
+    mock_app_with(&[])
 }
 
 fn request(cmd: &str) -> InvokeRequest {
@@ -342,5 +359,150 @@ fn complete_action_ambiguous_serialises_candidates() {
         candidates.len(),
         2,
         "both Draft bullets are candidates: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Commitments Timeline (M4, #56). The aggregation stamps `today` from
+// Local::now(), so these fixtures are dated relative to today rather
+// than a fixed date.
+// ---------------------------------------------------------------------
+
+fn project_with_hard_milestone(
+    slug_title: &str,
+    milestone: &str,
+    due: chrono::NaiveDate,
+) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# {slug_title}\n\n## Milestones\n- [ ] {milestone} \u{2014} hard: {due}\n\n## Next Actions\n",
+        due = due.format("%Y-%m-%d"),
+    )
+}
+
+fn standalone_commitment_note(due: chrono::NaiveDate) -> String {
+    format!(
+        "---\ntype: commitment\nstatus: active\ndue: {due}\ncreated: 2026-05-01\ncompleted: null\ncontext: personal\n---\n\n# Renew passport\n",
+        due = due.format("%Y-%m-%d"),
+    )
+}
+
+#[test]
+fn get_commitments_round_trips_the_camel_cased_arg_and_both_sources() {
+    // `lookahead_days` in Rust is `lookaheadDays` on the wire — the
+    // camelCase seam commands.ts pins. A 30-day window covers both
+    // fixtures below.
+    let today = chrono::Local::now().date_naive();
+    let milestone_due = today + chrono::Duration::days(5);
+    let commitment_due = today + chrono::Duration::days(7);
+    let (app, _store) = mock_app_with(&[
+        (
+            "projects/gamma.md",
+            &project_with_hard_milestone("Gamma", "Ship v1", milestone_due),
+        ),
+        (
+            "commitments/renew-passport.md",
+            &standalone_commitment_note(commitment_due),
+        ),
+    ]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-commitments", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "lookaheadDays": 30 }));
+    let response = get_ipc_response(&webview, request_with("get_commitments", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    // `today` is stamped in Rust and rides the wire as an ISO string.
+    assert_eq!(
+        value["today"].as_str(),
+        Some(today.format("%Y-%m-%d").to_string().as_str()),
+        "today is stamped for the frontend: {value}"
+    );
+
+    let entries = value["entries"].as_array().expect("entries is an array");
+    let milestone = entries
+        .iter()
+        .find(|e| e["title"] == "Ship v1")
+        .expect("the hard milestone is aggregated");
+    assert_eq!(milestone["source"]["kind"], "project_milestone");
+    assert_eq!(milestone["source"]["slug"], "gamma");
+    assert_eq!(milestone["context"], "work");
+
+    let standalone = entries
+        .iter()
+        .find(|e| e["title"] == "Renew passport")
+        .expect("the standalone commitment is aggregated");
+    // The slug now rides the wire so the done button can complete it.
+    assert_eq!(standalone["source"]["kind"], "standalone_commitment");
+    assert_eq!(standalone["source"]["slug"], "renew-passport");
+    assert_eq!(standalone["context"], "personal");
+}
+
+#[test]
+fn complete_commitment_round_trips_args_and_moves_the_note_to_done() {
+    use chrono::Datelike;
+
+    let today = chrono::Local::now().date_naive();
+    let (app, store) = mock_app_with(&[(
+        "commitments/renew-passport.md",
+        &standalone_commitment_note(today + chrono::Duration::days(7)),
+    )]);
+    let webview =
+        tauri::WebviewWindowBuilder::new(&app, "w-complete-commitment", Default::default())
+            .build()
+            .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "renew-passport" }));
+    get_ipc_response(&webview, request_with("complete_commitment", body))
+        .expect("command succeeds");
+
+    let active = VaultPath::new("commitments/renew-passport.md").unwrap();
+    assert!(
+        !store.exists(&active).expect("store query"),
+        "the active commitment is moved away"
+    );
+    // The domain files it under `_done/<completion year>/`.
+    let done = VaultPath::new(format!(
+        "commitments/_done/{}/renew-passport.md",
+        today.year()
+    ))
+    .unwrap();
+    assert!(
+        store.exists(&done).expect("store query"),
+        "the completed commitment lands under _done/<year>/"
+    );
+}
+
+#[test]
+fn complete_milestone_ambiguous_serialises_candidates() {
+    // Two milestones sharing the "Draft" substring make the query
+    // ambiguous — the picker the UI renders (kind "ambiguous").
+    let today = chrono::Local::now().date_naive();
+    let project = format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Delta\n\n## Milestones\n- [ ] Draft chapter one \u{2014} hard: {}\n- [ ] Draft chapter two \u{2014} hard: {}\n\n## Next Actions\n",
+        (today + chrono::Duration::days(5)).format("%Y-%m-%d"),
+        (today + chrono::Duration::days(6)).format("%Y-%m-%d"),
+    );
+    let (app, _store) = mock_app_with(&[("projects/delta.md", &project)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-milestone-ambig", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "delta",
+        "milestone": "Draft",
+    }));
+    let err = get_ipc_response(&webview, request_with("complete_milestone", body))
+        .expect_err("an ambiguous milestone must fail");
+
+    assert_eq!(err["kind"], "ambiguous", "{err}");
+    let candidates = err["data"]["candidates"]
+        .as_array()
+        .expect("candidates is an array");
+    assert_eq!(
+        candidates.len(),
+        2,
+        "both Draft milestones are candidates: {err}"
     );
 }
