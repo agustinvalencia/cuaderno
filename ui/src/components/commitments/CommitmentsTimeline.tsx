@@ -196,6 +196,12 @@ export default function CommitmentsTimeline({
         </details>
       )}
 
+      {visible.length === 0 && entries.length > 0 && (
+        <p className="text-sm text-ink-muted">
+          Nothing in these contexts. Clear the filter to see everything.
+        </p>
+      )}
+
       {months.map((month) => (
         <section key={month.label} aria-label={month.label}>
           <h3 className="text-xs font-medium uppercase tracking-wider text-ink-faint">

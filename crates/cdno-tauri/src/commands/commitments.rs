@@ -114,8 +114,9 @@ pub async fn complete_commitment<R: tauri::Runtime>(
 /// Tick an open milestone (`- [ ] <title> — hard: <date>`) on
 /// `project` to done. The domain rewrites the bullet in-place and logs
 /// the completion to today's daily in one transaction. An ambiguous
-/// `milestone` query comes back as `CmdError::Ambiguous` and the UI
-/// disambiguates.
+/// `milestone` query comes back as `CmdError::Ambiguous`; the UI
+/// currently surfaces the candidates in a toast (a picker is a later
+/// milestone).
 #[tauri::command]
 pub async fn complete_milestone<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

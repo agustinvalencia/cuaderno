@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP wire shape**: `get_commitments` source objects of kind `standalone_commitment` now carry
+  a `slug` field (additive; the `kind` tag is unchanged). Consumers that deserialise the source
+  strictly should allow the new field.
+
 ### Added
 
 - **Commitments Timeline (closes #56)** — the full promises view lands at `/commitments`: a
