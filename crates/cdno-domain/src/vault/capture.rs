@@ -16,7 +16,9 @@ use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
 
 /// One uncategorised capture under `inbox/` awaiting triage.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct InboxItem {
     /// Filename stem (`<YYYY-MM-DD>-<slug>`) — the handle passed to
     /// [`Vault::discard_inbox_item`].

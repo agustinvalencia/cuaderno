@@ -40,10 +40,16 @@ fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
             cdno_tauri::commands::actions::start_action,
             cdno_tauri::commands::actions::complete_action,
             cdno_tauri::commands::projects::update_project_state,
+            cdno_tauri::commands::capture::capture_quick,
+            cdno_tauri::commands::capture::log_quick,
+            cdno_tauri::commands::capture::list_inbox,
+            cdno_tauri::commands::capture::discard_inbox_item,
+            cdno_tauri::commands::capture::open_in_editor,
         ])
         .manage(AppState {
             vault: Arc::new(vault),
             journal: WriteJournal::default(),
+            root: std::path::PathBuf::from("/nonexistent-test-vault"),
         })
         .build(mock_context(noop_assets()))
         .expect("mock app builds");
@@ -170,6 +176,125 @@ fn update_project_state_round_trips_camel_cased_args() {
         .read_file(&VaultPath::new("projects/alpha.md").unwrap())
         .unwrap();
     assert!(content.contains("Rewired and humming."), "{content}");
+}
+
+#[test]
+fn capture_quick_round_trips_args_and_writes_the_inbox_note() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-capture", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "text": "buy milk" }));
+    get_ipc_response(&webview, request_with("capture_quick", body)).expect("command succeeds");
+
+    // Filename layout is `inbox/<YYYY-MM-DD>-<slug>.md`; the slug of
+    // "buy milk" is "buy-milk".
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let path = VaultPath::new(format!("inbox/{today}-buy-milk.md")).unwrap();
+    assert!(
+        store.exists(&path).expect("store query"),
+        "capture wrote the inbox note at {path}"
+    );
+    let content = store.read_file(&path).expect("inbox note readable");
+    assert!(
+        content.contains("buy milk"),
+        "inbox note carries the text: {content}"
+    );
+}
+
+#[test]
+fn log_quick_round_trips_args_and_appends_to_the_daily() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-log", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "text": "a passing thought" }));
+    get_ipc_response(&webview, request_with("log_quick", body)).expect("command succeeds");
+
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let content = store.read_file(&daily).expect("daily note written");
+    assert!(
+        content.contains("a passing thought"),
+        "daily carries the logged line: {content}"
+    );
+}
+
+#[test]
+fn list_inbox_returns_the_captured_item() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-list-inbox", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "text": "triage me" }));
+    get_ipc_response(&webview, request_with("capture_quick", body)).expect("capture succeeds");
+
+    let response = get_ipc_response(&webview, request("list_inbox")).expect("command succeeds");
+    let value = response_json(response);
+    let items = value.as_array().expect("list_inbox returns an array");
+    assert_eq!(items.len(), 1, "the one capture is listed: {value}");
+    assert_eq!(items[0]["text"], "triage me");
+    assert!(
+        items[0]["slug"]
+            .as_str()
+            .is_some_and(|s| s.ends_with("triage-me")),
+        "slug carries the date-prefixed stem: {value}"
+    );
+}
+
+#[test]
+fn discard_inbox_item_round_trips_and_logs_the_discard() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-discard", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // Capture first so there's a real inbox note (with valid inbox
+    // frontmatter) and index row for discard to find and delete.
+    let body = InvokeBody::Json(serde_json::json!({ "text": "throwaway idea" }));
+    get_ipc_response(&webview, request_with("capture_quick", body)).expect("capture succeeds");
+
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let slug = format!("{today}-throwaway-idea");
+    let note = VaultPath::new(format!("inbox/{slug}.md")).unwrap();
+    assert!(store.exists(&note).expect("store query"), "capture landed");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": slug }));
+    get_ipc_response(&webview, request_with("discard_inbox_item", body)).expect("discard succeeds");
+
+    assert!(
+        !store.exists(&note).expect("store query"),
+        "discard hard-deletes the inbox note"
+    );
+    // The domain preserves the text on today's daily as a discard line
+    // (see capture.rs: "-- discarded: <text>"), so the capture stays
+    // recoverable from the append-only daily.
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let content = store.read_file(&daily).expect("daily note written");
+    assert!(
+        content.contains("discarded: throwaway idea"),
+        "daily carries the discard line: {content}"
+    );
+}
+
+#[test]
+fn open_in_editor_rejects_a_path_escape() {
+    // The lexical VaultPath guard fires on the `..` components before
+    // the symlink-canonical layer is reached, so an escape attempt
+    // rejects as `invalid` — and this round-trips the command's args.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-open", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "path": "../../etc/passwd" }));
+    let err = get_ipc_response(&webview, request_with("open_in_editor", body))
+        .expect_err("a path escape must be refused");
+
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(err["data"].is_string());
 }
 
 #[test]

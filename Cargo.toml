@@ -149,6 +149,21 @@ notify-debouncer-mini = "0.6"
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-build = "2"
 
+# Global capture hotkey (⌘⇧C, M3). Registered from Rust `setup()` —
+# JS registration is racy — so no JS capability is needed. Summons the
+# dedicated capture window app-wide.
+tauri-plugin-global-shortcut = "2"
+
+# Single-instance guard (M3). Registered FIRST in the builder chain
+# (the plugin's hard requirement); a second launch focuses the running
+# main window instead of spawning a duplicate app.
+tauri-plugin-single-instance = "2"
+
+# Open a note in the user's default editor (M3 "open in editor"). The
+# only file access that bypasses the domain layer — guarded by a
+# VaultPath check before the vault-root join so it can't escape.
+tauri-plugin-opener = "2"
+
 # TypeScript bindings generated from the Rust wire types (plan §3.5).
 # `serde-compat` (default) honours the serde attrs; `chrono-impl` maps
 # NaiveDate to `string`. Optional everywhere — only the `ts-bindings`

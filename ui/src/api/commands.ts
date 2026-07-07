@@ -3,6 +3,7 @@
 // the single seam the tests mock.
 import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
+import type { InboxItem } from "./bindings/InboxItem";
 import type { OrientationView } from "./bindings/OrientationView";
 
 export class CuadernoError extends Error {
@@ -65,4 +66,29 @@ export function updateProjectState(project: string, newState: string): Promise<v
   // Rust `new_state` is `newState` on the wire (Tauri camelCases
   // command args) — pinned by the backend IPC round-trip test.
   return call("update_project_state", { project, newState });
+}
+
+/** Capture a thought into `inbox/` — the capture window's Enter verb. */
+export function captureQuick(text: string): Promise<void> {
+  return call("capture_quick", { text });
+}
+
+/** Append a thought to today's daily log — the capture window's Cmd+Enter verb. */
+export function logQuick(text: string): Promise<void> {
+  return call("log_quick", { text });
+}
+
+/** Every uncategorised inbox capture, oldest first. Backs the inbox drawer. */
+export function listInbox(): Promise<InboxItem[]> {
+  return call("list_inbox");
+}
+
+/** Hard-delete the inbox capture identified by `slug`. */
+export function discardInboxItem(slug: string): Promise<void> {
+  return call("discard_inbox_item", { slug });
+}
+
+/** Open a vault-relative note path in the user's default editor. */
+export function openInEditor(path: string): Promise<void> {
+  return call("open_in_editor", { path });
 }
