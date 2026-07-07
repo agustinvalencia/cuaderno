@@ -10,11 +10,11 @@
 use chrono::Local;
 use tauri::Emitter;
 
-use cdno_core::path::VaultPath;
 use crate::error::CmdError;
 use crate::events::{Origin, VAULT_CHANGED, VaultArea, VaultChanged};
 use crate::state::AppState;
 use crate::with_vault::with_vault;
+use cdno_core::path::VaultPath;
 
 /// Record `paths` as self-writes and emit the matching
 /// `origin: self` change event. Shared by every write command.
