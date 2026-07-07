@@ -415,3 +415,84 @@ fn list_tracking_caps_body_excerpt_at_200_chars() {
     assert!(char_count <= 201, "excerpt should be bounded: {char_count}");
     assert!(excerpt.ends_with('…'));
 }
+
+// ---------------------------------------------------------------------
+// tracking_series
+// ---------------------------------------------------------------------
+
+#[test]
+fn tracking_series_sums_numeric_columns_per_note() {
+    let session_1 = "\n| Exercise | Sets | Reps | Weight (kg) | Notes |\n|----------|------|------|-------------|-------|\n| Squat    | 3    | 8    | 80          | ok    |\n| Bench    | 3    | 10   | 60          |       |\n";
+    let session_2 = "\n| Exercise | Sets | Reps | Weight (kg) | Notes |\n|----------|------|------|-------------|-------|\n| Squat    | 4    | 8    | 85          |       |\n";
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-04-10-gym.md",
+            &tracking_note("health", "gym", "2026-04-10", session_1),
+        ),
+        (
+            "stewardships/health/tracking/2026-04-17-gym.md",
+            &tracking_note("health", "gym", "2026-04-17", session_2),
+        ),
+    ]);
+
+    let series = vault.tracking_series("health").unwrap();
+
+    // Sets, Reps, Weight are numeric; Exercise and Notes never parse.
+    let names: Vec<&str> = series.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "gym \u{b7} Reps",
+            "gym \u{b7} Sets",
+            "gym \u{b7} Weight (kg)"
+        ]
+    );
+    let weight = series
+        .iter()
+        .find(|s| s.name == "gym \u{b7} Weight (kg)")
+        .unwrap();
+    assert_eq!(weight.points.len(), 2);
+    assert_eq!(weight.points[0].date, ymd(2026, 4, 10));
+    assert_eq!(weight.points[0].value, 140.0, "80 + 60 summed");
+    assert_eq!(weight.points[1].value, 85.0);
+}
+
+#[test]
+fn tracking_series_single_row_measurement_is_the_value_itself() {
+    let body = "\n| Metric | Value |\n|--------|-------|\n| Weight | 82.5  |\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-04-10-body.md",
+        &tracking_note("health", "body", "2026-04-10", body),
+    )]);
+
+    let series = vault.tracking_series("health").unwrap();
+
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].name, "body \u{b7} Value");
+    assert_eq!(series[0].points[0].value, 82.5);
+}
+
+#[test]
+fn tracking_series_skips_other_stewardships_and_tableless_notes() {
+    let table = "\n| Laps |\n|------|\n| 20   |\n";
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-04-10-swim.md",
+            &tracking_note("health", "swim", "2026-04-10", table),
+        ),
+        (
+            "stewardships/health/tracking/2026-04-11-gym.md",
+            &tracking_note("health", "gym", "2026-04-11", "no table, just prose"),
+        ),
+        (
+            "stewardships/finance/tracking/2026-04-12-budget.md",
+            &tracking_note("finance", "budget", "2026-04-12", table),
+        ),
+    ]);
+
+    let series = vault.tracking_series("health").unwrap();
+
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].name, "swim \u{b7} Laps");
+    assert_eq!(series[0].points.len(), 1);
+}

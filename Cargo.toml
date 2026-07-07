@@ -131,6 +131,15 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # JWKS; the server never issues tokens, only verifies.
 jsonwebtoken = "9" 
 
+# Filesystem watching for live consumers (the desktop app's watcher
+# thread, GH Phase 5). `notify` provides the platform backends
+# (FSEvents on macOS); the mini debouncer coalesces editor
+# atomic-save storms (write + rename) into one batch per window.
+# Kept behind cdno-core's `FileWatcher` trait so the dependency never
+# leaks into other crates.
+notify = "8"
+notify-debouncer-mini = "0.6"
+
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }
 cdno-domain = { path = "crates/cdno-domain" }

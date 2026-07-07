@@ -450,3 +450,44 @@ fn promote_action_errors_on_ambiguous_match() {
         "got {err:?}",
     );
 }
+
+// ---------------------------------------------------------------------
+// start_action
+// ---------------------------------------------------------------------
+
+#[test]
+fn start_action_logs_to_daily_note() {
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let daily = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft the methods section")
+        .unwrap();
+
+    let content = store.read_file(&daily).unwrap();
+    assert!(
+        content.contains("- **09:30**: started [[alpha]] \u{2014} Draft the methods section"),
+        "daily note carries the started line: {content}"
+    );
+}
+
+#[test]
+fn start_action_rejects_parked_project_and_blank_action() {
+    const PARKED: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n";
+    let (vault, _store) = vault_with(&[
+        ("projects/alpha.md", ACTIVE_PROJECT),
+        ("projects/_parked/beta.md", PARKED),
+    ]);
+
+    let parked = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "beta", "Resume someday")
+        .unwrap_err();
+    assert!(
+        matches!(parked, DomainError::ProjectNotActive(_)),
+        "{parked:?}"
+    );
+
+    let blank = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "alpha", "   ")
+        .unwrap_err();
+    assert!(matches!(blank, DomainError::EmptyField { .. }), "{blank:?}");
+}

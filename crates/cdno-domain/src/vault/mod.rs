@@ -39,6 +39,7 @@ mod index_entry;
 mod lint;
 mod log;
 mod normalise;
+mod notes;
 mod orient;
 mod portfolios;
 mod projects;
@@ -60,9 +61,11 @@ pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
+    TrackingPoint, TrackingSeries,
 };
 pub use daily::{DailyNoteView, DailySection};
 pub use normalise::NormaliseReport;
+pub use notes::NoteView;
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};

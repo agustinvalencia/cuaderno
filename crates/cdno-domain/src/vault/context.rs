@@ -24,12 +24,16 @@
 //! - [`Vault::project_backlinks`] — backlinks grouped by note type.
 //! - [`Vault::list_tracking`] — tracking notes for a stewardship,
 //!   optionally filtered by activity and a date window.
+//! - [`Vault::tracking_series`] — numeric time series lifted from the
+//!   tracking notes' tables, ready for trend charts.
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 
+use std::collections::BTreeMap;
+
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
-use cdno_core::markdown::MarkdownDocument;
+use cdno_core::markdown::{MarkdownDocument, extract_first_table};
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -92,9 +96,27 @@ pub struct ProjectBacklinks {
     pub other: Vec<VaultPath>,
 }
 
+/// One numeric time series lifted from a stewardship's tracking
+/// notes, ready for a trend chart. See [`Vault::tracking_series`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct TrackingSeries {
+    /// `"{activity} · {column header}"` — e.g. `"gym · Weight (kg)"`.
+    pub name: String,
+    /// One point per tracking note that had a numeric value in the
+    /// column, sorted by date.
+    pub points: Vec<TrackingPoint>,
+}
+
+/// One dated value in a [`TrackingSeries`].
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct TrackingPoint {
+    pub date: NaiveDate,
+    pub value: f64,
+}
+
 /// One tracking note in `list_tracking` output, with a short body
 /// excerpt so a consumer can preview without fetching the full file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TrackingEntry {
     pub path: VaultPath,
     pub stewardship: String,
@@ -415,6 +437,75 @@ impl Vault {
                 .then_with(|| a.path.as_path().cmp(b.path.as_path()))
         });
         Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // tracking_series
+    // -----------------------------------------------------------------
+
+    /// Numeric time series for `stewardship`'s tracking notes, one
+    /// series per `(activity, table column)` pair that ever carries a
+    /// number — the data behind trend charts ("weight over time",
+    /// "session volume per week").
+    ///
+    /// For each tracking note, the **first** table in the body is
+    /// parsed (via `cdno-core`'s extractor — markdown structure stays
+    /// out of this layer) and each column's parseable numeric cells
+    /// are **summed** into one point at the note's date. Summing is
+    /// the useful aggregate for both table shapes our templates
+    /// produce: a single-row measurement table sums to the value
+    /// itself, and a multi-row session table (one row per exercise)
+    /// sums to the session total.
+    ///
+    /// Non-numeric cells and columns that never parse are skipped
+    /// silently — tables carry prose columns (`Notes`, `Exercise`) by
+    /// design. Notes without a table contribute no points. Series are
+    /// sorted by name, points by date.
+    pub fn tracking_series(&self, stewardship: &str) -> Result<Vec<TrackingSeries>, DomainError> {
+        // BTreeMap so series come out name-sorted without a second pass.
+        let mut by_name: BTreeMap<String, Vec<TrackingPoint>> = BTreeMap::new();
+        for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, body) = Frontmatter::parse(&raw)?;
+            let tf = TrackingFrontmatter::try_from(fm)?;
+            if tf.stewardship != stewardship {
+                continue;
+            }
+            let Some(table) = extract_first_table(body) else {
+                continue;
+            };
+            for (col, header) in table.headers.iter().enumerate() {
+                let mut sum = 0.0;
+                let mut seen_numeric = false;
+                for row in &table.rows {
+                    if let Some(value) = row.get(col).and_then(|cell| cell.parse::<f64>().ok()) {
+                        sum += value;
+                        seen_numeric = true;
+                    }
+                }
+                if !seen_numeric {
+                    continue;
+                }
+                by_name
+                    .entry(format!(
+                        "{activity} \u{b7} {header}",
+                        activity = tf.activity
+                    ))
+                    .or_default()
+                    .push(TrackingPoint {
+                        date: tf.date,
+                        value: sum,
+                    });
+            }
+        }
+
+        Ok(by_name
+            .into_iter()
+            .map(|(name, mut points)| {
+                points.sort_by_key(|p| p.date);
+                TrackingSeries { name, points }
+            })
+            .collect())
     }
 }
 

@@ -96,3 +96,60 @@ fn orientation_context_is_empty_on_a_fresh_vault() {
     assert!(ctx.projects.is_empty());
     assert!(ctx.lapsed_habits.is_empty());
 }
+
+// ---------------------------------------------------------------------
+// lapsed_habits
+// ---------------------------------------------------------------------
+
+const HEALTH: &str = "---\ntype: stewardship\ncontext: personal\n---\n\n# Health\n\n## Current Status\nHolding steady.\n\n## Periodic Commitments\n- Dental check-up \u{2014} every 6 months \u{2014} next: 2099-04-01\n\n## Active Habits\n- Resistance training 3x/week \u{2014} on track\n- Swimming 1x/week \u{2014} lapsed since March\n- Sleep before midnight \u{2014} inconsistent\n";
+
+const FINANCES: &str =
+    "---\ntype: stewardship\ncontext: household\n---\n\n# Finances\n\n## Current Status\nFine.\n";
+
+#[test]
+fn orientation_surfaces_declared_lapsed_habits() {
+    let vault = vault_with(&[
+        ("stewardships/health.md", HEALTH),
+        ("stewardships/finances.md", FINANCES),
+    ]);
+
+    let ctx = vault.orientation_context(ymd(2026, 5, 26)).unwrap();
+
+    assert_eq!(ctx.lapsed_habits.len(), 1);
+    assert_eq!(ctx.lapsed_habits[0].stewardship, "health");
+    assert_eq!(
+        ctx.lapsed_habits[0].detail,
+        "Swimming 1x/week \u{2014} lapsed since March"
+    );
+}
+
+#[test]
+fn lapsed_habits_matches_case_insensitively_and_only_status_segments() {
+    let steward = "---\ntype: stewardship\ncontext: personal\n---\n\n# Hobbies\n\n## Active Habits\n- Piano practice \u{2014} Lapsed (2w)\n- lapsed-thing cleanup \u{2014} on track\n- Journalling\n";
+    let vault = vault_with(&[("stewardships/hobbies.md", steward)]);
+
+    let lapsed = vault.lapsed_habits().unwrap();
+
+    // "Lapsed (2w)" matches despite the capital; the habit merely
+    // *named* lapsed-thing does not; the status-less line is skipped.
+    assert_eq!(lapsed.len(), 1);
+    assert_eq!(lapsed[0].detail, "Piano practice \u{2014} Lapsed (2w)");
+}
+
+#[test]
+fn lapsed_habits_sorted_and_expanded_variant_included() {
+    let a = "---\ntype: stewardship\ncontext: personal\n---\n\n# Zeta\n\n## Active Habits\n- Stretching \u{2014} lapsed since May\n";
+    let b = "---\ntype: stewardship\ncontext: personal\n---\n\n# Aqua\n\n## Active Habits\n- Laps \u{2014} lapsed since April\n";
+    let vault = vault_with(&[
+        ("stewardships/zeta.md", a),
+        ("stewardships/aqua/_index.md", b),
+    ]);
+
+    let lapsed = vault.lapsed_habits().unwrap();
+
+    assert_eq!(lapsed.len(), 2);
+    // Sorted by stewardship slug; the expanded variant's slug is its
+    // folder name.
+    assert_eq!(lapsed[0].stewardship, "aqua");
+    assert_eq!(lapsed[1].stewardship, "zeta");
+}

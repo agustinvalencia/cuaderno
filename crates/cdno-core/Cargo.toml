@@ -21,6 +21,10 @@ xxhash-rust.workspace = true
 # content write in a NamedTempFile in the target's directory and
 # renames it over the destination — atomic, crash-safe writes.
 tempfile.workspace = true
+# Filesystem watching (FileWatcher trait + FsFileWatcher). See the
+# workspace manifest for the rationale.
+notify.workspace = true
+notify-debouncer-mini.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true

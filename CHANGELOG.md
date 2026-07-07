@@ -6,6 +6,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Lapsed habits in orientation** — `cdno orient` / `get_orientation` now surface stewardship
+  habits whose `## Active Habits` line declares a lapse (e.g. `- Swimming 1x/week — lapsed since
+  March`). The dashboard prose is the source of truth; no cadence inference. Previously the
+  `lapsed_habits` field existed but was always empty.
+- **`FileWatcher` trait + `FsFileWatcher`** in cdno-core — debounced (400ms), vault-relative
+  filesystem events over `notify`, groundwork for the desktop app's live-refresh pipeline (#53).
+  Events are hints (`Changed`/`Removed`/`Rescan`); consumers stay correct by re-running
+  reconciliation.
+- **Domain queries for UI surfaces** — `Vault::read_note` (frontmatter + body + note type for
+  reader panes), `Vault::tracking_series` (numeric time series lifted from tracking-note tables
+  via a new cdno-core first-table extractor, for trend charts), and `Vault::start_action` (logs
+  `started [[project]] — action` to the daily note, single-sourcing the format across CLI, MCP,
+  and the future desktop Start button).
+
 ## [0.4.0] - 2026-07-07
 
 Remote serving: a Streamable HTTP transport for `cdno-mcp`, origin-side Access-JWT validation, and write safety for concurrent writers.

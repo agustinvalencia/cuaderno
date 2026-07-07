@@ -19,4 +19,5 @@ mod unit {
     mod template_tests;
     mod transaction_tests;
     mod vault_index_tests;
+    mod watcher_tests;
 }
