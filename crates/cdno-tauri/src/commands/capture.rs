@@ -95,12 +95,20 @@ pub async fn discard_inbox_item<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Open a vault note in the user's default editor. `path` is
-/// vault-relative; it is validated through [`VaultPath::new`] (which
-/// rejects absolute paths and `..` escapes) before being joined to the
-/// vault root. This is the one file access that bypasses the domain
-/// layer, so the escape guard is load-bearing — an unvalidated path
-/// would let the frontend open an arbitrary file on disk.
+/// Open a vault note in the user's default editor (read-only intent —
+/// this command only hands a path to the opener; it never writes).
+/// `path` is vault-relative. This is the one file access that bypasses
+/// the domain layer, so confinement is load-bearing and enforced in two
+/// layers:
+///
+/// 1. **Lexical** ([`VaultPath::new`]): rejects absolute paths and `..`
+///    escapes before the path is joined to the vault root.
+/// 2. **Symlink-canonical**: the lexical check follows no links, so a
+///    symlink *inside* the vault could still point outside it. We
+///    canonicalise both the resolved path and the root and require the
+///    former to sit under the latter — the guarantee is that the file
+///    actually opened resolves inside the vault, not merely that its
+///    spelling looked clean.
 #[tauri::command]
 pub async fn open_in_editor<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -109,10 +117,22 @@ pub async fn open_in_editor<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let rel = VaultPath::new(&path).map_err(|e| CmdError::Invalid(e.to_string()))?;
     let abs = state.root.join(rel.as_path());
+    // Mirrors FsVaultStore's confinement posture (`check_confinement`
+    // in cdno-core), which we can't call directly: it's private, and
+    // this open deliberately bypasses the store. Fail closed — a
+    // canonicalize error (missing file, dangling symlink, or a root
+    // that isn't on disk) is a refusal, never a fallthrough, so a
+    // symlink can't smuggle us outside the vault.
+    let outside = || CmdError::Invalid("path resolves outside the vault".to_owned());
+    let canon = std::fs::canonicalize(&abs).map_err(|_| outside())?;
+    let root_canon = std::fs::canonicalize(&state.root).map_err(|_| outside())?;
+    if !canon.starts_with(&root_canon) {
+        return Err(outside());
+    }
     // Called from Rust, so the opener plugin's JS ACL never applies —
     // no `opener:*` capability is required for this path.
     app.opener()
-        .open_path(abs.to_string_lossy().into_owned(), None::<&str>)
+        .open_path(canon.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|e| {
             tracing::error!(error = %e, "failed to open note in the default editor");
             CmdError::Internal("could not open the note in an editor".to_owned())

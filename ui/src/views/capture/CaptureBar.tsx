@@ -26,6 +26,14 @@ type Status =
 export default function CaptureBar() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  // Latest status, readable from the async `capture:show` listener
+  // without re-subscribing on every status change (its closure would
+  // otherwise capture a stale value).
+  const statusRef = useRef<Status>(status);
+  statusRef.current = status;
+  // Guards a write in flight: two rapid Enters must not capture the
+  // same text twice (the input isn't cleared until the await resolves).
+  const sending = useRef(false);
   // Pending timers, cleared on unmount or when superseded.
   const blurTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const confirmTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -43,15 +51,31 @@ export default function CaptureBar() {
   // the global hotkey re-summons an already-open window.
   useEffect(() => {
     focusInput();
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listen("capture:show", () => {
+      // Clear BOTH pending timers before resetting: a stale confirm
+      // timer from a prior capture must never fire mid-summon and hide
+      // the window while the user is typing a fresh thought, and a
+      // pending blur-hide is unwanted now the window is refocusing.
+      clearTimeout(confirmTimer.current);
+      clearTimeout(blurTimer.current);
+      // Preserve an errored capture's text across a hide + re-summon —
+      // the write failed, so these words are the only copy. Wipe only
+      // from a resolved state (idle, or the post-success confirm flash).
+      if (statusRef.current.kind !== "error" && inputRef.current) {
+        inputRef.current.value = "";
+      }
       setStatus({ kind: "idle" });
-      if (inputRef.current) inputRef.current.value = "";
       focusInput();
     }).then((fn) => {
-      unlisten = fn;
+      // Unmounted (or StrictMode-remounted) before listen resolved:
+      // detach immediately so the listener isn't orphaned.
+      if (cancelled) fn();
+      else unlisten = fn;
     });
     return () => {
+      cancelled = true;
       unlisten?.();
       clearTimeout(blurTimer.current);
       clearTimeout(confirmTimer.current);
@@ -63,6 +87,10 @@ export default function CaptureBar() {
       const input = inputRef.current;
       const text = input?.value.trim() ?? "";
       if (!text) return;
+      // In-flight guard: a second Enter arriving before the first write
+      // resolves must not re-send the same (not-yet-cleared) text.
+      if (sending.current) return;
+      sending.current = true;
       try {
         await (verb === "log" ? logQuick(text) : captureQuick(text));
         if (input) input.value = "";
@@ -76,6 +104,8 @@ export default function CaptureBar() {
         // The write failed — keep the text so it isn't lost, and show
         // the reason inline (muted, never alarming).
         setStatus({ kind: "error", message: errorMessage(error) });
+      } finally {
+        sending.current = false;
       }
     },
     [hide],
@@ -89,6 +119,9 @@ export default function CaptureBar() {
     }
     if (event.key === "Enter") {
       event.preventDefault();
+      // A held Enter autorepeats keydown; ignore the repeats so one
+      // keypress is one capture.
+      if (event.repeat) return;
       void send(event.metaKey || event.ctrlKey ? "log" : "capture");
     }
   };

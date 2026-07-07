@@ -79,7 +79,10 @@ export default function InboxDrawer({
   return (
     <div
       ref={panelRef}
-      role="dialog"
+      // Non-modal disclosure, not a dialog: there's no focus trap and
+      // no aria-modal, so `role="dialog"` would over-promise. It's a
+      // labelled region the user can Tab out of.
+      role="region"
       aria-label="Inbox"
       tabIndex={-1}
       onKeyDown={(event) => {
@@ -127,7 +130,7 @@ export default function InboxDrawer({
                     <button
                       type="button"
                       onClick={() => discard.mutate(item.slug)}
-                      aria-label={`Discard: ${item.text}`}
+                      aria-label={item.text ? `Discard: ${item.text}` : "Discard empty capture"}
                       className="rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
                     >
                       discard

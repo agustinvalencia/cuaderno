@@ -245,6 +245,59 @@ fn list_inbox_returns_the_captured_item() {
 }
 
 #[test]
+fn discard_inbox_item_round_trips_and_logs_the_discard() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-discard", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // Capture first so there's a real inbox note (with valid inbox
+    // frontmatter) and index row for discard to find and delete.
+    let body = InvokeBody::Json(serde_json::json!({ "text": "throwaway idea" }));
+    get_ipc_response(&webview, request_with("capture_quick", body)).expect("capture succeeds");
+
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let slug = format!("{today}-throwaway-idea");
+    let note = VaultPath::new(format!("inbox/{slug}.md")).unwrap();
+    assert!(store.exists(&note).expect("store query"), "capture landed");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": slug }));
+    get_ipc_response(&webview, request_with("discard_inbox_item", body)).expect("discard succeeds");
+
+    assert!(
+        !store.exists(&note).expect("store query"),
+        "discard hard-deletes the inbox note"
+    );
+    // The domain preserves the text on today's daily as a discard line
+    // (see capture.rs: "-- discarded: <text>"), so the capture stays
+    // recoverable from the append-only daily.
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let content = store.read_file(&daily).expect("daily note written");
+    assert!(
+        content.contains("discarded: throwaway idea"),
+        "daily carries the discard line: {content}"
+    );
+}
+
+#[test]
+fn open_in_editor_rejects_a_path_escape() {
+    // The lexical VaultPath guard fires on the `..` components before
+    // the symlink-canonical layer is reached, so an escape attempt
+    // rejects as `invalid` — and this round-trips the command's args.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-open", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "path": "../../etc/passwd" }));
+    let err = get_ipc_response(&webview, request_with("open_in_editor", body))
+        .expect_err("a path escape must be refused");
+
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(err["data"].is_string());
+}
+
+#[test]
 fn complete_action_error_path_serialises_the_cmd_error_contract() {
     let (app, _store) = mock_app();
     let webview = tauri::WebviewWindowBuilder::new(&app, "w-err", Default::default())
