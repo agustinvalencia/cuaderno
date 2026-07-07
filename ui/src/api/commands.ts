@@ -4,8 +4,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
 import type { CommitmentsView } from "./bindings/CommitmentsView";
+import type { EnergyLevel } from "./bindings/EnergyLevel";
 import type { InboxItem } from "./bindings/InboxItem";
+import type { NoteView } from "./bindings/NoteView";
 import type { OrientationView } from "./bindings/OrientationView";
+import type { ProjectActions } from "./bindings/ProjectActions";
+import type { ProjectDetail } from "./bindings/ProjectDetail";
+import type { ResolvedLink } from "./bindings/ResolvedLink";
+import type { SearchResultEntry } from "./bindings/SearchResultEntry";
 
 export class CuadernoError extends Error {
   readonly payload: CmdError;
@@ -112,4 +118,72 @@ export function discardInboxItem(slug: string): Promise<void> {
 /** Open a vault-relative note path in the user's default editor. */
 export function openInEditor(path: string): Promise<void> {
   return call("open_in_editor", { path });
+}
+
+// --- M5: note reader, project detail, actions list, command palette ---
+
+/** Read any vault note for the slide-in reader: parsed frontmatter,
+ * markdown body, note type, and title. */
+export function readNote(path: string): Promise<NoteView> {
+  return call("read_note", { path });
+}
+
+/** Resolve a clicked wikilink `target` to its note (path + note_type)
+ * for typed navigation. `null` when the target matches no note or is
+ * ambiguous — the caller renders that as a muted, un-clickable span. */
+export function resolveWikilink(target: string): Promise<ResolvedLink | null> {
+  return call("resolve_wikilink", { target });
+}
+
+/** The composed Project Detail bundle behind `/projects/:slug`. */
+export function getProject(slug: string): Promise<ProjectDetail> {
+  return call("get_project", { slug });
+}
+
+/** Every active project's open actions — the cross-project Actions
+ * list. */
+export function listAllActions(): Promise<ProjectActions[]> {
+  return call("list_all_actions");
+}
+
+/** Full-text vault search feeding the command palette's result list. A
+ * blank/term-less query comes back empty rather than erroring. */
+export function searchVault(query: string): Promise<SearchResultEntry[]> {
+  return call("search_vault", { query });
+}
+
+/** Add a next-action bullet to a project's `## Next Actions`. */
+export function addAction(
+  project: string,
+  action: string,
+  energy: EnergyLevel,
+): Promise<void> {
+  return call("add_action", { project, action, energy });
+}
+
+/** Promote an open action bullet to a manifest action note. */
+export function promoteAction(project: string, action: string): Promise<void> {
+  return call("promote_action", { project, action });
+}
+
+/** Record a new Waiting-On blocker on a project ("I'm now blocked on X"). */
+export function addWaitingOn(project: string, item: string): Promise<void> {
+  return call("add_waiting_on", { project, item });
+}
+
+/** Resolve (remove) a Waiting-On blocker matching `query`. Ambiguity
+ * comes back as a `CuadernoError` the caller toasts with candidates. */
+export function resolveWaiting(project: string, query: string): Promise<void> {
+  return call("resolve_waiting", { project, query });
+}
+
+/** Park an active project (moves its map to `projects/_parked/`). */
+export function parkProject(slug: string): Promise<void> {
+  return call("park_project", { slug });
+}
+
+/** Activate a parked project. At the active cap this fails with the
+ * structured `ProjectCapReached` `CuadernoError`. */
+export function activateProject(slug: string): Promise<void> {
+  return call("activate_project", { slug });
 }

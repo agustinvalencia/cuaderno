@@ -7,6 +7,7 @@ mod unit {
     mod custom_notes_tests;
     mod daily_tests;
     mod frontmatter_tests;
+    mod links_tests;
     mod lint_tests;
     mod normalise_tests;
     mod note_type_tests;

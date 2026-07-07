@@ -23,6 +23,12 @@
   --color-attention: oklch(0.75 0.09 75);
   --color-focus-ring: oklch(0.6 0.12 250);
 
+  /* The one calm blue for interactive affordances (wikilinks, the
+   * "edit" text button) — deliberately outside the seven context hues
+   * so "this is clickable" never reads as a context signal. Shares the
+   * focus-ring's blue family for a single coherent interaction colour. */
+  --color-accent-interactive: oklch(0.55 0.11 250);
+
   --color-ctx-work: oklch(0.62 0.1 245);
   --color-ctx-university: oklch(0.62 0.09 210);
   --color-ctx-side-project: oklch(0.62 0.11 300);
@@ -42,6 +48,9 @@
   --color-ink-muted: oklch(0.7 0.01 95);
   --color-ink-faint: oklch(0.52 0.01 95);
   --color-line: oklch(0.34 0.012 260);
+  /* Slightly lighter on dark so the accent keeps its lift against the
+   * sunken surfaces. */
+  --color-accent-interactive: oklch(0.68 0.11 250);
 }
 
 :root {
@@ -67,6 +76,63 @@
 :focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
+}
+
+/* Sheet / overlay motion. Real keyframe animations, not the inert
+ * `animate-in` utility (tailwindcss-animate isn't installed): Radix's
+ * Presence holds the element mounted until `animationend`, so a keyframe
+ * animation is what actually plays both the enter and the exit. A bare
+ * CSS transition wouldn't — it can't animate the initial mount, and
+ * Radix wouldn't wait for it on close. The reduced-motion rule above
+ * zeroes `animation-duration`, so these collapse to an instant swap for
+ * users who ask for less motion. */
+@keyframes sheet-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes sheet-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes sheet-right-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes sheet-right-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@keyframes sheet-left-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes sheet-left-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

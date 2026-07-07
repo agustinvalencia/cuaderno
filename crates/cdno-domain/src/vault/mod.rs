@@ -36,6 +36,7 @@ mod context;
 mod custom_notes;
 mod daily;
 mod index_entry;
+mod links;
 mod lint;
 mod log;
 mod normalise;
@@ -64,6 +65,7 @@ pub use context::{
     TrackingPoint, TrackingSeries,
 };
 pub use daily::{DailyNoteView, DailySection};
+pub use links::ResolvedLink;
 pub use normalise::NormaliseReport;
 pub use notes::NoteView;
 pub use orient::{LapsedHabit, OrientationContext};

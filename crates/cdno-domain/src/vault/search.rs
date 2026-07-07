@@ -40,7 +40,12 @@ const FILTERED_SCAN_CAP: usize = 500;
 /// domain surface owns its result shape (and can diverge later) rather
 /// than leaking the core struct through every caller.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct SearchResultEntry {
+    /// Serialised as a plain string over the wire (VaultPath's Display
+    /// form).
+    #[cfg_attr(feature = "ts-bindings", ts(type = "string"))]
     pub path: VaultPath,
     pub note_type: String,
     pub title: Option<String>,

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ActionListEntry } from "../../api/bindings/ActionListEntry";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
@@ -113,6 +114,14 @@ export default function ProjectCard({
             {project.actions.length} open
           </span>
         )}
+        {/* Quiet detail affordance — the M2 deferral: the link appears
+            now that M5 ships the /projects/:slug route. */}
+        <Link
+          to={`/projects/${project.slug}`}
+          className="shrink-0 rounded px-1.5 py-0.5 text-xs text-ink-faint hover:text-ink"
+        >
+          open
+        </Link>
       </div>
 
       {editing ? (

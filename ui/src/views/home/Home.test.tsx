@@ -4,6 +4,7 @@
 // states against a fixture shaped like the ts-rs bindings.
 import { afterEach, expect, test } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { ToastProvider } from "../../shell/Toasts";
@@ -55,7 +56,9 @@ function renderHome() {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <Home />
+        <MemoryRouter>
+          <Home />
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
