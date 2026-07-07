@@ -41,3 +41,14 @@ clean:
 coverage:
     cargo tarpaulin --workspace --out html
     @echo "Report: tarpaulin-report.html"
+
+# Regenerate the TypeScript bindings under ui/src/api/bindings/ from
+# the Rust wire types (ts-rs, plan §3.5). Run after changing any type
+# a Tauri command returns.
+gen-bindings:
+    TS_RS_EXPORT_DIR="{{justfile_directory()}}/ui/src/api/bindings" \
+        cargo test -p cdno-tauri --features ts-bindings export_bindings
+
+# Run the desktop app in dev mode against the vault at CUADERNO_VAULT_PATH
+app-dev:
+    cd ui && bunx tauri dev

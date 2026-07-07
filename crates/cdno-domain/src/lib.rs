@@ -1,8 +1,12 @@
 //! cdno-domain: Domain logic for Cuaderno.
 //!
 //! Note types, business rules, queries, and state transitions.
-//! Pure logic — no file I/O, no networking. Receives dependencies via constructor injection.
+//! Pure logic — no file I/O, no networking — with exactly one named
+//! exception: [`bootstrap`], the composition root that wires the
+//! concrete store/index for long-lived consumers. Everything else
+//! receives dependencies via constructor injection and stays pure.
 
+pub mod bootstrap;
 pub mod error;
 pub mod frontmatter;
 pub mod lint;
@@ -11,6 +15,7 @@ pub mod recurrence;
 pub mod type_registry;
 pub mod vault;
 
+pub use bootstrap::{BootstrapError, OpenedVault, open_vault};
 pub use cdno_core::template::TemplateSource;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};

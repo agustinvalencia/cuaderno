@@ -38,6 +38,8 @@ pub struct OrientationContext {
 /// A stewardship habit whose `## Active Habits` line declares a lapse
 /// (design §5.6 — e.g. "Swimming 1x/week — lapsed since March").
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct LapsedHabit {
     /// Slug of the owning stewardship.
     pub stewardship: String,

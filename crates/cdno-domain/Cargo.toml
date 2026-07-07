@@ -12,7 +12,15 @@ serde.workspace = true
 serde_yaml.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
+ts-rs = { workspace = true, optional = true }
 chrono.workspace = true
+
+[features]
+# TypeScript bindings for the types the desktop app's wire surface
+# embeds. Codegen-only: off for CLI/MCP builds, on when cdno-tauri
+# regenerates ui/src/api/bindings/.
+ts-bindings = ["dep:ts-rs"]
 
 [dev-dependencies]
 tempfile.workspace = true

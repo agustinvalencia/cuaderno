@@ -136,8 +136,8 @@ cuaderno/
 │   ├── cdno-domain/        ← note types, business rules, queries, state transitions
 │   ├── cdno-cli/           ← terminal commands (`cdno`)
 │   ├── cdno-mcp/           ← MCP server — stdio + Streamable HTTP binaries
-│   └── cdno-tauri/         ← Tauri backend for the desktop app (Phase 5, not yet created)
-├── ui/                     ← React + Tremor frontend (Phase 5, not yet created)
+│   └── cdno-tauri/         ← Tauri backend for the desktop app (scaffolded, Phase 5 in progress)
+├── ui/                     ← React + Tailwind frontend (scaffolded, Phase 5 in progress)
 └── skills/                 ← Claude skill definitions (Phase 4 skill adaptation, not yet created)
 ```
 
@@ -190,7 +190,7 @@ The tool has four consumers:
 
 Phases 1, 2, and 3 of [the build sequence](docs/implementation-plan.md) are complete; Phase 4 is in progress. **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
 
-The MCP server (Phase 4) is scaffolded with the full 16-tool catalogue advertised; three context tools are wired through to the domain (`get_orientation`, `get_active_questions`, `get_portfolio_contents`), the remaining 13 return "not yet implemented" until #46-follow-ups and #47 land. The Tauri desktop UI (Phase 5) is planned but not yet started.
+The MCP server (Phase 4) is scaffolded with the full 16-tool catalogue advertised; three context tools are wired through to the domain (`get_orientation`, `get_active_questions`, `get_portfolio_contents`), the remaining 13 return "not yet implemented" until #46-follow-ups and #47 land. The Tauri desktop UI (Phase 5) is scaffolded: the app launches with the shell and a live Home orientation view; the remaining views land milestone by milestone.
 
 See **[`STATUS.md`](STATUS.md)** for the per-phase and per-issue breakdown, and **[`CHANGELOG.md`](CHANGELOG.md)** for what's shipped per PR.
 

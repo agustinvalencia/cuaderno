@@ -26,6 +26,8 @@ use super::NEXT_ACTIONS_SECTION;
 // MCP `ActionListEntryDto` (energy/status are kebab-case via their serde
 // rename, same as the DTO's `as_str()` strings).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ActionListEntry {
     /// The bullet text after `- [ ] `, including any `(<energy>)`
     /// suffix and wikilink target. Preserved verbatim so the caller
@@ -45,6 +47,8 @@ pub struct ActionListEntry {
 /// and the current frontmatter `status` so a list view can flag
 /// active / blocked / completed inline.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct AttachedAction {
     pub slug: String,
     pub status: ActionStatus,
