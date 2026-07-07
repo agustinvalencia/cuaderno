@@ -23,7 +23,7 @@ use cdno_core::watcher::FileEvent;
 use crate::events::{
     self, Origin, VAULT_CHANGED, VaultArea, VaultChanged, WATCHER_STATUS, WatcherStatus,
 };
-use crate::state::AppState;
+use crate::state::{AppState, WriteJournal};
 
 /// Handles the watcher thread needs, cloned out of the bootstrap
 /// before `Vault` swallowed the store/index Arcs.
@@ -43,12 +43,28 @@ pub fn run(app: AppHandle, deps: WatcherDeps, rx: Receiver<Vec<FileEvent>>) {
     tracing::debug!("watcher channel closed; watcher thread exiting");
 }
 
-fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
+/// What a debounced batch means for the frontend. Computed by the
+/// pure [`plan_batch`] so the decision table is unit-testable without
+/// an `AppHandle`.
+#[derive(Debug, PartialEq)]
+pub enum BatchPlan {
+    /// Only our own echoes (or noise) — reconcile as insurance, emit
+    /// no change event (the command already emitted a precise
+    /// `origin: self` one).
+    Quiet,
+    /// Events were dropped somewhere — invalidate everything.
+    Rescan,
+    /// External edits in these areas.
+    External {
+        areas: Vec<VaultArea>,
+        paths: Vec<String>,
+    },
+}
+
+/// Classify a batch against the self-write journal.
+pub fn plan_batch(journal: &WriteJournal, batch: Vec<FileEvent>) -> BatchPlan {
     let mut rescan = false;
     let mut external: Vec<VaultPath> = Vec::new();
-
-    let state = app.state::<AppState>();
-    let journal = &state.journal;
     for event in batch {
         match event {
             FileEvent::Rescan => rescan = true,
@@ -66,15 +82,30 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
         }
     }
 
-    if !rescan && external.is_empty() {
-        // Pure self-echo (or noise) — reconcile is still cheap
-        // insurance, but there is nothing to tell the frontend.
-        run_reconcile(deps);
-        return;
+    if rescan {
+        return BatchPlan::Rescan;
     }
+    let mut areas: Vec<VaultArea> = external.iter().filter_map(events::classify).collect();
+    areas.sort();
+    areas.dedup();
+    if areas.is_empty() {
+        return BatchPlan::Quiet;
+    }
+    BatchPlan::External {
+        areas,
+        paths: external.iter().map(|p| p.to_string()).collect(),
+    }
+}
 
-    // Reconcile ALWAYS runs before the emit so the frontend's
-    // refetches hit an index that already reflects the change.
+fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
+    let state = app.state::<AppState>();
+    let plan = plan_batch(&state.journal, batch);
+
+    // Reconcile ALWAYS runs (even for pure self-echo batches — cheap
+    // insurance), and its health is ALWAYS reported: once write
+    // commands land, self-echo is the common batch shape, and a
+    // degraded index must not stay invisible until the next external
+    // edit.
     let ok = run_reconcile(deps);
     let _ = app.emit(
         WATCHER_STATUS,
@@ -83,25 +114,18 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
         },
     );
 
-    let payload = if rescan {
-        // Events were dropped somewhere — invalidate everything.
-        VaultChanged {
+    let payload = match plan {
+        BatchPlan::Quiet => return,
+        BatchPlan::Rescan => VaultChanged {
             origin: Origin::External,
             areas: all_areas(),
             paths: Vec::new(),
-        }
-    } else {
-        let mut areas: Vec<VaultArea> = external.iter().filter_map(events::classify).collect();
-        areas.sort_by_key(|a| format!("{a:?}"));
-        areas.dedup();
-        if areas.is_empty() {
-            return; // nothing any view renders
-        }
-        VaultChanged {
+        },
+        BatchPlan::External { areas, paths } => VaultChanged {
             origin: Origin::External,
             areas,
-            paths: external.iter().map(|p| p.to_string()).collect(),
-        }
+            paths,
+        },
     };
     let _ = app.emit(VAULT_CHANGED, payload);
 }

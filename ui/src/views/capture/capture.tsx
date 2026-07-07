@@ -4,7 +4,10 @@
 // and the window wiring honest from day one.
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { initTheme } from "../../lib/theme";
 import "../../styles/globals.css";
+
+initTheme();
 
 function CaptureBar() {
   return (

@@ -11,7 +11,7 @@
 //! span everything.
 
 use crate::error::DomainError;
-use crate::frontmatter::{EnergyLevel, ProjectStatus};
+use crate::frontmatter::{Context, EnergyLevel, ProjectStatus};
 
 use super::super::Vault;
 use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
@@ -29,6 +29,11 @@ use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
 pub struct ProjectSummary {
     pub slug: String,
     pub status: ProjectStatus,
+    /// Life context from the frontmatter — drives the UI's colour
+    /// dot. Carried here so orientation consumers get it in the same
+    /// pass that reads the map (a separate lookup could race a
+    /// concurrent park/rename into a silently wrong colour).
+    pub context: Context,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
 }
@@ -73,6 +78,7 @@ impl Vault {
         Ok(ProjectSummary {
             slug: slug.to_owned(),
             status: project.status,
+            context: project.context,
             state_snippet,
             top_action,
         })

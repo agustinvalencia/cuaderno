@@ -29,7 +29,7 @@
   --color-ctx-personal: oklch(0.65 0.1 330);
   --color-ctx-family: oklch(0.65 0.11 145);
   --color-ctx-household: oklch(0.65 0.1 110);
-  --color-ctx-legal: oklch(0.6 0.06 60);
+  --color-ctx-legal: oklch(0.6 0.06 170);
 }
 
 /* Dark theme: class strategy on <html>; default follows the OS via
@@ -45,11 +45,21 @@
 }
 
 :root {
-  color-scheme: light dark;
+  /* Follows the .dark class, not the OS — a manual light override
+   * must also get light scrollbars and form controls. */
+  color-scheme: light;
 }
 
-body {
-  @apply bg-bg-base text-ink antialiased;
+.dark {
+  color-scheme: dark;
+}
+
+/* In @layer base so utilities can override it — the capture window's
+ * transparent body depends on bg-transparent winning. */
+@layer base {
+  body {
+    @apply bg-bg-base text-ink antialiased;
+  }
 }
 
 /* Keyboard-first: the focus ring is always visible on keyboard

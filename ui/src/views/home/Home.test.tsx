@@ -15,7 +15,7 @@ const FIXTURE: OrientationView = {
     {
       date: "2026-07-08",
       title: "submit-report",
-      source: { kind: "project_milestone", slug: "alpha" } as never,
+      source: { kind: "project_milestone", slug: "alpha" },
       is_overdue: false,
     },
   ],
@@ -59,6 +59,16 @@ test("renders commitments, project cards, and the lapsed line", async () => {
   expect(screen.getByText("submit-report")).toBeDefined();
   expect(screen.getByText(/Draft methods/)).toBeDefined();
   expect(screen.getByText(/quietly lapsed/)).toBeDefined();
+});
+
+test("backend failure renders the calm error state", async () => {
+  mockIPC(() => {
+    throw { kind: "internal", data: "internal error" };
+  });
+
+  renderHome();
+
+  expect(await screen.findByText(/could not be read/)).toBeDefined();
 });
 
 test("empty vault renders the warm empty state, not blanks", async () => {

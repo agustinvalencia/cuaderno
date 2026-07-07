@@ -81,6 +81,7 @@ export default function AppShell() {
         <div className="mt-auto flex items-center justify-between px-2 pt-4">
           <button
             type="button"
+            aria-label="Cycle colour theme (system, light, dark)"
             onClick={() => cycleTheme()}
             className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
           >

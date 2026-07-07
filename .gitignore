@@ -31,3 +31,4 @@ docs-site/book/
 ui/node_modules/
 ui/dist/
 crates/cdno-tauri/gen/
+ui/tsconfig.tsbuildinfo

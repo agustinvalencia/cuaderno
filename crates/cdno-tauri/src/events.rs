@@ -15,6 +15,8 @@ pub const CLOCK_DAY_CHANGED: &str = "clock:day-changed";
 /// The global shortcut summoned the capture window (M3).
 pub const CAPTURE_SHOW: &str = "capture:show";
 
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct VaultChanged {
     pub origin: Origin,
@@ -22,6 +24,8 @@ pub struct VaultChanged {
     pub paths: Vec<String>,
 }
 
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Origin {
@@ -35,7 +39,9 @@ pub enum Origin {
 /// Coarse buckets the frontend maps to query-key prefixes. One area
 /// per top-level vault directory, split where the journal folds two
 /// note types into one tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VaultArea {
     Projects,

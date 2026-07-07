@@ -46,22 +46,35 @@ pub const ECHO_WINDOW: Duration = Duration::from_secs(2);
 impl WriteJournal {
     /// Record paths this process just committed.
     pub fn record(&self, paths: impl IntoIterator<Item = VaultPath>) {
-        let now = Instant::now();
-        let mut inner = self.inner.lock().expect("journal mutex poisoned");
-        // Prune on every insert so the map never grows past the set
-        // of paths written in the last window.
-        inner.retain(|_, at| now.duration_since(*at) < ECHO_WINDOW);
-        for path in paths {
-            inner.insert(path, now);
-        }
+        self.record_at(Instant::now(), paths);
     }
 
     /// Was `path` written by us within the echo window? Prunes stale
     /// entries as a side effect.
     pub fn is_recent_self_write(&self, path: &VaultPath) -> bool {
-        let now = Instant::now();
+        self.is_recent_self_write_at(Instant::now(), path)
+    }
+
+    /// Clock-injected form of [`record`](Self::record) — exists so
+    /// the expiry behaviour is testable without sleeping through a
+    /// real window.
+    #[doc(hidden)]
+    pub fn record_at(&self, now: Instant, paths: impl IntoIterator<Item = VaultPath>) {
         let mut inner = self.inner.lock().expect("journal mutex poisoned");
-        inner.retain(|_, at| now.duration_since(*at) < ECHO_WINDOW);
+        // Prune on every insert so the map never grows past the set
+        // of paths written in the last window.
+        inner.retain(|_, at| now.saturating_duration_since(*at) < ECHO_WINDOW);
+        for path in paths {
+            inner.insert(path, now);
+        }
+    }
+
+    /// Clock-injected form of
+    /// [`is_recent_self_write`](Self::is_recent_self_write).
+    #[doc(hidden)]
+    pub fn is_recent_self_write_at(&self, now: Instant, path: &VaultPath) -> bool {
+        let mut inner = self.inner.lock().expect("journal mutex poisoned");
+        inner.retain(|_, at| now.saturating_duration_since(*at) < ECHO_WINDOW);
         inner.contains_key(path)
     }
 }

@@ -13,6 +13,8 @@ use cdno_domain::error::DomainError;
 /// lossy is the direction: a user-fixable error must not degrade to
 /// `Internal` (which hides the message behind a generic toast) —
 /// hence the exhaustive match below.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, serde::Serialize, thiserror::Error)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum CmdError {
@@ -100,8 +102,15 @@ impl From<DomainError> for CmdError {
             DomainError::Validation(_) | DomainError::Parse(_) | DomainError::Manipulation(_) => {
                 CmdError::Invalid(e.to_string())
             }
-            // Store errors other than NotFound (AlreadyExists, escape
-            // attempts, IO) read as user-actionable messages too.
+            // Disk failures and the symlink-escape backstop are not
+            // user-fixable — a bug or an environment fault, never a
+            // typo. Log, genericise.
+            DomainError::Store(StoreError::Io { .. } | StoreError::OutsideVault(_)) => {
+                tracing::error!(error = %e, "store failure behind a command");
+                CmdError::Internal("internal error while executing the command".to_owned())
+            }
+            // The remaining store errors (AlreadyExists, LockTimeout,
+            // PermissionDenied) read as user-actionable messages.
             DomainError::Store(_) | DomainError::Path(_) | DomainError::Config(_) => {
                 CmdError::Invalid(e.to_string())
             }

@@ -1,17 +1,9 @@
-// The seven life contexts (mirrors cdno-domain's `Context` enum) and
-// their token-backed hues. Colour signals context, never urgency —
-// design law.
-export const CONTEXTS = [
-  "work",
-  "university",
-  "side-project",
-  "personal",
-  "family",
-  "household",
-  "legal",
-] as const;
+// Token-backed hue per life context (the `Context` union is generated
+// from the Rust enum). Colour signals context, never urgency — design
+// law.
+import type { Context } from "../api/bindings/Context";
 
-export type Context = (typeof CONTEXTS)[number];
+export type { Context };
 
 /** Tailwind class fragments per context, resolved from theme tokens. */
 export function contextDotClass(context: string): string {

@@ -52,7 +52,7 @@ fn orientation_view_composes_context_actions_and_lapses() {
     assert_eq!(view.projects.len(), 1);
     let project = &view.projects[0];
     assert_eq!(project.summary.slug, "alpha");
-    assert_eq!(project.context, cdno_domain::Context::Work);
+    assert_eq!(project.summary.context, cdno_domain::Context::Work);
     assert_eq!(project.actions.len(), 2);
 
     assert_eq!(view.lapsed_habits.len(), 1);

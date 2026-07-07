@@ -28,7 +28,12 @@ const queryClient = new QueryClient({
 // cover anything emitted earlier. In a plain browser tab (vite dev
 // without Tauri) the bridge is absent — render anyway.
 attachEventBridge(queryClient)
-  .catch(() => undefined)
+  .catch((error) => {
+    // Absent bridge is normal in a plain browser tab; a failure
+    // inside Tauri (capability regression) must at least be loud in
+    // the devtools console.
+    console.warn("event bridge not attached; relying on focus refetch", error);
+  })
   .finally(() => {
     createRoot(document.getElementById("root")!).render(
       <StrictMode>

@@ -9,9 +9,13 @@
 //!
 //! Lives in cdno-domain, not cdno-core, because it constructs a
 //! [`Vault`] and the domain crate sits above core in the dependency
-//! order. Errors are typed ([`BootstrapError`]) per the workspace
-//! rule — no `anyhow` in library code; binary callers wrap it at
-//! their boundary.
+//! order. This is deliberately the crate's **single impure module**
+//! — the composition root that names `FsVaultStore` and
+//! `SqliteIndex` concretely so no downstream crate has to; the
+//! "domain depends on traits only" rule holds everywhere else.
+//! Errors are typed ([`BootstrapError`]) per the workspace rule — no
+//! `anyhow` in library code; binary callers wrap it at their
+//! boundary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -2,18 +2,9 @@
 // refetches are index-backed and cheap, and a too-wide invalidation
 // is self-healing while a too-narrow one shows stale data.
 import type { QueryClient } from "@tanstack/react-query";
+import type { VaultArea } from "../api/bindings/VaultArea";
 
-export type VaultArea =
-  | "projects"
-  | "actions"
-  | "daily"
-  | "weekly"
-  | "commitments"
-  | "portfolios"
-  | "stewardships"
-  | "questions"
-  | "inbox"
-  | "config";
+export type { VaultArea };
 
 const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   projects: ["get_orientation", "list_projects", "get_project"],

@@ -39,7 +39,7 @@ export default function Home() {
           <ul className="mt-2 flex flex-wrap gap-2">
             {data.commitments.map((commitment) => (
               <li
-                key={`${commitment.date}-${commitment.title}`}
+                key={`${commitment.source.kind}-${commitment.date}-${commitment.title}`}
                 className="rounded border border-line bg-bg-surface px-3 py-1.5 text-sm text-ink"
               >
                 <span>{commitment.title}</span>

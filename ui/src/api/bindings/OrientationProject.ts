@@ -4,9 +4,16 @@ import type { Context } from "./Context";
 import type { ProjectStatus } from "./ProjectStatus";
 import type { TopAction } from "./TopAction";
 
-export type OrientationProject = { context: Context, 
+export type OrientationProject = { 
 /**
  * All open bullets from `## Next Actions`, for the energy
  * filter's no-match rule (a card never blanks).
  */
-actions: Array<ActionListEntry>, slug: string, status: ProjectStatus, state_snippet: string, top_action: TopAction | null, };
+actions: Array<ActionListEntry>, slug: string, status: ProjectStatus, 
+/**
+ * Life context from the frontmatter — drives the UI's colour
+ * dot. Carried here so orientation consumers get it in the same
+ * pass that reads the map (a separate lookup could race a
+ * concurrent park/rename into a silently wrong colour).
+ */
+context: Context, state_snippet: string, top_action: TopAction | null, };

@@ -176,3 +176,19 @@ fn log_to_daily_note_upserts_index_row_for_the_daily_note() {
         "content_hash should be populated",
     );
 }
+
+// ---------------------------------------------------------------------
+// bootstrap::open_vault
+// ---------------------------------------------------------------------
+
+#[test]
+fn open_vault_rejects_a_directory_without_the_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let Err(err) = cdno_domain::bootstrap::open_vault(dir.path()) else {
+        panic!("a bare tempdir must not open as a vault");
+    };
+    assert!(matches!(
+        err,
+        cdno_domain::bootstrap::BootstrapError::NotAVault { .. }
+    ));
+}

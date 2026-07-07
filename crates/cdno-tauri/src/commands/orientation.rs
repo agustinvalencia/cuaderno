@@ -2,8 +2,8 @@
 
 use chrono::{Local, NaiveDate};
 
+use cdno_domain::Vault;
 use cdno_domain::vault::{ActionListEntry, CommitmentEntry, LapsedHabit, ProjectSummary};
-use cdno_domain::{Context, Vault};
 
 use crate::error::CmdError;
 use crate::state::AppState;
@@ -31,7 +31,6 @@ pub struct OrientationView {
 pub struct OrientationProject {
     #[serde(flatten)]
     pub summary: ProjectSummary,
-    pub context: Context,
     /// All open bullets from `## Next Actions`, for the energy
     /// filter's no-match rule (a card never blanks).
     pub actions: Vec<ActionListEntry>,
@@ -42,32 +41,10 @@ pub struct OrientationProject {
 pub fn get_orientation_impl(vault: &Vault, today: NaiveDate) -> Result<OrientationView, CmdError> {
     let ctx = vault.orientation_context(today)?;
 
-    // Context per slug from the typed frontmatter. `active_projects`
-    // re-reads the maps the summaries came from — index-backed and
-    // personal-scale, not worth a domain-API change to dedupe.
-    let mut contexts = std::collections::HashMap::new();
-    for (path, fm) in vault.active_projects()? {
-        let slug = path
-            .as_path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_owned();
-        contexts.insert(slug, fm.context);
-    }
-
     let mut projects = Vec::with_capacity(ctx.projects.len());
     for summary in ctx.projects {
         let actions = vault.list_actions(&summary.slug)?;
-        let context = contexts
-            .get(&summary.slug)
-            .copied()
-            .unwrap_or(Context::Personal);
-        projects.push(OrientationProject {
-            context,
-            actions,
-            summary,
-        });
+        projects.push(OrientationProject { actions, summary });
     }
 
     Ok(OrientationView {
