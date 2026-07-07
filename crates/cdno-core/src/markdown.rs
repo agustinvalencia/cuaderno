@@ -497,8 +497,10 @@ pub struct MarkdownTable {
 /// after the delimiter become data rows until the first line that no
 /// longer starts with `|`. This is a line scanner in the same spirit
 /// as the other extractors in this module — it handles the tables our
-/// templates write and hands anything fancier (multiline cells,
-/// escaped pipes) back as plain cell text.
+/// templates write. Known limits: it does not track ``` fences (a
+/// pipe table inside a code block would be matched first), and an
+/// escaped `\|` still splits the cell — acceptable for tracking-note
+/// bodies, which the templates keep fence-free and plain.
 pub fn extract_first_table(body: &str) -> Option<MarkdownTable> {
     let mut lines = body.lines().peekable();
     while let Some(line) = lines.next() {

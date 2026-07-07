@@ -22,6 +22,14 @@ fn vp(p: &str) -> VaultPath {
 /// Drain batches until `pred` matches one event or the timeout
 /// elapses. Batching is nondeterministic (one edit can arrive as one
 /// or several batches), so tests assert on the union.
+/// FSEvents can miss events fired in the instant after stream
+/// creation; a short settle after `watch()` keeps local macOS runs
+/// deterministic (inotify registers synchronously, so this is free on
+/// Linux CI).
+fn settle() {
+    std::thread::sleep(Duration::from_millis(150));
+}
+
 fn wait_for(
     rx: &mpsc::Receiver<Vec<FileEvent>>,
     pred: impl Fn(&FileEvent) -> bool,
@@ -46,6 +54,7 @@ fn watcher_reports_created_file_as_changed() {
     let (tx, rx) = mpsc::channel();
     let mut watcher = FsFileWatcher::new(dir.path());
     watcher.watch(tx).unwrap();
+    settle();
 
     fs::write(dir.path().join("projects/alpha.md"), "# Alpha\n").unwrap();
 
@@ -66,6 +75,7 @@ fn watcher_reports_deleted_file_as_removed() {
     let (tx, rx) = mpsc::channel();
     let mut watcher = FsFileWatcher::new(dir.path());
     watcher.watch(tx).unwrap();
+    settle();
 
     fs::remove_file(&target).unwrap();
 
@@ -90,6 +100,7 @@ fn watcher_collapses_atomic_save_to_final_path() {
     let (tx, rx) = mpsc::channel();
     let mut watcher = FsFileWatcher::new(dir.path());
     watcher.watch(tx).unwrap();
+    settle();
 
     let tmp = dir.path().join(".note.md.tmp-1234");
     fs::write(&tmp, "v2\n").unwrap();
@@ -129,4 +140,60 @@ fn stopped_watcher_stops_delivering() {
         }
     }
     assert!(!got_late_event, "no events after stop()");
+}
+
+// ---------------------------------------------------------------------
+// map_debounce_result — the closure body, unit-testable without a
+// real backend
+// ---------------------------------------------------------------------
+
+use std::path::Path;
+
+use cdno_core::watcher::map_debounce_result;
+use notify_debouncer_mini::{DebouncedEvent, DebouncedEventKind};
+
+fn debounced(path: &Path) -> DebouncedEvent {
+    DebouncedEvent {
+        path: path.to_path_buf(),
+        kind: DebouncedEventKind::Any,
+    }
+}
+
+#[test]
+fn map_debounce_result_backend_error_becomes_rescan() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = notify::Error::generic("backend fell over");
+    let batch = map_debounce_result(dir.path(), Err(err));
+    assert_eq!(batch, vec![FileEvent::Rescan]);
+}
+
+#[test]
+fn map_debounce_result_probes_existence_and_relativises() {
+    let dir = tempfile::tempdir().unwrap();
+    let existing = dir.path().join("projects/alpha.md");
+    fs::create_dir_all(existing.parent().unwrap()).unwrap();
+    fs::write(&existing, "# Alpha\n").unwrap();
+    let gone = dir.path().join("projects/removed.md");
+
+    let batch = map_debounce_result(dir.path(), Ok(vec![debounced(&existing), debounced(&gone)]));
+
+    assert_eq!(
+        batch,
+        vec![
+            FileEvent::Changed(vp("projects/alpha.md")),
+            FileEvent::Removed(vp("projects/removed.md")),
+        ]
+    );
+}
+
+#[test]
+fn map_debounce_result_drops_paths_outside_the_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let foreign = other.path().join("elsewhere.md");
+    fs::write(&foreign, "x\n").unwrap();
+
+    let batch = map_debounce_result(dir.path(), Ok(vec![debounced(&foreign)]));
+
+    assert!(batch.is_empty(), "foreign path dropped, not misattributed");
 }

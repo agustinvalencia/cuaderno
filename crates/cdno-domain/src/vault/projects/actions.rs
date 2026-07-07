@@ -54,9 +54,10 @@ impl Vault {
     /// Record that work on an action is starting: one line in today's
     /// daily log, `started [[<slug>]] — <action>`.
     ///
-    /// This is the single home of the "started" log format — the CLI,
-    /// MCP, and desktop Start button all call this rather than
-    /// composing their own line, so the trace stays greppable. The
+    /// This is the single home of the "started" log format — CLI,
+    /// MCP, and desktop-Start-button surfaces are expected to call
+    /// this rather than compose their own line, so the trace stays
+    /// greppable. The
     /// project is resolved first (active projects only) so the logged
     /// wikilink can't dangle; `action` is free text — typically the
     /// bullet the caller picked from `list_actions`, but starting

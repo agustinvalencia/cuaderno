@@ -199,6 +199,14 @@ pub enum FileEvent {
 }
 ```
 
+**2026-07-07 update:** the shipped trait (`crates/cdno-core/src/watcher.rs`, PR #311) deviates
+from this sketch. Post-debounce, the platform backends cannot reliably distinguish create from
+modify, and a rename surfaces as two paths — so the honest event surface is
+`Changed(VaultPath)` / `Removed(VaultPath)` / `Rescan`, delivered as debounced **batches**
+(`Sender<Vec<FileEvent>>`), with `watch`/`stop` taking `&mut self`. Events are hints: consumers
+re-run `reconcile()` per batch rather than trusting event fidelity. See the module docs for the
+full rationale, including the inotify-overflow caveat on `Rescan`.
+
 ### 3.5 Template Engine (`cdno-core`)
 
 ```rust

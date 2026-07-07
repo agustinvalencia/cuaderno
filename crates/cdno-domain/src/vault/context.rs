@@ -445,22 +445,25 @@ impl Vault {
 
     /// Numeric time series for `stewardship`'s tracking notes, one
     /// series per `(activity, table column)` pair that ever carries a
-    /// number — the data behind trend charts ("weight over time",
-    /// "session volume per week").
+    /// number — the data behind trend charts ("weight over time").
     ///
     /// For each tracking note, the **first** table in the body is
     /// parsed (via `cdno-core`'s extractor — markdown structure stays
     /// out of this layer) and each column's parseable numeric cells
-    /// are **summed** into one point at the note's date. Summing is
-    /// the useful aggregate for both table shapes our templates
-    /// produce: a single-row measurement table sums to the value
-    /// itself, and a multi-row session table (one row per exercise)
-    /// sums to the session total.
+    /// are **summed** into one point at the note's date. Per-column
+    /// sums are the canonical *raw* aggregate this layer can compute
+    /// without knowing column semantics: a single-row measurement
+    /// table sums to the value itself, and multi-row columns sum to
+    /// their per-note total (meaningful for counts like Sets/Reps;
+    /// noise for e.g. Weight-per-exercise — picking which series to
+    /// chart is the consumer's job).
     ///
-    /// Non-numeric cells and columns that never parse are skipped
-    /// silently — tables carry prose columns (`Notes`, `Exercise`) by
-    /// design. Notes without a table contribute no points. Series are
-    /// sorted by name, points by date.
+    /// Non-numeric and non-finite cells (`NaN`/`inf` parse as f64 but
+    /// would poison sums and serialise as JSON `null`) and columns
+    /// that never yield a value are skipped silently — tables carry
+    /// prose columns (`Notes`, `Exercise`) by design. Notes without a
+    /// table contribute no points. Series are sorted by name, points
+    /// by date.
     pub fn tracking_series(&self, stewardship: &str) -> Result<Vec<TrackingSeries>, DomainError> {
         // BTreeMap so series come out name-sorted without a second pass.
         let mut by_name: BTreeMap<String, Vec<TrackingPoint>> = BTreeMap::new();
@@ -478,7 +481,11 @@ impl Vault {
                 let mut sum = 0.0;
                 let mut seen_numeric = false;
                 for row in &table.rows {
-                    if let Some(value) = row.get(col).and_then(|cell| cell.parse::<f64>().ok()) {
+                    if let Some(value) = row
+                        .get(col)
+                        .and_then(|cell| cell.parse::<f64>().ok())
+                        .filter(|v| v.is_finite())
+                    {
                         sum += value;
                         seen_numeric = true;
                     }

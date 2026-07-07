@@ -5,6 +5,7 @@
 //! parsed frontmatter, the markdown body, and the note type so a
 //! renderer never re-implements the frontmatter split.
 
+use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 
@@ -58,14 +59,4 @@ impl Vault {
             body,
         })
     }
-}
-
-/// Text of the first ATX H1 line in `body`, with the leading `# ` and
-/// surrounding whitespace stripped.
-fn first_h1(body: &str) -> Option<String> {
-    body.lines().find_map(|line| {
-        line.trim_start()
-            .strip_prefix("# ")
-            .map(|rest| rest.trim().to_owned())
-    })
 }

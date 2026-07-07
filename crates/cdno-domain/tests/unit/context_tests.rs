@@ -496,3 +496,22 @@ fn tracking_series_skips_other_stewardships_and_tableless_notes() {
     assert_eq!(series[0].name, "swim \u{b7} Laps");
     assert_eq!(series[0].points.len(), 1);
 }
+
+#[test]
+fn tracking_series_ignores_non_finite_numerics() {
+    // "inf"/"NaN" parse as f64 but would poison sums and serialise as
+    // JSON null — they must not count as numeric cells.
+    let body = "\n| Metric | Value | Mood |\n|--------|-------|------|\n| Weight | 82.5  | inf  |\n| Rest   | NaN   | good |\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-04-10-body.md",
+        &tracking_note("health", "body", "2026-04-10", body),
+    )]);
+
+    let series = vault.tracking_series("health").unwrap();
+
+    // Value keeps only the finite 82.5; Mood never yields a finite
+    // number so no series exists for it.
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].name, "body \u{b7} Value");
+    assert_eq!(series[0].points[0].value, 82.5);
+}
