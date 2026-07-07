@@ -1,14 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { getOrientation, listInbox } from "../api/commands";
-import NoteReader from "../components/markdown/NoteReader";
 import { contextDotClass } from "../lib/contexts";
 import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
-import CommandPalette from "./CommandPalette";
 import InboxDrawer from "./InboxDrawer";
 import { ReaderProvider, useReader } from "./reader";
+
+// The note reader pulls react-markdown + remark-gfm; the palette pulls
+// cmdk. Neither is on the shell's first paint, so both load lazily —
+// the reader only when a note is opened, the palette only on first ⌘K —
+// keeping those deps out of the main chunk.
+const NoteReader = lazy(() => import("../components/markdown/NoteReader"));
+const CommandPalette = lazy(() => import("./CommandPalette"));
 
 /** The single note-reader panel for the whole app (plan §6): distant
  * surfaces (timeline chips, palette results, backlinks) open it via
@@ -18,7 +23,19 @@ import { ReaderProvider, useReader } from "./reader";
 function ReaderHost() {
   const { openPath, openReader, closeReader } = useReader();
   if (!openPath) return null;
-  return <NoteReader path={openPath} onClose={closeReader} onNavigate={openReader} />;
+  // `key={openPath}` remounts the reader on note-to-note navigation so
+  // scroll position and internal state reset instead of bleeding from
+  // the previous note into the next.
+  return (
+    <Suspense fallback={null}>
+      <NoteReader
+        key={openPath}
+        path={openPath}
+        onClose={closeReader}
+        onNavigate={openReader}
+      />
+    </Suspense>
+  );
 }
 
 const NAV = [
@@ -179,7 +196,13 @@ export default function AppShell() {
         <InboxDrawer onClose={() => setInboxOpen(false)} returnFocusRef={inboxButtonRef} />
       )}
 
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      {/* Mounted only once opened, so cmdk loads on first ⌘K, not on
+          the shell's first paint. */}
+      {paletteOpen && (
+        <Suspense fallback={null}>
+          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        </Suspense>
+      )}
       <ReaderHost />
     </div>
     </ReaderProvider>

@@ -142,6 +142,13 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
   // Optimistic done: drop the bullet from the cached detail immediately
   // (cheap, high-frequency), roll back on error.
+  //
+  // Bullet text is the action's identity throughout this view — the
+  // React key, the optimistic filter below, and the `completeAction`
+  // argument all key on `action.text`. Two bullets with identical text
+  // would collide (and the backend's case-insensitive substring match
+  // would reject the pair as ambiguous). We accept that: distinct next
+  // actions read as distinct text in practice.
   const complete = useMutation({
     mutationFn: (text: string) => completeAction(slug, text),
     onMutate: async (text) => {
@@ -285,7 +292,7 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
             type="button"
             onClick={() => setEditingState(true)}
             aria-label={`Edit the current state of ${slug}`}
-            className="mt-2 block rounded text-left text-sm text-ctx-work hover:underline"
+            className="mt-2 block rounded text-left text-sm text-accent-interactive hover:underline"
           >
             Edit current state
           </button>

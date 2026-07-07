@@ -8,6 +8,7 @@
 use chrono::{Duration, Local, NaiveDate, NaiveTime};
 
 use cdno_core::path::VaultPath;
+use cdno_domain::error::DomainError;
 use cdno_domain::vault::ActionListEntry;
 use cdno_domain::{Context, ProjectStatus, Vault};
 
@@ -116,9 +117,22 @@ pub fn get_project_impl(
 
     // Only active projects expose their action list; parked ones fold
     // to an empty list rather than erroring, so the page stays a
-    // read-only history view.
+    // read-only history view. The frontmatter `status` is the primary
+    // gate.
+    //
+    // Drift case: the map's frontmatter can say `active` while the file
+    // actually sits under `_parked/` (a torn park/activate that only got
+    // half-committed, or a hand-edited status). `list_actions` reads the
+    // file's real location and refuses a parked map with
+    // `ProjectNotActive` — so we catch that here and also fold to empty.
+    // An inconsistent vault must degrade to a read-only page, never fail
+    // the whole detail load.
     let actions = if fm.status == ProjectStatus::Active {
-        vault.list_actions(slug)?
+        match vault.list_actions(slug) {
+            Ok(actions) => actions,
+            Err(DomainError::ProjectNotActive(_)) => Vec::new(),
+            Err(e) => return Err(e.into()),
+        }
     } else {
         Vec::new()
     };

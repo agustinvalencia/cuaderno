@@ -16,8 +16,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **Project Detail, Actions view, note reader, and command palette (M5, plan §1.0/§1.2/§1.8; no
   GH issue for Project Detail or the Actions view — both are plan deltas; the palette is plan §1.0;
-  the standalone origin chip completes the last acceptance bullet of #56)** — the desktop app's
-  navigation targets now resolve to real views, and every note is one click from being read.
+  delivers the standalone-chip-to-reader bullet that M4 deferred when it closed #56)** — the
+  desktop app's navigation targets now resolve to real views, and every note is one click from
+  being read.
   - **Note reader** (`components/markdown/NoteReader.tsx`): a 380px Radix-dialog slide-in
     (focus trap, Esc-to-close, return-focus) that renders any vault note — title, flat scalar
     frontmatter chips, the markdown body, and an "Open in editor" footer. Hosted once in the shell
@@ -45,13 +46,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     "Log to daily…" — that switch to a one-line submit into the vault. Styled from the semantic
     tokens; Esc closes and returns focus. A sidebar "Search & jump ⌘K" affordance opens it too.
   - **Commitments Timeline**: the standalone origin chip now opens the commitment note in the
-    reader (closing #56's last deferred bullet), replacing the plain-text placeholder.
+    reader — the one acceptance bullet M4 deferred when it closed #56 — replacing the plain-text
+    placeholder.
   - New frontend deps (Bun): `react-markdown` 10, `remark-gfm` 4, `cmdk` 1.1, `@radix-ui/react-dialog`
     1.1 (the first vendored Radix-backed primitive, a shadcn-style `Sheet` under
-    `components/ui/`). No backend changes — this milestone consumes the M5 commands
-    (`read_note`, `resolve_wikilink`, `get_project`, `list_all_actions`, `search_vault`,
-    `add_action`, `promote_action`, `add_waiting_on`, `resolve_waiting`, `park_project`,
-    `activate_project`) already in the tree.
+    `components/ui/`).
+  - **Backend surface (this PR):** the Tauri command layer this milestone consumes lands here too.
+    New reads — the composed `get_project` (ProjectDetail: typed frontmatter, body, actions, open
+    milestones, grouped backlinks, and recent log mentions in one invoke), `list_all_actions`
+    (the cross-project Actions list), `search_vault`, and `read_note`. New writes — `add_action`,
+    `promote_action`, `add_waiting_on`, `resolve_waiting`, `park_project`, and `activate_project`
+    (the last surfacing `ProjectCapReached` for the allocator modal). Plus a new domain method,
+    `Vault::resolve_wikilink`, which resolves a single clicked `[[target]]` for UI navigation by
+    delegating to the batch core resolver (`cdno_core::extractors::resolve_wikilinks`) with a
+    one-element input, so the two paths can't drift.
 
 - **Commitments Timeline (closes #56)** — the full promises view lands at `/commitments`: a
   strictly chronological vertical list of every dated commitment from all four sources (project

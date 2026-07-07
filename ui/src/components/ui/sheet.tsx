@@ -35,14 +35,23 @@ export function SheetContent({
   children: ReactNode;
   side?: "right" | "left";
 }) {
+  // Real keyframe motion keyed on Radix's data-state (enter on open,
+  // exit on close). The keyframes live in globals.css; Radix's Presence
+  // waits for `animationend` before unmounting, so the exit actually
+  // plays. Reduced-motion collapses the duration there.
+  const panelMotion =
+    side === "right"
+      ? "data-[state=open]:animate-[sheet-right-in_200ms_ease-out] data-[state=closed]:animate-[sheet-right-out_160ms_ease-in]"
+      : "data-[state=open]:animate-[sheet-left-in_200ms_ease-out] data-[state=closed]:animate-[sheet-left-out_160ms_ease-in]";
   return (
     <Dialog.Portal>
       {/* Scrim: no red, just a soft dim; the panel carries the surface. */}
-      <Dialog.Overlay className="fixed inset-0 z-40 bg-black/20 data-[state=open]:animate-in" />
+      <Dialog.Overlay className="fixed inset-0 z-40 bg-black/20 data-[state=open]:animate-[sheet-overlay-in_200ms_ease-out] data-[state=closed]:animate-[sheet-overlay-out_160ms_ease-in]" />
       <Dialog.Content
         className={classes(
           "fixed inset-y-0 z-50 flex flex-col border-line bg-bg-surface shadow-lg outline-none",
           side === "right" ? "right-0 border-l" : "left-0 border-r",
+          panelMotion,
           className,
         )}
         {...props}

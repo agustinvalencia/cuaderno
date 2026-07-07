@@ -143,8 +143,11 @@ export default function CommandPalette({
                 placeholder={mode === "capture" ? "Capture a thought…" : "Log a line to today…"}
                 className="w-full border-b border-line bg-transparent px-4 py-3 text-sm text-ink outline-none placeholder:text-ink-faint"
               />
+              {/* Esc is owned by the Radix dialog and closes the whole
+                  palette (not just the verb) — the copy says so honestly
+                  rather than promising a back-to-root that isn't wired. */}
               <p className="px-4 py-2 text-xs text-ink-faint">
-                {mode === "capture" ? "Enter to capture" : "Enter to log"} · Esc to cancel
+                {mode === "capture" ? "Enter to capture" : "Enter to log"} · Esc closes
               </p>
             </form>
           ) : (

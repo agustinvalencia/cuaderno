@@ -21,6 +21,12 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
   const { toast } = useToast();
   const { openReader } = useReader();
 
+  // Bullet text is the action's identity here — the React key (in the
+  // parent map), the optimistic filter below, and the `completeAction`
+  // argument all key on `action.text`. Two bullets with identical text
+  // on one project would collide, matching the backend's own substring
+  // matching (which would flag such a pair ambiguous). Accepted: distinct
+  // actions read as distinct text.
   // Optimistic done: drop this bullet from the cached list immediately.
   const complete = useMutation({
     mutationFn: () => completeAction(slug, action.text),

@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{VaultConfig, VaultMeta};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -20,7 +20,14 @@ use tauri::webview::InvokeRequest;
 
 const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Draft the intro (light)\n";
 
-fn memory_vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
+/// Build a Memory-backed vault seeded with the baseline ALPHA project
+/// plus `notes`, under a caller-supplied config — the cap round-trip
+/// lowers `max_active_projects` so a single active project already fills
+/// the cap.
+fn memory_vault_configured(
+    notes: &[(&str, &str)],
+    config: VaultConfig,
+) -> (Vault, Arc<dyn VaultStore>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     store
@@ -31,9 +38,21 @@ fn memory_vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
             .write_file(&VaultPath::new(path).unwrap(), body)
             .unwrap();
     }
-    let (vault, _report) =
-        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
     (vault, store)
+}
+
+/// A vault config that caps the active-project count at `max` — the
+/// cheapest honest way to drive `ProjectCapReached` without seeding five
+/// full project fixtures.
+fn config_capped_at(max: u8) -> VaultConfig {
+    VaultConfig {
+        vault: VaultMeta {
+            name: "test-vault".to_owned(),
+            max_active_projects: max,
+        },
+        ..VaultConfig::default()
+    }
 }
 
 /// A mock app seeded with `notes` on top of the baseline ALPHA
@@ -42,7 +61,16 @@ fn memory_vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
 fn mock_app_with(
     notes: &[(&str, &str)],
 ) -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
-    let (vault, store) = memory_vault_with(notes);
+    mock_app_configured(notes, VaultConfig::default())
+}
+
+/// A mock app over a config-driven vault — the cap round-trip lowers
+/// `max_active_projects` so a single active project fills the slot.
+fn mock_app_configured(
+    notes: &[(&str, &str)],
+    config: VaultConfig,
+) -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
+    let (vault, store) = memory_vault_configured(notes, config);
     let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             cdno_tauri::commands::orientation::get_orientation,
@@ -656,6 +684,58 @@ fn park_project_round_trips_and_moves_the_map_to_parked() {
         store.exists(&parked).expect("store query"),
         "the map lands under projects/_parked/"
     );
+}
+
+#[test]
+fn add_waiting_on_round_trips_args_and_appends_to_the_map() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-add-waiting", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "item": "sign-off from Legal",
+    }));
+    get_ipc_response(&webview, request_with("add_waiting_on", body)).expect("command succeeds");
+
+    let content = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        content.contains("sign-off from Legal"),
+        "the waiting-on item lands on the map: {content}"
+    );
+}
+
+#[test]
+fn activate_project_at_cap_serialises_the_project_cap_reached_contract() {
+    // ALPHA is already active; with the cap lowered to one, activating a
+    // parked project must fail with the structured ProjectCapReached the
+    // allocator modal keys on — kind "project_cap_reached", data.active
+    // naming the blocking projects — rather than a generic error. A
+    // cap-of-one vault is the cheapest honest way to hit the cap (one
+    // active fixture instead of five).
+    const PARKED: &str = "---\ntype: project\ncontext: personal\nstatus: parked\ncreated: 2026-03-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n";
+    let (app, _store) =
+        mock_app_configured(&[("projects/_parked/beta.md", PARKED)], config_capped_at(1));
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-activate-cap", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "beta" }));
+    let err = get_ipc_response(&webview, request_with("activate_project", body))
+        .expect_err("activating past the cap must fail");
+
+    assert_eq!(err["kind"], "project_cap_reached", "{err}");
+    let active = err["data"]["active"]
+        .as_array()
+        .expect("active is an array of slugs");
+    assert!(
+        active.iter().any(|s| s == "alpha"),
+        "the blocking active project is named: {err}"
+    );
+    assert_eq!(err["data"]["max"], 1, "the cap rides the wire: {err}");
 }
 
 #[test]
