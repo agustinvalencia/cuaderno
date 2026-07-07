@@ -143,7 +143,7 @@ impl From<CommitmentEntry> for CommitmentEntryDto {
 pub enum CommitmentSourceDto {
     ProjectMilestone(String),
     Stewardship(String),
-    StandaloneCommitment,
+    StandaloneCommitment(String),
     ActionNote(String),
 }
 
@@ -152,7 +152,7 @@ impl From<CommitmentSource> for CommitmentSourceDto {
         match s {
             CommitmentSource::ProjectMilestone(slug) => Self::ProjectMilestone(slug),
             CommitmentSource::Stewardship(slug) => Self::Stewardship(slug),
-            CommitmentSource::StandaloneCommitment => Self::StandaloneCommitment,
+            CommitmentSource::StandaloneCommitment(slug) => Self::StandaloneCommitment(slug),
             CommitmentSource::ActionNote(slug) => Self::ActionNote(slug),
         }
     }

@@ -6,7 +6,35 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP wire shape**: `get_commitments` source objects of kind `standalone_commitment` now carry
+  a `slug` field (additive; the `kind` tag is unchanged). Consumers that deserialise the source
+  strictly should allow the new field.
+
 ### Added
+
+- **Commitments Timeline (closes #56)** — the full promises view lands at `/commitments`: a
+  strictly chronological vertical list of every dated commitment from all four sources (project
+  milestones, stewardship periodic commitments, standalone commitment notes, and self-due action
+  notes), 90 days out by default. Upcoming entries group under month headers; past-due entries
+  collapse into a calm, collapsed-by-default "a few slipped past" group at the top. Colour signals
+  context, never urgency — a past-due row keeps its context hue and earns only a secondary
+  desaturated-amber accent (a thin left border and a `planned for …` date label; never "overdue",
+  never red). A row of seven context-filter chips narrows the list client-side (multiple active,
+  empty means all). Standalone commitments and project milestones carry a quiet **done** button
+  (optimistic removal, rollback on error, `Done: {title}.` on success); periodic and action-note
+  sources are read-only here (periodic shows cadence; actions complete from Home). Origin chips
+  link project- and stewardship-backed entries to their detail; a standalone reads as plain text
+  until the note reader arrives (M5). Empty state: "Nothing promised in this window." — emptiness
+  is success. Three new commands — `get_commitments` (returns a `today`-stamped `CommitmentsView`),
+  `complete_commitment`, `complete_milestone` — follow the established write-command pattern
+  (`WriteJournal` record + `origin: self` emit after commit); the `projects` invalidation area now
+  also refreshes the timeline, since a milestone edit changes both. The shared `CommitmentsTimeline`
+  component is built for M6's lookahead and M9's six-week views to reuse. `CommitmentSource`'s
+  standalone variant now carries the commitment's own slug (so the done button can complete it
+  without re-deriving it) — a change rippling through the CLI `orient` label, the MCP
+  `CommitmentSourceDto` mirror, and the aggregation site.
 
 - **Global capture + inbox drawer (M3, no GH issue — plan delta)** — capture a thought from
   anywhere with `⌘⇧C` (registered in Rust via `tauri-plugin-global-shortcut`; SUPER+SHIFT maps to

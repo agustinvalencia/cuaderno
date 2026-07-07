@@ -3,6 +3,7 @@
 // the single seam the tests mock.
 import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
+import type { CommitmentsView } from "./bindings/CommitmentsView";
 import type { InboxItem } from "./bindings/InboxItem";
 import type { OrientationView } from "./bindings/OrientationView";
 
@@ -66,6 +67,26 @@ export function updateProjectState(project: string, newState: string): Promise<v
   // Rust `new_state` is `newState` on the wire (Tauri camelCases
   // command args) — pinned by the backend IPC round-trip test.
   return call("update_project_state", { project, newState });
+}
+
+/**
+ * Every dated commitment from today through `lookaheadDays` out (90 by
+ * default), aggregated and sorted chronologically. Backs the
+ * Commitments Timeline. Rust `lookahead_days` is `lookaheadDays` on the
+ * wire (Tauri camelCases args) — pinned by the backend IPC round-trip.
+ */
+export function getCommitments(lookaheadDays = 90): Promise<CommitmentsView> {
+  return call("get_commitments", { lookaheadDays });
+}
+
+/** Complete a standalone commitment (moves it to `commitments/_done/`). */
+export function completeCommitment(slug: string): Promise<void> {
+  return call("complete_commitment", { slug });
+}
+
+/** Tick an open milestone on `project` to done. */
+export function completeMilestone(project: string, milestone: string): Promise<void> {
+  return call("complete_milestone", { project, milestone });
 }
 
 /** Capture a thought into `inbox/` — the capture window's Enter verb. */

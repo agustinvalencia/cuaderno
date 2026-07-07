@@ -121,7 +121,7 @@ pub(crate) fn source_label(source: &CommitmentSource) -> String {
     match source {
         CommitmentSource::ProjectMilestone(slug) => format!("project: {slug}"),
         CommitmentSource::Stewardship(slug) => format!("stewardship: {slug}"),
-        CommitmentSource::StandaloneCommitment => "commitment".to_owned(),
+        CommitmentSource::StandaloneCommitment(_) => "commitment".to_owned(),
         CommitmentSource::ActionNote(slug) => format!("action: {slug}"),
     }
 }

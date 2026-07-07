@@ -4,4 +4,4 @@
  * Origin of an aggregated commitment. The string payloads carry the
  * owning project / stewardship slug for context.
  */
-export type CommitmentSource = { "kind": "project_milestone", "slug": string } | { "kind": "stewardship", "slug": string } | { "kind": "standalone_commitment" } | { "kind": "action_note", "slug": string };
+export type CommitmentSource = { "kind": "project_milestone", "slug": string } | { "kind": "stewardship", "slug": string } | { "kind": "standalone_commitment", "slug": string } | { "kind": "action_note", "slug": string };

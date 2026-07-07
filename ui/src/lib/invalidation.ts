@@ -7,7 +7,9 @@ import type { VaultArea } from "../api/bindings/VaultArea";
 export type { VaultArea };
 
 const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
-  projects: ["get_orientation", "list_projects", "get_project"],
+  // A milestone edit (in the app or in nvim) changes both the project
+  // map and the commitments timeline, so projects invalidates both.
+  projects: ["get_orientation", "list_projects", "get_project", "get_commitments"],
   actions: ["get_orientation", "list_all_actions"],
   daily: ["get_orientation", "read_daily"],
   weekly: ["get_weekly_bundle"],
