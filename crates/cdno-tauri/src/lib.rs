@@ -165,6 +165,8 @@ pub fn run() {
             commands::commitments::get_commitments,
             commands::commitments::complete_commitment,
             commands::commitments::complete_milestone,
+            commands::weekly::get_weekly_bundle,
+            commands::weekly::save_weekly_section,
             commands::capture::capture_quick,
             commands::capture::log_quick,
             commands::capture::list_inbox,

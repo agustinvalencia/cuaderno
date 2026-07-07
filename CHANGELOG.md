@@ -14,6 +14,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Weekly Review (M6, plan §1.4; closes #55)** — the `/weekly` route is now a guided, deliberately
+  anti-chore 5-step flow, backed by one composed `get_weekly_bundle` read and a single
+  `save_weekly_section` write.
+  - **Backend** (`crates/cdno-tauri/src/commands/weekly.rs`): `get_weekly_bundle(week_of?)` composes
+    the whole review in one invoke — the existing weekly note's four sections (parsed so the UI
+    prefers written content over a fresh seed), the week's completed actions and (capped) daily
+    logs for the wins seed, the active-project scan (`ProjectSummary`, context riding along), the
+    stuck-project set with each project's day count, the 14-day commitments lookahead, and the
+    stewardship scan. `save_weekly_section(week_of?, section, content)` wraps
+    `upsert_weekly_section` (compose/overwrite); the `section` wire string is kebab-case —
+    `"wins" | "challenges" | "one-improvement" | "this-weeks-goal"` (the plan sketch's
+    "Next Week's Focus" maps to the domain's `ThisWeeksGoal`) — and an unrecognised value is a
+    calm `Invalid` naming the valid sections. A new `stuck_project_days` domain query returns the
+    stuck set with day counts; `StewardshipSummary`/`StewardshipVariant` gained `ts-rs` derives.
+  - **Frontend** (`ui/src/views/weekly/`): a non-linear stepper — the progress dots jump anywhere,
+    each step's save is complete in itself, and after any save or "looked at" the flow reassures
+    "you can stop here — it's already saved". No "N of 5" counter unless the metrics toggle is on.
+    Step 1 seeds an editable Wins composer from completed actions (`- Completed: {title} ({project})`)
+    plus a few log lines (empty weeks get the calm "what felt like progress anyway?" prompt); step 2
+    is the inline Current State scan with a muted "state untouched for N days" line on stuck
+    projects; step 3 (stewardships) and step 4 (the 14-day lookahead, reusing the shared
+    `CommitmentsTimeline`) are read-only with a local "looked at" affordance; step 5 saves next
+    week's single focus, with quick-pick buttons from the active project slugs. The route is
+    lazy-loaded like the other heavy views; `weekly → get_weekly_bundle` invalidation was already
+    wired.
 - **Project Detail, Actions view, note reader, and command palette (M5, plan §1.0/§1.2/§1.8; no
   GH issue for Project Detail or the Actions view — both are plan deltas; the palette is plan §1.0;
   delivers the standalone-chip-to-reader bullet that M4 deferred when it closed #56)** — the

@@ -12,6 +12,7 @@ import type { ProjectActions } from "./bindings/ProjectActions";
 import type { ProjectDetail } from "./bindings/ProjectDetail";
 import type { ResolvedLink } from "./bindings/ResolvedLink";
 import type { SearchResultEntry } from "./bindings/SearchResultEntry";
+import type { WeeklyBundle } from "./bindings/WeeklyBundle";
 
 export class CuadernoError extends Error {
   readonly payload: CmdError;
@@ -186,4 +187,25 @@ export function parkProject(slug: string): Promise<void> {
  * structured `ProjectCapReached` `CuadernoError`. */
 export function activateProject(slug: string): Promise<void> {
   return call("activate_project", { slug });
+}
+
+// --- M6: Weekly Review ---
+
+/** The composed Weekly Review bundle behind `/weekly`. `weekOf` is an
+ * optional ISO date naming any day in the week to review; omitted, it
+ * reviews the current week. Rust `week_of` is `weekOf` on the wire
+ * (Tauri camelCases args) — pinned by the backend IPC round-trip. */
+export function getWeeklyBundle(weekOf?: string): Promise<WeeklyBundle> {
+  return call("get_weekly_bundle", { weekOf: weekOf ?? null });
+}
+
+/** Write one section of the week's note (compose/overwrite). `section`
+ * is the kebab wire string: "wins" | "challenges" | "one-improvement" |
+ * "this-weeks-goal". */
+export function saveWeeklySection(
+  section: string,
+  content: string,
+  weekOf?: string,
+): Promise<void> {
+  return call("save_weekly_section", { weekOf: weekOf ?? null, section, content });
 }

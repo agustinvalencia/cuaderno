@@ -8,4 +8,5 @@ mod unit {
     mod orientation_tests;
     mod projects_tests;
     mod watcher_plan_tests;
+    mod weekly_tests;
 }
