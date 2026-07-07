@@ -18,33 +18,43 @@ use tauri::ipc::{CallbackFn, InvokeBody, InvokeResponseBody};
 use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
 use tauri::webview::InvokeRequest;
 
-const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n";
+const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Draft the intro (light)\n";
 
-fn memory_vault() -> Vault {
+fn memory_vault() -> (Vault, Arc<dyn VaultStore>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     store
         .write_file(&VaultPath::new("projects/alpha.md").unwrap(), ALPHA)
         .unwrap();
-    let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
-    vault
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    (vault, store)
 }
 
-fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
-    mock_builder()
+fn mock_app() -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
+    let (vault, store) = memory_vault();
+    let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             cdno_tauri::commands::orientation::get_orientation,
             cdno_tauri::commands::orientation::get_today,
+            cdno_tauri::commands::actions::start_action,
+            cdno_tauri::commands::actions::complete_action,
+            cdno_tauri::commands::projects::update_project_state,
         ])
         .manage(AppState {
-            vault: Arc::new(memory_vault()),
+            vault: Arc::new(vault),
             journal: WriteJournal::default(),
         })
         .build(mock_context(noop_assets()))
-        .expect("mock app builds")
+        .expect("mock app builds");
+    (app, store)
 }
 
 fn request(cmd: &str) -> InvokeRequest {
+    request_with(cmd, InvokeBody::default())
+}
+
+fn request_with(cmd: &str, body: InvokeBody) -> InvokeRequest {
     InvokeRequest {
         cmd: cmd.to_owned(),
         callback: CallbackFn(0),
@@ -58,7 +68,7 @@ fn request(cmd: &str) -> InvokeRequest {
         }
         .parse()
         .unwrap(),
-        body: InvokeBody::default(),
+        body,
         headers: Default::default(),
         invoke_key: INVOKE_KEY.to_owned(),
     }
@@ -73,7 +83,7 @@ fn response_json(response: InvokeResponseBody) -> serde_json::Value {
 
 #[test]
 fn get_orientation_round_trips_the_real_ipc_serialiser() {
-    let app = mock_app();
+    let (app, _store) = mock_app();
     let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
         .build()
         .expect("mock webview");
@@ -98,7 +108,7 @@ fn get_orientation_round_trips_the_real_ipc_serialiser() {
 
 #[test]
 fn get_today_round_trips() {
-    let app = mock_app();
+    let (app, _store) = mock_app();
     let webview = tauri::WebviewWindowBuilder::new(&app, "today", Default::default())
         .build()
         .expect("mock webview");
@@ -110,11 +120,102 @@ fn get_today_round_trips() {
 
 #[test]
 fn unknown_command_is_rejected() {
-    let app = mock_app();
+    let (app, _store) = mock_app();
     let webview = tauri::WebviewWindowBuilder::new(&app, "nope", Default::default())
         .build()
         .expect("mock webview");
 
     let result = get_ipc_response(&webview, request("no_such_command"));
     assert!(result.is_err(), "unregistered command must error");
+}
+
+#[test]
+fn start_action_round_trips_args_and_writes_the_daily_note() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-start", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Draft methods",
+    }));
+    get_ipc_response(&webview, request_with("start_action", body)).expect("command succeeds");
+
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let content = store.read_file(&daily).expect("daily note written");
+    assert!(
+        content.contains("started [[alpha]] \u{2014} Draft methods"),
+        "daily carries the started line: {content}"
+    );
+}
+
+#[test]
+fn update_project_state_round_trips_camel_cased_args() {
+    // `new_state` in Rust is `newState` on the wire — the exact
+    // marshalling mismatch these tests exist to catch.
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-state", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "newState": "Rewired and humming.",
+    }));
+    get_ipc_response(&webview, request_with("update_project_state", body))
+        .expect("command succeeds");
+
+    let content = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(content.contains("Rewired and humming."), "{content}");
+}
+
+#[test]
+fn complete_action_error_path_serialises_the_cmd_error_contract() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-err", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "no such bullet anywhere",
+    }));
+    let err = get_ipc_response(&webview, request_with("complete_action", body))
+        .expect_err("no matching bullet must fail");
+
+    // The rejected value is the serialised CmdError — the shape
+    // commands.ts pattern-matches on.
+    assert_eq!(err["kind"], "not_found", "{err}");
+    assert!(err["data"].is_string());
+}
+
+#[test]
+fn complete_action_ambiguous_serialises_candidates() {
+    // "Draft" matches both Next Actions bullets (case-insensitive
+    // substring), so the domain returns AmbiguousAction, which the
+    // command maps to CmdError::Ambiguous — the picker the UI renders.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-ambig", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Draft",
+    }));
+    let err = get_ipc_response(&webview, request_with("complete_action", body))
+        .expect_err("an ambiguous match must fail");
+
+    assert_eq!(err["kind"], "ambiguous", "{err}");
+    let candidates = err["data"]["candidates"]
+        .as_array()
+        .expect("candidates is an array");
+    assert_eq!(
+        candidates.len(),
+        2,
+        "both Draft bullets are candidates: {err}"
+    );
 }

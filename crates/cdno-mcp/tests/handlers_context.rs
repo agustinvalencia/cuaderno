@@ -937,6 +937,8 @@ async fn get_commitments_aggregates_a_standalone_commitment_due_soon() {
         .find(|c| c["title"].as_str() == Some("Submit the report"))
         .expect("the standalone commitment is aggregated");
     assert!(!entry["is_overdue"].as_bool().unwrap());
+    // The commitment's own context surfaces on the wire (kebab-case).
+    assert_eq!(entry["context"].as_str(), Some("work"));
 }
 
 #[tokio::test]

@@ -22,6 +22,7 @@ use cdno_core::template::VariableContext;
 use crate::error::DomainError;
 use crate::frontmatter::{
     ActionFrontmatter, ActionStatus, CommitmentFrontmatter, CommitmentStatus, Context,
+    ProjectFrontmatter, StewardshipFrontmatter,
 };
 use crate::note_type::NoteType;
 
@@ -48,6 +49,12 @@ pub struct CommitmentEntry {
     pub source: CommitmentSource,
     /// `true` when `date` is strictly before the query's `today`.
     pub is_overdue: bool,
+    /// Life-domain of the owning note, so the Home commitments strip
+    /// can colour-code each row by context (#54). Resolved from the
+    /// source note's frontmatter: the project map for milestones and
+    /// action notes, the stewardship dashboard for periodic
+    /// commitments, the note itself for standalone commitments.
+    pub context: Context,
 }
 
 /// Origin of an aggregated commitment. The string payloads carry the
@@ -312,6 +319,13 @@ impl Vault {
 
         let mut entries = Vec::new();
 
+        // Per-project-file context cache. Sources 1 and 4 both resolve a
+        // commitment's context by reading the owning project map; caching
+        // by path means N milestones (or actions) on one project read and
+        // parse it once. `None` records a project file that failed to
+        // read or parse, so a broken map is retried zero times.
+        let mut project_context: HashMap<VaultPath, Option<Context>> = HashMap::new();
+
         // Source 1: hard project milestones via the index table. The
         // query already bounds by date and excludes undated markers.
         let from_s = from.format("%Y-%m-%d").to_string();
@@ -323,11 +337,18 @@ impl Vault {
             let Some(date) = milestone.date.as_deref().and_then(parse_ymd) else {
                 continue;
             };
+            // A project map that fails to parse skips its milestones
+            // silently — mirroring the source-2 tolerance, since a broken
+            // map is lint's problem, not the aggregator's.
+            let Some(context) = self.cached_project_context(&path, &mut project_context) else {
+                continue;
+            };
             entries.push(CommitmentEntry {
                 date,
                 title: milestone.name,
                 source: CommitmentSource::ProjectMilestone(slug_of(&path)),
                 is_overdue: date < today,
+                context,
             });
         }
 
@@ -340,6 +361,17 @@ impl Vault {
         for entry in self.index.list_by_type(NoteType::Stewardship.as_str())? {
             let raw = self.store.read_file(&entry.path)?;
             let slug = stewardship_slug_from_path(&entry.path);
+            // Parse the frontmatter off the raw text before it's moved
+            // into the markdown document, to recover the stewardship's
+            // context. Same posture as the doc/section parse below: a
+            // stewardship whose frontmatter won't parse is skipped whole.
+            let Ok((fm, _body)) = Frontmatter::parse(&raw) else {
+                continue;
+            };
+            let Ok(stewardship) = StewardshipFrontmatter::try_from(fm) else {
+                continue;
+            };
+            let context = stewardship.context;
             let Ok(doc) = MarkdownDocument::parse(raw) else {
                 continue;
             };
@@ -358,6 +390,7 @@ impl Vault {
                     title,
                     source: CommitmentSource::Stewardship(slug.clone()),
                     is_overdue: next < today,
+                    context,
                 });
             }
         }
@@ -379,6 +412,7 @@ impl Vault {
                 title: body_title_or_slug(&raw, &slug).to_owned(),
                 source: CommitmentSource::StandaloneCommitment,
                 is_overdue: commitment.due < today,
+                context: commitment.context,
             });
         }
 
@@ -397,12 +431,25 @@ impl Vault {
             {
                 continue;
             }
+            // Action frontmatter carries no context of its own; it
+            // inherits the owning project's. Resolve the project slug to
+            // its map (active or parked) and read the context through the
+            // same cache source 1 populated. A missing or unparseable
+            // project map drops the entry silently.
+            let Some(project_path) = self.resolve_project_path(&action.project) else {
+                continue;
+            };
+            let Some(context) = self.cached_project_context(&project_path, &mut project_context)
+            else {
+                continue;
+            };
             let slug = slug_of(&entry.path);
             entries.push(CommitmentEntry {
                 date: due,
                 title: body_title_or_slug(&raw, &slug).to_owned(),
                 source: CommitmentSource::ActionNote(action.project),
                 is_overdue: due < today,
+                context,
             });
         }
 
@@ -455,6 +502,45 @@ impl Vault {
         }
         matches.sort_by_key(|(_, commitment)| commitment.due);
         Ok(matches)
+    }
+
+    /// Read the life-domain context off a project map, memoised by path.
+    /// Returns `None` — and caches it — when the file can't be read or
+    /// its frontmatter won't parse, so a broken map short-circuits its
+    /// milestones and actions rather than failing the whole aggregation.
+    fn cached_project_context(
+        &self,
+        path: &VaultPath,
+        cache: &mut HashMap<VaultPath, Option<Context>>,
+    ) -> Option<Context> {
+        if let Some(cached) = cache.get(path) {
+            return *cached;
+        }
+        let context = self
+            .store
+            .read_file(path)
+            .ok()
+            .and_then(|raw| Frontmatter::parse(&raw).ok().map(|(fm, _body)| fm))
+            .and_then(|fm| ProjectFrontmatter::try_from(fm).ok())
+            .map(|project| project.context);
+        cache.insert(path.clone(), context);
+        context
+    }
+
+    /// Resolve a bare project slug to its map path, preferring the
+    /// active location and falling back to `projects/_parked/`. `None`
+    /// when neither exists (a dangling `action.project` link).
+    fn resolve_project_path(&self, slug: &str) -> Option<VaultPath> {
+        let active = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS)).ok()?;
+        if self.store.exists(&active).ok()? {
+            return Some(active);
+        }
+        let parked =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED)).ok()?;
+        if self.store.exists(&parked).ok()? {
+            return Some(parked);
+        }
+        None
     }
 }
 

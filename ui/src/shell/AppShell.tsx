@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { getOrientation } from "../api/commands";
 import { contextDotClass } from "../lib/contexts";
+import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
 
 const NAV = [
@@ -21,6 +22,7 @@ export default function AppShell() {
   // The sidebar's project list rides on the same query the Home view
   // uses — one cache entry, no extra invoke.
   const orientation = useQuery({ queryKey: ["get_orientation"], queryFn: getOrientation });
+  const showMetrics = useMetrics();
 
   return (
     <div className="flex h-screen">
@@ -86,6 +88,17 @@ export default function AppShell() {
             className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
           >
             theme
+          </button>
+          <button
+            type="button"
+            aria-pressed={showMetrics}
+            aria-label="Show progress metrics (hidden by default)"
+            onClick={() => toggleMetrics()}
+            className={`rounded px-2 py-1 text-xs ${
+              showMetrics ? "bg-bg-surface text-ink" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            metrics
           </button>
         </div>
       </aside>
