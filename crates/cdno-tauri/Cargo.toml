@@ -1,0 +1,35 @@
+[package]
+name = "cdno-tauri"
+description = "Tauri backend for the Cuaderno desktop app: thin commands over cdno-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+cdno-core.workspace = true
+cdno-domain.workspace = true
+tauri.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# Regenerate ui/src/api/bindings/ — see `just gen-bindings`.
+ts-bindings = ["dep:ts-rs", "cdno-domain/ts-bindings"]
+
+[dev-dependencies]
+tempfile.workspace = true
+# `test` unlocks tauri::test::{mock_builder, get_ipc_response} — the
+# real-IPC round-trip tests the M1 review made mandatory.
+tauri = { workspace = true, features = ["test"] }

@@ -24,6 +24,8 @@ use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
 /// `## Next Actions` (closed bullets and blanks skipped); `None`
 /// when nothing is open.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ProjectSummary {
     pub slug: String,
     pub status: ProjectStatus,
@@ -35,6 +37,8 @@ pub struct ProjectSummary {
 /// `(deep)` / `(medium)` / `(light)` suffix is present. `energy`
 /// is `None` for hand-edited bullets without a suffix.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct TopAction {
     pub text: String,
     pub energy: Option<EnergyLevel>,

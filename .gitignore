@@ -26,3 +26,8 @@ cobertura.xml
 
 # mdBook docs-site build output
 docs-site/book/
+
+# Desktop app build artefacts
+ui/node_modules/
+ui/dist/
+crates/cdno-tauri/gen/

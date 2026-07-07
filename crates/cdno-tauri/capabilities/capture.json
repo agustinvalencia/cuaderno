@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "capture-window",
+  "description": "Quick-capture window: least privilege — events plus hide/show of itself.",
+  "windows": ["capture"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
+  ]
+}

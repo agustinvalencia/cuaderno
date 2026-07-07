@@ -16,6 +16,8 @@ use super::context::Context;
 /// against `max_active_projects`; completion is terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum ProjectStatus {
     Active,
     Parked,
@@ -42,6 +44,8 @@ impl ProjectStatus {
 /// matching that level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum EnergyLevel {
     Deep,
     Medium,

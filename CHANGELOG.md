@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Desktop app scaffold (closes #53)** — new `cdno-tauri` crate + `ui/` frontend (React 19,
+  Vite 7 multi-page, TypeScript, Tailwind v4, Bun as package manager / Node as runtime). The app
+  opens the vault named by `CUADERNO_VAULT_PATH`, runs startup reconciliation, registers
+  `Arc<Vault>` as managed state (no wrapper lock — writes serialise on the transaction's
+  cross-process lock), and serves a styled shell whose Home view renders the live orientation
+  (commitments strip, project cards with context dots, lapsed-habits line). A dedicated watcher
+  thread turns debounced filesystem events into `vault:changed` area events with self-echo
+  suppression (`WriteJournal`), backed by focus-refetch and a day-change ticker. TypeScript
+  bindings are generated from the Rust wire types via `ts-rs` (`just gen-bindings`). Commands so
+  far: `get_orientation`, `get_today`; every command is async and routes domain calls through
+  `tauri::async_runtime::spawn_blocking`. Vault opening was lifted into
+  `cdno_domain::bootstrap::open_vault` (typed `BootstrapError`), with `cdno-mcp`'s bootstrap now
+  delegating to it.
+
 - **Lapsed habits in orientation** — `cdno orient` / `get_orientation` now surface stewardship
   habits whose `## Active Habits` line declares a lapse (e.g. `- Swimming 1x/week — lapsed since
   March`). The dashboard prose is the source of truth; no cadence inference. Previously the

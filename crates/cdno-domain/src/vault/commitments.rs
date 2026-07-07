@@ -40,6 +40,8 @@ const OVERDUE_LOOKBACK_DAYS: i64 = 30;
 /// [`Vault::commitments`]. The `source` records where it came from so
 /// callers (orient, the commitments CLI) can group or label entries.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct CommitmentEntry {
     pub date: NaiveDate,
     pub title: String,
@@ -56,6 +58,8 @@ pub struct CommitmentEntry {
 // the MCP `CommitmentSourceDto`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", content = "slug", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum CommitmentSource {
     /// A hard `## Milestones` deadline of the named project.
     ProjectMilestone(String),

@@ -5,6 +5,7 @@ members = [
     "crates/cdno-domain",
     "crates/cdno-cli",
     "crates/cdno-mcp",
+    "crates/cdno-tauri",
 ]
 
 [workspace.package]
@@ -139,6 +140,20 @@ jsonwebtoken = "9"
 # leaks into other crates.
 notify = "8"
 notify-debouncer-mini = "0.6"
+
+# Desktop app shell (GH #53, Phase 5). The Tauri commands are thin
+# wrappers over cdno-domain methods — no DTO layer; domain types
+# serialise directly over the IPC bridge. `macos-private-api` matches
+# tauri.conf.json's macOSPrivateApi (transparent capture window);
+# accepted cost: no Mac App Store distribution.
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-build = "2"
+
+# TypeScript bindings generated from the Rust wire types (plan §3.5).
+# `serde-compat` (default) honours the serde attrs; `chrono-impl` maps
+# NaiveDate to `string`. Optional everywhere — only the `ts-bindings`
+# feature (a codegen-time concern) pulls it in.
+ts-rs = { version = "12", features = ["chrono-impl"] }
 
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }

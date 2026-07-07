@@ -12,7 +12,7 @@ Snapshot of development progress as of the most recent merge. For per-PR detail 
 | **2 — Daily loop** | Projects (5-cap, state, milestones, waiting-on, park/activate), actions (bullets + manifest notes, add/promote/complete/list), commitments (create/complete + aggregation timeline), orient/status/lint, flags-and-prompts ergonomics retrofit, append-only-after-completion lint | Complete |
 | **3 — Knowledge & stewardship** | Portfolios + evidence (create, file, list, show), questions (CRUD + status transitions + grouped list), stewardships (flat + expanded, list, show, periodic commitments, tracking notes with config-driven per-activity templates), `cdno track` | Complete |
 | **4 — MCP server** | `cdno-mcp` crate on `rmcp`, full 42-tool schema catalogue, stdio binary | Core complete (16 §11 + 2 daily-note (#158) + 2 weekly-note + 4 structural-creation (#162) + 4 lifecycle (#166) + `search_notes` (#172) tools wired, stdio binary polished); file watcher (#49) + skill adaptations (#50/#51/#52) outstanding |
-| **5 — Tauri UI** | `cdno-tauri` backend, React frontend with Tremor, Home / Weekly / Commitments views | Not started |
+| **5 — Tauri UI** | `cdno-tauri` backend, React frontend (Tailwind v4 + shadcn-style, Recharts), Home / Weekly / Commitments views | In progress — M0 (watcher + domain gaps, #311) and M1 (scaffold + shell + live orientation, #53) done; views M2+ pending |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | Partial — HTTP Streamable transport + Access-JWT auth + periodic reconciliation shipped (#304, #305); Tauri UI views not started |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |
 
