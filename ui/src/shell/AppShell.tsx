@@ -1,11 +1,25 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { getOrientation, listInbox } from "../api/commands";
+import NoteReader from "../components/markdown/NoteReader";
 import { contextDotClass } from "../lib/contexts";
 import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
+import CommandPalette from "./CommandPalette";
 import InboxDrawer from "./InboxDrawer";
+import { ReaderProvider, useReader } from "./reader";
+
+/** The single note-reader panel for the whole app (plan §6): distant
+ * surfaces (timeline chips, palette results, backlinks) open it via
+ * `useReader`; it renders here, once. A wikilink to a plain note
+ * replaces the panel in place; project/stewardship links route away and
+ * `NoteReader` closes it. */
+function ReaderHost() {
+  const { openPath, openReader, closeReader } = useReader();
+  if (!openPath) return null;
+  return <NoteReader path={openPath} onClose={closeReader} onNavigate={openReader} />;
+}
 
 const NAV = [
   { to: "/", label: "Today" },
@@ -31,8 +45,24 @@ export default function AppShell() {
   const inboxCount = inbox.data?.length ?? 0;
   const [inboxOpen, setInboxOpen] = useState(false);
   const inboxButtonRef = useRef<HTMLButtonElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global Cmd/Ctrl+K toggles the command palette (plan §1.0). Bound on
+  // window so it fires from any focused view; the palette itself owns
+  // Esc-to-close (Radix dialog).
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
+    <ReaderProvider>
     <div className="flex h-screen">
       <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-bg-sunken px-3 py-4">
         <div className="mb-6 px-2 text-sm font-semibold tracking-wide text-ink">cuaderno</div>
@@ -107,7 +137,18 @@ export default function AppShell() {
           )}
         </button>
 
-        <div className="mt-4 flex items-center justify-between px-2 pt-4">
+        <button
+          type="button"
+          onClick={() => setPaletteOpen(true)}
+          aria-label="Open command palette"
+          className="mt-4 flex items-center justify-between rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
+        >
+          <span>Search &amp; jump</span>
+          {/* Glyphs, not emoji — the ⌘K hint (plan §5). */}
+          <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-ink-faint">⌘K</span>
+        </button>
+
+        <div className="mt-2 flex items-center justify-between px-2 pt-4">
           <button
             type="button"
             aria-label="Cycle colour theme (system, light, dark)"
@@ -137,6 +178,10 @@ export default function AppShell() {
       {inboxOpen && (
         <InboxDrawer onClose={() => setInboxOpen(false)} returnFocusRef={inboxButtonRef} />
       )}
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <ReaderHost />
     </div>
+    </ReaderProvider>
   );
 }

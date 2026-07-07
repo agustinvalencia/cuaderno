@@ -7,6 +7,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
 import type { CommitmentsView } from "../../api/bindings/CommitmentsView";
 import Commitments from "./Commitments";
@@ -60,7 +61,9 @@ function renderView() {
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <ToastProvider>
-          <Commitments />
+          <ReaderProvider>
+            <Commitments />
+          </ReaderProvider>
         </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,

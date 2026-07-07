@@ -16,6 +16,7 @@ import type { CommitmentsView } from "../../api/bindings/CommitmentsView";
 import type { Context } from "../../lib/contexts";
 import { completeCommitment, completeMilestone, errorMessage } from "../../api/commands";
 import { contextDotClass } from "../../lib/contexts";
+import { useReader } from "../../shell/reader";
 import { useToast } from "../../shell/Toasts";
 
 /** `8 Jul` / `Jul 8` per locale. Parsed at local midnight so the day
@@ -44,9 +45,10 @@ function monthLabel(date: string, thisYear: number): string {
 
 /** The origin chip: names the source and links to where it lives.
  * Project-backed sources go to the project detail; stewardship to the
- * stewardships list; a standalone commitment is plain text — its note
- * reader arrives in M5, so no dead-end link. */
+ * stewardships list; a standalone commitment opens its note in the
+ * shell reader (the reader landed in M5). */
 function OriginChip({ source }: { source: CommitmentSource }) {
+  const { openReader } = useReader();
   const cls = "text-xs text-ink-faint hover:text-ink-muted";
   switch (source.kind) {
     case "project_milestone":
@@ -63,7 +65,15 @@ function OriginChip({ source }: { source: CommitmentSource }) {
         </Link>
       );
     case "standalone_commitment":
-      return <span className="text-xs text-ink-faint">standalone</span>;
+      return (
+        <button
+          type="button"
+          onClick={() => openReader(`commitments/${source.slug}.md`)}
+          className={cls}
+        >
+          {source.slug}
+        </button>
+      );
   }
 }
 

@@ -49,7 +49,18 @@ fn mock_app_with(
             cdno_tauri::commands::orientation::get_today,
             cdno_tauri::commands::actions::start_action,
             cdno_tauri::commands::actions::complete_action,
+            cdno_tauri::commands::actions::add_action,
+            cdno_tauri::commands::actions::promote_action,
+            cdno_tauri::commands::actions::list_all_actions,
             cdno_tauri::commands::projects::update_project_state,
+            cdno_tauri::commands::projects::get_project,
+            cdno_tauri::commands::projects::add_waiting_on,
+            cdno_tauri::commands::projects::resolve_waiting,
+            cdno_tauri::commands::projects::park_project,
+            cdno_tauri::commands::projects::activate_project,
+            cdno_tauri::commands::notes::read_note,
+            cdno_tauri::commands::notes::resolve_wikilink,
+            cdno_tauri::commands::search::search_vault,
             cdno_tauri::commands::commitments::get_commitments,
             cdno_tauri::commands::commitments::complete_commitment,
             cdno_tauri::commands::commitments::complete_milestone,
@@ -472,6 +483,195 @@ fn complete_commitment_round_trips_args_and_moves_the_note_to_done() {
         store.exists(&done).expect("store query"),
         "the completed commitment lands under _done/<year>/"
     );
+}
+
+// ---------------------------------------------------------------------
+// Detail / reader / palette (M5). Reads and the Project-Detail writes.
+// ---------------------------------------------------------------------
+
+// A richer project than ALPHA: actions, a hard milestone, and a
+// waiting-on item — the Project Detail fixture.
+const DETAIL: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Detail\n\n## Current State\nMoving.\n\n## Next Actions\n- [ ] Wire the reader (deep)\n- [ ] Tidy imports (light)\n\n## Waiting On\n- Review from Sam\n\n## Milestones\n- [ ] Cut release \u{2014} hard: 2026-08-01\n";
+
+#[test]
+fn read_note_round_trips_the_path_arg_and_returns_the_note() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-read-note", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "path": "projects/alpha.md" }));
+    let response =
+        get_ipc_response(&webview, request_with("read_note", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["path"], "projects/alpha.md");
+    assert_eq!(value["note_type"], "project");
+    assert!(
+        value["body"]
+            .as_str()
+            .is_some_and(|b| b.contains("## Next Actions")),
+        "body carries the markdown: {value}"
+    );
+}
+
+#[test]
+fn resolve_wikilink_round_trips_a_resolved_target() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-resolve", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "target": "alpha" }));
+    let response = get_ipc_response(&webview, request_with("resolve_wikilink", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["path"], "projects/alpha.md");
+    assert_eq!(value["note_type"], "project");
+}
+
+#[test]
+fn resolve_wikilink_returns_null_for_an_unresolved_target() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-resolve-none", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "target": "no-such-note" }));
+    let response = get_ipc_response(&webview, request_with("resolve_wikilink", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    assert!(
+        value.is_null(),
+        "an unresolved target rides the wire as null: {value}"
+    );
+}
+
+#[test]
+fn get_project_round_trips_and_composes_the_detail_view() {
+    let (app, _store) = mock_app_with(&[("projects/detail.md", DETAIL)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-get-project", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "detail" }));
+    let response =
+        get_ipc_response(&webview, request_with("get_project", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["slug"], "detail");
+    assert_eq!(value["status"], "active");
+    assert_eq!(value["context"], "work");
+    let actions = value["actions"].as_array().expect("actions is an array");
+    assert_eq!(actions.len(), 2, "both open bullets: {value}");
+    let milestones = value["open_milestones"]
+        .as_array()
+        .expect("open_milestones is an array");
+    assert_eq!(milestones.len(), 1);
+    assert_eq!(milestones[0]["name"], "Cut release");
+    assert_eq!(milestones[0]["is_hard"], true);
+}
+
+#[test]
+fn search_vault_round_trips_the_query_arg() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-search", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // ALPHA's body carries "Draft methods" — a term-based match.
+    let body = InvokeBody::Json(serde_json::json!({ "query": "methods" }));
+    let response =
+        get_ipc_response(&webview, request_with("search_vault", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    let results = value.as_array().expect("search_vault returns an array");
+    assert!(
+        results.iter().any(|r| r["path"] == "projects/alpha.md"),
+        "the alpha project is a hit for 'methods': {value}"
+    );
+}
+
+#[test]
+fn add_action_round_trips_args_including_the_energy_string() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-add-action", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Wire the palette",
+        "energy": "deep",
+    }));
+    get_ipc_response(&webview, request_with("add_action", body)).expect("command succeeds");
+
+    let content = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        content.contains("- [ ] Wire the palette (deep)"),
+        "the new bullet lands with its energy suffix: {content}"
+    );
+}
+
+#[test]
+fn add_action_rejects_an_unknown_energy_string() {
+    // The energy string is parsed into EnergyLevel; a bad value is a
+    // user-visible Invalid, never a silent default.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-add-action-bad", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Something",
+        "energy": "turbo",
+    }));
+    let err = get_ipc_response(&webview, request_with("add_action", body))
+        .expect_err("an unknown energy must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
+}
+
+#[test]
+fn park_project_round_trips_and_moves_the_map_to_parked() {
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-park", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "alpha" }));
+    get_ipc_response(&webview, request_with("park_project", body)).expect("command succeeds");
+
+    let active = VaultPath::new("projects/alpha.md").unwrap();
+    let parked = VaultPath::new("projects/_parked/alpha.md").unwrap();
+    assert!(
+        !store.exists(&active).expect("store query"),
+        "the active map is moved away"
+    );
+    assert!(
+        store.exists(&parked).expect("store query"),
+        "the map lands under projects/_parked/"
+    );
+}
+
+#[test]
+fn promote_action_missing_bullet_serialises_not_found() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-promote-err", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "no such bullet anywhere",
+    }));
+    let err = get_ipc_response(&webview, request_with("promote_action", body))
+        .expect_err("no matching bullet must fail");
+    assert_eq!(err["kind"], "not_found", "{err}");
 }
 
 #[test]

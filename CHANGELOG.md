@@ -14,6 +14,45 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Project Detail, Actions view, note reader, and command palette (M5, plan §1.0/§1.2/§1.8; no
+  GH issue for Project Detail or the Actions view — both are plan deltas; the palette is plan §1.0;
+  the standalone origin chip completes the last acceptance bullet of #56)** — the desktop app's
+  navigation targets now resolve to real views, and every note is one click from being read.
+  - **Note reader** (`components/markdown/NoteReader.tsx`): a 380px Radix-dialog slide-in
+    (focus trap, Esc-to-close, return-focus) that renders any vault note — title, flat scalar
+    frontmatter chips, the markdown body, and an "Open in editor" footer. Hosted once in the shell
+    behind a small `ReaderProvider`/`useReader()` context (plan §6), so the timeline, palette, and
+    backlinks anywhere open it without prop drilling. Markdown is `react-markdown` + `remark-gfm`
+    (tables, task lists rendered read-only) plus a hand-rolled `remarkWikilinks` plugin turning
+    `[[target]]`/`[[target|label]]` into in-app links (adjacent links and aliases handled;
+    unparseable syntax stays literal). A wikilink resolves via `resolve_wikilink`: a project routes
+    to its detail, a stewardship to the list, anything else replaces the reader in place; an
+    unresolved target renders muted and does nothing. External `http(s)` links render as muted text
+    (the webview has no shell-open capability wired).
+  - **Project Detail** (`/projects/:slug`): the full project map — inline Current State editor,
+    Next Actions (tick + energy-tagged quick-add), Waiting On (add + text-matched resolve
+    quick-rows), Milestones (tick, `hard:` chip + date), grouped backlinks and "recently in your
+    logs", and the whole map body rendered below a divider so nothing is hidden. Header carries
+    park/activate (the `ProjectCapReached` error surfaces as a calm toast) and open-in-editor. A
+    parked project renders read-only. Home's project cards gained the quiet "open" link the M2
+    deferral promised for when this route shipped.
+  - **Actions view** (`/actions`): a single cross-project list grouped by project with a
+    single-select energy filter (empty groups drop out); each row ticks done (optimistic), promotes
+    an unattached bullet to a note, or opens an attached note in the reader. Empty state: "No open
+    actions anywhere. Enjoy it."
+  - **Command palette** (`⌘K`, `cmdk`): a Navigate group (static views + debounced `search_vault`
+    note results, routing to project/stewardship/reader) and two verbs — "Capture…" and
+    "Log to daily…" — that switch to a one-line submit into the vault. Styled from the semantic
+    tokens; Esc closes and returns focus. A sidebar "Search & jump ⌘K" affordance opens it too.
+  - **Commitments Timeline**: the standalone origin chip now opens the commitment note in the
+    reader (closing #56's last deferred bullet), replacing the plain-text placeholder.
+  - New frontend deps (Bun): `react-markdown` 10, `remark-gfm` 4, `cmdk` 1.1, `@radix-ui/react-dialog`
+    1.1 (the first vendored Radix-backed primitive, a shadcn-style `Sheet` under
+    `components/ui/`). No backend changes — this milestone consumes the M5 commands
+    (`read_note`, `resolve_wikilink`, `get_project`, `list_all_actions`, `search_vault`,
+    `add_action`, `promote_action`, `add_waiting_on`, `resolve_waiting`, `park_project`,
+    `activate_project`) already in the tree.
+
 - **Commitments Timeline (closes #56)** — the full promises view lands at `/commitments`: a
   strictly chronological vertical list of every dated commitment from all four sources (project
   milestones, stewardship periodic commitments, standalone commitment notes, and self-due action
