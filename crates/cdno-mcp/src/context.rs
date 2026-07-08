@@ -17,7 +17,7 @@ use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
     MonthlyNoteViewDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
     ProjectListDto, ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
-    StewardshipTrackingDto, WeeklyContextDto, WeeklyNoteViewDto,
+    StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs,
 };
 
 use crate::input::*;
@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
+        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. The payload is bounded for token-cap safety: each `state_changes` entry carries only a ~200-char gist (marked with a trailing \u{2026}) of its before/after Current State bodies, and `logs` is capped to the 100 most-recent lines. The full detail stays one `get_project_context` / `read_daily_note` away. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
     )]
     pub async fn get_weekly_context(
         &self,
@@ -72,9 +72,13 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
 
+        // Bound the two unbounded slices before serialising (GH #298):
+        // `state_changes` bodies are truncated per-entry in the DTO's
+        // `From` impl; `logs` is capped to the most-recent lines here.
+        let logs = cap_recent_logs(logs.into_iter().map(Into::into).collect(), WEEKLY_LOGS_MAX);
         json_result(WeeklyContextDto {
             week_of: monday,
-            logs: logs.into_iter().map(Into::into).collect(),
+            logs,
             completed_actions: completed.into_iter().map(Into::into).collect(),
             state_changes: state_changes.into_iter().map(Into::into).collect(),
             commitments: commitments.into_iter().map(Into::into).collect(),

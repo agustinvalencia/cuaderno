@@ -398,6 +398,37 @@ impl From<CompletedActionEntry> for CompletedActionEntryDto {
     }
 }
 
+/// Max length (in `char`s) of each `old_state` / `new_state` snippet
+/// carried in a [`ProjectStateChangeDto`].
+///
+/// The dominant contributor to the oversized `get_weekly_context`
+/// payload (GH #298): every state change embeds the *full* before
+/// and after `## Current State` body, the two are ~90% identical,
+/// and a busy week stacks several changes on a project whose state
+/// runs to hundreds of words — multiplying multi-hundred-word bodies
+/// into tens of KB and blowing the MCP client's token cap.
+///
+/// The weekly review only needs the *gist* of what moved; the full
+/// before/after lives in the project map and the daily note, each one
+/// `get_project_context` / `read_daily_note` away. 200 chars is
+/// roughly the first sentence or two — enough to tell what changed
+/// without shipping the whole state.
+const STATE_SNIPPET_MAX_CHARS: usize = 200;
+
+/// Truncate `s` to at most [`STATE_SNIPPET_MAX_CHARS`] characters,
+/// appending an ellipsis (`…`) when content was dropped. Counts and
+/// slices by `char` so a multi-byte UTF-8 boundary is never split.
+/// The trailing marker is deliberately observable so a consumer (and
+/// our tests) can tell a snippet was truncated.
+fn truncate_state_snippet(s: String) -> String {
+    if s.chars().count() <= STATE_SNIPPET_MAX_CHARS {
+        return s;
+    }
+    let mut out: String = s.chars().take(STATE_SNIPPET_MAX_CHARS).collect();
+    out.push('…');
+    out
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ProjectStateChangeDto {
     pub date: NaiveDate,
@@ -411,16 +442,50 @@ impl From<ProjectStateChange> for ProjectStateChangeDto {
         Self {
             date: c.date,
             project: c.project,
-            old_state: c.old_state,
-            new_state: c.new_state,
+            // Bound both sides — see STATE_SNIPPET_MAX_CHARS. This is
+            // the change that kills the 82k payload from GH #298.
+            old_state: truncate_state_snippet(c.old_state),
+            new_state: truncate_state_snippet(c.new_state),
         }
     }
+}
+
+/// Max number of daily-log lines carried in a [`WeeklyContextDto`].
+///
+/// Secondary contributor to the GH #298 blow-up: `logs` ships every
+/// daily-log line of the week verbatim, and a heavy week runs to
+/// ~140+ terse checkpoint lines. Once the state-change bodies are
+/// bounded ([`STATE_SNIPPET_MAX_CHARS`]) this is what remains to trim
+/// to get the whole payload *well* under the client's cap.
+///
+/// We keep the most-recent lines and drop the oldest, so the back
+/// half of the week (the part a review most often reasons forward
+/// from) survives intact; the full per-day logs stay one
+/// `read_daily_note` away. 100 lines covers a normal-to-busy week
+/// while keeping the `logs` slice to roughly 10 KB.
+pub const WEEKLY_LOGS_MAX: usize = 100;
+
+/// Keep only the most-recent `max` entries of an oldest-first log
+/// vec, dropping from the front. A no-op when the vec is already
+/// within budget. The drop is observable (the vec shrinks) so a
+/// consumer can tell the week was capped.
+pub fn cap_recent_logs(mut logs: Vec<DailyLogLineDto>, max: usize) -> Vec<DailyLogLineDto> {
+    if logs.len() > max {
+        let drop = logs.len() - max;
+        logs.drain(0..drop);
+    }
+    logs
 }
 
 /// Top-level output of `get_weekly_context`. The four slices are
 /// what design §11 calls for: this week's daily logs, what got
 /// done, project state changes during the week, and the lookahead
 /// of upcoming commitments.
+///
+/// Two slices are bounded to keep the payload under the MCP client's
+/// token cap (GH #298): each `state_changes` entry carries only a
+/// [`STATE_SNIPPET_MAX_CHARS`]-char gist of its before/after bodies,
+/// and `logs` is capped to the [`WEEKLY_LOGS_MAX`] most-recent lines.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct WeeklyContextDto {
     /// The Monday of the ISO week the rest of the slices cover.

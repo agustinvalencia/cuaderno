@@ -391,6 +391,223 @@ async fn get_weekly_context_includes_a_log_from_today() {
     );
 }
 
+/// Seed a daily note whose `## Logs` section carries `log_lines`
+/// plain checkpoint lines plus, when `state_change` is `Some`, one
+/// canonical `state on [[slug]]` block with the given long
+/// before/after bodies (the shape `update_project_state` writes and
+/// `project_state_changes_between` parses).
+fn seed_daily_week_fixture(
+    store: &Arc<dyn VaultStore>,
+    date: NaiveDate,
+    log_lines: usize,
+    state_change: Option<(&str, &str, &str)>,
+) {
+    let path = cdno_core::path::VaultPath::new(cdno_core::paths::daily_note_relpath(date)).unwrap();
+    let mut body = format!(
+        "---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n",
+        date = date.format("%Y-%m-%d"),
+    );
+    if let Some((slug, was, now)) = state_change {
+        body.push_str(&format!(
+            "- **08:00**: state on [[{slug}]]\n  was: {was}\n  now: {now}\n"
+        ));
+    }
+    for i in 0..log_lines {
+        body.push_str(&format!(
+            "- **09:{minute:02}**: checkpoint {i} on the day, a terse but realistic log line\n",
+            minute = i % 60,
+        ));
+    }
+    store.write_file(&path, &body).unwrap();
+}
+
+// A ~400-word Current State body — representative of an active
+// project whose state has grown over the week. Two of these per state
+// change (before + after) are exactly what blew the payload to 82k in
+// GH #298.
+const LONG_STATE: &str = "The nonlinear factor model refactor is mid-flight: the core solver now \
+threads the sparse Jacobian through the block-elimination path, but the boundary handling for the \
+periodic terms is still provisional and only exercised by the synthetic fixtures. We validated the \
+forward pass against the reference implementation to within tolerance on the small grid, though the \
+large grid diverges after roughly forty iterations, which points at an accumulation bug in the \
+residual reduction rather than the factorisation itself. The next concrete step is to instrument \
+the residual norm per block and compare against the dense baseline, then decide whether the \
+preconditioner needs the extra Chebyshev smoothing pass or whether the divergence is purely a \
+scheduling artefact of the parallel reduction. Documentation and the benchmark harness are \
+lagging behind the code and will need a dedicated pass before this is shareable. Open questions \
+remain about whether the memory budget holds on the target hardware once the halo exchange is \
+enabled, and about the interaction between the adaptive time step and the factor caching.";
+
+#[tokio::test]
+async fn get_weekly_context_payload_is_bounded_for_a_heavy_week() {
+    // A realistic heavy week: every day of the current ISO week carries
+    // a long-bodied project state change plus a stack of log lines,
+    // reproducing the GH #298 conditions (full before/after state bodies
+    // multiplied across changes, and >100 verbatim log lines). Assert
+    // the serialised payload comes out bounded.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let monday = monday_of(today());
+    // 7 days x 25 log lines = 175 lines (> WEEKLY_LOGS_MAX of 100), and
+    // one long state change per day = 7 changes with full before/after
+    // bodies.
+    for offset in 0..7 {
+        let date = monday + chrono::Duration::days(offset);
+        seed_daily_week_fixture(&store, date, 25, Some(("nfm", LONG_STATE, LONG_STATE)));
+    }
+
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+
+    // Measure the raw serialised text — the exact bytes the MCP client
+    // receives and counts against its token cap.
+    let raw = match &result.content[0].raw {
+        RawContent::Text(t) => t.text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    let value = decode_json(&result);
+
+    // Ceiling well under the ~25k-char target from GH #298. The
+    // un-truncated fixture would serialise to well over 80k.
+    const CEILING: usize = 25_000;
+    assert!(
+        raw.len() < CEILING,
+        "payload should be bounded under {CEILING} chars, got {}",
+        raw.len()
+    );
+
+    // state_changes: every before/after body is truncated to the gist.
+    let state_changes = value["state_changes"].as_array().unwrap();
+    assert!(!state_changes.is_empty(), "fixture should yield changes");
+    for change in state_changes {
+        for field in ["old_state", "new_state"] {
+            let body = change[field].as_str().unwrap();
+            // <= 200 content chars + one ellipsis marker.
+            assert!(
+                body.chars().count() <= 201,
+                "{field} should be truncated, got {} chars",
+                body.chars().count()
+            );
+            // The seeded body is far longer than the cap, so every one
+            // must carry the observable truncation marker.
+            assert!(
+                body.ends_with('…'),
+                "{field} should end with the ellipsis marker: {body:?}"
+            );
+        }
+    }
+
+    // logs: capped to the most-recent WEEKLY_LOGS_MAX lines.
+    let logs = value["logs"].as_array().unwrap();
+    assert_eq!(
+        logs.len(),
+        cdno_mcp::dto::WEEKLY_LOGS_MAX,
+        "logs should be capped to the most-recent {} lines",
+        cdno_mcp::dto::WEEKLY_LOGS_MAX
+    );
+}
+
+/// Run `get_weekly_context` over a store seeded with a single state
+/// change on today, returning the first state change's `old_state`
+/// string. A focused helper for the boundary tests below.
+async fn first_old_state(was: &str, now: &str) -> String {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    seed_daily_week_fixture(&store, today(), 0, Some(("nfm", was, now)));
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+    let value = decode_json(&result);
+    value["state_changes"][0]["old_state"]
+        .as_str()
+        .expect("state change should carry an old_state string")
+        .to_owned()
+}
+
+#[tokio::test]
+async fn get_weekly_context_truncates_on_a_multibyte_char_boundary() {
+    // A state body of 250 multibyte (3-byte) codepoints: char index 200
+    // sits mid-way through the string, and byte offset 200 is NOT a char
+    // boundary. A naive `&s[..200]` byte-slice would panic here; the
+    // char-based truncation must not. Guards against a regression to
+    // byte-slicing that would otherwise leave the suite green (the
+    // ASCII fixtures never straddle a codepoint boundary).
+    let body = "\u{3042}".repeat(250); // 'あ' x250 = 750 bytes, 250 chars
+    let old_state = first_old_state(&body, &body).await;
+
+    // Did not panic, and the result is a valid string bounded to the cap
+    // plus the one-char ellipsis marker.
+    assert_eq!(
+        old_state.chars().count(),
+        201,
+        "200 content chars + one ellipsis marker"
+    );
+    assert!(
+        old_state.ends_with('\u{2026}'),
+        "truncated multibyte snippet should end with the ellipsis marker: {old_state:?}"
+    );
+    // Every retained char is the seeded codepoint — no split/replacement.
+    assert!(
+        old_state.chars().take(200).all(|c| c == '\u{3042}'),
+        "retained chars should be the intact seeded codepoint"
+    );
+}
+
+#[tokio::test]
+async fn get_weekly_context_passes_through_a_body_at_exactly_the_cap() {
+    // Exactly STATE_SNIPPET_MAX_CHARS (200) chars: the `<=` early-return
+    // branch must return it unchanged with NO ellipsis. Guards the
+    // off-by-one at the truncation boundary.
+    let body = "a".repeat(200);
+    let old_state = first_old_state(&body, &body).await;
+    assert_eq!(old_state, body, "a body at the cap passes through verbatim");
+    assert!(
+        !old_state.ends_with('\u{2026}'),
+        "a body at the cap must not gain a truncation marker"
+    );
+}
+
+#[tokio::test]
+async fn get_weekly_context_leaves_a_normal_small_week_untouched() {
+    // A light week: one short state change plus a handful of log lines,
+    // all well under the caps. Nothing should be truncated — the short
+    // state body round-trips verbatim and the logs vec is returned whole.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let short_state = "shipped the parser; next up is the boundary handling";
+    // One day: 10 plain log lines + one state change. The state-change
+    // header parses as a log line too (its `was:`/`now:` fold in as
+    // continuations), so the expected count is 10 + 1 = 11.
+    seed_daily_week_fixture(&store, today(), 10, Some(("nfm", short_state, short_state)));
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+    let value = decode_json(&result);
+
+    // Short state body returned byte-for-byte, no truncation marker.
+    let old_state = value["state_changes"][0]["old_state"].as_str().unwrap();
+    assert_eq!(old_state, short_state);
+    assert!(!old_state.ends_with('\u{2026}'));
+
+    // Logs vec returned whole (cap is a no-op below WEEKLY_LOGS_MAX).
+    let logs = value["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 11, "10 plain lines + 1 state-change header");
+    assert!(logs.len() < cdno_mcp::dto::WEEKLY_LOGS_MAX);
+}
+
 // ---------------------------------------------------------------------
 // get_monthly_context
 // ---------------------------------------------------------------------
