@@ -161,6 +161,7 @@ export default function CommitmentsTimeline({
   today,
   filter,
   readOnly = false,
+  monthHeading: MonthHeading = "h3",
 }: {
   entries: CommitmentEntry[];
   today: string;
@@ -168,6 +169,11 @@ export default function CommitmentsTimeline({
   /** Suppress the done buttons (origin chips remain) — for hosts that
    * present the timeline as a pure look, like the review's lookahead. */
   readOnly?: boolean;
+  /** Month-header element. Heading levels must not skip (axe
+   * heading-order): hosts nesting the timeline under an h2 section
+   * keep the h3 default; the Commitments view sits right under its h1
+   * and passes "h2". */
+  monthHeading?: "h2" | "h3";
 }) {
   // Empty active set means "all contexts" — a filter narrows, never
   // blanks by default.
@@ -220,9 +226,9 @@ export default function CommitmentsTimeline({
 
       {months.map((month) => (
         <section key={month.label} aria-label={month.label}>
-          <h3 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <MonthHeading className="text-xs font-medium uppercase tracking-wider text-ink-faint">
             {month.label}
-          </h3>
+          </MonthHeading>
           <ul className="mt-2 space-y-2">
             {month.entries.map((entry) => (
               <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />

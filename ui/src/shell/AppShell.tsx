@@ -6,6 +6,7 @@ import { contextDotClass } from "../lib/contexts";
 import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
 import InboxDrawer from "./InboxDrawer";
+import WatcherPill from "./WatcherPill";
 import { ReaderProvider, useReader } from "./reader";
 
 // The note reader pulls react-markdown + remark-gfm; the palette pulls
@@ -164,6 +165,8 @@ export default function AppShell() {
           {/* Glyphs, not emoji — the ⌘K hint (plan §5). */}
           <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-ink-faint">⌘K</span>
         </button>
+
+        <WatcherPill />
 
         <div className="mt-2 flex items-center justify-between px-2 pt-4">
           <button

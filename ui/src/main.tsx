@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { attachEventBridge } from "./api/events";
 import { initTheme } from "./lib/theme";
+import { setWatcherState } from "./lib/watcherStatus";
 import { ToastProvider } from "./shell/Toasts";
 import App from "./App";
 import "./styles/globals.css";
@@ -28,7 +29,9 @@ const queryClient = new QueryClient({
 // first fetch); attachEventBridge ends with a global invalidation to
 // cover anything emitted earlier. In a plain browser tab (vite dev
 // without Tauri) the bridge is absent — render anyway.
-attachEventBridge(queryClient)
+// watcher:status lands in the module store; the shell's WatcherPill
+// reads it reactively (grey pill + 60s poll fallback while degraded).
+attachEventBridge(queryClient, (status) => setWatcherState(status.state))
   .catch((error) => {
     // Absent bridge is normal in a plain browser tab; a failure
     // inside Tauri (capability regression) must at least be loud in

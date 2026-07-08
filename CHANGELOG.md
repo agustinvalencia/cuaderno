@@ -6,6 +6,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **M10 packaging remainder (plan §5 M10 — the final desktop-app milestone)** (#326) — the
+  polish slice left after the dmg/ad-hoc-signing/release pipeline shipped with v0.5.0–0.7.0.
+  Phase 5/6 UI is now COMPLETE. Deliberately left out of v1: notarization, an auto-updater, an
+  NSPanel capture overlay, and an Intel dmg.
+  - **Menu-bar tray** (`crates/cdno-tauri/src/tray.rs`, plan §1.0): Quick capture (same handler as
+    the global shortcut — show + focus the capture window, emit `capture:show`), Open cuaderno,
+    Quit. Minimal and calm — no counts, no status swaps; icon reuses the codegen-embedded app icon
+    (workspace `tauri` dep gains the `tray-icon` feature); a tray failure logs a warning and never
+    aborts startup.
+  - **Degraded-watcher pill + poll fallback** (plan §3.1): the backend's `watcher:status` events —
+    emitted with every batch but consumed by nothing until now — land in a
+    `ui/src/lib/watcherStatus.ts` module store; while degraded the sidebar footer shows a muted
+    grey "live updates paused" pill and all queries are invalidated every 60s (event-driven refresh
+    can't be trusted after a notify overflow/failed reconcile), both cleared on the next healthy
+    batch.
+  - **Day-change QA**: the event bridge is now under test (`ui/src/api/events.test.ts`) —
+    `clock:day-changed` invalidates the date-dependent queries, `vault:changed` fans out through
+    the area map, `watcher:status` reaches its callback. No Rust-side clock test: `clock.rs` is a
+    sleep-loop around `Local::now()` with no extractable pure logic.
+  - **A11y pass** (M2/M5 keyboard criteria): `vitest-axe` smoke tests over Home, Commitments, and
+    Strategic (`ui/src/views/a11y.test.tsx`; `color-contrast` excluded — jsdom cannot paint). One
+    real finding fixed: the Commitments view skipped from `h1` to the shared timeline's `h3` month
+    headers — `CommitmentsTimeline` now takes a `monthHeading` level prop.
+  - **Docs**: README gains the desktop-app install (cask with `--no-quarantine` + the `launchctl`
+    vault-path step) and drops the long-stale "scaffolded" phrasing; new docs-site page
+    "Desktop app" (`getting-started/desktop-app.md`) covers install, the two launch caveats, the
+    vault env var, and a tour of the views.
+
 ## [0.7.0] - 2026-07-08
 
 The Strategic view milestone (M9 of the desktop-app plan) - the final view; every route in the app is now real.

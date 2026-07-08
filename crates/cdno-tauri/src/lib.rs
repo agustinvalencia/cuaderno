@@ -16,6 +16,7 @@ pub mod watcher;
 pub mod with_vault;
 
 mod clock;
+mod tray;
 
 use std::sync::Arc;
 
@@ -29,12 +30,23 @@ use crate::state::{AppState, WriteJournal};
 use crate::watcher::WatcherDeps;
 
 /// Bring `label`'s window to the front (show + focus), tolerating a
-/// missing window. Used both by the single-instance guard (main) and
-/// the global capture shortcut (capture).
+/// missing window. Used by the single-instance guard (main), the
+/// global capture shortcut (capture), and the tray menu (both).
 fn surface_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>, label: &str) {
     if let Some(window) = app.get_webview_window(label) {
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// Summon the floating capture window: show + focus, then emit
+/// `capture:show` so the window's input re-focuses even when it was
+/// already visible. Shared by the global shortcut and the tray's
+/// "Quick capture" item so the two entry points cannot drift.
+fn summon_capture<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    surface_window(app, "capture");
+    if let Err(err) = app.emit(CAPTURE_SHOW, ()) {
+        tracing::warn!(error = %err, "failed to emit capture:show");
     }
 }
 
@@ -109,10 +121,7 @@ pub fn run() {
                         if event.state != ShortcutState::Pressed {
                             return;
                         }
-                        surface_window(app, "capture");
-                        if let Err(err) = app.emit(CAPTURE_SHOW, ()) {
-                            tracing::warn!(error = %err, "failed to emit capture:show");
-                        }
+                        summon_capture(app);
                     });
             // A failed registration (the OS refused the hotkey, or it
             // clashes with another app) must not abort startup — the
@@ -142,6 +151,12 @@ pub fn run() {
 
             let clock_app = app.handle().clone();
             std::thread::spawn(move || clock::run(clock_app));
+
+            // Menu-bar tray (M10). A tray failure is cosmetic — log
+            // and carry on, never crash startup over it.
+            if let Err(err) = tray::init(app.handle()) {
+                tracing::warn!(error = %err, "failed to create the tray icon");
+            }
 
             Ok(())
         })
