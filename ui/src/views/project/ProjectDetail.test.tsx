@@ -18,7 +18,7 @@ const ACTIVE: ProjectDetailData = {
   created: "2026-01-01",
   core_question: null,
   body_markdown: "## Current State\nGoing well.\n\n## Notes\nSome prose.",
-  actions: [{ text: "Draft methods (deep)", energy: "deep", attached: null }],
+  actions: [{ text: "Draft methods", energy: "deep", attached: null }],
   open_milestones: [{ name: "v1 ship", date: "2026-08-01", is_hard: true }],
   backlinks: {
     portfolios: ["portfolios/x/_index.md"],
@@ -66,7 +66,7 @@ afterEach(() => {
 
 test("renders actions, milestones, backlinks, and log mentions", async () => {
   renderDetail(ACTIVE);
-  expect(await screen.findByText("Draft methods (deep)")).toBeDefined();
+  expect(await screen.findByText("Draft methods")).toBeDefined();
   expect(screen.getByText("v1 ship")).toBeDefined();
   expect(screen.getByText("hard:")).toBeDefined();
   expect(screen.getByText("portfolios/x/_index.md")).toBeDefined();
@@ -80,7 +80,7 @@ test("done fires complete_action for the bullet", async () => {
   // Await the success toast so the (microtask-deferred) mutation has run.
   expect(await screen.findByText(/one step further/)).toBeDefined();
   const done = calls.find((c) => c.cmd === "complete_action");
-  expect(done?.args).toMatchObject({ project: "alpha", action: "Draft methods (deep)" });
+  expect(done?.args).toMatchObject({ project: "alpha", action: "Draft methods" });
 });
 
 test("a parked project renders read-only — no add row, no done", async () => {

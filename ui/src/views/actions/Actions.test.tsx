@@ -15,7 +15,7 @@ const GROUPS: ProjectActions[] = [
     slug: "alpha",
     context: "work",
     actions: [
-      { text: "Draft methods (deep)", energy: "deep", attached: null },
+      { text: "Draft methods", energy: "deep", attached: null },
       { text: "File receipts (light)", energy: "light", attached: null },
     ],
   },
@@ -23,7 +23,7 @@ const GROUPS: ProjectActions[] = [
     slug: "beta",
     context: "family",
     actions: [
-      { text: "Water plants (light)", energy: "light", attached: { slug: "water-plants", status: "active" } },
+      { text: "Water plants", energy: "light", attached: { slug: "water-plants", status: "active" } },
     ],
   },
 ];
@@ -57,15 +57,15 @@ test("groups actions under their project headers", async () => {
   renderActions();
   expect(await screen.findByText("alpha")).toBeDefined();
   expect(screen.getByText("beta")).toBeDefined();
-  expect(screen.getByText("Draft methods (deep)")).toBeDefined();
-  expect(screen.getByText("Water plants (light)")).toBeDefined();
+  expect(screen.getByText("Draft methods")).toBeDefined();
+  expect(screen.getByText("Water plants")).toBeDefined();
 });
 
 test("the energy filter narrows to matching bullets and drops empty groups", async () => {
   renderActions();
   await screen.findByText("alpha");
   fireEvent.click(screen.getByRole("button", { name: "deep" }));
-  expect(screen.getByText("Draft methods (deep)")).toBeDefined();
+  expect(screen.getByText("Draft methods")).toBeDefined();
   // beta has no deep action, so its group disappears entirely.
   expect(screen.queryByText("File receipts (light)")).toBeNull();
   expect(screen.queryByText("beta")).toBeNull();
@@ -78,5 +78,5 @@ test("promote fires promote_action for an unattached bullet", async () => {
   // Await the success toast so the (microtask-deferred) mutation has run.
   expect(await screen.findByText(/Promoted to an action note/)).toBeDefined();
   const promoted = calls.find((c) => c.cmd === "promote_action");
-  expect(promoted?.args).toMatchObject({ project: "alpha", action: "Draft methods (deep)" });
+  expect(promoted?.args).toMatchObject({ project: "alpha", action: "Draft methods" });
 });

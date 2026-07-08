@@ -6,6 +6,7 @@
 // and log mentions are quiet, clickable context. A parked project
 // renders read-only: history stays visible, the write affordances fall
 // away.
+import { actionLabel } from "../../lib/actionLabel";
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
@@ -318,14 +319,14 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
                 <span aria-hidden className="text-ink-faint">
                   →
                 </span>
-                <span className="min-w-0 flex-1 text-sm text-ink">{action.text}</span>
+                <span className="min-w-0 flex-1 text-sm text-ink">{actionLabel(action.text)}</span>
                 {action.energy && (
                   <span className="shrink-0 text-xs text-ink-faint">({action.energy})</span>
                 )}
                 <button
                   type="button"
                   onClick={() => complete.mutate(action.text)}
-                  aria-label={`Mark done: ${action.text}`}
+                  aria-label={`Mark done: ${actionLabel(action.text)}`}
                   className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
                 >
                   done
