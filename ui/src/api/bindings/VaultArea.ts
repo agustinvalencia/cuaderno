@@ -5,4 +5,4 @@
  * per top-level vault directory, split where the journal folds two
  * note types into one tree.
  */
-export type VaultArea = "projects" | "actions" | "daily" | "weekly" | "commitments" | "portfolios" | "stewardships" | "questions" | "inbox" | "config";
+export type VaultArea = "projects" | "actions" | "daily" | "weekly" | "monthly" | "commitments" | "portfolios" | "stewardships" | "questions" | "inbox" | "config";

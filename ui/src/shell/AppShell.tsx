@@ -42,6 +42,7 @@ function ReaderHost() {
 const NAV = [
   { to: "/", label: "Today" },
   { to: "/actions", label: "Actions" },
+  { to: "/calendar", label: "Calendar" },
   { to: "/commitments", label: "Commitments" },
   { to: "/weekly", label: "Weekly" },
   { to: "/strategic", label: "Strategic" },

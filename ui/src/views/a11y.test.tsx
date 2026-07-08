@@ -25,6 +25,7 @@ import type { StrategicBundle } from "../api/bindings/StrategicBundle";
 import Home from "./home/Home";
 import Commitments from "./commitments/Commitments";
 import Strategic from "./strategic/Strategic";
+import Calendar from "./calendar/Calendar";
 
 expect.extend(matchers);
 // vitest-axe 0.1.0 ships type augmentation for the pre-1.0 `Vi`
@@ -175,5 +176,32 @@ test("Strategic has no axe violations", async () => {
   mockIPC((cmd) => (cmd === "get_strategic_bundle" ? STRATEGIC : undefined));
   const { container } = renderView(<Strategic />);
   await screen.findByText("alpha");
+  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
+test("Calendar has no axe violations", async () => {
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "get_today":
+        return "2026-07-15";
+      case "list_daily_dates":
+        return ["2026-07-15"];
+      case "read_daily":
+        return {
+          date: (args as { date: string }).date,
+          exists: true,
+          markdown: "# Wednesday\n\nShipped the calendar grid.",
+          path: "journal/2026/daily/2026-07-15.md",
+          prev_date: "2026-07-14",
+          next_date: "2026-07-16",
+          week_of: "2026-07-13",
+          month: "2026-07",
+        };
+      default:
+        return undefined;
+    }
+  });
+  const { container } = renderView(<Calendar />);
+  await screen.findByRole("heading", { name: "Wednesday" });
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
