@@ -3,6 +3,7 @@
 // energy. The cross-project complement to Home's per-project cards.
 // Attached actions open in the shell note reader; unattached ones can
 // be promoted to a manifest note in place.
+import { actionLabel } from "../../lib/actionLabel";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
@@ -62,7 +63,7 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
       <span aria-hidden className="text-ink-faint">
         →
       </span>
-      <span className="min-w-0 flex-1 text-sm text-ink">{action.text}</span>
+      <span className="min-w-0 flex-1 text-sm text-ink">{actionLabel(action.text)}</span>
       {action.energy && <span className="shrink-0 text-xs text-ink-faint">({action.energy})</span>}
       {action.attached ? (
         <button
@@ -77,7 +78,7 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
           type="button"
           onClick={() => promote.mutate()}
           disabled={promote.isPending}
-          aria-label={`Promote to a note: ${action.text}`}
+          aria-label={`Promote to a note: ${actionLabel(action.text)}`}
           className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
         >
           promote
@@ -86,7 +87,7 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
       <button
         type="button"
         onClick={() => complete.mutate()}
-        aria-label={`Mark done: ${action.text}`}
+        aria-label={`Mark done: ${actionLabel(action.text)}`}
         className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
       >
         done

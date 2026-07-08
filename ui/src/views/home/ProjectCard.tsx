@@ -6,6 +6,7 @@ import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import type { OrientationProject } from "../../api/bindings/OrientationProject";
 import type { OrientationView } from "../../api/bindings/OrientationView";
 import { completeAction, errorMessage, startAction, updateProjectState } from "../../api/commands";
+import { actionLabel } from "../../lib/actionLabel";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useToast } from "../../shell/Toasts";
@@ -179,7 +180,7 @@ export default function ProjectCard({
             <span aria-hidden className="text-ink-faint">
               →{" "}
             </span>
-            {action.text}
+            {actionLabel(action.text)}
             {action.energy && (
               <span className="ml-1 text-xs text-ink-faint">({action.energy})</span>
             )}
@@ -202,7 +203,7 @@ export default function ProjectCard({
               type="button"
               onClick={() => complete.mutate(action.text)}
               disabled={complete.isPending}
-              aria-label={`Mark done: ${action.text}`}
+              aria-label={`Mark done: ${actionLabel(action.text)}`}
               className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
             >
               done

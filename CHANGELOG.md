@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Action bullets no longer double their energy tag or leak wikilink syntax** (#PR-pending) -
+  the stored bullet text is the verbatim matching key (it carries the `(deep)` suffix and any
+  raw `[[target|label]]` link), and the views rendered it as-is next to their own energy tag.
+  A display-only `actionLabel` helper strips the suffix and renders wikilinks by label or last
+  path segment across Home cards, the Actions view, and Project Detail; mutations still match
+  on the raw text. Spotted in v0.5.0 user testing.
+
 ## [0.8.0] - 2026-07-08
 
 The packaging-remainder milestone (M10) - the desktop-app plan (M0-M10) is complete.
