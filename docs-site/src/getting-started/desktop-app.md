@@ -64,10 +64,12 @@ xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 The sidebar leads with **Today** — the morning orientation: commitments due soon, a card per
 active project with its current state and a next action filtered by your energy, and any quietly
-lapsed habits. **Actions** is the cross-project list of next actions; **Commitments** a
-chronological timeline of everything promised (context-coloured, never red); **Weekly** a guided,
-stop-anywhere five-step review; **Strategic** the monthly view — questions grid, five-slot project
-allocator, portfolio health, stewardship trends. Below those, each active project has a full map
+lapsed habits. **Actions** is the cross-project list of next actions; **Calendar** a month grid
+of your journal — days with a daily note are marked, and clicking one opens it in an embedded
+panel that reads read-only and jumps to the previous or next day, the day's week, or its month;
+**Commitments** a chronological timeline of everything promised (context-coloured, never red);
+**Weekly** a guided, stop-anywhere five-step review; **Strategic** the monthly view — questions
+grid, five-slot project allocator, portfolio health, stewardship trends. Below those, each active project has a full map
 (`/projects/<slug>`), and **Portfolios** and **Stewardships** browse the knowledge and
 responsibility layers. Everywhere: `⌘K` opens search-and-jump, `⌘⇧C` summons the global capture
 window from any app (Enter files to the inbox, `⌘Enter` appends to today's log), and the menu-bar
