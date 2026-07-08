@@ -8,15 +8,26 @@
 //!
 //! 1. the `CUADERNO_VAULT_PATH` env var — an explicit override, honoured
 //!    verbatim and expected to *fail loudly* if it points at a non-vault;
-//! 2. a persisted setting at `<app_config_dir>/vault.json`;
+//! 2. a persisted setting at `<app_config_dir>/vault.json`, accepted only
+//!    if it passes a cheap `.cuaderno/` marker check;
 //! 3. otherwise, the caller must prompt (a native folder picker).
 //!
-//! The ordering and the "a stored path that no longer opens falls
-//! through to the picker instead of crashing" rule are pure and
-//! unit-tested here ([`resolve`] takes the vault check as a closure, so
-//! no dialog or filesystem vault is needed to test the branching). The
-//! actual picker loop lives in `lib.rs` — it is untestable UI and stays
-//! thin.
+//! **A stored path falls through to the picker on *any* failure, not just
+//! a moved/deleted vault.** Two gates guard it: the cheap marker check
+//! here (vault gone or never was) and the full `open_vault` in `lib.rs`
+//! (marker present but the open fails — corrupt config, unopenable index,
+//! or a TOCTOU delete between check and open). Either gate degrades to the
+//! picker instead of aborting; only the explicit env override hard-fails.
+//! The ordering and the marker-check fall-through are pure and unit-tested
+//! here ([`resolve`] takes the check as a closure, so no dialog or
+//! filesystem vault is needed to test the branching); the full-open
+//! fall-through lives with the picker loop in `lib.rs`, which is
+//! untestable UI and stays thin.
+//!
+//! Caveat: the marker check `stat`s `<candidate>/.cuaderno` during
+//! resolve. A stored path on a hard-mounted but unreachable network share
+//! can block that `stat` (kernel-level, uninterruptible), stalling
+//! startup — a documented limitation, not something this seam can guard.
 
 use std::fs;
 use std::io;

@@ -136,7 +136,35 @@ fn init_with_vault(
         tracing::warn!(error = %err, "failed to create the tray icon");
     }
 
+    // Reveal the main window. It starts hidden (tauri.conf.json main
+    // window `visible: false`) so its webview can load — and, on the
+    // first-launch picker path, flash its no-vault error — off-screen while
+    // the vault is still being resolved. Now that state is managed and the
+    // vault is open, show it. A show/focus failure is cosmetic (the window
+    // is only hidden), so log and carry on rather than abort.
+    if let Some(window) = app.get_webview_window("main") {
+        if let Err(err) = window.show() {
+            tracing::warn!(error = %err, "failed to show the main window");
+        }
+        if let Err(err) = window.set_focus() {
+            tracing::warn!(error = %err, "failed to focus the main window");
+        }
+    } else {
+        tracing::warn!("main window missing; cannot reveal it after init");
+    }
+
     Ok(())
+}
+
+/// Spawn the first-launch picker on a background thread. Shared by the
+/// `NeedsPicker` arm and the `Stored`-open-failure fall-through so the two
+/// cannot drift. The thread must be background: `run_picker`'s blocking
+/// dialogs post onto the main event loop, which is not pumping until
+/// `setup` returns — the thread's first dialog simply blocks until then,
+/// then the live loop services it.
+fn spawn_picker(app: &tauri::AppHandle, config_dir: PathBuf) {
+    let picker_app = app.clone();
+    std::thread::spawn(move || run_picker(picker_app, config_dir));
 }
 
 /// First-launch folder-picker loop, run on a background thread (see the
@@ -242,6 +270,12 @@ pub fn run() {
         // the already-running main window instead of spawning a
         // duplicate app.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Surface the already-running instance's main window. If that
+            // first instance is still pre-init (vault not yet picked, so the
+            // main window is hidden and no state is managed), this reveals
+            // the loading/error shell rather than a ready UI — acceptable:
+            // the user asked to focus the app, and init's own show/focus
+            // will replace the shell once the picker returns.
             surface_window(app, "main");
         }))
         .plugin(tauri_plugin_opener::init())
@@ -267,24 +301,37 @@ pub fn run() {
             );
 
             match resolution {
-                // Both carry a concrete root: open synchronously so the
-                // window loads with state already managed. An Env
-                // override that fails to open propagates via `?` as a
-                // hard startup error — an explicit override fails loudly.
-                Resolution::Env(root) | Resolution::Stored(root) => {
+                // Explicit override: open synchronously so the window loads
+                // with state already managed. A failure propagates via `?`
+                // as a hard startup error — an explicit override must fail
+                // loudly, never fall through.
+                Resolution::Env(root) => {
                     init_with_vault(app.handle(), root)?;
                 }
-                // No usable vault: prompt. The blocking picker MUST NOT
-                // run on the main thread — its blocking API posts the
-                // dialog onto the main event loop and then blocks the
-                // caller, but that loop is not pumping until `setup`
-                // returns, so a main-thread call would deadlock. Run the
-                // loop on a background thread; once the event loop is
-                // live it services the dialog, and init finishes back on
-                // the main thread.
+                // Persisted path: also opened synchronously on the main
+                // thread (the event loop is not pumping yet, so this stays
+                // on the main thread — only the error branch below changes).
+                // The path already passed the cheap `.cuaderno/` marker
+                // check in `resolve`, but the full open can still fail —
+                // corrupt config.toml, an unopenable index, or a TOCTOU
+                // delete between check and open. That must NOT abort to
+                // Console.app, the silent death #331 removes: warn (naming
+                // the error) and fall through to the picker, exactly as
+                // `NeedsPicker` does.
+                Resolution::Stored(root) => {
+                    if let Err(err) = init_with_vault(app.handle(), root) {
+                        tracing::warn!(
+                            error = %err,
+                            "stored vault path failed to open; falling back to the picker",
+                        );
+                        spawn_picker(app.handle(), config_dir);
+                    }
+                }
+                // No usable vault: prompt. The picker runs on a background
+                // thread (see `spawn_picker`) because its blocking dialogs
+                // would deadlock the not-yet-pumping main event loop.
                 Resolution::NeedsPicker => {
-                    let picker_app = app.handle().clone();
-                    std::thread::spawn(move || run_picker(picker_app, config_dir));
+                    spawn_picker(app.handle(), config_dir);
                 }
             }
 
