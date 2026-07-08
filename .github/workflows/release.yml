@@ -40,6 +40,16 @@ jobs:
           # repo home page.
           prerelease: ${{ contains(github.ref, '-') }}
           generate_release_notes: true
+          # The macOS desktop app is ad-hoc signed (no notarization, no
+          # updater — that slice of M10 pulled forward for user testing),
+          # so Gatekeeper blocks it on first launch. Flag the right-click
+          # -> Open workaround up top; the auto-generated PR list follows.
+          body: |
+            ### Desktop app (macOS)
+
+            The `cuaderno-app-*.dmg` is **ad-hoc signed, not notarized**. On first
+            launch macOS Gatekeeper will refuse it — **right-click the app and choose
+            Open**, then confirm the dialog, to run it. There is no auto-updater yet.
 
   build:
     name: Build ${{ matrix.target }}
@@ -82,9 +92,12 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build release binaries
-        # `--bins` builds every binary in the workspace: `cdno`
-        # (from cdno-cli) and `cdno-mcp` (from cdno-mcp).
-        run: cargo build --release --target ${{ matrix.target }} --bins
+        # Scope to the two shipped binaries: `cdno` (cdno-cli) and
+        # `cdno-mcp` (cdno-mcp). A bare `--bins` would also pull in
+        # cdno-tauri, whose release build embeds `ui/dist` (gitignored,
+        # absent on these runners) and needs webkit on Linux — it would
+        # break this job. The desktop app is built separately in `app-dmg`.
+        run: cargo build --release --target ${{ matrix.target }} -p cdno-cli -p cdno-mcp --bins
         env:
           # Cross-compiling Linux aarch64 needs the right linker.
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
@@ -109,3 +122,66 @@ jobs:
           files: |
             cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
             cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
+
+  # Builds the macOS desktop app disk image for user testing. This
+  # deliberately pulls the ad-hoc-signing slice of M10 forward: the
+  # `.dmg` is ad-hoc signed with no notarization and no updater, so the
+  # release notes tell users to right-click -> Open on first launch.
+  # Kept a separate job (not part of the `build` matrix) because it only
+  # ships aarch64, runs a Bun/Node frontend build, and must not gate the
+  # CLI/MCP archives if the GUI toolchain hiccups.
+  app-dmg:
+    name: Build macOS app DMG
+    needs: create-release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: app-dmg
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        run: cd ui && bun install --frozen-lockfile
+
+      - name: Build desktop app bundle
+        # Non-standard layout: the Tauri config lives at
+        # crates/cdno-tauri/tauri.conf.json and the frontend at ui/. The
+        # Tauri CLI locates its project by scanning SUBFOLDERS of the cwd,
+        # so it must run from the repo root (crates/cdno-tauri is a
+        # subfolder) — running from ui/ fails with "couldn't recognize the
+        # current folder as a Tauri project", and `--config` does not
+        # override that project-root search. The CLI binary is installed
+        # under ui/node_modules by the previous step. The config's
+        # beforeBuildCommand runs `bun run build` in ui/ to produce
+        # ui/dist before bundling.
+        run: PATH="ui/node_modules/.bin:$PATH" tauri build
+
+      - name: Rename and checksum the DMG
+        # Tauri names the artifact cuaderno_<version>_aarch64.dmg; rename
+        # to the release's target-triple convention and drop a sidecar.
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          SRC="$(ls target/release/bundle/dmg/*.dmg)"
+          DEST="cuaderno-app-${VERSION}-aarch64-apple-darwin.dmg"
+          mv "$SRC" "$DEST"
+          shasum -a 256 "$DEST" > "$DEST.sha256"
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            cuaderno-app-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.dmg
+            cuaderno-app-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.dmg.sha256

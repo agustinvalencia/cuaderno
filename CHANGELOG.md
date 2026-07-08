@@ -6,15 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-08
+
+Desktop app: M1–M7 of the Tauri UI — scaffold, Home interactions, global capture, Commitments Timeline, Project Detail / Actions / note reader / command palette, Weekly Review, and Stewardship Detail — on top of M0's UI-groundwork domain queries and file watcher. M0 (#311) and M1–M7 all landed after the v0.4.0 tag, so they ship here; the CLI and stdio/HTTP MCP surfaces are otherwise unchanged.
+
 ### Changed
 
-- **MCP wire shape**: `get_commitments` source objects of kind `standalone_commitment` now carry
+- **MCP wire shape** (#317): `get_commitments` source objects of kind `standalone_commitment` now carry
   a `slug` field (additive; the `kind` tag is unchanged). Consumers that deserialise the source
   strictly should allow the new field.
 
 ### Added
 
-- **Stewardship Detail (M7, plan §1.7; closes #59)** — the `/stewardships` and `/stewardships/:slug`
+- **Stewardship Detail (M7, plan §1.7; closes #59)** (#320) — the `/stewardships` and `/stewardships/:slug`
   routes replace the placeholder: a calm list of perpetual responsibilities and a per-stewardship
   dashboard with read-only trend charts, recent tracking, and an inline log form.
   - **Backend** (`crates/cdno-tauri/src/commands/stewardships.rs`): `list_stewardships()` (today
@@ -45,7 +49,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     column in the gym tracking template or a richer domain query. Not built here — the shipped charts
     are weight-over-time and per-column count trends (Sets/Reps totals).
 
-- **Weekly Review (M6, plan §1.4; closes #55)** — the `/weekly` route is now a guided, deliberately
+- **Weekly Review (M6, plan §1.4; closes #55)** (#319) — the `/weekly` route is now a guided, deliberately
   anti-chore 5-step flow, backed by one composed `get_weekly_bundle` read and a single
   `save_weekly_section` write.
   - **Backend** (`crates/cdno-tauri/src/commands/weekly.rs`): `get_weekly_bundle(week_of?)` composes
@@ -83,7 +87,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     commitments, and stewardships areas the bundle composes.
 - **Project Detail, Actions view, note reader, and command palette (M5, plan §1.0/§1.2/§1.8; no
   GH issue for Project Detail or the Actions view — both are plan deltas; the palette is plan §1.0;
-  delivers the standalone-chip-to-reader bullet that M4 deferred when it closed #56)** — the
+  delivers the standalone-chip-to-reader bullet that M4 deferred when it closed #56)** (#318) — the
   desktop app's navigation targets now resolve to real views, and every note is one click from
   being read.
   - **Note reader** (`components/markdown/NoteReader.tsx`): a 380px Radix-dialog slide-in
@@ -128,7 +132,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
     delegating to the batch core resolver (`cdno_core::extractors::resolve_wikilinks`) with a
     one-element input, so the two paths can't drift.
 
-- **Commitments Timeline (closes #56)** — the full promises view lands at `/commitments`: a
+- **Commitments Timeline (closes #56)** (#317) — the full promises view lands at `/commitments`: a
   strictly chronological vertical list of every dated commitment from all four sources (project
   milestones, stewardship periodic commitments, standalone commitment notes, and self-due action
   notes), 90 days out by default. Upcoming entries group under month headers; past-due entries
@@ -150,7 +154,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   without re-deriving it) — a change rippling through the CLI `orient` label, the MCP
   `CommitmentSourceDto` mirror, and the aggregation site.
 
-- **Global capture + inbox drawer (M3, no GH issue — plan delta)** — capture a thought from
+- **Global capture + inbox drawer (M3, no GH issue — plan delta)** (#316) — capture a thought from
   anywhere with `⌘⇧C` (registered in Rust via `tauri-plugin-global-shortcut`; SUPER+SHIFT maps to
   Cmd on macOS). The hotkey summons a dedicated undecorated, transparent capture window whose
   minimal entry never loads the SPA: a single input where **Enter** captures to `inbox/`,
@@ -166,7 +170,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   the running window instead of launching a duplicate; `tauri-plugin-opener` backs
   open-in-editor. `InboxItem` gained `ts-rs` bindings.
 
-- **Home view interactions (closes #54)** — the desktop app is now daily-usable. Energy selector
+- **Home view interactions (closes #54)** (#314) — the desktop app is now daily-usable. Energy selector
   (deep/medium/light) filters each card's surfaced action with the no-match rule: a card never
   blanks — it keeps its best-available action behind a muted "smallest step" note. Start logs
   `started [[project]] — action` to today's daily note; done completes the bullet with an
@@ -181,7 +185,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   is an open-actions count pill on project cards. IPC round-trips now cover args marshalling
   (including the `new_state`→`newState` camelCase seam) and the serialised error contract.
 
-- **Desktop app scaffold (closes #53)** — new `cdno-tauri` crate + `ui/` frontend (React 19,
+- **Desktop app scaffold (closes #53)** (#313) — new `cdno-tauri` crate + `ui/` frontend (React 19,
   Vite 7 multi-page, TypeScript, Tailwind v4, Bun as package manager / Node as runtime). The app
   opens the vault named by `CUADERNO_VAULT_PATH`, runs startup reconciliation, registers
   `Arc<Vault>` as managed state (no wrapper lock — writes serialise on the transaction's
@@ -195,15 +199,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `cdno_domain::bootstrap::open_vault` (typed `BootstrapError`), with `cdno-mcp`'s bootstrap now
   delegating to it.
 
-- **Lapsed habits in orientation** — `cdno orient` / `get_orientation` now surface stewardship
+- **Lapsed habits in orientation** (#311) — `cdno orient` / `get_orientation` now surface stewardship
   habits whose `## Active Habits` line declares a lapse (e.g. `- Swimming 1x/week — lapsed since
   March`). The dashboard prose is the source of truth; no cadence inference. Previously the
   `lapsed_habits` field existed but was always empty.
-- **`FileWatcher` trait + `FsFileWatcher`** in cdno-core — debounced (400ms), vault-relative
+- **`FileWatcher` trait + `FsFileWatcher`** in cdno-core (#311) — debounced (400ms), vault-relative
   filesystem events over `notify`, groundwork for the desktop app's live-refresh pipeline (#53).
   Events are hints (`Changed`/`Removed`/`Rescan`); consumers stay correct by re-running
   reconciliation.
-- **Domain queries for UI surfaces** — `Vault::read_note` (frontmatter + body + note type for
+- **Domain queries for UI surfaces** (#311) — `Vault::read_note` (frontmatter + body + note type for
   reader panes), `Vault::tracking_series` (numeric time series lifted from tracking-note tables
   via a new cdno-core first-table extractor, for trend charts), and `Vault::start_action` (logs
   `started [[project]] — action` to the daily note, single-sourcing the format across CLI, MCP,

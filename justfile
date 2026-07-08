@@ -58,6 +58,9 @@ gen-bindings:
     TS_RS_EXPORT_DIR="{{justfile_directory()}}/ui/src/api/bindings" \
         cargo test -p cdno-domain --features ts-bindings export_bindings
 
-# Run the desktop app in dev mode against the vault at CUADERNO_VAULT_PATH
+# Run the desktop app in dev mode against the vault at CUADERNO_VAULT_PATH.
+# Runs from the repo root: the Tauri CLI locates the project by scanning
+# SUBFOLDERS of the cwd (crates/cdno-tauri), not parents — from ui/ it
+# panics with "couldn't recognize the current folder as a Tauri project".
 app-dev:
-    cd ui && bunx tauri dev
+    PATH="{{justfile_directory()}}/ui/node_modules/.bin:$PATH" tauri dev
