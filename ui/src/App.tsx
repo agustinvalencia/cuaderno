@@ -20,6 +20,11 @@ const WeeklyReview = lazy(() => import("./views/weekly/WeeklyReview"));
 // load on navigation rather than sitting in the main chunk.
 const Stewardships = lazy(() => import("./views/stewardships/Stewardships"));
 const StewardshipDetail = lazy(() => import("./views/stewardships/StewardshipDetail"));
+// Portfolio Browser (M8): the selector list and the composed detail
+// (evidence timeline + quick-add composer + links sidebar). Split onto
+// navigation like the other secondary surfaces.
+const Portfolios = lazy(() => import("./views/portfolios/Portfolios"));
+const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -49,7 +54,22 @@ export default function App() {
           }
         />
         <Route path="strategic" element={<Placeholder view="Strategic" milestone="M9" />} />
-        <Route path="portfolios" element={<Placeholder view="Portfolios" milestone="M8" />} />
+        <Route
+          path="portfolios"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Portfolios />
+            </Suspense>
+          }
+        />
+        <Route
+          path="portfolios/:slug"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <PortfolioDetail />
+            </Suspense>
+          }
+        />
         <Route
           path="stewardships"
           element={

@@ -6,6 +6,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Portfolio Browser (M8, plan §1.6; closes #58)** (#322) — the `/portfolios` and
+  `/portfolios/:slug` routes replace the placeholder: a calm selector of per-question evidence
+  dossiers and a per-portfolio detail with an evidence timeline, a links sidebar, and the app's only
+  note-creation form (evidence quick-add, sanctioned by #58).
+  - **Backend** (`crates/cdno-tauri/src/commands/portfolios.rs`): `list_portfolios()` (today stamped
+    in Rust) returns one `PortfolioSummary` per portfolio (evidence count, last-updated, staleness);
+    a composed `get_portfolio(slug)` bundles the unifying question, the linked project and the
+    related questions (the project comes from frontmatter, the questions are scanned from the
+    `_index.md` body's `[[questions/…]]` wikilinks — that link lives in the body, not the
+    frontmatter), and every filed evidence note as a wire-ready row (path, created, source, origin),
+    newest-first. `add_evidence(portfolio, source, origin, content)` wraps `file_evidence_with_vars`
+    (mirroring the MCP `file_to_portfolio` plain-evidence path) and emits the Portfolios area.
+    Stored wikilinks are lowered to bare navigable targets for the frontend. `PortfolioSummary`
+    gained `ts-rs` derives.
+  - **Origin validation (a deliberate tightening over the MCP tool):** the domain does not validate
+    an evidence `origin`, so a wrong slug writes a dangling `[[…]]` link that only lint later
+    notices. The desktop composer free-texts `origin`, so `add_evidence` resolves it first via
+    `resolve_wikilink` and refuses an unresolvable target with a calm `Invalid` — the GUI cannot
+    write a dangling link. The CLI/MCP surfaces keep the looser contract for scripted callers.
+  - **Frontend** (`ui/src/views/portfolios/`): the selector lists each portfolio's question, an
+    evidence count, and a staleness line rendered as *neutral* emphasis — fresh sits at full ink,
+    ageing fades to ink-muted, long-dormant recedes to ink-faint, with a "last updated N d ago"
+    hover title — never a hue (colour is identity, never urgency, and no semantic green/red token
+    exists). The detail collapses the plan's three panes to two: an evidence timeline (each row opens
+    the note in the shared reader; its origin chip opens the producing note) and a links sidebar
+    (project → `/projects/:slug`, questions → reader). The quick-add composer is an inline (not modal)
+    slide-down form — source + origin (both required, origin hinted as "must name an existing note")
+    + content — that surfaces the invalid-origin message inline. Empty portfolios invite their first
+    artefact. Both surfaces code-split onto navigation.
+
 ## [0.5.0] - 2026-07-08
 
 Desktop app: M1–M7 of the Tauri UI — scaffold, Home interactions, global capture, Commitments Timeline, Project Detail / Actions / note reader / command palette, Weekly Review, and Stewardship Detail — on top of M0's UI-groundwork domain queries and file watcher. M0 (#311) and M1–M7 all landed after the v0.4.0 tag, so they ship here; the CLI and stdio/HTTP MCP surfaces are otherwise unchanged.

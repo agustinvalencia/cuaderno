@@ -8,6 +8,8 @@ import type { EnergyLevel } from "./bindings/EnergyLevel";
 import type { InboxItem } from "./bindings/InboxItem";
 import type { NoteView } from "./bindings/NoteView";
 import type { OrientationView } from "./bindings/OrientationView";
+import type { PortfolioDetail } from "./bindings/PortfolioDetail";
+import type { PortfolioSummary } from "./bindings/PortfolioSummary";
 import type { ProjectActions } from "./bindings/ProjectActions";
 import type { ProjectDetail } from "./bindings/ProjectDetail";
 import type { ResolvedLink } from "./bindings/ResolvedLink";
@@ -253,4 +255,32 @@ export function logTrackingEntry(
     content,
     vars,
   });
+}
+
+// --- M8: Portfolio Browser ---
+
+/** Every indexed portfolio with its evidence count and staleness line,
+ * sorted by slug. Backs the `/portfolios` selector. */
+export function listPortfolios(): Promise<PortfolioSummary[]> {
+  return call("list_portfolios");
+}
+
+/** The composed Portfolio Detail bundle behind `/portfolios/:slug`: the
+ * unifying question, the linked project + related questions, and every
+ * evidence note (newest first). */
+export function getPortfolio(slug: string): Promise<PortfolioDetail> {
+  return call("get_portfolio", { slug });
+}
+
+/** File an evidence note into a portfolio — the quick-add composer. An
+ * `origin` that resolves to no note comes back as a `CuadernoError`
+ * (kind "invalid") the caller shows inline; this is a deliberate
+ * tightening the GUI adds over the scripted MCP/CLI surfaces. */
+export function addEvidence(
+  portfolio: string,
+  source: string,
+  origin: string,
+  content: string,
+): Promise<void> {
+  return call("add_evidence", { portfolio, source, origin, content });
 }

@@ -8,6 +8,7 @@ pub mod capture;
 pub mod commitments;
 pub mod notes;
 pub mod orientation;
+pub mod portfolios;
 pub mod projects;
 pub mod search;
 pub mod stewardships;
