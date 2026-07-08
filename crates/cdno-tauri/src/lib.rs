@@ -176,6 +176,9 @@ pub fn run() {
             commands::stewardships::get_stewardship_detail,
             commands::stewardships::get_tracking_template_fields,
             commands::stewardships::log_tracking_entry,
+            commands::portfolios::list_portfolios,
+            commands::portfolios::get_portfolio,
+            commands::portfolios::add_evidence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

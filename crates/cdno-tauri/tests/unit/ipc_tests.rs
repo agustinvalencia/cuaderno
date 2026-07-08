@@ -103,6 +103,9 @@ fn mock_app_configured(
             cdno_tauri::commands::stewardships::get_stewardship_detail,
             cdno_tauri::commands::stewardships::get_tracking_template_fields,
             cdno_tauri::commands::stewardships::log_tracking_entry,
+            cdno_tauri::commands::portfolios::list_portfolios,
+            cdno_tauri::commands::portfolios::get_portfolio,
+            cdno_tauri::commands::portfolios::add_evidence,
         ])
         .manage(AppState {
             vault: Arc::new(vault),
@@ -1061,5 +1064,148 @@ fn complete_milestone_ambiguous_serialises_candidates() {
         candidates.len(),
         2,
         "both Draft milestones are candidates: {err}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Portfolio Browser (M8, #58). The selector list, the composed detail
+// (frontmatter question + project, body-linked questions, evidence rows
+// newest-first), and the quick-add write — the happy path (origin
+// resolves to the seeded ALPHA project) plus the invalid-origin
+// tightening the GUI adds over the MCP tool.
+// ---------------------------------------------------------------------
+
+// A portfolio folder: an `_index.md` linking the baseline ALPHA project
+// (frontmatter) and a research question (body `## Related Questions`),
+// plus one evidence note whose `origin` points at ALPHA.
+const SURROGATE_INDEX: &str = "---\ntype: portfolio\nquestion: How does the surrogate behave?\ncreated: 2026-06-01\nproject: \"[[projects/alpha]]\"\n---\n\n# How does the surrogate behave?\n\n## Related Questions\n- [[questions/research/surrogate-fidelity]]\n\n## Evidence\n";
+const SURROGATE_EVIDENCE: &str = "---\ntype: evidence\ncreated: 2026-07-01\nsource: Smith 2024\nportfolio: surrogate\norigin: \"[[projects/alpha]]\"\n---\n\n# Smith 2024\n\nThe error stayed bounded.\n";
+
+fn portfolio_fixture() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("portfolios/surrogate/_index.md", SURROGATE_INDEX),
+        (
+            "portfolios/surrogate/2026-07-01-smith-2024.md",
+            SURROGATE_EVIDENCE,
+        ),
+    ]
+}
+
+#[test]
+fn list_portfolios_round_trips_with_evidence_count_and_staleness() {
+    let (app, _store) = mock_app_with(&portfolio_fixture());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-list-portfolios", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let response =
+        get_ipc_response(&webview, request("list_portfolios")).expect("command succeeds");
+    let value = response_json(response);
+    let rows = value.as_array().expect("list is an array");
+    let surrogate = rows
+        .iter()
+        .find(|p| p["slug"] == "surrogate")
+        .expect("the surrogate portfolio is listed");
+    assert_eq!(surrogate["question"], "How does the surrogate behave?");
+    assert_eq!(surrogate["evidence_count"], 1);
+    assert_eq!(surrogate["last_updated"], "2026-07-01");
+    // staleness_days is stamped in Rust against today — a plain integer.
+    assert!(surrogate["staleness_days"].is_number(), "{surrogate}");
+}
+
+#[test]
+fn get_portfolio_round_trips_links_and_evidence_rows() {
+    let (app, _store) = mock_app_with(&portfolio_fixture());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-get-portfolio", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "surrogate" }));
+    let response =
+        get_ipc_response(&webview, request_with("get_portfolio", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["slug"], "surrogate");
+    assert_eq!(value["question"], "How does the surrogate behave?");
+    // Frontmatter `project` wikilink lowered to a bare navigable target.
+    assert_eq!(value["project"], "projects/alpha");
+    // The body's `## Related Questions` link is surfaced for the sidebar.
+    let questions = value["questions"]
+        .as_array()
+        .expect("questions is an array");
+    assert_eq!(
+        questions,
+        &[serde_json::json!("questions/research/surrogate-fidelity")]
+    );
+    // One evidence row, origin stripped to a bare target the UI resolves.
+    let evidence = value["evidence"].as_array().expect("evidence is an array");
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0]["source"], "Smith 2024");
+    assert_eq!(evidence[0]["created"], "2026-07-01");
+    assert_eq!(evidence[0]["origin"], "projects/alpha");
+    assert_eq!(
+        evidence[0]["path"],
+        "portfolios/surrogate/2026-07-01-smith-2024.md"
+    );
+}
+
+#[test]
+fn add_evidence_round_trips_args_and_files_the_note() {
+    let (app, store) = mock_app_with(&portfolio_fixture());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-add-evidence", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // origin "projects/alpha" resolves to the seeded baseline project.
+    let body = InvokeBody::Json(serde_json::json!({
+        "portfolio": "surrogate",
+        "source": "Lab notebook p.12",
+        "origin": "projects/alpha",
+        "content": "Reran the sweep; matches Smith.",
+    }));
+    get_ipc_response(&webview, request_with("add_evidence", body)).expect("command succeeds");
+
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let path =
+        VaultPath::new(format!("portfolios/surrogate/{today}-lab-notebook-p-12.md")).unwrap();
+    assert!(
+        store.exists(&path).expect("store query"),
+        "the evidence note lands inside the portfolio folder"
+    );
+    let content = store.read_file(&path).expect("evidence note readable");
+    assert!(content.contains("Reran the sweep"), "{content}");
+    // The origin was wrapped back into a wikilink by the domain.
+    assert!(content.contains("[[projects/alpha]]"), "{content}");
+}
+
+#[test]
+fn add_evidence_with_unresolvable_origin_serialises_invalid() {
+    // The GUI tightening: an origin naming no note is refused before the
+    // write, so a dangling link can never be persisted from the composer.
+    let (app, store) = mock_app_with(&portfolio_fixture());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-bad-origin", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "portfolio": "surrogate",
+        "source": "Stray thought",
+        "origin": "projects/does-not-exist",
+        "content": "…",
+    }));
+    let err = get_ipc_response(&webview, request_with("add_evidence", body))
+        .expect_err("an unresolvable origin must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(
+        err["data"].as_str().is_some_and(|s| s.contains("origin")),
+        "{err}"
+    );
+
+    // No evidence note was written for the rejected origin.
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let path = VaultPath::new(format!("portfolios/surrogate/{today}-stray-thought.md")).unwrap();
+    assert!(
+        !store.exists(&path).expect("store query"),
+        "nothing is filed when the origin is refused"
     );
 }

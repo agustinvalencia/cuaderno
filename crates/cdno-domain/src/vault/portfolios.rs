@@ -32,6 +32,8 @@ use super::slug::slugify;
 /// portfolio metadata that's expensive to recompute by hand: the
 /// number of evidence notes filed into the folder, the most recent
 /// `created` date among them, and a derived staleness in days.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PortfolioSummary {
     pub slug: String,
