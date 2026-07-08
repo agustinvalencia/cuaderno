@@ -20,6 +20,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   portfolio chips only; project-link/backlink chips need a new `question_backlinks` domain method
   and are deferred to a follow-up.
 
+- **Desktop: column chart variant for stewardship trends** (#337) — Stewardship Detail now draws
+  count/volume series (reps, laps, sessions) as calm columns rather than lines, while continuous
+  measures (a weight, a pace) keep the line. The mark is chosen per series from a robust,
+  non-semantic signal — a series whose every tracking value is integer-valued reads as a column,
+  any fractional value keeps the line — so no domain change is needed (`TrackingSeries` still
+  infers no column semantics) and a misclassification is purely cosmetic. The column obeys the
+  same design laws as the line: same context hue, no target lines, no red, reduced-motion aware,
+  same height and axes.
+
 ## [0.11.0] - 2026-07-08
 
 The journal grows a month view: a monthly note type and a desktop calendar to browse daily notes.

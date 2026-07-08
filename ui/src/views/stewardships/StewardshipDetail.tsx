@@ -19,6 +19,7 @@ import {
   resolveWikilink,
 } from "../../api/commands";
 import {
+  markForSeries,
   SERIES_COLORS,
   TrendChart,
   usePrefersReducedMotion,
@@ -147,11 +148,15 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
           <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Trends</h2>
           <div className="mt-3 space-y-6">
             {data.series.map((series, index) => (
+              // Count/volume series (all-integer values — reps, laps,
+              // sessions) read better as calm columns; continuous
+              // measures keep the line. The choice is cosmetic.
               <TrendChart
                 key={series.name}
                 series={series}
                 color={SERIES_COLORS[index % SERIES_COLORS.length]}
                 animate={!reducedMotion}
+                kind={markForSeries(series)}
               />
             ))}
           </div>
