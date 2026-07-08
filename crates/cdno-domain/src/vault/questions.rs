@@ -37,6 +37,8 @@ use super::slug::slugify;
 /// lookups), the domain (for grouping), the status (for badging and
 /// filtering by the CLI pickers), the question text (extracted from
 /// the body H1), and the most recent update date.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct QuestionSummary {
     pub slug: String,

@@ -6,6 +6,40 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Strategic / Monthly view (M9, plan §1.5; closes #57)** (#PR-pending) — the `/strategic` route
+  replaces the placeholder with the in-app monthly review: a questions grid (by domain), the
+  button-based five-slot project allocator with a gentle cap modal, a portfolio-health table,
+  a stewardship overview with habit sparklines, and the six-week commitments timeline — all painted
+  from one composed read.
+  - **Backend** (`crates/cdno-tauri/src/commands/strategic.rs`): `get_strategic_bundle()` composes
+    the active questions, the portfolio-health rows (reusing `list_portfolios`), the active + parked
+    project slots (a thin `ProjectSlot { slug, context }` view over the project frontmatter), the
+    configured active-project cap (read from `config.vault.max_active_projects` — never hardcoded),
+    a stewardship overview row per stewardship (its `StewardshipSummary` paired with a precomputed
+    12-week habit sparkline), and the six-week (42-day) commitments window. The sparklines are
+    **entries-per-ISO-week counts computed backend-side** from each expanded stewardship's tracking
+    dates (plan §3.7: the frontend does no date maths); flat stewardships get an empty sparkline.
+    The allocator's park/activate reuse the existing M5 `park_project` / `activate_project` commands,
+    whose `ProjectCapReached` error already carries the active slugs the cap modal lists.
+    `QuestionSummary`, `QuestionDomain`, and `QuestionStatus` gained `ts-rs` derives.
+  - **Frontend** (`ui/src/views/strategic/Strategic.tsx`): questions group into a research/life
+    grid, each card opening the question note in the shared reader. The allocator draws `max_active`
+    slots — the filled ones first, then soft dashed "open slot" placeholders (breathing room, not
+    vacancy) — with a quiet per-slot "park" button and a parked shelf of "activate" buttons below.
+    An over-cap activate opens a gentle centred modal ("Room for five. Park one to make space.")
+    listing the active projects with inline park buttons — no red anywhere. The portfolio-health
+    table renders staleness as the same neutral emphasis tiers as the M8 browser (now a shared
+    `lib/staleness.ts` helper, so the two surfaces can't drift). The stewardship overview shows a
+    context-hued 24px sparkline per tracked stewardship, and the six-week commitments timeline reuses
+    the shared `CommitmentsTimeline` in read-only mode.
+  - **Chart extraction** (`ui/src/components/charts/TrendChart.tsx`): the `TrendChart` (and the
+    `usePrefersReducedMotion` hook + `SERIES_COLORS`) moved out of `StewardshipDetail` into a shared
+    charts module, joined by a new tiny `Sparkline` (line-only, no axes, animation off under reduced
+    motion). `StewardshipDetail` keeps working via the new import. A minimal centred `Dialog`
+    primitive was vendored under `components/ui/` following `sheet.tsx`'s Radix pattern.
+
 ## [0.6.0] - 2026-07-08
 
 The Portfolio Browser milestone (M8 of the desktop-app plan).

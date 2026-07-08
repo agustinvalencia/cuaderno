@@ -16,6 +16,7 @@ import type { ResolvedLink } from "./bindings/ResolvedLink";
 import type { SearchResultEntry } from "./bindings/SearchResultEntry";
 import type { StewardshipDetail } from "./bindings/StewardshipDetail";
 import type { StewardshipSummary } from "./bindings/StewardshipSummary";
+import type { StrategicBundle } from "./bindings/StrategicBundle";
 import type { TemplateField } from "./bindings/TemplateField";
 import type { WeeklyBundle } from "./bindings/WeeklyBundle";
 
@@ -283,4 +284,15 @@ export function addEvidence(
   content: string,
 ): Promise<void> {
   return call("add_evidence", { portfolio, source, origin, content });
+}
+
+// --- M9: Strategic / Monthly ---
+
+/** The composed Strategic / Monthly bundle behind `/strategic`: the
+ * active questions, portfolio-health rows, the active + parked project
+ * slots with the configured cap, the stewardship overview with a
+ * precomputed 12-week habit sparkline each, and the six-week
+ * commitments window. One read paints the whole page. */
+export function getStrategicBundle(): Promise<StrategicBundle> {
+  return call("get_strategic_bundle");
 }

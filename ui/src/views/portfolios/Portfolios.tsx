@@ -10,12 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import type { PortfolioSummary } from "../../api/bindings/PortfolioSummary";
 import { listPortfolios } from "../../api/commands";
-
-// Day thresholds for the freshness tiers. Portfolios accumulate slowly
-// (a paper a week is active), so the bands are generous — this is a
-// gentle "how warm is this dossier", not a deadline.
-const AGEING_AFTER_DAYS = 30n;
-const STALE_AFTER_DAYS = 90n;
+import { stalenessAgo, stalenessTone } from "../../lib/staleness";
 
 interface Freshness {
   /** Neutral ink tier for the dot + line (no hue). */
@@ -38,15 +33,14 @@ function freshness(s: PortfolioSummary): Freshness {
   }
 
   const days = s.staleness_days;
-  const ago = days <= 0n ? "today" : `${days.toString()}d ago`;
   const title = days <= 0n ? "last updated today" : `last updated ${days.toString()}d ago`;
-  const tone =
-    days <= AGEING_AFTER_DAYS
-      ? "text-ink"
-      : days <= STALE_AFTER_DAYS
-        ? "text-ink-muted"
-        : "text-ink-faint";
-  return { tone, title, line: `${count} · last filed ${ago}` };
+  // Neutral tier + "N d ago" come from the shared staleness ladder, so
+  // this row and the Strategic health table can never drift apart.
+  return {
+    tone: stalenessTone(days),
+    title,
+    line: `${count} · last filed ${stalenessAgo(days)}`,
+  };
 }
 
 export default function Portfolios() {

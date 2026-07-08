@@ -18,6 +18,9 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "get_project",
     "get_commitments",
     "get_weekly_bundle",
+    // The Strategic allocator's slots + parked shelf are project state,
+    // so a park/activate (in-app or an external edit) must refresh it.
+    "get_strategic_bundle",
   ],
   actions: ["get_orientation", "list_all_actions"],
   daily: ["get_orientation", "read_daily", "get_weekly_bundle"],
