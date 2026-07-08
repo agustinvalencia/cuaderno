@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-08
+
+Two daily-use fixes: custom daily templates render `day_name`/`week`, and `get_weekly_context` stays under the MCP token cap.
+
 ### Fixed
 
 - **Daily scaffold now supplies `day_name` and `week`** (#300) — a customised
