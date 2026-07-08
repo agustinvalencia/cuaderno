@@ -6,7 +6,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Fixed
 
 - **Daily scaffold now supplies `day_name` and `week`** (#300) — a customised
@@ -19,16 +18,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `2026-W01`). `cdno templates vars daily` and the template docs now list the full daily set:
   `date`, `heading`, `weekday`, `day_name`, `week`.
 
-||||||| parent of 62b2670 (Bound get_weekly_context payload size to fit the MCP token cap)
-=======
-### Fixed
-
 - **`get_weekly_context` is now bounded to fit the MCP client's token cap** (#298) — the payload
   could overflow the client's max-token limit. Each project state change now carries a ~200-char
   gist of its before/after `## Current State` rather than the full bodies, and `logs` is capped to
   the 100 most-recent lines. Non-breaking — the DTO field shape is unchanged.
 
->>>>>>> 62b2670 (Bound get_weekly_context payload size to fit the MCP token cap)
 ## [0.12.0] - 2026-07-08
 
 Desktop polish: portfolio chips on questions, column charts for count-style trends, and a disambiguation picker instead of a dead-end toast.
