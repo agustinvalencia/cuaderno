@@ -26,6 +26,8 @@ import {
   resolveWikilink,
   updateProjectState,
 } from "../../api/commands";
+import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
+import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import Markdown from "../../components/markdown/Markdown";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
@@ -91,6 +93,12 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
   const showMetrics = useMetrics();
   const parked = data.status === "parked";
   const key = ["get_project", slug];
+
+  // A single picker serves this view's three substring-matched writes
+  // (complete action, resolve blocker, tick milestone). Each mutation's
+  // onError hands the resolver a re-invoke via `mutateAsync`, so a chosen
+  // candidate reuses that mutation's own success/rollback/toast path.
+  const ambiguity = useAmbiguityResolver();
 
   const [editingState, setEditingState] = useState(false);
   const stateDraft = useRef<HTMLTextAreaElement>(null);
@@ -162,6 +170,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
     },
     onError: (err, _text, context) => {
       if (context?.previous) client.setQueryData(key, context.previous);
+      // A bullet substring matching several actions opens the picker;
+      // choosing re-runs this same mutation with the exact text.
+      if (ambiguity.handle(err, (choice) => complete.mutateAsync(choice), "action")) return;
       toast(errorMessage(err), "attention");
     },
     onSuccess: () => toast(`Done: one step further on ${slug}.`),
@@ -189,7 +200,12 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
   const resolveWait = useMutation({
     mutationFn: (query: string) => resolveWaiting(slug, query),
-    onError: (err) => toast(errorMessage(err), "attention"),
+    onError: (err) => {
+      // The free-text resolve box is the likeliest ambiguity: a short
+      // query can match several blockers. Pick the one meant.
+      if (ambiguity.handle(err, (choice) => resolveWait.mutateAsync(choice), "blocker")) return;
+      toast(errorMessage(err), "attention");
+    },
     onSuccess: () => {
       if (resolveDraft.current) resolveDraft.current.value = "";
       toast("Unblocked.");
@@ -199,7 +215,10 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
   const tickMilestone = useMutation({
     mutationFn: (name: string) => completeMilestone(slug, name),
-    onError: (err) => toast(errorMessage(err), "attention"),
+    onError: (err) => {
+      if (ambiguity.handle(err, (choice) => tickMilestone.mutateAsync(choice), "milestone")) return;
+      toast(errorMessage(err), "attention");
+    },
     onSuccess: (_data, name) => toast(`Milestone reached: ${name}.`),
     onSettled: () => {
       invalidate();
@@ -534,6 +553,13 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           ← back to today
         </Link>
       </p>
+
+      <AmbiguityPicker
+        state={ambiguity.state}
+        resolving={ambiguity.resolving}
+        choose={ambiguity.choose}
+        close={ambiguity.close}
+      />
     </div>
   );
 }

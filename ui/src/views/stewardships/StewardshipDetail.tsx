@@ -18,6 +18,8 @@ import {
   openInEditor,
   resolveWikilink,
 } from "../../api/commands";
+import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
+import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import {
   markForSeries,
   SERIES_COLORS,
@@ -223,6 +225,7 @@ function LogEntry({
   onLogged: () => void;
 }) {
   const { toast } = useToast();
+  const ambiguity = useAmbiguityResolver();
   const [open, setOpen] = useState(false);
   const [activity, setActivity] = useState("");
   const [routine, setRoutine] = useState("");
@@ -275,7 +278,16 @@ function LogEntry({
         routine.trim() || undefined,
       );
     },
-    onError: (err) => toast(errorMessage(err), "attention"),
+    onError: (err) => {
+      // logTrackingEntry's only ambiguity is an ambiguous *slug* (a
+      // stewardship existing both flat and expanded), which carries no
+      // candidates — the resolver lets that fall through to the toast.
+      // The wiring is here for consistency with the other write sites and
+      // so any future substring-matched selector on this form gets the
+      // picker for free.
+      if (ambiguity.handle(err, () => submit.mutateAsync(), "entry")) return;
+      toast(errorMessage(err), "attention");
+    },
     onSuccess: () => {
       toast(`Logged ${activity.trim()} — one more on the record.`);
       reset();
@@ -392,6 +404,12 @@ function LogEntry({
           </button>
         </div>
       </form>
+      <AmbiguityPicker
+        state={ambiguity.state}
+        resolving={ambiguity.resolving}
+        choose={ambiguity.choose}
+        close={ambiguity.close}
+      />
     </section>
   );
 }

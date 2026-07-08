@@ -15,6 +15,8 @@ import type { CommitmentSource } from "../../api/bindings/CommitmentSource";
 import type { CommitmentsView } from "../../api/bindings/CommitmentsView";
 import type { Context } from "../../lib/contexts";
 import { completeCommitment, completeMilestone, errorMessage } from "../../api/commands";
+import AmbiguityPicker from "../ambiguity/AmbiguityPicker";
+import { useAmbiguityResolver } from "../ambiguity/useAmbiguityResolver";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
 import { useToast } from "../../shell/Toasts";
@@ -103,11 +105,24 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
   // A read-only host (the Weekly Review's lookahead — "nothing to add
   // here") suppresses completion entirely; origin chips stay.
   const invoke = readOnly ? null : completionFor(entry);
+  // A milestone title can be a substring of a longer one, so completing
+  // from here can come back ambiguous; the picker re-fires with the
+  // exact name. (Standalone commitments complete by exact slug — never
+  // ambiguous.)
+  const ambiguity = useAmbiguityResolver();
 
   // Optimistic removal across every cached lookahead window (the key
   // carries the days arg, so filter by prefix). Rolls back on error.
+  //
+  // The optional `override` lets a disambiguation pick re-fire against an
+  // exact milestone name; the default path completes the entry as shown.
   const complete = useMutation({
-    mutationFn: () => invoke!(),
+    mutationFn: (override?: string) => {
+      if (override !== undefined && entry.source.kind === "project_milestone") {
+        return completeMilestone(entry.source.slug, override);
+      }
+      return invoke!();
+    },
     onMutate: async () => {
       await client.cancelQueries({ queryKey: ["get_commitments"] });
       const snapshots = client.getQueriesData<CommitmentsView>({ queryKey: ["get_commitments"] });
@@ -118,6 +133,7 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
     },
     onError: (error, _vars, context) => {
       context?.snapshots.forEach(([qk, data]) => client.setQueryData(qk, data));
+      if (ambiguity.handle(error, (choice) => complete.mutateAsync(choice), "milestone")) return;
       toast(errorMessage(error), "attention");
     },
     onSuccess: () => toast(`Done: ${entry.title}.`),
@@ -144,7 +160,7 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
       {invoke && (
         <button
           type="button"
-          onClick={() => complete.mutate()}
+          onClick={() => complete.mutate(undefined)}
           disabled={complete.isPending}
           aria-label={`Mark done: ${entry.title}`}
           className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
@@ -152,6 +168,12 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
           done
         </button>
       )}
+      <AmbiguityPicker
+        state={ambiguity.state}
+        resolving={ambiguity.resolving}
+        choose={ambiguity.choose}
+        close={ambiguity.close}
+      />
     </li>
   );
 }
