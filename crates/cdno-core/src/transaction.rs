@@ -206,7 +206,12 @@ impl VaultTransaction {
     /// Deduplicated because a single logical write can stage the same
     /// path more than once (e.g. a note written then re-written in the
     /// same batch); the journal only needs each path once.
-    pub fn touched_paths(&self) -> Vec<VaultPath> {
+    ///
+    /// Crate-private: [`commit`](Self::commit) is the only consumer and
+    /// returns this set on success, so a caller never needs to snapshot it
+    /// separately (and snapshotting before commit would report paths even
+    /// on a rolled-back write).
+    pub(crate) fn touched_paths(&self) -> Vec<VaultPath> {
         let mut paths: Vec<VaultPath> = Vec::with_capacity(self.file_ops.len());
         let mut push = |p: &VaultPath| {
             if !paths.contains(p) {

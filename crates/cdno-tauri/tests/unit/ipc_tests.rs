@@ -442,6 +442,12 @@ fn complete_action_command_journals_every_touched_path_including_the_archive() {
     }));
     get_ipc_response(&webview, request_with("complete_action", body)).expect("command succeeds");
 
+    // The command stamps its own `Local::now()` internally (no injection
+    // seam), so we recompute the expected year/daily from a fresh
+    // `Local::now()`. A completion firing in the last instant before a
+    // year/day rollover could see the two clocks disagree and fail
+    // spuriously — inherent to testing the un-mockable real command, and
+    // astronomically rare; flagged here rather than papered over.
     let year = chrono::Local::now().date_naive().format("%Y");
     let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
     let state = app.state::<AppState>();

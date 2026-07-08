@@ -519,7 +519,7 @@ fn import_external_commits_alongside_a_stub_write() {
         vp("portfolios/p/2026-06-13-d.md"),
         "---\ntype: evidence\n---\n# d\n",
     );
-    tx.commit().unwrap();
+    let touched = tx.commit().unwrap();
 
     assert!(
         store
@@ -527,6 +527,42 @@ fn import_external_commits_alongside_a_stub_write() {
             .unwrap()
     );
     assert!(store.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
+
+    // The touched set must carry the imported artefact's DESTINATION (the
+    // in-vault path a watcher sees appear) alongside the stub write. The
+    // import's source is a real filesystem path outside the vault, so it
+    // is deliberately absent. Order is first-staged: import, then stub.
+    assert_eq!(
+        touched,
+        vec![
+            vp("portfolios/p/2026-06-13-d/derivation.pdf"),
+            vp("portfolios/p/2026-06-13-d.md"),
+        ],
+    );
+}
+
+#[test]
+fn commit_touched_paths_excludes_index_only_ops() {
+    // The touched set is the *file* effect of a commit — a watcher only
+    // observes on-disk changes. A transaction that stages only index ops
+    // (no file write) must therefore commit to an EMPTY set, or the echo
+    // journal would suppress paths nothing was written to.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    // Seed a note so the index op has a subject; write it OUTSIDE the
+    // transaction so the transaction itself stages no file op.
+    store
+        .write_file(&vp("projects/foo.md"), "---\ntype: project\n---\n# Foo\n")
+        .unwrap();
+
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.replace_tags(vp("projects/foo.md"), vec!["urgent".to_owned()]);
+    let touched = tx.commit().unwrap();
+
+    assert!(
+        touched.is_empty(),
+        "an index-only commit touches no files: {touched:?}"
+    );
 }
 
 #[test]
