@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-08
+
+The packaging-remainder milestone (M10) - the desktop-app plan (M0-M10) is complete.
+
 ### Added
 
 - **M10 packaging remainder (plan §5 M10 — the final desktop-app milestone)** (#326) — the
