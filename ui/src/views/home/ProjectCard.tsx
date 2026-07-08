@@ -203,7 +203,7 @@ export default function ProjectCard({
               type="button"
               onClick={() => complete.mutate(action.text)}
               disabled={complete.isPending}
-              aria-label={`Mark done: ${action.text}`}
+              aria-label={`Mark done: ${actionLabel(action.text)}`}
               className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
             >
               done
