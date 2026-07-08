@@ -103,7 +103,10 @@ const STRATEGIC: StrategicBundle = {
   ],
   portfolios: [
     {
-      slug: "surrogate",
+      // Shares the question's slug, so a portfolio chip renders on the
+      // question card — this is what proves the chip carries no
+      // nested-interactive (button-in-button) axe violation.
+      slug: "surrogate-fidelity",
       question: "How does the surrogate behave?",
       evidence_count: 3,
       last_updated: "2026-07-01",

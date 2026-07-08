@@ -6,6 +6,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop: portfolio link chips on the Strategic questions grid** (#339) — each question card
+  on `/strategic` now surfaces a chip row for its linked portfolio(s), so a question links out to
+  the evidence gathered against it. Portfolios are correlated to a question entirely client-side:
+  a portfolio shares its question's slug, and the strategic bundle already returns the portfolio
+  list, so a question's chips are the portfolios whose `slug` matches the question's `slug` — no
+  backend change. Clicking a chip navigates to the portfolio detail route, mirroring the
+  commitments timeline's `OriginChip`. The question card, previously a single full-card button,
+  is restructured into a plain container so the title stays the reader-opening control and the
+  chips are accessible sibling links (interactive elements must not nest inside a button). v1 is
+  portfolio chips only; project-link/backlink chips need a new `question_backlinks` domain method
+  and are deferred to a follow-up.
+
 ## [0.11.0] - 2026-07-08
 
 The journal grows a month view: a monthly note type and a desktop calendar to browse daily notes.
