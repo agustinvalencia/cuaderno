@@ -12,21 +12,25 @@ pub mod commands;
 pub mod error;
 pub mod events;
 pub mod state;
+pub mod vault_locator;
 pub mod watcher;
 pub mod with_vault;
 
 mod clock;
 mod tray;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-use cdno_domain::bootstrap::open_vault;
+use cdno_domain::bootstrap::{BootstrapError, open_vault};
 
 use crate::events::CAPTURE_SHOW;
 use crate::state::{AppState, WriteJournal};
+use crate::vault_locator::Resolution;
 use crate::watcher::WatcherDeps;
 
 /// Bring `label`'s window to the front (show + focus), tolerating a
@@ -50,19 +54,180 @@ fn summon_capture<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-/// Environment variable naming the vault root — same contract as the
-/// CLI and the MCP binaries. Upward discovery and a persisted app
-/// setting are later polish; for now a missing/invalid vault is a
-/// hard, explicit startup error.
-const ENV_VAULT_PATH: &str = "CUADERNO_VAULT_PATH";
+/// Open the vault at `root` and wire everything that depends on it:
+/// the managed [`AppState`], the global capture shortcut, the
+/// live-refresh watcher thread, the vault clock, and the tray. Called
+/// exactly once per launch — synchronously from `setup` when the vault
+/// resolved from the env var or the persisted setting, or from the main
+/// thread once the first-launch picker returns a vault.
+///
+/// Takes an `&AppHandle` (not the `setup` `&App`) so both call sites can
+/// share it; every capability it uses — `manage`, `global_shortcut`,
+/// tray, window handles — is available on the handle.
+fn init_with_vault(
+    app: &tauri::AppHandle,
+    root: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Startup reconciliation runs inside open_vault, before any window
+    // content leans on the index — the correctness backstop the
+    // watcher's incremental repairs build on.
+    let opened = open_vault(&root)?;
+    if opened.report.added + opened.report.updated + opened.report.removed > 0 {
+        tracing::info!(
+            added = opened.report.added,
+            updated = opened.report.updated,
+            removed = opened.report.removed,
+            "startup reconciliation applied changes",
+        );
+    }
+
+    app.manage(AppState {
+        vault: Arc::new(opened.vault),
+        journal: WriteJournal::default(),
+        root: root.clone(),
+    });
+
+    // Global capture hotkey (⌘⇧C on macOS; SUPER maps to Cmd).
+    // Registered from Rust — JS registration is racy (plan §3.6).
+    // SUPER+SHIFT+C summons the floating capture window: show + focus,
+    // then emit `capture:show` so the window's input re-focuses even
+    // when it was already visible.
+    let capture_shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyC);
+    let registration =
+        app.global_shortcut()
+            .on_shortcut(capture_shortcut, |app, _shortcut, event| {
+                // The handler fires on both press and release — act once, on
+                // press.
+                if event.state != ShortcutState::Pressed {
+                    return;
+                }
+                summon_capture(app);
+            });
+    // A failed registration (the OS refused the hotkey, or it clashes
+    // with another app) must not abort startup — the app is fully usable
+    // without the global shortcut. Surfacing it as a toast is later
+    // polish (plan §3.6); the log suffices for now.
+    if let Err(err) = registration {
+        tracing::warn!(error = %err, "failed to register the global capture shortcut");
+    }
+
+    // Live updates: FsFileWatcher -> mpsc -> watcher thread -> reconcile
+    // + emit. The watcher handle must outlive setup, so it is managed as
+    // state (dropping it would stop the platform watcher).
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut fs_watcher = cdno_core::watcher::FsFileWatcher::new(&root);
+    cdno_core::watcher::FileWatcher::watch(&mut fs_watcher, tx)?;
+    app.manage(std::sync::Mutex::new(fs_watcher));
+
+    let deps = WatcherDeps {
+        store: opened.store,
+        index: opened.index,
+        ignore: opened.ignore,
+    };
+    let watcher_app = app.clone();
+    std::thread::spawn(move || watcher::run(watcher_app, deps, rx));
+
+    let clock_app = app.clone();
+    std::thread::spawn(move || clock::run(clock_app));
+
+    // Menu-bar tray (M10). A tray failure is cosmetic — log and carry
+    // on, never crash startup over it.
+    if let Err(err) = tray::init(app) {
+        tracing::warn!(error = %err, "failed to create the tray icon");
+    }
+
+    Ok(())
+}
+
+/// First-launch folder-picker loop, run on a background thread (see the
+/// call site for why it must not touch the main thread). Loops until the
+/// user picks a folder that opens as a vault, then persists it and
+/// finishes initialisation on the main thread; on cancel it explains
+/// itself and exits cleanly rather than aborting to Console.app.
+///
+/// Validation calls `open_vault` and matches [`BootstrapError::NotAVault`]
+/// so the "no `.cuaderno/`" message is precise. The proven-good path is
+/// re-opened by [`init_with_vault`] on the main thread; the extra open
+/// (one reconciliation pass, first launch only) is the price of keeping
+/// every dialog off the main thread, where a blocking dialog deadlocks.
+fn run_picker(app: tauri::AppHandle, config_dir: PathBuf) {
+    loop {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title("Choose your cuaderno vault")
+            .blocking_pick_folder();
+
+        let Some(folder) = picked.and_then(|p| p.into_path().ok()) else {
+            // Cancelled. A calm explanation, then a graceful exit — never
+            // the old silent, Console-only abort.
+            app.dialog()
+                .message(
+                    "cuaderno needs a vault to open.\n\nRun `cdno init <path>` to create one, \
+                     then relaunch the app.",
+                )
+                .blocking_show();
+            std::process::exit(0);
+        };
+
+        match open_vault(&folder) {
+            Ok(_) => {
+                // Proven vault (the opened handles are dropped here; the
+                // main thread re-opens them). Persist best-effort — a
+                // failed write only costs the user a second pick next
+                // launch, never a crash.
+                if let Err(err) = vault_locator::write_setting(&config_dir, &folder) {
+                    tracing::warn!(error = %err, "could not persist the chosen vault path");
+                }
+                let init_app = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Err(err) = init_with_vault(&init_app, folder) {
+                        // The same path opened moments ago on this thread;
+                        // a failure now is a genuine surprise. A blocking
+                        // dialog here would deadlock the main thread, so
+                        // log and abort loudly instead.
+                        tracing::error!(error = %err, "failed to open the picked vault");
+                        std::process::exit(1);
+                    }
+                    // The main window's webview loaded and fired its first
+                    // queries before the vault existed — they failed (no
+                    // managed state). Reload once so they refetch against
+                    // the now-ready vault. First launch only.
+                    if let Some(window) = init_app.get_webview_window("main") {
+                        let _ = window.eval("window.location.reload()");
+                    }
+                });
+                return;
+            }
+            Err(BootstrapError::NotAVault { .. }) => {
+                app.dialog()
+                    .message(
+                        "That folder isn't a cuaderno vault (no .cuaderno/ found).\n\nPick the \
+                         vault root, or run `cdno init` first.",
+                    )
+                    .blocking_show();
+                // Re-open the picker.
+            }
+            Err(err) => {
+                app.dialog()
+                    .message(format!("Could not open that vault:\n\n{err}"))
+                    .blocking_show();
+                // Re-open the picker.
+            }
+        }
+    }
+}
 
 /// Build and run the app. Called from `main`.
 ///
 /// # Panics
 ///
-/// Panics (with a readable message) when the vault cannot be opened —
-/// there is nothing sensible to render without one, and Tauri's setup
-/// hook has no error channel to the user beyond aborting.
+/// Panics (with a readable message) only when an explicit
+/// `CUADERNO_VAULT_PATH` override points at something that will not open
+/// as a vault — an explicit override must fail loudly. A missing
+/// override, or a persisted path that no longer opens, is no longer
+/// fatal: the app falls back to a native folder picker, and a cancelled
+/// picker exits cleanly (never a silent abort).
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -80,82 +245,47 @@ pub fn run() {
             surface_window(app, "main");
         }))
         .plugin(tauri_plugin_opener::init())
+        // Native folder picker + message dialogs for first-launch vault
+        // discovery (GH #331). Invoked only from Rust, so — like the
+        // opener plugin — it needs no window capability entry.
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            let root = std::env::var(ENV_VAULT_PATH).map_err(|_| {
-                format!("{ENV_VAULT_PATH} is not set — point it at your vault root")
-            })?;
-            let root = std::path::PathBuf::from(root);
-
-            // Startup reconciliation runs inside open_vault, before
-            // any window content loads — the correctness backstop the
-            // watcher's incremental repairs lean on.
-            let opened = open_vault(&root)?;
-            if opened.report.added + opened.report.updated + opened.report.removed > 0 {
-                tracing::info!(
-                    added = opened.report.added,
-                    updated = opened.report.updated,
-                    removed = opened.report.removed,
-                    "startup reconciliation applied changes",
-                );
-            }
-
-            app.manage(AppState {
-                vault: Arc::new(opened.vault),
-                journal: WriteJournal::default(),
-                root: root.clone(),
+            // Vault resolution: explicit env override, then a persisted
+            // setting, then a native picker (GH #331). The persisted
+            // path is validated with the same `.cuaderno/` marker check
+            // open_vault uses for NotAVault, so a moved/deleted vault
+            // falls through to the picker instead of crashing.
+            let config_dir = app.path().app_config_dir().unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "no app config dir; the vault path won't persist");
+                PathBuf::new()
             });
+            let resolution = vault_locator::resolve(
+                vault_locator::resolve_from_env(),
+                &config_dir,
+                |candidate| candidate.join(cdno_core::paths::CUADERNO_DIR).is_dir(),
+            );
 
-            // Global capture hotkey (⌘⇧C on macOS; SUPER maps to Cmd).
-            // Registered from Rust — JS registration is racy (plan
-            // §3.6). SUPER+SHIFT+C summons the floating capture window:
-            // show + focus, then emit `capture:show` so the window's
-            // input re-focuses even when it was already visible.
-            let capture_shortcut =
-                Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyC);
-            let registration =
-                app.global_shortcut()
-                    .on_shortcut(capture_shortcut, |app, _shortcut, event| {
-                        // The handler fires on both press and release —
-                        // act once, on press.
-                        if event.state != ShortcutState::Pressed {
-                            return;
-                        }
-                        summon_capture(app);
-                    });
-            // A failed registration (the OS refused the hotkey, or it
-            // clashes with another app) must not abort startup — the
-            // app is fully usable without the global shortcut. Surfacing
-            // it as a toast is later polish (plan §3.6); the log
-            // suffices for now.
-            if let Err(err) = registration {
-                tracing::warn!(error = %err, "failed to register the global capture shortcut");
-            }
-
-            // Live updates: FsFileWatcher -> mpsc -> watcher thread ->
-            // reconcile + emit. The watcher handle must outlive setup,
-            // so it is managed as state (dropping it would stop the
-            // platform watcher).
-            let (tx, rx) = std::sync::mpsc::channel();
-            let mut fs_watcher = cdno_core::watcher::FsFileWatcher::new(&root);
-            cdno_core::watcher::FileWatcher::watch(&mut fs_watcher, tx)?;
-            app.manage(std::sync::Mutex::new(fs_watcher));
-
-            let deps = WatcherDeps {
-                store: opened.store,
-                index: opened.index,
-                ignore: opened.ignore,
-            };
-            let watcher_app = app.handle().clone();
-            std::thread::spawn(move || watcher::run(watcher_app, deps, rx));
-
-            let clock_app = app.handle().clone();
-            std::thread::spawn(move || clock::run(clock_app));
-
-            // Menu-bar tray (M10). A tray failure is cosmetic — log
-            // and carry on, never crash startup over it.
-            if let Err(err) = tray::init(app.handle()) {
-                tracing::warn!(error = %err, "failed to create the tray icon");
+            match resolution {
+                // Both carry a concrete root: open synchronously so the
+                // window loads with state already managed. An Env
+                // override that fails to open propagates via `?` as a
+                // hard startup error — an explicit override fails loudly.
+                Resolution::Env(root) | Resolution::Stored(root) => {
+                    init_with_vault(app.handle(), root)?;
+                }
+                // No usable vault: prompt. The blocking picker MUST NOT
+                // run on the main thread — its blocking API posts the
+                // dialog onto the main event loop and then blocks the
+                // caller, but that loop is not pumping until `setup`
+                // returns, so a main-thread call would deadlock. Run the
+                // loop on a background thread; once the event loop is
+                // live it services the dialog, and init finishes back on
+                // the main thread.
+                Resolution::NeedsPicker => {
+                    let picker_app = app.handle().clone();
+                    std::thread::spawn(move || run_picker(picker_app, config_dir));
+                }
             }
 
             Ok(())

@@ -54,28 +54,26 @@ jobs:
           generate_release_notes: true
           # The macOS desktop app is ad-hoc signed (no notarization, no
           # updater — that slice of M10 pulled forward for user testing).
-          # Two traps the tester must be told about up front, accurately:
+          # One trap the tester must still be told about accurately:
           # Sequoia removed the right-click -> Open Gatekeeper bypass, so
-          # the reliable path is stripping quarantine; and a Finder-
-          # launched app inherits no shell environment, so the vault env
-          # var needs launchctl. The auto-generated PR list follows.
+          # the reliable path is stripping quarantine. Vault discovery is
+          # now handled by a first-launch picker (GH #331), so launchctl
+          # is optional. The auto-generated PR list follows.
           body: |
             ### Desktop app (macOS) — read before first launch
 
             The `cuaderno-app-*.dmg` is **ad-hoc signed, not notarized**, and there
-            is no auto-updater yet. Two steps to get it running:
+            is no auto-updater yet. To get it running:
 
             1. **Gatekeeper** (right-click -> Open no longer works on macOS 15+):
                after copying the app to /Applications, run
                `xattr -dr com.apple.quarantine /Applications/cuaderno.app`
                (or use System Settings -> Privacy & Security -> "Open Anyway"
                after the first blocked attempt).
-            2. **Vault discovery**: a Finder-launched app inherits no shell
-               environment, so set the vault path for GUI apps once per login:
-               `launchctl setenv CUADERNO_VAULT_PATH "$HOME/Documents/notebook"`
-               then (re)launch the app. Alternative for a one-off run:
-               `CUADERNO_VAULT_PATH=... open -a cuaderno` from a terminal.
-               Without it the app aborts on startup (visible in Console.app).
+            2. **Vault discovery**: on first launch the app asks for your vault
+               folder with a native picker and remembers it. `CUADERNO_VAULT_PATH`
+               overrides it for terminals/dev (`CUADERNO_VAULT_PATH=... open -a
+               cuaderno`), but it is no longer required for a Finder launch.
 
   build:
     name: Build ${{ matrix.target }}

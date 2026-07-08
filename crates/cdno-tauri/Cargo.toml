@@ -26,6 +26,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 ts-rs = { workspace = true, optional = true }
+tauri-plugin-dialog.workspace = true
 
 [features]
 # Regenerate ui/src/api/bindings/ — see `just gen-bindings`.
