@@ -11,6 +11,7 @@
 // alarm. Empty project slots read as soft dashed "open slot" — breathing
 // room, not vacancy.
 import { useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ProjectSlot } from "../../api/bindings/ProjectSlot";
 import type { QuestionSummary } from "../../api/bindings/QuestionSummary";
@@ -100,7 +101,7 @@ function StrategicBody({ data }: { data: StrategicBundle }) {
         </p>
       </header>
 
-      <QuestionsGrid questions={data.questions} />
+      <QuestionsGrid questions={data.questions} portfolios={data.portfolios} />
       <ProjectSlots active={data.active} parked={data.parked} maxActive={data.max_active} />
       <PortfolioHealth portfolios={data.portfolios} />
       <StewardshipsOverview rows={data.stewardships} />
@@ -111,7 +112,27 @@ function StrategicBody({ data }: { data: StrategicBundle }) {
 
 // --- Questions grid ------------------------------------------------------
 
-function QuestionsGrid({ questions }: { questions: QuestionSummary[] }) {
+/** Portfolio link chip on a question card. A portfolio shares its
+ * question's slug (portfolios.rs), so the Strategic bundle's flat
+ * portfolio list is correlated to a question by exact slug match —
+ * no backend link field is needed for v1. Mirrors the commitments
+ * `OriginChip`: a small faint chip that navigates, here to the
+ * portfolio detail route. */
+function PortfolioChip({ slug }: { slug: string }) {
+  return (
+    <Link to={`/portfolios/${slug}`} className="text-xs text-ink-faint hover:text-ink-muted">
+      {slug}
+    </Link>
+  );
+}
+
+function QuestionsGrid({
+  questions,
+  portfolios,
+}: {
+  questions: QuestionSummary[];
+  portfolios: PortfolioSummary[];
+}) {
   const { openReader } = useReader();
 
   return (
@@ -128,20 +149,47 @@ function QuestionsGrid({ questions }: { questions: QuestionSummary[] }) {
               <div key={domain}>
                 <h3 className="text-xs capitalize text-ink-muted">{domain}</h3>
                 <ul className="mt-2 space-y-2">
-                  {inDomain.map((q) => (
-                    <li key={q.slug}>
-                      <button
-                        type="button"
-                        onClick={() => openReader(`questions/${q.domain}/${q.slug}.md`)}
-                        className="flex w-full flex-col items-start gap-1 rounded-md border border-line bg-bg-surface px-3 py-2 text-left hover:bg-bg-sunken"
+                  {inDomain.map((q) => {
+                    // Correlate portfolios to this question by shared slug.
+                    const linked = portfolios.filter((p) => p.slug === q.slug);
+                    return (
+                      // The card is a plain container, not a button: the
+                      // title is the reader-opening control and the chips
+                      // are accessible sibling links — interactive elements
+                      // must not nest inside a button (a11y / DOM validity).
+                      // The card is a plain container, not a button: the
+                      // title is the reader-opening control and the chips
+                      // are accessible sibling links — interactive elements
+                      // must not nest inside a button (a11y / DOM validity).
+                      // The hover highlight and padding live on the title
+                      // button (full-bleed via the container's overflow
+                      // clip), so the highlighted area matches the click
+                      // target — the old card-wide hover left the padding
+                      // ring a dead zone that implied a click it didn't do.
+                      <li
+                        key={q.slug}
+                        className="overflow-hidden rounded-md border border-line bg-bg-surface"
                       >
-                        <span className="text-sm text-ink">{q.question_text || q.slug}</span>
-                        <span className="text-xs text-ink-faint">
-                          updated {shortDate(q.updated)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                        <button
+                          type="button"
+                          onClick={() => openReader(`questions/${q.domain}/${q.slug}.md`)}
+                          className="flex w-full flex-col items-start gap-1 px-3 py-2 text-left hover:bg-bg-sunken"
+                        >
+                          <span className="text-sm text-ink">{q.question_text || q.slug}</span>
+                          <span className="text-xs text-ink-faint">
+                            updated {shortDate(q.updated)}
+                          </span>
+                        </button>
+                        {linked.length > 0 && (
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pb-2">
+                            {linked.map((p) => (
+                              <PortfolioChip key={p.slug} slug={p.slug} />
+                            ))}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             );

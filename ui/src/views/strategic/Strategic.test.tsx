@@ -39,6 +39,15 @@ const BUNDLE: StrategicBundle = {
       last_updated: "2026-07-01",
       staleness_days: 7n,
     },
+    {
+      // Shares the "surrogate-fidelity" research question's slug, so it
+      // correlates to that question and surfaces a chip on its card.
+      slug: "surrogate-fidelity",
+      question: "Fidelity evidence dossier",
+      evidence_count: 2,
+      last_updated: "2026-07-05",
+      staleness_days: 3n,
+    },
   ],
   active: [
     { slug: "alpha", context: "work" },
@@ -119,6 +128,22 @@ test("questions are grouped by domain", async () => {
   expect(screen.getByText("life")).toBeDefined();
   expect(screen.getByText("How faithful is the surrogate?")).toBeDefined();
   expect(screen.getByText("What does a sustainable week look like?")).toBeDefined();
+});
+
+test("a question with a matching portfolio shows a chip that navigates to it", async () => {
+  renderStrategic(BUNDLE);
+  // The "surrogate-fidelity" question shares its slug with a portfolio,
+  // so its card carries a chip linking to that portfolio's detail route.
+  const chip = await screen.findByRole("link", { name: "surrogate-fidelity" });
+  expect(chip.getAttribute("href")).toBe("/portfolios/surrogate-fidelity");
+});
+
+test("a question without a matching portfolio shows no chip", async () => {
+  renderStrategic(BUNDLE);
+  // The "balance" life question has no same-slug portfolio, so no chip
+  // links out from it.
+  await screen.findByText("What does a sustainable week look like?");
+  expect(screen.queryByRole("link", { name: "balance" })).toBeNull();
 });
 
 test("the allocator draws filled slots and dashed open slots from the cap", async () => {
