@@ -6,6 +6,7 @@ pub mod file;
 pub mod init;
 pub mod lint;
 pub mod log;
+pub mod monthly;
 pub mod normalise;
 pub mod note;
 pub mod orient;

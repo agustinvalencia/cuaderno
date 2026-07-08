@@ -38,17 +38,19 @@ rules as the CLI apply (append-only notes, auto-logged project state, the projec
 | `complete_commitment` | `commitment` (slug) | Mark a commitment done and archive it. |
 | `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?` | File a tracking note under an expanded stewardship. |
 
-## Daily and weekly sections
+## Daily, weekly, and monthly sections
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
 | `upsert_daily_section` | `section` (`Standup`\|`Intention`\|`Agenda`\|`Meeting`), `content?`, `date?`, `append?` | Write or append a daily-note section. |
 | `upsert_weekly_section` | `section` (`Wins`\|`Challenges`\|`One Improvement`\|`This Week's Goal`), `content?`, `date?`, `append?` | Write or append a weekly-note section. |
+| `upsert_monthly_section` | `section` (`Wins`\|`Themes`\|`Next Month's Focus`), `content?`, `date?`, `append?` | Write or append a monthly-note section. |
 
 ## Notes
 
 - `append?` defaults to replacing the section; set it `true` to append instead.
-- Dates are `YYYY-MM-DD`; week-scoped tools accept any day in the target week.
+- Dates are `YYYY-MM-DD`; week-scoped tools accept any day in the target week, and month-scoped
+  tools accept any day in the target month.
 - `vars?` is an optional `name -> value` map supplying values for a custom template's
   [`[variables.prompt]`](../../tutorials/templates-and-frontmatter.md) placeholders — the MCP analogue
   of the CLI's repeatable `--var name=value`. Omitting a required prompted variable fails with an

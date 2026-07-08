@@ -9,7 +9,7 @@ use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
 use cdno_domain::frontmatter::{Context, EnergyLevel};
-use cdno_domain::{DailySection, WeeklySection};
+use cdno_domain::{DailySection, MonthlySection, WeeklySection};
 
 use crate::dto::WriteResultDto;
 
@@ -426,6 +426,32 @@ impl CuadernoServer {
         let path = self
             .with_vault(move |vault| {
                 vault.upsert_weekly_section(date, section, &input.content, input.append)
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let verb = if append { "Appended to" } else { "Updated" };
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("{verb} {} on {}", section.heading(), path),
+        ))
+    }
+
+    #[tool(
+        description = "Write a section of the monthly note for the calendar month containing `date` (any day in the month; defaults to this month). `section` is one of `Wins`, `Themes`, `Next Month's Focus` (case-insensitive); any other value is rejected. Creates the monthly note (frontmatter + the three section headings + a `## Weeks` block linking the month's weekly notes) if absent. With `append: false` (default) the section is replaced — compose the review; with `append: true` the content is appended — accrue within a section across a session. The monthly note links (never copies) its weeks, so the weekly notes stay the source of truth; there is no Metrics section (quantitative metrics live behind the desktop 'show metrics' toggle)."
+    )]
+    pub async fn upsert_monthly_section(
+        &self,
+        Parameters(input): Parameters<UpsertMonthlySectionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let date = input
+            .date
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let section = MonthlySection::from_str(&input.section)
+            .map_err(|reason| invalid_argument("section", &reason))?;
+        let append = input.append;
+        let path = self
+            .with_vault(move |vault| {
+                vault.upsert_monthly_section(date, section, &input.content, input.append)
             })
             .await?
             .map_err(into_mcp_error)?;

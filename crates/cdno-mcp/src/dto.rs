@@ -707,6 +707,25 @@ impl From<cdno_domain::WeeklyNoteView> for WeeklyNoteViewDto {
     }
 }
 
+/// Output of `read_monthly_note` — mirrors [`WeeklyNoteViewDto`]. A month
+/// with no note yet returns `exists: false` and empty `markdown`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MonthlyNoteViewDto {
+    pub path: String,
+    pub exists: bool,
+    pub markdown: String,
+}
+
+impl From<cdno_domain::MonthlyNoteView> for MonthlyNoteViewDto {
+    fn from(v: cdno_domain::MonthlyNoteView) -> Self {
+        Self {
+            path: v.path.to_string(),
+            exists: v.exists,
+            markdown: v.markdown,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // Write-op result
 // ---------------------------------------------------------------------

@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        42,
-        "expected the full catalogue: 41 prior + create_custom_note (config-defined custom types), got {}",
+        44,
+        "expected the full catalogue: 42 prior + the two monthly-note tools (read_monthly_note, upsert_monthly_section, #228), got {}",
         tools.len()
     );
 }

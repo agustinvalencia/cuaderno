@@ -194,7 +194,7 @@ impl<'a> TypeRegistry<'a> {
         self.resolve(note_type).is_some()
     }
 
-    /// Every known type name — the 11 built-ins plus every config type — for
+    /// Every known type name — the 12 built-ins plus every config type — for
     /// shell completions and the `--type` filter. Built-ins first (in
     /// [`NoteType::ALL`] order), then config types sorted alphabetically so the
     /// completion list is stable across runs (the config map is unordered).

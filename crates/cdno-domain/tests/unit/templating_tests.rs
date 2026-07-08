@@ -960,6 +960,7 @@ fn built_in_templates_only_reference_supplied_placeholders() {
         (NoteType::Tracking, "tracking/generic.md"),
         (NoteType::Daily, "daily.md"),
         (NoteType::Weekly, "weekly.md"),
+        (NoteType::Monthly, "monthly.md"),
         (NoteType::Inbox, "inbox.md"),
     ];
     for (nt, file) in cases {
@@ -983,9 +984,9 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
     // registry never over-advertises — every key it lists is genuinely
     // `set_contextual`'d by the create path (a future registry key with no
     // matching `set_contextual` would survive as a literal and fail here).
-    use cdno_domain::WeeklySection;
     use cdno_domain::frontmatter::{EnergyLevel, QuestionDomain};
     use cdno_domain::note_type::NoteType;
+    use cdno_domain::{MonthlySection, WeeklySection};
 
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
     // A custom template = the built-in with an HTML comment inserted right after
@@ -1024,6 +1025,7 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
             NoteType::Commitment => ("commitment.md".into(), "commitment.md"),
             NoteType::Daily => ("daily.md".into(), "daily.md"),
             NoteType::Weekly => ("weekly.md".into(), "weekly.md"),
+            NoteType::Monthly => ("monthly.md".into(), "monthly.md"),
             NoteType::Inbox => ("inbox.md".into(), "inbox.md"),
         }
     };
@@ -1091,6 +1093,9 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
         vault
             .upsert_weekly_section(today(), WeeklySection::Wins, "shipped", false)
             .expect("weekly"),
+        vault
+            .upsert_monthly_section(today(), MonthlySection::Wins, "shipped", false)
+            .expect("monthly"),
         vault.capture_to_inbox(at, "thought").expect("inbox"),
     ];
 

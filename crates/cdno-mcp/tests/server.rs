@@ -46,9 +46,10 @@ fn advertised_catalogue_matches_expected_surface() {
 
     // Sorted to match `advertised_tools`'s order so a failure points
     // at the missing or extra tool cleanly. The 16 design §11 tools,
-    // the two daily-note tools (GH #158), and the two weekly-note tools.
+    // the two daily-note tools (GH #158), the two weekly-note tools, and
+    // the two monthly-note tools (GH #228).
     let mut expected = vec![
-        // Context (14)
+        // Context (15)
         "get_orientation",
         "get_weekly_context",
         "get_monthly_context",
@@ -58,12 +59,13 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_active_questions",
         "read_daily_note",
         "read_weekly_note",
+        "read_monthly_note",
         "search_notes",
         "list_projects",
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (22)
+        // Operations (23)
         "append_to_log",
         "capture",
         "discard_inbox_item",
@@ -81,6 +83,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "create_tracking_entry",
         "upsert_daily_section",
         "upsert_weekly_section",
+        "upsert_monthly_section",
         "create_project",
         "create_portfolio",
         "link_portfolio_to_question",
@@ -96,7 +99,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 42);
+    assert_eq!(tools.len(), 44);
 }
 
 #[test]

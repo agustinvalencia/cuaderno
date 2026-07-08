@@ -148,6 +148,7 @@ Each type provides these:
 |-----------|------------------------------|
 | `daily` | `date`, `heading`, `weekday` |
 | `weekly` | `week`, `week_num`, `year`, `date_start`, `date_end` |
+| `monthly` | `month`, `month_name`, `year`, `date_start`, `date_end`, `weeks` |
 | `project` | `title`, `context`, `status`, `created`, `core_question` |
 | `action` | `title`, `slug`, `project`, `energy`, `status`, `created`, `due`, `completed`, `milestone`, `criteria`, `blocker`, `tags` |
 | `portfolio` | `question`, `project`, `created` |

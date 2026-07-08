@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-/// The eleven canonical note types that make up a Cuaderno vault.
+/// The twelve canonical note types that make up a Cuaderno vault.
 ///
 /// Serialises and parses as kebab-case (`Daily` ↔ `"daily"`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 pub enum NoteType {
     Daily,
     Weekly,
+    Monthly,
     Project,
     Action,
     Portfolio,
@@ -23,9 +24,10 @@ pub enum NoteType {
 }
 
 impl NoteType {
-    pub const ALL: [NoteType; 11] = [
+    pub const ALL: [NoteType; 12] = [
         NoteType::Daily,
         NoteType::Weekly,
+        NoteType::Monthly,
         NoteType::Project,
         NoteType::Action,
         NoteType::Portfolio,
@@ -41,6 +43,7 @@ impl NoteType {
         match self {
             NoteType::Daily => "daily",
             NoteType::Weekly => "weekly",
+            NoteType::Monthly => "monthly",
             NoteType::Project => "project",
             NoteType::Action => "action",
             NoteType::Portfolio => "portfolio",
@@ -77,6 +80,7 @@ impl NoteType {
         match self {
             NoteType::Daily => &["type", "date"],
             NoteType::Weekly => &["type", "week", "date_start", "date_end"],
+            NoteType::Monthly => &["type", "month", "date_start", "date_end"],
             NoteType::Project => &["type", "context", "status", "created", "core_question"],
             NoteType::Action => &[
                 "type",
@@ -137,6 +141,14 @@ impl NoteType {
         match self {
             NoteType::Daily => &["date", "heading", "weekday"],
             NoteType::Weekly => &["week", "week_num", "year", "date_start", "date_end"],
+            NoteType::Monthly => &[
+                "month",
+                "month_name",
+                "year",
+                "date_start",
+                "date_end",
+                "weeks",
+            ],
             NoteType::Project => &["title", "context", "status", "created", "core_question"],
             NoteType::Action => &[
                 "title",

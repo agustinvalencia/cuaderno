@@ -173,6 +173,28 @@ fn fresh_weekly_scaffold_matches_canonical_frontmatter_order() {
 }
 
 #[test]
+fn fresh_monthly_scaffold_matches_canonical_frontmatter_order() {
+    // The monthly scaffold renders the `monthly.md` template in code
+    // (`monthly.rs`) — pin the note it produces to `NoteType::Monthly`'s
+    // order so template and enum can't drift apart.
+    use cdno_domain::MonthlySection;
+    use chrono::NaiveDate;
+
+    let (vault, store) = vault_with_notes(&[]);
+    let date = NaiveDate::from_ymd_opt(2026, 4, 26).unwrap();
+    let path = vault
+        .upsert_monthly_section(date, MonthlySection::Wins, "shipped", false)
+        .expect("create monthly note");
+    let content = store.read_file(&path).unwrap();
+
+    assert_eq!(
+        frontmatter_keys(&content),
+        NoteType::Monthly.frontmatter_order(),
+        "monthly scaffold drifted from NoteType::Monthly::frontmatter_order:\n{content}"
+    );
+}
+
+#[test]
 fn fresh_inbox_scaffold_matches_canonical_frontmatter_order() {
     // The inbox capture scaffold lives in code (`capture.rs`).
     use chrono::{NaiveDate, NaiveTime};

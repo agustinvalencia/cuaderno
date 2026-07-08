@@ -1,6 +1,6 @@
 # Custom note types
 
-Cuaderno ships eleven built-in note types (see [Note types](../concepts/note-types.md)). If you need
+Cuaderno ships twelve built-in note types (see [Note types](../concepts/note-types.md)). If you need
 an entity the built-ins don't cover — people, books, clients, recipes — you can declare your own
 **custom note type** under `[note_types.<name>]` in `.cuaderno/config.toml`. No recompile, no plugin.
 

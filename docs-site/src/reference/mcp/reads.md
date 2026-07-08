@@ -16,13 +16,15 @@ anything. Inputs marked optional may be omitted.
 | `list_projects` | — | All projects (active + parked) with summaries. |
 | `read_daily_note` | `date?` (default today) | The daily log for a date. |
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
+| `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |
 | `search_notes` | `query`, `note_type?`, `from?`, `to?`, `portfolio?`, `limit?` (default 20) | Ranked full-text hits. The MCP form of [`cdno search`](../cli/search.md). |
 | `lint` | — | Frontmatter problems across the vault. |
 | `triage_inbox` | — | Pending inbox captures awaiting triage. |
 
 ## Notes
 
-- **Dates** are `YYYY-MM-DD`. Week-scoped tools accept *any* day within the target ISO week.
+- **Dates** are `YYYY-MM-DD`. Week-scoped tools accept *any* day within the target ISO week;
+  month-scoped tools accept *any* day within the target calendar month.
 - **`search_notes`** returns the same hit shape as the CLI: `path`, `note_type`, `title`, `snippet`,
   `score`. See [JSON output](../json-output.md).
 - These pair naturally with the [write tools](writes.md): read context, propose an action, then
