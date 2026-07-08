@@ -99,11 +99,38 @@ fn commit_applies_move_and_delete() {
     .expect("write lock");
     tx.move_file(vp("a.md"), vp("c.md"));
     tx.delete_file(vp("b.md"));
-    tx.commit().unwrap();
+    let touched = tx.commit().unwrap();
 
     assert_eq!(store.read_file(&vp("c.md")).unwrap(), "A");
     assert!(!store.exists(&vp("a.md")).unwrap());
     assert!(!store.exists(&vp("b.md")).unwrap());
+
+    // commit reports every touched file path in stage order. A move
+    // counts BOTH endpoints — the source vanishes and the destination
+    // appears, so a watcher sees a change at each (this is what the
+    // desktop echo journal needs, #315).
+    assert_eq!(touched, vec![vp("a.md"), vp("c.md"), vp("b.md")]);
+}
+
+#[test]
+fn commit_touched_paths_dedupes_repeated_writes() {
+    // A note written then re-written in the same batch is one touched
+    // path, not two: the journal only needs each path once.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.write_file(vp("projects/foo.md"), "first\n");
+    tx.write_file(vp("projects/foo.md"), "second\n");
+    tx.write_file(vp("journal/2026/daily/2026-05-01.md"), "log\n");
+    let touched = tx.commit().unwrap();
+
+    assert_eq!(
+        touched,
+        vec![
+            vp("projects/foo.md"),
+            vp("journal/2026/daily/2026-05-01.md"),
+        ],
+    );
 }
 
 // ---------------------------------------------------------------------

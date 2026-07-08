@@ -411,6 +411,87 @@ fn complete_action_ambiguous_serialises_candidates() {
     );
 }
 
+// A project whose one open bullet wikilinks an action note, plus that
+// note — the fixture for exercising complete_action's archival through
+// the real command, so the WriteJournal is populated by the wired-up
+// command body, not a hand-reproduced composition.
+const BEACON: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Beacon\n\n## Current State\nUnderway.\n\n## Next Actions\n- [ ] [[actions/wire-reader]] (deep)\n";
+const WIRE_READER: &str = "---\ntype: action\nstatus: active\nproject: beacon\nenergy: deep\nmilestone: null\ndue: null\ncreated: 2026-07-01\ncompleted: null\nblocker: null\ncriteria: |\n  Reader wired.\n---\n\n# Wire the reader\n";
+
+#[test]
+fn complete_action_command_journals_every_touched_path_including_the_archive() {
+    // End-to-end through the real `#[tauri::command]`: completing a bullet
+    // that wikilinks an action note archives the note in the same
+    // transaction, and the command must journal ALL of the domain's
+    // touched paths — the project map, the daily, and both endpoints of
+    // the archival move — so the watcher suppresses every echo (#315).
+    // Guards the command wire-up itself, not just the journal seam.
+    use tauri::Manager;
+
+    let (app, _store) = mock_app_with(&[
+        ("projects/beacon.md", BEACON),
+        ("actions/wire-reader.md", WIRE_READER),
+    ]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-complete-archive", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "beacon",
+        "action": "wire-reader",
+    }));
+    get_ipc_response(&webview, request_with("complete_action", body)).expect("command succeeds");
+
+    let year = chrono::Local::now().date_naive().format("%Y");
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let state = app.state::<AppState>();
+    for path in [
+        VaultPath::new("projects/beacon.md").unwrap(),
+        VaultPath::new("actions/wire-reader.md").unwrap(),
+        VaultPath::new(format!("actions/_done/{year}/wire-reader.md")).unwrap(),
+        daily,
+    ] {
+        assert!(
+            state.journal.is_recent_self_write(&path),
+            "the command should have journalled its own write at {path}"
+        );
+    }
+}
+
+#[test]
+fn update_project_state_command_journals_nothing_on_a_noop() {
+    // The no-op guard, end-to-end: re-setting ALPHA's state to its current
+    // "Underway." is a silent domain no-op, so the command must journal
+    // nothing — planting a suppression entry here would swallow a genuine
+    // external edit to those paths for the echo window (#315).
+    use tauri::Manager;
+
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-state-noop", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "newState": "Underway.",
+    }));
+    get_ipc_response(&webview, request_with("update_project_state", body))
+        .expect("command succeeds");
+
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let state = app.state::<AppState>();
+    assert!(
+        !state
+            .journal
+            .is_recent_self_write(&VaultPath::new("projects/alpha.md").unwrap()),
+        "a no-op update must not journal the project map"
+    );
+    assert!(
+        !state.journal.is_recent_self_write(&daily),
+        "a no-op update must not journal the daily"
+    );
+}
+
 // ---------------------------------------------------------------------
 // Commitments Timeline (M4, #56). The aggregation stamps `today` from
 // Local::now(), so these fixtures are dated relative to today rather
