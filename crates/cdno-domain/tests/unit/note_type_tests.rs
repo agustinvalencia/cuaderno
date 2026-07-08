@@ -4,6 +4,7 @@ use cdno_domain::note_type::{NoteType, ParseNoteTypeError};
 fn display_uses_kebab_case() {
     assert_eq!(NoteType::Daily.to_string(), "daily");
     assert_eq!(NoteType::Weekly.to_string(), "weekly");
+    assert_eq!(NoteType::Monthly.to_string(), "monthly");
     assert_eq!(NoteType::Project.to_string(), "project");
     assert_eq!(NoteType::Action.to_string(), "action");
     assert_eq!(NoteType::Portfolio.to_string(), "portfolio");
@@ -23,14 +24,15 @@ fn as_str_matches_display() {
 }
 
 #[test]
-fn all_contains_eleven_variants() {
-    assert_eq!(NoteType::ALL.len(), 11);
+fn all_contains_twelve_variants() {
+    assert_eq!(NoteType::ALL.len(), 12);
 }
 
 #[test]
 fn parse_accepts_kebab_case() {
     assert_eq!("daily".parse::<NoteType>().unwrap(), NoteType::Daily);
     assert_eq!("weekly".parse::<NoteType>().unwrap(), NoteType::Weekly);
+    assert_eq!("monthly".parse::<NoteType>().unwrap(), NoteType::Monthly);
     assert_eq!("project".parse::<NoteType>().unwrap(), NoteType::Project);
     assert_eq!("action".parse::<NoteType>().unwrap(), NoteType::Action);
     assert_eq!(

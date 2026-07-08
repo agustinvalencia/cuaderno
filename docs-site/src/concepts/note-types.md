@@ -1,12 +1,13 @@
 # Note types
 
 Every note in a vault has a `type:` in its frontmatter. Cuaderno parses that frontmatter into a
-typed structure — if it parses, it's valid. There are **eleven** note types.
+typed structure — if it parses, it's valid. There are **twelve** note types.
 
 | Type | Lives in | Mutability | Purpose |
 |------|----------|------------|---------|
 | `daily` | `journal/<year>/daily/` | Append-only | One day's chronological log |
 | `weekly` | `journal/<year>/weekly/` | Append-only | Weekly review (Wins, Challenges, One Improvement, This Week's Goal) |
+| `monthly` | `journal/<year>/monthly/` | Append-only | Monthly review (Wins, Themes, Next Month's Focus) + links to the month's weeks |
 | `project` | `projects/` (+ `_parked/`) | **Mutable** | Project map: state, next actions, milestones, waiting-on |
 | `action` | `actions/` → `actions/_done/<year>/` | Mutable while open, then archived | Manifest note for an action-as-investigation |
 | `portfolio` | `portfolios/<slug>/_index.md` | Occasionally edited | Index/summary of an evidence dossier |
@@ -18,11 +19,14 @@ typed structure — if it parses, it's valid. There are **eleven** note types.
 
 Plus the **inbox**: raw, untyped captures in `inbox/` awaiting [triage](../tutorials/inbox-and-triage.md).
 
-## The journal: `daily` and `weekly`
+## The journal: `daily`, `weekly`, and `monthly`
 
 The chronological backbone. Daily notes collect timestamped log lines plus structured sections
 (Intention, Agenda, Standup, Meeting). Weekly notes hold the review (Wins, Challenges, One
-Improvement) and the week's single goal. Both are **append-only** — the historical record only grows.
+Improvement) and the week's single goal. Monthly notes hold the higher-altitude review (Wins,
+Themes, Next Month's Focus) and a `## Weeks` block that **links** the month's weekly notes rather
+than copying them, so the weeks stay the source of truth. All three are **append-only** — the
+historical record only grows.
 
 ## `project` — the one mutable map
 

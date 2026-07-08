@@ -42,6 +42,7 @@ fn run_creates_full_directory_tree_with_current_year_partitions() {
     let exists = |rel: &str| target.join(rel).is_dir();
     assert!(exists(&format!("journal/{year}/daily")));
     assert!(exists(&format!("journal/{iso_year}/weekly")));
+    assert!(exists(&format!("journal/{year}/monthly")));
     assert!(exists("projects"));
     assert!(exists("projects/_parked"));
     assert!(exists("portfolios"));

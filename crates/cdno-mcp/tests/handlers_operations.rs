@@ -24,8 +24,9 @@ use cdno_mcp::server::{
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput, UpdateProjectStateInput,
-    UpsertDailySectionInput, UpsertWeeklySectionInput,
+    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput,
+    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
+    UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -810,6 +811,103 @@ async fn read_weekly_note_reports_absence_then_presence() {
             }))
             .await
             .expect("read_weekly_note (present)"),
+    );
+    assert_eq!(after["exists"].as_bool(), Some(true));
+    assert!(
+        after["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("- Shipped it.")
+    );
+}
+
+// ---------------------------------------------------------------------
+// read_monthly_note / upsert_monthly_section (GH #228)
+// ---------------------------------------------------------------------
+
+/// A day in July 2026.
+fn month_day() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 7, 15).unwrap()
+}
+
+#[tokio::test]
+async fn upsert_monthly_section_writes_a_review_section() {
+    let (server, store) = server_with(|_v, _s| {});
+
+    let result = server
+        .upsert_monthly_section(Parameters(UpsertMonthlySectionInput {
+            section: "Next Month's Focus".to_owned(),
+            content: "Draft the discussion section.".to_owned(),
+            date: Some(month_day()),
+            append: false,
+        }))
+        .await
+        .expect("upsert_monthly_section");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.ends_with("2026-07.md"), "monthly path: {path}");
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("month: 2026-07"), "frontmatter:\n{body}");
+    assert!(
+        body.contains("## Next Month's Focus\nDraft the discussion section."),
+        "body:\n{body}"
+    );
+    // The month's weeks are linked, not copied.
+    assert!(
+        body.contains("- [[journal/2026/weekly/2026-W28]]"),
+        "weeks block:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn upsert_monthly_section_rejects_an_unknown_section() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let err = server
+        .upsert_monthly_section(Parameters(UpsertMonthlySectionInput {
+            section: "Metrics".to_owned(),
+            content: "x".to_owned(),
+            date: Some(month_day()),
+            append: false,
+        }))
+        .await
+        .expect_err("unknown monthly section should be rejected");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("section"));
+}
+
+#[tokio::test]
+async fn read_monthly_note_reports_absence_then_presence() {
+    let (server, _store) = server_with(|_v, _s| {});
+
+    let before = decode_json(
+        &server
+            .read_monthly_note(Parameters(ReadMonthlyNoteInput {
+                date: Some(month_day()),
+            }))
+            .await
+            .expect("read_monthly_note (absent)"),
+    );
+    assert_eq!(before["exists"].as_bool(), Some(false));
+
+    server
+        .upsert_monthly_section(Parameters(UpsertMonthlySectionInput {
+            section: "Wins".to_owned(),
+            content: "- Shipped it.".to_owned(),
+            date: Some(month_day()),
+            append: false,
+        }))
+        .await
+        .expect("seed monthly note");
+
+    let after = decode_json(
+        &server
+            .read_monthly_note(Parameters(ReadMonthlyNoteInput {
+                date: Some(month_day()),
+            }))
+            .await
+            .expect("read_monthly_note (present)"),
     );
     assert_eq!(after["exists"].as_bool(), Some(true));
     assert!(

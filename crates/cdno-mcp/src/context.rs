@@ -15,8 +15,8 @@ use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 
 use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
-    OrientationContextDto, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
-    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
+    MonthlyNoteViewDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
+    ProjectListDto, ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
     StewardshipTrackingDto, WeeklyContextDto, WeeklyNoteViewDto,
 };
 
@@ -373,6 +373,23 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         json_result(WeeklyNoteViewDto::from(view))
+    }
+
+    #[tool(
+        description = "Read the monthly note for the calendar month containing `date` (any day in the month; defaults to this month). Returns `{ path, exists, markdown }`. A month with no note yet returns `exists: false` and empty `markdown` rather than erroring, so a skill can check whether the month is already started before composing. The note's review sections are Wins, Themes, and Next Month's Focus; a scaffolded `## Weeks` block links (never copies) the month's weekly notes so the weeks stay the source of truth."
+    )]
+    pub async fn read_monthly_note(
+        &self,
+        Parameters(input): Parameters<ReadMonthlyNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let date = input
+            .date
+            .unwrap_or_else(|| chrono::Local::now().date_naive());
+        let view = self
+            .with_vault(move |vault| vault.read_monthly_note(date))
+            .await?
+            .map_err(into_mcp_error)?;
+        json_result(MonthlyNoteViewDto::from(view))
     }
 
     #[tool(

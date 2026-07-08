@@ -351,7 +351,7 @@ fn templates_eject_all_json_emits_written_and_skipped_arrays() {
     let skipped = v["skipped"].as_array().expect("skipped array");
     assert_eq!(
         written.len() + skipped.len(),
-        11,
+        12,
         "every type accounted for"
     );
 }
@@ -1919,6 +1919,55 @@ fn review_weekly_non_interactive_prints_the_current_weeks_note() {
         .stdout(predicate::str::contains("shipped the parser"))
         // frontmatter is stripped by the shared weekly renderer
         .stdout(predicate::str::contains("type: weekly").not());
+}
+
+// ---------------------------------------------------------------------
+// review monthly (#228)
+// ---------------------------------------------------------------------
+
+#[test]
+fn review_monthly_non_interactive_reports_no_note() {
+    // Piped stdout -> non-interactive: it reads rather than prompts,
+    // reusing `cdno monthly`'s placeholder.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["review", "monthly"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No monthly note for"));
+}
+
+#[test]
+fn review_monthly_non_interactive_prints_the_current_months_note() {
+    use chrono::{Datelike, Local};
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    // `review monthly` defaults to today's calendar month; seed that note.
+    let today = Local::now().date_naive();
+    let rel = format!(
+        "journal/{}/monthly/{}.md",
+        today.year(),
+        today.format("%Y-%m")
+    );
+    let path = dir.path().join(&rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        "---\ntype: monthly\n---\n\n# Month\n\n## Wins\nshipped the parser\n",
+    )
+    .unwrap();
+
+    cdno()
+        .current_dir(dir.path())
+        .args(["review", "monthly"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("shipped the parser"))
+        // frontmatter is stripped by the shared monthly renderer
+        .stdout(predicate::str::contains("type: monthly").not());
 }
 
 // ---------------------------------------------------------------------

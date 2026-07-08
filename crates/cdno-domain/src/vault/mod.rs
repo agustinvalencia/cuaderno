@@ -39,6 +39,7 @@ mod index_entry;
 mod links;
 mod lint;
 mod log;
+mod monthly;
 mod normalise;
 mod notes;
 mod orient;
@@ -67,6 +68,7 @@ pub use context::{
 };
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
+pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use normalise::NormaliseReport;
 pub use notes::NoteView;
 pub use orient::{LapsedHabit, OrientationContext};

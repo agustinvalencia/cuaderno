@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Monthly note type + `cdno review monthly`** (#228) — a new first-class `monthly` note
+  type, mirroring the weekly-note seam throughout. One artefact per calendar month at
+  `journal/<year>/monthly/<YYYY-MM>.md`, keyed by month so any day resolves to the same note.
+  The `MonthlySection` set is celebration-first and lean — `Wins`, `Themes`, `Next Month's
+  Focus` — with **no Metrics section** (quantitative metrics stay behind the desktop "show
+  metrics" toggle, a design law). The scaffold's `## Weeks` block **links, doesn't copy**: one
+  wikilink per Monday falling within the calendar month, pointing at that Monday's weekly note,
+  so the weekly notes stay the source of truth. New domain seam `Vault::read_monthly_note` +
+  `Vault::upsert_monthly_section` (mirroring the weekly read/section-write pair, absence is
+  non-error), core path helpers `journal_monthly_dir` / `monthly_note_relpath`, `cdno monthly`
+  (read the note) and `cdno review monthly` (interactive compose; lists sections when
+  non-interactive), and the `read_monthly_note` + `upsert_monthly_section` MCP tools (44 tools
+  total). Monthly participates in reconcile, index, search, backlinks, normalise, and lint
+  exactly as weekly does, recognised by its `type: monthly` frontmatter. This brings the vault
+  to twelve built-in note types.
+
 ## [0.10.0] - 2026-07-08
 
 Quieter internals - lint now catches malformed stewardship-dashboard bullets that used to vanish silently, and the desktop watcher stops echoing the app's own writes back as external edits.

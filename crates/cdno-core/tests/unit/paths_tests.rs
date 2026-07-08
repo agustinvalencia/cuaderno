@@ -39,6 +39,40 @@ fn weekly_note_relpath_pads_single_digit_weeks() {
 }
 
 #[test]
+fn journal_monthly_dir_uses_calendar_year() {
+    assert_eq!(paths::journal_monthly_dir(2026), "journal/2026/monthly");
+}
+
+#[test]
+fn monthly_note_relpath_uses_calendar_year_and_year_month_stem() {
+    let date = NaiveDate::from_ymd_opt(2026, 7, 15).unwrap();
+    assert_eq!(
+        paths::monthly_note_relpath(date),
+        "journal/2026/monthly/2026-07.md",
+    );
+}
+
+#[test]
+fn monthly_note_relpath_is_keyed_by_month_not_day() {
+    // Any day in July 2026 resolves to the same monthly note.
+    let first = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();
+    let last = NaiveDate::from_ymd_opt(2026, 7, 31).unwrap();
+    assert_eq!(
+        paths::monthly_note_relpath(first),
+        paths::monthly_note_relpath(last),
+    );
+}
+
+#[test]
+fn monthly_note_relpath_pads_single_digit_months() {
+    let date = NaiveDate::from_ymd_opt(2026, 3, 9).unwrap();
+    assert_eq!(
+        paths::monthly_note_relpath(date),
+        "journal/2026/monthly/2026-03.md",
+    );
+}
+
+#[test]
 fn commitments_done_dir_partitions_by_year() {
     assert_eq!(paths::commitments_done_dir(2026), "commitments/_done/2026");
 }
@@ -55,6 +89,7 @@ fn init_dirs_includes_year_partitions_and_static_folders() {
 
     assert!(dirs.contains(&"journal/2026/daily".to_string()));
     assert!(dirs.contains(&"journal/2026/weekly".to_string()));
+    assert!(dirs.contains(&"journal/2026/monthly".to_string()));
     assert!(dirs.contains(&"commitments/_done/2026".to_string()));
     assert!(dirs.contains(&paths::ACTIONS.to_string()));
     assert!(dirs.contains(&"actions/_done/2026".to_string()));

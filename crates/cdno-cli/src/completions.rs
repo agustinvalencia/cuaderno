@@ -161,7 +161,7 @@ pub fn complete_any_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     out
 }
 
-/// Note-type names — the 11 built-ins plus any config-defined custom types.
+/// Note-type names — the 12 built-ins plus any config-defined custom types.
 /// Used by `--type` on `cdno search` and `<type>` on `cdno note`/`cdno
 /// templates`. Opens the vault to include custom types; falls back to the
 /// built-in set when no vault is discoverable (so completion still works

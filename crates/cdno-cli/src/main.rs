@@ -54,7 +54,7 @@ struct Cli {
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
     /// result and run non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
-    /// `normalise`, `triage`, `review`, `weekly`).
+    /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
     #[arg(long, global = true)]
     json: bool,
 
@@ -147,6 +147,14 @@ enum Commands {
     /// Improvement, and This Week's Goal. Defaults to this ISO week.
     Weekly {
         /// Any day in the target ISO week (YYYY-MM-DD). Defaults to this week.
+        #[arg(long)]
+        date: Option<NaiveDate>,
+    },
+
+    /// Show the monthly review note: Wins, Themes, Next Month's Focus,
+    /// and the month's linked weeks. Defaults to this calendar month.
+    Monthly {
+        /// Any day in the target calendar month (YYYY-MM-DD). Defaults to this month.
         #[arg(long)]
         date: Option<NaiveDate>,
     },
@@ -397,6 +405,10 @@ fn main() -> Result<()> {
         Commands::Weekly { date } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::weekly::run(&root, Local::now().date_naive(), date)
+        }
+        Commands::Monthly { date } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::monthly::run(&root, Local::now().date_naive(), date)
         }
         Commands::Action { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

@@ -22,7 +22,7 @@
 
 use chrono::{Datelike, NaiveDate};
 
-// Journal — daily and weekly notes, year-partitioned. Use the
+// Journal — daily, weekly, and monthly notes, year-partitioned. Use the
 // helper functions below to build the actual paths.
 pub const JOURNAL: &str = "journal";
 
@@ -92,6 +92,17 @@ pub fn journal_weekly_dir(iso_year: i32) -> String {
     format!("{JOURNAL}/{iso_year}/weekly")
 }
 
+/// Directory holding monthly notes for the given calendar year:
+/// `journal/<year>/monthly`.
+///
+/// Unlike weekly notes, a month never straddles calendar years, so this
+/// takes the plain calendar year of the month (the month's own year),
+/// keeping the folder name and the filename's `YYYY` component
+/// consistent.
+pub fn journal_monthly_dir(year: i32) -> String {
+    format!("{JOURNAL}/{year}/monthly")
+}
+
 /// Directory holding fulfilled commitments for the given year:
 /// `commitments/_done/<year>`.
 pub fn commitments_done_dir(year: i32) -> String {
@@ -126,6 +137,20 @@ pub fn weekly_note_relpath(date: NaiveDate) -> String {
     )
 }
 
+/// Vault-relative path of the monthly note covering `date`:
+/// `journal/<year>/monthly/YYYY-MM.md`.
+///
+/// Keyed by the calendar month, so any day in the month resolves to the
+/// same note. The `<year>` folder is the month's calendar year (months
+/// never straddle years, unlike ISO weeks).
+pub fn monthly_note_relpath(date: NaiveDate) -> String {
+    format!(
+        "{}/{}.md",
+        journal_monthly_dir(date.year()),
+        date.format("%Y-%m")
+    )
+}
+
 /// Every directory `cdno init` creates for a fresh vault, given
 /// today's date so the journal and `_done` year subfolders exist
 /// from day one. Subsequent years self-create on first write via
@@ -136,6 +161,7 @@ pub fn init_dirs(today: NaiveDate) -> Vec<String> {
     vec![
         journal_daily_dir(year),
         journal_weekly_dir(iso_year),
+        journal_monthly_dir(year),
         PROJECTS.into(),
         PROJECTS_PARKED.into(),
         PORTFOLIOS.into(),

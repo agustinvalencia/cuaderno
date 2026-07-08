@@ -37,7 +37,7 @@ SQLite index is just a rebuildable cache).
 
 - **[Getting started](getting-started/installation.md)** — install, create a vault, run the daily
   loop, and wire up Claude.
-- **[Concepts](concepts/rlm.md)** — the mental model: the method, the ten note types, the vault
+- **[Concepts](concepts/rlm.md)** — the mental model: the method, the twelve note types, the vault
   layout, and the rules the tool enforces.
 - **[Tutorials](tutorials/daily-loop.md)** — task-oriented walkthroughs of each workflow.
 - **[CLI reference](reference/cli/overview.md)** — every command, flag, and example.

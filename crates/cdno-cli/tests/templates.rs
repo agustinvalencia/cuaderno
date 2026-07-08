@@ -183,7 +183,7 @@ fn templates_eject_all_writes_every_type_skipping_existing() {
     );
     assert_eq!(
         written.len() + skipped.len(),
-        11,
+        12,
         "every type accounted for"
     );
     // Every type now has a template file on disk.
@@ -204,7 +204,7 @@ fn templates_eject_all_rerun_skips_everything() {
     templates::eject_all(dir.path(), false).expect("first");
     let second = templates::eject_all(dir.path(), false).expect("second");
     assert!(second.written.is_empty(), "everything already exists");
-    assert_eq!(second.skipped.len(), 11);
+    assert_eq!(second.skipped.len(), 12);
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn templates_eject_all_force_overwrites_a_customised_template() {
     fs::write(&project, "# mine\n").unwrap();
 
     let report = templates::eject_all(dir.path(), true).expect("force eject all");
-    assert_eq!(report.written.len(), 11, "force writes all, none skipped");
+    assert_eq!(report.written.len(), 12, "force writes all, none skipped");
     assert!(report.skipped.is_empty());
     // The customised project.md was overwritten with the built-in.
     assert!(

@@ -60,6 +60,7 @@ const COMMITMENT_TEMPLATE: &str = include_str!("../../templates/commitment.md");
 const TRACKING_GENERIC_TEMPLATE: &str = include_str!("../../templates/tracking/generic.md");
 const DAILY_TEMPLATE: &str = include_str!("../../templates/daily.md");
 const WEEKLY_TEMPLATE: &str = include_str!("../../templates/weekly.md");
+const MONTHLY_TEMPLATE: &str = include_str!("../../templates/monthly.md");
 const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
 
 /// Built-in default templates, keyed as the engine expects: `<type>` for
@@ -82,6 +83,7 @@ fn builtin_defaults() -> HashMap<String, &'static str> {
         ("tracking".to_owned(), TRACKING_GENERIC_TEMPLATE),
         ("daily".to_owned(), DAILY_TEMPLATE),
         ("weekly".to_owned(), WEEKLY_TEMPLATE),
+        ("monthly".to_owned(), MONTHLY_TEMPLATE),
         ("inbox".to_owned(), INBOX_TEMPLATE),
     ])
 }

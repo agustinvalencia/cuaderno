@@ -41,6 +41,7 @@ The tool has four consumers:
 |-------------|-------------------------------------------------------------|----------------------------------|------------------------------------------|
 |`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/daily/`                          |
 |`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/weekly/`                         |
+|`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/monthly/`                        |
 |`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/`                               |
 |`action`     |Manifest note for an action-as-investigation (heavier form)  |Yes while attached, append-only after completion |`actions/` (archived to `actions/_done/<year>/`) |
 |`portfolio`  |Index note for an evidence folder                            |Rarely (summary)                  |`portfolios/*/`                           |
@@ -53,7 +54,7 @@ The tool has four consumers:
 
 ### Note lifecycle patterns
 
-**Append-only**: daily, weekly, evidence, tracking. Once written, these notes only grow. They are the historical record.
+**Append-only**: daily, weekly, monthly, evidence, tracking. Once written, these notes only grow. They are the historical record.
 
 **Mutable dashboard**: project. The current state section is rewritten regularly. Previous states are auto-logged to the daily entry before being overwritten, preserving full history in the chronological log.
 
@@ -75,9 +76,12 @@ vault/
 │   │   ├── 2026-04-04.md
 │   │   ├── 2026-04-05.md
 │   │   └── 2026-04-06.md
-│   └── weekly/
-│       ├── 2026-W13.md
-│       └── 2026-W14.md
+│   ├── weekly/
+│   │   ├── 2026-W13.md
+│   │   └── 2026-W14.md
+│   └── monthly/
+│       ├── 2026-03.md
+│       └── 2026-04.md
 │
 ├── projects/
 │   ├── surrogate-model.md
@@ -237,6 +241,37 @@ Draft the ICML methods section using the ablation results.
 ```
 
 **Created by**: scaffolded for the ISO week on first write. The three retrospective sections (Wins, Challenges, One Improvement) are composed by Claude during the weekly-review ritual; `This Week's Goal` is the week's anchor — set ahead of the week by weekly-planning, or written into next week's note by the review as the carry-forward hand-off. It is the goal a daily orientation reads for the day's umbrella.
+
+#### 5.2.1 Monthly Review
+
+```markdown
+---
+type: monthly
+month: 2026-04
+date_start: 2026-04-01
+date_end: 2026-04-30
+---
+
+# April 2026
+
+## Wins
+- Submitted the ICML paper.
+- Closed the apartment renovation project.
+
+## Themes
+- Deep-work mornings held; afternoons still fragmented.
+
+## Next Month's Focus
+Open the follow-up study and line up two reading blocks a week.
+
+## Weeks
+- [[journal/2026/weekly/2026-W14]]
+- [[journal/2026/weekly/2026-W15]]
+- [[journal/2026/weekly/2026-W16]]
+- [[journal/2026/weekly/2026-W17]]
+```
+
+**Created by**: scaffolded for the calendar month on first write, keyed by month (any day in the month resolves to the same note at `journal/<year>/monthly/<YYYY-MM>.md`). The three review sections — Wins, Themes, Next Month's Focus — are composed by Claude during the monthly-review ritual, mirroring the weekly note's celebration-first ethos. There is deliberately **no Metrics section**: quantitative metrics stay behind the desktop "show metrics" toggle, not a note section. The `## Weeks` block **links, doesn't copy** — one wikilink per Monday falling within the calendar month, pointing at that Monday's weekly note — so the weekly notes remain the source of truth and the month points at them (respecting markdown-as-truth + append-only). Unlike the weekly note there is no cross-note carry-forward: every section lands in the same month's note.
 
 ### 5.3 Project Map
 
