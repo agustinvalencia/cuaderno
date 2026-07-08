@@ -12,10 +12,12 @@ Apple Silicon only for now (an Intel build can join when there is a taker).
 ### Homebrew cask (recommended)
 
 ```bash
-brew install --cask agustinvalencia/tap/cuaderno-app --no-quarantine
+brew install --cask agustinvalencia/tap/cuaderno-app
+xattr -dr com.apple.quarantine /Applications/cuaderno.app
 ```
 
-`--no-quarantine` matters: the app is **ad-hoc signed, not notarized**, so without it Gatekeeper
+The `xattr` step matters: the app is **ad-hoc signed, not notarized**, so Gatekeeper (recent
+Homebrew removed the `--no-quarantine` install flag)
 blocks the first launch.
 
 ### Manual `.dmg`
@@ -32,7 +34,7 @@ xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 ## Before first launch: two caveats
 
-1. **Gatekeeper** — covered above: install with `--no-quarantine`, or strip the quarantine
+1. **Gatekeeper** — covered above: strip the quarantine
    attribute from a manual install. There is no notarization and no auto-updater yet; upgrades go
    through `brew upgrade --cask cuaderno-app` or a fresh `.dmg`.
 
