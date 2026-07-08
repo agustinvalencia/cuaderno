@@ -29,7 +29,9 @@ export default function LookaheadStep({
           Nothing promised in the next two weeks.
         </p>
       ) : (
-        <CommitmentsTimeline entries={entries} today={today} filter={NO_FILTER} />
+        // readOnly matches this step's own "nothing to add here" copy:
+        // the review looks ahead, it doesn't complete from here.
+        <CommitmentsTimeline entries={entries} today={today} filter={NO_FILTER} readOnly />
       )}
 
       <div className="mt-4">

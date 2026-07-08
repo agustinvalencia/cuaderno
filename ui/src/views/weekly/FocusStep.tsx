@@ -1,8 +1,11 @@
 // Step 5 — Focus (plan §1.4). One line for next week's single
-// direction, saved to the weekly note's This Week's Goal. Quick-pick
-// buttons from the active project slugs fill the input in a tap. If the
-// note already carries a goal, it's shown for editing rather than
-// overwritten blindly.
+// direction, saved to NEXT week's note's This Week's Goal — the goal is
+// "carried into the next week's note by the review" (domain weekly.rs),
+// so the save targets bundle.next_week_of, never the reviewed week
+// (whose own goal must survive the review untouched). Quick-pick
+// buttons from the active project slugs fill the input in a tap. If
+// next week's note already carries a goal (planning got there first),
+// it's shown for editing rather than overwritten blindly.
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
@@ -17,13 +20,13 @@ export default function FocusStep({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  // Controlled so the quick-pick buttons can fill it. Seeded from the
-  // note's existing goal when present.
-  const [value, setValue] = useState(bundle.weekly.this_weeks_goal ?? "");
+  // Controlled so the quick-pick buttons can fill it. Seeded from NEXT
+  // week's existing goal when present (the section this step writes).
+  const [value, setValue] = useState(bundle.next_week_goal ?? "");
 
   const save = useMutation({
     mutationFn: (content: string) =>
-      saveWeeklySection("this-weeks-goal", content, bundle.week_of),
+      saveWeeklySection("this-weeks-goal", content, bundle.next_week_of),
     onError: (error) => toast(errorMessage(error), "attention"),
     onSuccess: () => {
       toast("Focus set.");

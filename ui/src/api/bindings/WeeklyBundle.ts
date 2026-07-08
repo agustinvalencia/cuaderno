@@ -9,9 +9,10 @@ import type { WeeklyLogLine } from "./WeeklyLogLine";
 
 /**
  * The composed Weekly Review data (plan §1.4). One read, every panel:
- * the resolved week anchor, the existing note's sections, the wins-seed
+ * the resolved week anchor (and the following week's, for the focus
+ * save), the existing note's sections, next week's goal, the wins-seed
  * sources, the project and stewardship scans, the stuck set, and the
- * 14-day commitments lookahead.
+ * commitments lookahead (14 days forward plus the overdue look-back).
  */
 export type WeeklyBundle = { 
 /**
@@ -21,6 +22,15 @@ export type WeeklyBundle = {
  */
 week_of: string, 
 /**
+ * The Monday of the week *after* the reviewed one. The Focus step's
+ * "next week's focus" belongs to next week's note (weekly.rs: the
+ * goal is "carried into the next week's note by the review"), not
+ * the week under review — so the frontend echoes this back into
+ * `save_weekly_section` for the focus save. Exposed here so the
+ * frontend never does date arithmetic (plan §3.7).
+ */
+next_week_of: string, 
+/**
  * The real current date the lookahead was computed against
  * (stamped in Rust, like `CommitmentsView.today`), so the shared
  * timeline can label months and split past/upcoming without
@@ -28,10 +38,18 @@ week_of: string,
  */
 today: string, 
 /**
- * The weekly note's existing section content, so step 1 (Wins) and
- * step 5 (Focus) can prefer what's already written over the seed.
+ * The weekly note's existing section content, so step 1 (Wins) can
+ * prefer what's already written over the seed.
  */
 weekly: WeeklyContent, 
+/**
+ * Next week's existing goal, read from the note at `next_week_of`
+ * (`None` when that note doesn't exist yet or its goal section is
+ * empty). The Focus step seeds from this so it edits an
+ * already-planned goal rather than blindly overwriting it — and
+ * crucially reads NEXT week's goal, not the reviewed week's.
+ */
+next_week_goal: string | null, 
 /**
  * Action notes completed within the reviewed week — the primary
  * wins-seed source ("Completed: {title} ({project})").
@@ -53,7 +71,10 @@ projects: Array<ProjectSummary>,
  */
 stuck: Array<StuckProject>, 
 /**
- * The next 14 days of dated commitments, for the step-4 lookahead.
+ * Dated commitments for the step-4 lookahead: the next 14 days
+ * forward, plus anything overdue within the domain's 30-day
+ * look-back (the `commitments` query folds both together, so this
+ * is not purely forward-looking).
  */
 commitments: Array<CommitmentEntry>, 
 /**

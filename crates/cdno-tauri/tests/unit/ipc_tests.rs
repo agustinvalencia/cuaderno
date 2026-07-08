@@ -644,6 +644,35 @@ fn save_weekly_section_round_trips_args_and_writes_the_section() {
 }
 
 #[test]
+fn save_weekly_section_round_trips_the_kebab_goal_section() {
+    // "this-weeks-goal" is the multi-word kebab wire string FocusStep
+    // actually sends — the tolerant parser must map it (hyphens to
+    // spaces, apostrophe dropped) onto WeeklySection::ThisWeeksGoal.
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-goal", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "weekOf": "2026-07-13",
+        "section": "this-weeks-goal",
+        "content": "Start M7.",
+    }));
+    get_ipc_response(&webview, request_with("save_weekly_section", body))
+        .expect("command succeeds");
+
+    let weekly = VaultPath::new(cdno_core::paths::weekly_note_relpath(
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 13).unwrap(),
+    ))
+    .unwrap();
+    let content = store.read_file(&weekly).expect("weekly note written");
+    assert!(
+        content.contains("## This Week's Goal") && content.contains("Start M7."),
+        "the goal section carries the focus: {content}"
+    );
+}
+
+#[test]
 fn save_weekly_section_rejects_an_unknown_section() {
     // The section string is parsed into WeeklySection; a bad value is a
     // user-visible Invalid whose message names the valid sections.

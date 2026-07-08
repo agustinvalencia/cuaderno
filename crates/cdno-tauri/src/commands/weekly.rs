@@ -40,21 +40,25 @@ use super::actions::record_and_emit;
 /// "state untouched for N days"). Informative, never accusatory.
 const STUCK_THRESHOLD_DAYS: i64 = 7;
 
-/// The commitments lookahead the review's step 4 shows: the next two
-/// weeks (plan §1.4). Reuses the shared timeline component with this
-/// window.
+/// The forward window of the commitments query the review's step 4
+/// shows: the next two weeks (plan §1.4). The domain query additionally
+/// folds in its fixed overdue look-back, so the result is not purely
+/// forward-looking. Reuses the shared timeline component.
 const COMMITMENTS_LOOKAHEAD_DAYS: i64 = 14;
 
 /// Upper bound on log lines carried into the wins seed. A busy week can
 /// accumulate hundreds of `## Logs` entries; the seed only needs a
 /// representative handful, so the bundle stays bounded rather than
-/// shipping the whole week's log to the webview.
+/// shipping the whole week's log to the webview. When a week overflows
+/// this cap the *most recent* lines are kept (see the seed composition),
+/// because a memory jog wants the recent past, not Monday morning.
 const MAX_LOG_LINES: usize = 100;
 
 /// The composed Weekly Review data (plan §1.4). One read, every panel:
-/// the resolved week anchor, the existing note's sections, the wins-seed
+/// the resolved week anchor (and the following week's, for the focus
+/// save), the existing note's sections, next week's goal, the wins-seed
 /// sources, the project and stewardship scans, the stuck set, and the
-/// 14-day commitments lookahead.
+/// commitments lookahead (14 days forward plus the overdue look-back).
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
@@ -63,14 +67,27 @@ pub struct WeeklyBundle {
     /// frontend labels the week with and echoes back into
     /// `save_weekly_section`. Any day in the week resolves here.
     pub week_of: NaiveDate,
+    /// The Monday of the week *after* the reviewed one. The Focus step's
+    /// "next week's focus" belongs to next week's note (weekly.rs: the
+    /// goal is "carried into the next week's note by the review"), not
+    /// the week under review — so the frontend echoes this back into
+    /// `save_weekly_section` for the focus save. Exposed here so the
+    /// frontend never does date arithmetic (plan §3.7).
+    pub next_week_of: NaiveDate,
     /// The real current date the lookahead was computed against
     /// (stamped in Rust, like `CommitmentsView.today`), so the shared
     /// timeline can label months and split past/upcoming without
     /// touching a clock.
     pub today: NaiveDate,
-    /// The weekly note's existing section content, so step 1 (Wins) and
-    /// step 5 (Focus) can prefer what's already written over the seed.
+    /// The weekly note's existing section content, so step 1 (Wins) can
+    /// prefer what's already written over the seed.
     pub weekly: WeeklyContent,
+    /// Next week's existing goal, read from the note at `next_week_of`
+    /// (`None` when that note doesn't exist yet or its goal section is
+    /// empty). The Focus step seeds from this so it edits an
+    /// already-planned goal rather than blindly overwriting it — and
+    /// crucially reads NEXT week's goal, not the reviewed week's.
+    pub next_week_goal: Option<String>,
     /// Action notes completed within the reviewed week — the primary
     /// wins-seed source ("Completed: {title} ({project})").
     pub completed_actions: Vec<CompletedActionView>,
@@ -83,7 +100,10 @@ pub struct WeeklyBundle {
     /// Active projects whose map has sat untouched past the staleness
     /// threshold, paired with how many days — the grey step-2 hint.
     pub stuck: Vec<StuckProject>,
-    /// The next 14 days of dated commitments, for the step-4 lookahead.
+    /// Dated commitments for the step-4 lookahead: the next 14 days
+    /// forward, plus anything overdue within the domain's 30-day
+    /// look-back (the `commitments` query folds both together, so this
+    /// is not purely forward-looking).
     pub commitments: Vec<CommitmentEntry>,
     /// Every stewardship with its tracking count and staleness, for the
     /// read-only step-3 scan.
@@ -166,10 +186,21 @@ pub fn get_weekly_bundle_impl(
 ) -> Result<WeeklyBundle, CmdError> {
     let monday = monday_of(anchor);
     let sunday = monday + Duration::days(6);
+    // The focus save targets NEXT week's note (weekly.rs: the goal is
+    // "carried into the next week's note by the review"), so the review
+    // must never write its goal into the week it just looked back on.
+    let next_monday = monday + Duration::days(7);
 
     // Existing sections first: the frontend prefers what's already
-    // written over the seed for Wins and This Week's Goal.
+    // written over the seed for Wins.
     let weekly = parse_weekly_content(&vault.read_weekly_note(monday)?)?;
+
+    // Next week's goal (if planning already set one) seeds the Focus
+    // step. read_weekly_note tolerates a not-yet-created note — it
+    // returns exists: false, which parse_weekly_content maps to all-None
+    // — so a missing next-week note simply yields None here.
+    let next_week_goal =
+        parse_weekly_content(&vault.read_weekly_note(next_monday)?)?.this_weeks_goal;
 
     let completed_actions = vault
         .completed_actions_between(monday, sunday)?
@@ -182,12 +213,17 @@ pub fn get_weekly_bundle_impl(
         })
         .collect();
 
-    // weekly_logs returns Monday-first chronological order; cap the
-    // count so a log-heavy week can't bloat the bundle.
-    let logs = vault
-        .weekly_logs(monday)?
+    // weekly_logs returns Monday-first chronological order. Cap the
+    // count so a log-heavy week can't bloat the bundle, but keep the
+    // MOST RECENT lines (drop from the front) rather than the earliest:
+    // the seed is a memory jog, and the recent past is what needs
+    // jogging. Skipping from the front preserves chronological order in
+    // what survives.
+    let all_logs = vault.weekly_logs(monday)?;
+    let skip = all_logs.len().saturating_sub(MAX_LOG_LINES);
+    let logs = all_logs
         .into_iter()
-        .take(MAX_LOG_LINES)
+        .skip(skip)
         .map(|l| WeeklyLogLine {
             date: l.date,
             time: l.time,
@@ -216,8 +252,10 @@ pub fn get_weekly_bundle_impl(
 
     Ok(WeeklyBundle {
         week_of: monday,
+        next_week_of: next_monday,
         today,
         weekly,
+        next_week_goal,
         completed_actions,
         logs,
         projects,

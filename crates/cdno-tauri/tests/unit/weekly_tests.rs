@@ -102,4 +102,74 @@ fn bundle_without_a_weekly_note_reports_absent_sections() {
     assert!(bundle.weekly.wins.is_none());
     assert!(bundle.weekly.this_weeks_goal.is_none());
     assert!(bundle.completed_actions.is_empty());
+    // The following week has no note either, so next week's goal is None
+    // and the Focus step starts blank rather than echoing this week's.
+    assert!(bundle.next_week_goal.is_none());
+    // The focus save targets the Monday AFTER the reviewed week's Monday.
+    assert_eq!(bundle.week_of, ymd(2026, 7, 6));
+    assert_eq!(bundle.next_week_of, ymd(2026, 7, 13));
+}
+
+#[test]
+fn focus_save_targets_next_week_and_leaves_the_reviewed_week_untouched() {
+    // The Focus step's "next week's focus" must land in NEXT week's note,
+    // never overwrite the goal of the week being reviewed. This exercises
+    // the seam the frontend uses: read the bundle, then save the goal to
+    // `bundle.next_week_of`.
+    let vault = vault_with(&[("projects/alpha.md", ALPHA)]);
+    let anchor = ymd(2026, 7, 8); // Wednesday of the reviewed week.
+
+    // The reviewed week already carries a goal set by planning; the
+    // review must leave it alone.
+    vault
+        .upsert_weekly_section(
+            anchor,
+            WeeklySection::ThisWeeksGoal,
+            "Ship M6 this week.",
+            false,
+        )
+        .expect("seed the reviewed week's goal");
+
+    let today = chrono::Local::now().date_naive();
+    let bundle = get_weekly_bundle_impl(&vault, today, anchor, 0).unwrap();
+    assert_eq!(bundle.week_of, ymd(2026, 7, 6));
+    assert_eq!(bundle.next_week_of, ymd(2026, 7, 13));
+
+    // The Focus step saves to the bundle's next_week_of — exactly what
+    // the frontend echoes back — writing the goal into the FOLLOWING
+    // week's note.
+    vault
+        .upsert_weekly_section(
+            bundle.next_week_of,
+            WeeklySection::ThisWeeksGoal,
+            "Start M7.",
+            false,
+        )
+        .expect("save next week's focus");
+
+    // Path assertion: the write landed in the week-of-2026-07-13 note,
+    // not the reviewed week's note.
+    let next_week_note = vp(&cdno_core::paths::weekly_note_relpath(ymd(2026, 7, 13)));
+    let reviewed_note = vp(&cdno_core::paths::weekly_note_relpath(ymd(2026, 7, 6)));
+    assert_ne!(next_week_note, reviewed_note, "the two notes are distinct");
+
+    let next_content = vault
+        .read_weekly_note(ymd(2026, 7, 13))
+        .expect("read next week's note");
+    assert_eq!(next_content.path, next_week_note);
+    assert!(
+        next_content.markdown.contains("Start M7."),
+        "next week's note carries the focus: {}",
+        next_content.markdown
+    );
+
+    // The reviewed week's own goal is untouched by the focus save.
+    let reviewed = get_weekly_bundle_impl(&vault, today, anchor, 0).unwrap();
+    assert_eq!(
+        reviewed.weekly.this_weeks_goal.as_deref(),
+        Some("Ship M6 this week."),
+        "the reviewed week's goal is not overwritten"
+    );
+    // And next week's goal now shows through the bundle for editing.
+    assert_eq!(reviewed.next_week_goal.as_deref(), Some("Start M7."));
 }
