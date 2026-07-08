@@ -29,6 +29,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   same design laws as the line: same context hue, no target lines, no red, reduced-motion aware,
   same height and axes.
 
+- **Desktop: milestone/action disambiguation picker** (#338) — a free-text selector that matches
+  more than one candidate (completing a milestone or action, resolving a waiting-on blocker) now
+  opens a calm picker of the candidates instead of a dead-end "be more specific" toast. Choosing
+  one re-invokes the same command with that exact string, so the write completes in place. A new
+  shared `useAmbiguityResolver` hook centralises the branch-on-`kind` + re-invoke logic (each write
+  site hands it a `mutateAsync` re-invoke, reusing that mutation's own success/rollback/toast
+  path), and an `AmbiguityPicker` renders over the same centred Radix `Dialog` as the project-cap
+  modal — focus trap, Esc, and return-focus for free, reduced-motion honoured, no red. Wired into
+  the Commitments timeline, Project Detail, and the cross-project Actions list.
+  An ambiguous *slug* (no candidates to choose between) falls through to the normal toast. UI-only;
+  the backend already carried `CmdError::Ambiguous { query, candidates }`.
+
 ## [0.11.0] - 2026-07-08
 
 The journal grows a month view: a monthly note type and a desktop calendar to browse daily notes.

@@ -2,7 +2,7 @@
 // backlinks, log mentions), fires complete_action on done, and renders
 // a parked project read-only (no add row, no done buttons).
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -81,6 +81,62 @@ test("done fires complete_action for the bullet", async () => {
   expect(await screen.findByText(/one step further/)).toBeDefined();
   const done = calls.find((c) => c.cmd === "complete_action");
   expect(done?.args).toMatchObject({ project: "alpha", action: "Draft methods" });
+});
+
+test("an ambiguous complete opens the picker; choosing re-invokes with the exact text", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let completeCalls = 0;
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_project") return ACTIVE;
+    if (cmd === "complete_action") {
+      completeCalls += 1;
+      // First attempt (the full bullet text is a substring of two
+      // milestones' texts) comes back ambiguous; the retry succeeds.
+      if (completeCalls === 1) {
+        throw {
+          kind: "ambiguous",
+          data: {
+            query: "Draft methods",
+            candidates: ["Draft methods for section 1", "Draft methods for section 2"],
+          },
+        };
+      }
+      return undefined;
+    }
+    return undefined;
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <ReaderProvider>
+          <MemoryRouter initialEntries={["/projects/alpha"]}>
+            <Routes>
+              <Route path="/projects/:slug" element={<ProjectDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </ReaderProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: /Mark done: Draft methods/ }));
+
+  // The picker opens with the candidates — not a dead-end toast.
+  expect(await screen.findByRole("dialog")).toBeDefined();
+  const chosen = screen.getByRole("button", { name: "Draft methods for section 2" });
+  fireEvent.click(chosen);
+
+  // The command re-fires with the exact chosen string.
+  await waitFor(() => {
+    const completes = calls.filter((c) => c.cmd === "complete_action");
+    expect(completes).toHaveLength(2);
+    expect(completes[1].args).toMatchObject({
+      project: "alpha",
+      action: "Draft methods for section 2",
+    });
+  });
 });
 
 test("a parked project renders read-only — no add row, no done", async () => {

@@ -10,6 +10,8 @@ import { Link } from "react-router";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import type { ProjectActions } from "../../api/bindings/ProjectActions";
 import { completeAction, errorMessage, listAllActions, promoteAction } from "../../api/commands";
+import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
+import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
 import { useToast } from "../../shell/Toasts";
@@ -21,30 +23,37 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
   const client = useQueryClient();
   const { toast } = useToast();
   const { openReader } = useReader();
+  // Picker for the two substring-matched writes on a row (complete,
+  // promote). A chosen candidate re-runs the same mutation with the
+  // exact text via `mutateAsync`.
+  const ambiguity = useAmbiguityResolver();
 
   // Bullet text is the action's identity here — the React key (in the
   // parent map), the optimistic filter below, and the `completeAction`
-  // argument all key on `action.text`. Two bullets with identical text
-  // on one project would collide, matching the backend's own substring
-  // matching (which would flag such a pair ambiguous). Accepted: distinct
-  // actions read as distinct text.
+  // argument all key on `action.text`. The mutation takes that text as
+  // its variable so a disambiguation pick can re-fire with an exact
+  // candidate string. Two bullets with identical text on one project
+  // would collide, matching the backend's own substring matching (which
+  // would flag such a pair ambiguous). Accepted: distinct actions read
+  // as distinct text.
   // Optimistic done: drop this bullet from the cached list immediately.
   const complete = useMutation({
-    mutationFn: () => completeAction(slug, action.text),
-    onMutate: async () => {
+    mutationFn: (text: string) => completeAction(slug, text),
+    onMutate: async (text) => {
       await client.cancelQueries({ queryKey: KEY });
       const previous = client.getQueryData<ProjectActions[]>(KEY);
       client.setQueryData<ProjectActions[]>(KEY, (groups) =>
         (groups ?? []).map((group) =>
           group.slug === slug
-            ? { ...group, actions: group.actions.filter((a) => a.text !== action.text) }
+            ? { ...group, actions: group.actions.filter((a) => a.text !== text) }
             : group,
         ),
       );
       return { previous };
     },
-    onError: (err, _vars, context) => {
+    onError: (err, _text, context) => {
       if (context?.previous) client.setQueryData(KEY, context.previous);
+      if (ambiguity.handle(err, (choice) => complete.mutateAsync(choice), "action")) return;
       toast(errorMessage(err), "attention");
     },
     onSuccess: () => toast(`Done: one step further on ${slug}.`),
@@ -52,8 +61,11 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
   });
 
   const promote = useMutation({
-    mutationFn: () => promoteAction(slug, action.text),
-    onError: (err) => toast(errorMessage(err), "attention"),
+    mutationFn: (text: string) => promoteAction(slug, text),
+    onError: (err) => {
+      if (ambiguity.handle(err, (choice) => promote.mutateAsync(choice), "action")) return;
+      toast(errorMessage(err), "attention");
+    },
     onSuccess: () => toast("Promoted to an action note."),
     onSettled: () => client.invalidateQueries({ queryKey: KEY }),
   });
@@ -76,7 +88,7 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
       ) : (
         <button
           type="button"
-          onClick={() => promote.mutate()}
+          onClick={() => promote.mutate(action.text)}
           disabled={promote.isPending}
           aria-label={`Promote to a note: ${actionLabel(action.text)}`}
           className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
@@ -86,12 +98,18 @@ function ActionRow({ slug, action }: { slug: string; action: ProjectActions["act
       )}
       <button
         type="button"
-        onClick={() => complete.mutate()}
+        onClick={() => complete.mutate(action.text)}
         aria-label={`Mark done: ${actionLabel(action.text)}`}
         className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
       >
         done
       </button>
+      <AmbiguityPicker
+        state={ambiguity.state}
+        resolving={ambiguity.resolving}
+        choose={ambiguity.choose}
+        close={ambiguity.close}
+      />
     </li>
   );
 }
