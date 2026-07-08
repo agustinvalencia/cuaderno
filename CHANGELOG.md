@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **Portfolio Browser (M8, plan §1.6; closes #58)** (#PR-pending) — the `/portfolios` and
+- **Portfolio Browser (M8, plan §1.6; closes #58)** (#322) — the `/portfolios` and
   `/portfolios/:slug` routes replace the placeholder: a calm selector of per-question evidence
   dossiers and a per-portfolio detail with an evidence timeline, a links sidebar, and the app's only
   note-creation form (evidence quick-add, sanctioned by #58).

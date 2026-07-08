@@ -129,7 +129,7 @@ function PortfolioDetailBody({ slug, data }: { slug: string; data: PortfolioDeta
                       type="button"
                       onClick={() => void openTarget(row.origin)}
                       title={`origin: ${row.origin}`}
-                      className="shrink-0 truncate rounded bg-bg-sunken px-1.5 py-0.5 text-xs text-ink-muted hover:text-ink"
+                      className="min-w-0 max-w-[40%] truncate rounded bg-bg-sunken px-1.5 py-0.5 text-xs text-ink-muted hover:text-ink"
                     >
                       {lastSegment(row.origin)}
                     </button>
@@ -229,7 +229,12 @@ function QuickAdd({ slug }: { slug: string }) {
       <div className="mt-10 border-t border-line pt-6">
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            // Clear any stale mutation error from a prior aborted attempt
+            // so a reopened form never greets the user with an old error.
+            submit.reset();
+            setOpen(true);
+          }}
           className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
         >
           File evidence
@@ -309,6 +314,9 @@ function QuickAdd({ slug }: { slug: string }) {
             type="button"
             onClick={() => {
               reset();
+              // Also drop the mutation error, so reopening the (now
+              // cleared) form doesn't resurface a stale refusal message.
+              submit.reset();
               setOpen(false);
             }}
             className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"

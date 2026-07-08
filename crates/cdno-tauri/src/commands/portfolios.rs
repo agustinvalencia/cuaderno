@@ -72,8 +72,10 @@ pub struct EvidenceRow {
 /// `|label`, yielding the bare target the frontend resolves/navigates
 /// on (`"[[projects/foo|Foo]]"` → `"projects/foo"`). Idempotent on an
 /// already-bare target, so it is safe to run on frontmatter that a hand
-/// edit left unbracketed.
-fn strip_wikilink(raw: &str) -> String {
+/// edit left unbracketed. `#[doc(hidden)] pub` so the unit-test seam can
+/// exercise its edge cases directly.
+#[doc(hidden)]
+pub fn strip_wikilink(raw: &str) -> String {
     let inner = raw.trim().trim_start_matches("[[").trim_end_matches("]]");
     match inner.find('|') {
         Some(pipe) => inner[..pipe].trim().to_owned(),
@@ -165,11 +167,15 @@ pub fn add_evidence_impl(
     content: &str,
 ) -> Result<VaultPath, CmdError> {
     let origin = origin.trim();
-    // Resolve before writing so an origin that names no note is refused
-    // rather than persisted as a dangling link (the tightening above).
+    // Resolve before writing so an origin that can't be pinned to one
+    // note is refused rather than persisted as a dangling link (the
+    // tightening above). `resolve_wikilink` returns `None` for BOTH a
+    // no-match and an ambiguous stem (two notes share the last segment),
+    // so the message covers both truthfully and points at the fix — the
+    // full `folder/slug` path disambiguates either way.
     if vault.resolve_wikilink(origin)?.is_none() {
         return Err(CmdError::Invalid(format!(
-            "origin does not resolve to a note: [[{origin}]] — name an existing note"
+            "origin does not resolve to a single note: [[{origin}]] — use the note's full path (folder/slug)"
         )));
     }
     // Mirror the MCP handler's plain-evidence path (`file_evidence_with_vars`);

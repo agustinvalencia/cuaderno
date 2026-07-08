@@ -50,8 +50,9 @@ test("renders each portfolio with its evidence count and staleness line", async 
   renderList(ROWS);
   expect(await screen.findByText("How does the surrogate behave?")).toBeDefined();
   // Count + freshness, with the age spelled out in the hover title.
+  // Visible line and hover title share the same "3d ago" spacing.
   const line = screen.getByText("4 notes · last filed 3d ago");
-  expect(line.getAttribute("title")).toBe("last updated 3 d ago");
+  expect(line.getAttribute("title")).toBe("last updated 3d ago");
 
   // A portfolio with no evidence reads as calm "no evidence yet", never
   // an alarm.

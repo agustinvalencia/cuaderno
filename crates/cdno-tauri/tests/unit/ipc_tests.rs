@@ -1209,3 +1209,45 @@ fn add_evidence_with_unresolvable_origin_serialises_invalid() {
         "nothing is filed when the origin is refused"
     );
 }
+
+#[test]
+fn add_evidence_with_ambiguous_origin_stem_serialises_invalid() {
+    // The tightening is honest about ambiguity too: `resolve_wikilink`
+    // returns None for an ambiguous stem (two notes share the last
+    // segment), not just a no-match. Seeding a second `alpha`-stemmed
+    // note alongside the baseline `projects/alpha` makes the bare stem
+    // "alpha" ambiguous, so the composer refuses it and the message
+    // points at the fix — the note's full folder/slug path.
+    const ALPHA_STEWARDSHIP: &str =
+        "---\ntype: stewardship\ncontext: personal\n---\n\n# Alpha\n\n## Current Status\nGoing.\n";
+    let mut notes = portfolio_fixture();
+    notes.push(("stewardships/alpha.md", ALPHA_STEWARDSHIP));
+    let (app, store) = mock_app_with(&notes);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-ambig-origin", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "portfolio": "surrogate",
+        "source": "Ambiguous stem",
+        "origin": "alpha",
+        "content": "…",
+    }));
+    let err = get_ipc_response(&webview, request_with("add_evidence", body))
+        .expect_err("an ambiguous origin stem must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(
+        err["data"]
+            .as_str()
+            .is_some_and(|s| s.contains("full path")),
+        "the refusal points at the full-path fix: {err}"
+    );
+
+    // Nothing was filed for the refused ambiguous origin.
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let path = VaultPath::new(format!("portfolios/surrogate/{today}-ambiguous-stem.md")).unwrap();
+    assert!(
+        !store.exists(&path).expect("store query"),
+        "nothing is filed when the origin is ambiguous"
+    );
+}

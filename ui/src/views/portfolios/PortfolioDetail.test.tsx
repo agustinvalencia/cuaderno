@@ -142,3 +142,25 @@ test("an unresolvable origin shows its message inline", async () => {
   expect(await screen.findByText(/origin does not resolve to a note/)).toBeDefined();
   expect(screen.getByLabelText("Origin")).toBeDefined();
 });
+
+test("a stale error is cleared when the form is cancelled and reopened", async () => {
+  renderDetail(DETAIL, {
+    addEvidence: () => {
+      throw { kind: "invalid", data: "origin does not resolve to a note: [[nope]]" };
+    },
+  });
+
+  // Submit an invalid origin so the inline error appears.
+  fireEvent.click(await screen.findByRole("button", { name: "File evidence" }));
+  fireEvent.change(screen.getByLabelText("Source"), { target: { value: "Stray" } });
+  fireEvent.change(screen.getByLabelText("Origin"), { target: { value: "nope" } });
+  fireEvent.click(screen.getByRole("button", { name: "File it" }));
+  expect(await screen.findByText(/origin does not resolve to a note/)).toBeDefined();
+
+  // Cancel, then reopen the composer.
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  fireEvent.click(await screen.findByRole("button", { name: "File evidence" }));
+
+  // The reopened, cleared form no longer greets the user with the error.
+  expect(screen.queryByText(/origin does not resolve to a note/)).toBeNull();
+});

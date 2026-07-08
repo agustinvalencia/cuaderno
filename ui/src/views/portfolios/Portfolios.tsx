@@ -39,7 +39,7 @@ function freshness(s: PortfolioSummary): Freshness {
 
   const days = s.staleness_days;
   const ago = days <= 0n ? "today" : `${days.toString()}d ago`;
-  const title = days <= 0n ? "last updated today" : `last updated ${days.toString()} d ago`;
+  const title = days <= 0n ? "last updated today" : `last updated ${days.toString()}d ago`;
   const tone =
     days <= AGEING_AFTER_DAYS
       ? "text-ink"
