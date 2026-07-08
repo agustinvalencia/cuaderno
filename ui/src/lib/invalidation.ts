@@ -9,13 +9,22 @@ export type { VaultArea };
 const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   // A milestone edit (in the app or in nvim) changes both the project
   // map and the commitments timeline, so projects invalidates both.
-  projects: ["get_orientation", "list_projects", "get_project", "get_commitments"],
+  // The weekly bundle composes projects, daily logs, commitments, AND
+  // stewardships, so an edit in any of those areas must also refresh an
+  // open review — hence get_weekly_bundle rides those four lists.
+  projects: [
+    "get_orientation",
+    "list_projects",
+    "get_project",
+    "get_commitments",
+    "get_weekly_bundle",
+  ],
   actions: ["get_orientation", "list_all_actions"],
-  daily: ["get_orientation", "read_daily"],
+  daily: ["get_orientation", "read_daily", "get_weekly_bundle"],
   weekly: ["get_weekly_bundle"],
-  commitments: ["get_orientation", "get_commitments"],
+  commitments: ["get_orientation", "get_commitments", "get_weekly_bundle"],
   portfolios: ["list_portfolios", "get_portfolio"],
-  stewardships: ["get_orientation", "list_stewardships", "get_stewardship"],
+  stewardships: ["get_orientation", "list_stewardships", "get_stewardship", "get_weekly_bundle"],
   questions: ["get_strategic_bundle"],
   inbox: ["list_inbox"],
   config: ["get_orientation"],

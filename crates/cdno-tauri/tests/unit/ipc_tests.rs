@@ -92,6 +92,8 @@ fn mock_app_configured(
             cdno_tauri::commands::commitments::get_commitments,
             cdno_tauri::commands::commitments::complete_commitment,
             cdno_tauri::commands::commitments::complete_milestone,
+            cdno_tauri::commands::weekly::get_weekly_bundle,
+            cdno_tauri::commands::weekly::save_weekly_section,
             cdno_tauri::commands::capture::capture_quick,
             cdno_tauri::commands::capture::log_quick,
             cdno_tauri::commands::capture::list_inbox,
@@ -600,6 +602,138 @@ fn get_project_round_trips_and_composes_the_detail_view() {
     assert_eq!(milestones.len(), 1);
     assert_eq!(milestones[0]["name"], "Cut release");
     assert_eq!(milestones[0]["is_hard"], true);
+}
+
+// ---------------------------------------------------------------------
+// Weekly Review (M6, #55). One composed read and the section write.
+// ---------------------------------------------------------------------
+
+// A completed action note dated inside the reviewed week (Mon
+// 2026-07-06 .. Sun 2026-07-12) — the wins source get_weekly_bundle
+// aggregates.
+const DONE_ACTION: &str = "---\ntype: action\nstatus: completed\nproject: alpha\nenergy: deep\nmilestone: null\ndue: null\ncreated: 2026-07-01\ncompleted: 2026-07-08\nblocker: null\ncriteria: |\n  Reader wired.\n---\n\n# Wire the reader\n";
+
+#[test]
+fn save_weekly_section_round_trips_args_and_writes_the_section() {
+    // `week_of` in Rust is `weekOf` on the wire — the camelCase seam
+    // commands.ts pins, exercised here for real.
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-weekly", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "weekOf": "2026-07-08",
+        "section": "wins",
+        "content": "We shipped M6.",
+    }));
+    get_ipc_response(&webview, request_with("save_weekly_section", body))
+        .expect("command succeeds");
+
+    // The note is keyed by ISO week, so any day resolves to the same
+    // file; the section lands under its `## Wins` heading.
+    let weekly = VaultPath::new(cdno_core::paths::weekly_note_relpath(
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 8).unwrap(),
+    ))
+    .unwrap();
+    let content = store.read_file(&weekly).expect("weekly note written");
+    assert!(
+        content.contains("## Wins") && content.contains("We shipped M6."),
+        "the Wins section carries the composed content: {content}"
+    );
+}
+
+#[test]
+fn save_weekly_section_round_trips_the_kebab_goal_section() {
+    // "this-weeks-goal" is the multi-word kebab wire string FocusStep
+    // actually sends — the tolerant parser must map it (hyphens to
+    // spaces, apostrophe dropped) onto WeeklySection::ThisWeeksGoal.
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-goal", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "weekOf": "2026-07-13",
+        "section": "this-weeks-goal",
+        "content": "Start M7.",
+    }));
+    get_ipc_response(&webview, request_with("save_weekly_section", body))
+        .expect("command succeeds");
+
+    let weekly = VaultPath::new(cdno_core::paths::weekly_note_relpath(
+        chrono::NaiveDate::from_ymd_opt(2026, 7, 13).unwrap(),
+    ))
+    .unwrap();
+    let content = store.read_file(&weekly).expect("weekly note written");
+    assert!(
+        content.contains("## This Week's Goal") && content.contains("Start M7."),
+        "the goal section carries the focus: {content}"
+    );
+}
+
+#[test]
+fn save_weekly_section_rejects_an_unknown_section() {
+    // The section string is parsed into WeeklySection; a bad value is a
+    // user-visible Invalid whose message names the valid sections.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-weekly-bad", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "weekOf": "2026-07-08",
+        "section": "nonsense",
+        "content": "x",
+    }));
+    let err = get_ipc_response(&webview, request_with("save_weekly_section", body))
+        .expect_err("an unknown section must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(err["data"].is_string());
+}
+
+#[test]
+fn get_weekly_bundle_round_trips_and_composes_the_review() {
+    let (app, _store) = mock_app_with(&[("actions/wire-reader.md", DONE_ACTION)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-get-weekly", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // Seed the week's Wins first so the bundle carries existing content.
+    let save = InvokeBody::Json(serde_json::json!({
+        "weekOf": "2026-07-08",
+        "section": "wins",
+        "content": "We shipped M6.",
+    }));
+    get_ipc_response(&webview, request_with("save_weekly_section", save)).expect("seed succeeds");
+
+    let body = InvokeBody::Json(serde_json::json!({ "weekOf": "2026-07-08" }));
+    let response = get_ipc_response(&webview, request_with("get_weekly_bundle", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    // The anchor normalises to the Monday of the ISO week and rides the
+    // wire as an ISO string.
+    assert_eq!(value["week_of"], "2026-07-06", "{value}");
+    // Existing section content is parsed and carried.
+    assert_eq!(value["weekly"]["wins"], "We shipped M6.", "{value}");
+    assert_eq!(value["weekly"]["exists"], true);
+
+    // The completed action inside the week is a wins source.
+    let completed = value["completed_actions"]
+        .as_array()
+        .expect("completed_actions is an array");
+    assert!(
+        completed.iter().any(|c| c["title"] == "Wire the reader"),
+        "the week's completed action is aggregated: {value}"
+    );
+
+    // The baseline ALPHA project shows in the step-2 scan.
+    let projects = value["projects"].as_array().expect("projects is an array");
+    assert!(
+        projects.iter().any(|p| p["slug"] == "alpha"),
+        "the active project shows in the scan: {value}"
+    );
 }
 
 #[test]

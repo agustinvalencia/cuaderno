@@ -96,11 +96,13 @@ function removeEntry(view: CommitmentsView | undefined, key: string): Commitment
   return view ? { ...view, entries: view.entries.filter((e) => entryKey(e) !== key) } : view;
 }
 
-function TimelineRow({ entry }: { entry: CommitmentEntry }) {
+function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: boolean }) {
   const client = useQueryClient();
   const { toast } = useToast();
   const key = entryKey(entry);
-  const invoke = completionFor(entry);
+  // A read-only host (the Weekly Review's lookahead — "nothing to add
+  // here") suppresses completion entirely; origin chips stay.
+  const invoke = readOnly ? null : completionFor(entry);
 
   // Optimistic removal across every cached lookahead window (the key
   // carries the days arg, so filter by prefix). Rolls back on error.
@@ -158,10 +160,14 @@ export default function CommitmentsTimeline({
   entries,
   today,
   filter,
+  readOnly = false,
 }: {
   entries: CommitmentEntry[];
   today: string;
   filter: Set<Context>;
+  /** Suppress the done buttons (origin chips remain) — for hosts that
+   * present the timeline as a pure look, like the review's lookahead. */
+  readOnly?: boolean;
 }) {
   // Empty active set means "all contexts" — a filter narrows, never
   // blanks by default.
@@ -200,7 +206,7 @@ export default function CommitmentsTimeline({
           </summary>
           <ul className="mt-3 space-y-2">
             {past.map((entry) => (
-              <TimelineRow key={entryKey(entry)} entry={entry} />
+              <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />
             ))}
           </ul>
         </details>
@@ -219,7 +225,7 @@ export default function CommitmentsTimeline({
           </h3>
           <ul className="mt-2 space-y-2">
             {month.entries.map((entry) => (
-              <TimelineRow key={entryKey(entry)} entry={entry} />
+              <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />
             ))}
           </ul>
         </section>

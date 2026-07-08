@@ -273,6 +273,47 @@ impl Vault {
     }
 
     // -----------------------------------------------------------------
+    // stuck_project_days
+    // -----------------------------------------------------------------
+
+    /// The same active-project staleness filter as
+    /// [`Vault::stuck_projects`], but returning each stuck project's
+    /// slug paired with the whole number of days since its map was last
+    /// modified. The weekly-review scan (#55) renders this as the grey
+    /// "state untouched for N days" hint, which needs the count, not
+    /// just the set — so it can't lean on `stuck_projects`
+    /// (`ProjectSummary`, no age) and keeps its own thin loop rather
+    /// than widening that summary type for one caller.
+    pub fn stuck_project_days(
+        &self,
+        today: NaiveDate,
+        unchanged_for_days: i64,
+    ) -> Result<Vec<(String, i64)>, DomainError> {
+        let threshold_ns = mtime_threshold_ns(today, unchanged_for_days);
+        let entries = self.index.list_by_type(NoteType::Project.as_str())?;
+        let mut out = Vec::new();
+        for entry in entries {
+            // Same active-only gate as stuck_projects: the "stuck"
+            // heuristic is meaningless for parked / completed work.
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let pf = ProjectFrontmatter::try_from(fm)?;
+            if pf.status != ProjectStatus::Active {
+                continue;
+            }
+            if entry.mtime_ns > threshold_ns {
+                continue;
+            }
+            out.push((
+                path_stem(&entry.path),
+                days_since_mtime(today, entry.mtime_ns),
+            ));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
+    // -----------------------------------------------------------------
     // get_project_full
     // -----------------------------------------------------------------
 
@@ -538,6 +579,20 @@ fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
         .expect("23:59:59 is always a valid time");
     let nanos = datetime.and_utc().timestamp_nanos_opt().unwrap_or(0);
     nanos.max(0) as u64
+}
+
+/// Whole days from a note's `mtime_ns` (nanoseconds since the Unix
+/// epoch, UTC) back from `today`. Used by `stuck_project_days` to
+/// report how long a project map has sat untouched. A `mtime_ns` that
+/// can't be represented as a timestamp (only possible on a corrupt
+/// index row) degrades to `today`, i.e. zero days, rather than
+/// panicking a read.
+fn days_since_mtime(today: NaiveDate, mtime_ns: u64) -> i64 {
+    let secs = (mtime_ns / 1_000_000_000) as i64;
+    let modified = chrono::DateTime::from_timestamp(secs, 0)
+        .map(|dt| dt.date_naive())
+        .unwrap_or(today);
+    (today - modified).num_days()
 }
 
 /// Extract the date from a daily-note path, e.g.

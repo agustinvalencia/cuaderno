@@ -5,9 +5,13 @@
  * navigation. `path` is the vault-relative note the target points at;
  * `note_type` is the index row's type (`"project"`, `"stewardship"`,
  * …) so the frontend can route to a typed view rather than always
- * falling back to the generic note reader. `note_type` is `None` when
- * the resolved file has no index row (written since the last
- * reconcile, or an ignored file).
+ * falling back to the generic note reader. `note_type` is virtually
+ * always `Some`: the target was resolved *from* `list_all_paths`, which
+ * only returns indexed notes, so a matching index row is expected. It
+ * is `None` only as a race artefact — the row was removed between the
+ * path listing and the type lookup — not because ignored files leak
+ * through (they aren't in `list_all_paths` to begin with, so they can
+ * never resolve here).
  */
 export type ResolvedLink = { 
 /**

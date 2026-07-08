@@ -12,6 +12,9 @@ import Placeholder from "./views/Placeholder";
 // is the index route and stays eager.
 const Actions = lazy(() => import("./views/actions/Actions"));
 const ProjectDetail = lazy(() => import("./views/project/ProjectDetail"));
+// Weekly Review pulls in the shared commitments timeline (and the 5
+// step components); load it on navigation rather than the main chunk.
+const WeeklyReview = lazy(() => import("./views/weekly/WeeklyReview"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -32,7 +35,14 @@ export default function App() {
           }
         />
         <Route path="commitments" element={<Commitments />} />
-        <Route path="weekly" element={<Placeholder view="Weekly Review" milestone="M6" />} />
+        <Route
+          path="weekly"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <WeeklyReview />
+            </Suspense>
+          }
+        />
         <Route path="strategic" element={<Placeholder view="Strategic" milestone="M9" />} />
         <Route path="portfolios" element={<Placeholder view="Portfolios" milestone="M8" />} />
         <Route
