@@ -6,9 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-08
+
+The Strategic view milestone (M9 of the desktop-app plan) - the final view; every route in the app is now real.
+
 ### Added
 
-- **Strategic / Monthly view (M9, plan §1.5; closes #57)** (#PR-pending) — the `/strategic` route
+- **Strategic / Monthly view (M9, plan §1.5; closes #57)** (#324) — the `/strategic` route
   replaces the placeholder with the in-app monthly review: a questions grid (by domain), the
   button-based five-slot project allocator with a gentle cap modal, a portfolio-health table,
   a stewardship overview with habit sparklines, and the six-week commitments timeline — all painted
