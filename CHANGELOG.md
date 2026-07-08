@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-08
+
+The journal grows a month view: a monthly note type and a desktop calendar to browse daily notes.
+
 ### Added
 
 - **Desktop: calendar view for daily notes** (#340) — a new `/calendar` surface (sidebar entry
