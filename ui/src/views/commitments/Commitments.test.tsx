@@ -3,7 +3,7 @@
 // past-due wording without hoisting, the context filter, and the
 // completion buttons (present only where the source is completable).
 import { afterEach, expect, test } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -142,6 +142,43 @@ test("done on a standalone commitment invokes complete_commitment with its slug"
   expect(await screen.findByText("Done: Renew passport.")).toBeDefined();
   const done = calls.find((c) => c.cmd === "complete_commitment");
   expect(done?.args).toMatchObject({ slug: "renew-passport" });
+});
+
+test("an ambiguous milestone completion opens the picker and re-invokes with the exact name", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let milestoneCalls = 0;
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_commitments") return FIXTURE;
+    if (cmd === "complete_milestone") {
+      milestoneCalls += 1;
+      // The row's title "Ship v1" is a substring of two milestones; the
+      // first attempt comes back ambiguous, the picked one succeeds.
+      if (milestoneCalls === 1) {
+        throw {
+          kind: "ambiguous",
+          data: { query: "Ship v1", candidates: ["Ship v1 (backend)", "Ship v1 (desktop)"] },
+        };
+      }
+      return undefined;
+    }
+    return undefined;
+  });
+  renderView();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Mark done: Ship v1" }));
+
+  // The picker opens with the candidates — not a dead-end toast.
+  expect(await screen.findByRole("dialog")).toBeDefined();
+  fireEvent.click(screen.getByRole("button", { name: "Ship v1 (desktop)" }));
+
+  // The milestone completion re-fires against the project slug with the
+  // exact chosen name (the bespoke override plumbing on this site).
+  await waitFor(() => {
+    const completes = calls.filter((c) => c.cmd === "complete_milestone");
+    expect(completes).toHaveLength(2);
+    expect(completes[1].args).toMatchObject({ project: "alpha", milestone: "Ship v1 (desktop)" });
+  });
 });
 
 test("periodic and action-note rows carry no done button", async () => {

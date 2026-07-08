@@ -96,6 +96,37 @@ test("choosing a candidate re-invokes the retry with the chosen string", async (
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
+test("a rejected re-invoke still closes the picker; the hook stays silent", async () => {
+  // The re-invoke (a mutation's mutateAsync) rejects — its own onError
+  // owns the surfacing. The hook must not crash and must still close the
+  // picker so the user isn't trapped.
+  const retry = vi.fn(() => Promise.reject(new Error("boom")));
+  render(
+    <Harness error={ambiguousError("rev", ["Review the draft", "Revise the intro"])} retry={retry} />,
+  );
+  fireEvent.click(screen.getByText("trigger"));
+  fireEvent.click(await screen.findByRole("button", { name: "Review the draft" }));
+
+  expect(retry).toHaveBeenCalledWith("Review the draft");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("dismissing the picker (Esc) closes it without re-invoking", async () => {
+  const retry = vi.fn(() => Promise.resolve());
+  render(
+    <Harness error={ambiguousError("rev", ["Review the draft", "Revise the intro"])} retry={retry} />,
+  );
+  fireEvent.click(screen.getByText("trigger"));
+  const dialog = await screen.findByRole("dialog");
+
+  // Radix closes on Escape and calls onOpenChange(false) -> close().
+  fireEvent.keyDown(dialog, { key: "Escape" });
+
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  // No candidate was chosen, so the command is never re-invoked.
+  expect(retry).not.toHaveBeenCalled();
+});
+
 test("an ambiguous slug (no candidates) is not pickable — handle returns false", () => {
   const handled: boolean[] = [];
   render(

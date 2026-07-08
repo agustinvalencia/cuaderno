@@ -13,6 +13,16 @@
 // the gentle project-cap modal — focus trap, Esc, and return-focus come
 // for free, and reduced motion is honoured by the global CSS that
 // neutralises the dialog animation.
+//
+// Known limitation: the backend matches the selector as a case-insensitive
+// substring, so if one candidate is itself a substring of another (e.g.
+// "Draft methods" vs "Draft methods for section 2"), picking the SHORTER
+// one re-ambiguates — `handle` reopens the picker, but `choose`'s
+// `.finally(close)` then shuts that just-reopened picker, so the pick
+// reads as a silent no-op. The user can pick the longer, unambiguous
+// candidate and succeed; only the shorter one dead-ends. The proper fix
+// is exact-match-first resolution in the domain layer (out of scope for
+// #338); a client-side workaround would just paper over a backend gap.
 import { useCallback, useRef, useState } from "react";
 import { CuadernoError } from "../../api/commands";
 
