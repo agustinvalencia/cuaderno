@@ -3,7 +3,6 @@ import { Route, Routes } from "react-router";
 import AppShell from "./shell/AppShell";
 import Commitments from "./views/commitments/Commitments";
 import Home from "./views/home/Home";
-import Placeholder from "./views/Placeholder";
 
 // Code-split the surfaces that aren't on the initial paint and that
 // pull heavy deps: Project Detail drags in react-markdown + remark-gfm
@@ -25,6 +24,11 @@ const StewardshipDetail = lazy(() => import("./views/stewardships/StewardshipDet
 // navigation like the other secondary surfaces.
 const Portfolios = lazy(() => import("./views/portfolios/Portfolios"));
 const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"));
+// Strategic / Monthly (M9): the composed monthly review — questions
+// grid, project-slot allocator, portfolio health, stewardship
+// sparklines, and the six-week timeline. Pulls in recharts (sparklines)
+// and the shared timeline, so it splits onto navigation.
+const Strategic = lazy(() => import("./views/strategic/Strategic"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -53,7 +57,14 @@ export default function App() {
             </Suspense>
           }
         />
-        <Route path="strategic" element={<Placeholder view="Strategic" milestone="M9" />} />
+        <Route
+          path="strategic"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Strategic />
+            </Suspense>
+          }
+        />
         <Route
           path="portfolios"
           element={

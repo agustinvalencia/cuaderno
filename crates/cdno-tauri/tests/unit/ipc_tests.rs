@@ -106,6 +106,7 @@ fn mock_app_configured(
             cdno_tauri::commands::portfolios::list_portfolios,
             cdno_tauri::commands::portfolios::get_portfolio,
             cdno_tauri::commands::portfolios::add_evidence,
+            cdno_tauri::commands::strategic::get_strategic_bundle,
         ])
         .manage(AppState {
             vault: Arc::new(vault),
@@ -1249,5 +1250,134 @@ fn add_evidence_with_ambiguous_origin_stem_serialises_invalid() {
     assert!(
         !store.exists(&path).expect("store query"),
         "nothing is filed when the origin is ambiguous"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Strategic / Monthly (M9, #57). One composed read stitching every
+// panel: the questions grid, portfolio health, the project-slot
+// allocator (+ the configured cap), the stewardship overview with a
+// backend-computed habit sparkline, and the six-week timeline.
+// ---------------------------------------------------------------------
+
+// A research question for the grid.
+const STRATEGIC_QUESTION: &str = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-06-01\nupdated: 2026-06-15\n---\n\n# How faithful is the surrogate?\n";
+// A parked project for the shelf.
+const STRATEGIC_PARKED: &str = "---\ntype: project\ncontext: personal\nstatus: parked\ncreated: 2026-03-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n";
+// An expanded stewardship whose one tracking note the sparkline counts.
+const STRATEGIC_STEWARDSHIP: &str = "---\ntype: stewardship\ncontext: personal\n---\n\n# Health\n\n## Current Status\nConsistent.\n";
+
+#[test]
+fn get_strategic_bundle_round_trips_and_composes_every_panel() {
+    // Dates are stamped from Local::now() inside the command, so the
+    // sparkline fixture and the commitment are dated relative to today.
+    let today = chrono::Local::now().date_naive();
+    let tracking = format!(
+        "---\ntype: tracking\nstewardship: health\nactivity: gym\ndate: {date}\nduration_min: 60\nroutine: null\n---\n\n# Gym\n\n| Sets | Reps |\n|------|------|\n| 3 | 5 |\n",
+        date = today.format("%Y-%m-%d"),
+    );
+    let tracking_path = format!(
+        "stewardships/health/tracking/{date}-gym.md",
+        date = today.format("%Y-%m-%d"),
+    );
+    let commitment = standalone_commitment_note(today + chrono::Duration::days(7));
+
+    // ALPHA (the baseline active project) is always seeded; add a parked
+    // project, a question, a portfolio, an expanded stewardship with one
+    // in-window tracking note, and a near-term commitment.
+    let (app, _store) = mock_app_with(&[
+        ("projects/_parked/beta.md", STRATEGIC_PARKED),
+        (
+            "questions/research/surrogate-fidelity.md",
+            STRATEGIC_QUESTION,
+        ),
+        ("portfolios/surrogate/_index.md", SURROGATE_INDEX),
+        (
+            "portfolios/surrogate/2026-07-01-smith-2024.md",
+            SURROGATE_EVIDENCE,
+        ),
+        ("stewardships/health/_index.md", STRATEGIC_STEWARDSHIP),
+        (&tracking_path, &tracking),
+        ("commitments/renew-passport.md", &commitment),
+    ]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-strategic", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let response =
+        get_ipc_response(&webview, request("get_strategic_bundle")).expect("command succeeds");
+    let value = response_json(response);
+
+    // today is stamped in Rust as an ISO string.
+    assert_eq!(
+        value["today"].as_str(),
+        Some(today.format("%Y-%m-%d").to_string().as_str()),
+        "today is stamped for the frontend: {value}"
+    );
+    // The cap rides the wire from the (default) config — the allocator
+    // lays out five slots.
+    assert_eq!(value["max_active"], 5, "{value}");
+
+    // The active slot (baseline ALPHA) and the parked shelf entry, each
+    // with its context.
+    let active = value["active"].as_array().expect("active is an array");
+    assert!(
+        active
+            .iter()
+            .any(|s| s["slug"] == "alpha" && s["context"] == "work"),
+        "the active slot carries slug + context: {value}"
+    );
+    let parked = value["parked"].as_array().expect("parked is an array");
+    assert!(
+        parked.iter().any(|s| s["slug"] == "beta"),
+        "the parked project is on the shelf: {value}"
+    );
+
+    // The active question rides with its domain for the grid grouping.
+    let questions = value["questions"]
+        .as_array()
+        .expect("questions is an array");
+    assert!(
+        questions
+            .iter()
+            .any(|q| q["slug"] == "surrogate-fidelity" && q["domain"] == "research"),
+        "the research question is carried: {value}"
+    );
+
+    // The portfolio-health row with its evidence count.
+    let portfolios = value["portfolios"]
+        .as_array()
+        .expect("portfolios is an array");
+    let surrogate = portfolios
+        .iter()
+        .find(|p| p["slug"] == "surrogate")
+        .expect("the surrogate portfolio is listed");
+    assert_eq!(surrogate["evidence_count"], 1);
+
+    // The stewardship overview row carries the summary + a 12-week
+    // sparkline; today's tracking note lands in the current-week bucket.
+    let stewardships = value["stewardships"]
+        .as_array()
+        .expect("stewardships is an array");
+    let health = stewardships
+        .iter()
+        .find(|s| s["summary"]["slug"] == "health")
+        .expect("the health stewardship is listed");
+    let sparkline = health["sparkline"]
+        .as_array()
+        .expect("sparkline is an array");
+    assert_eq!(sparkline.len(), 12, "twelve weekly buckets: {value}");
+    assert_eq!(
+        sparkline[11], 1,
+        "today's entry lands in the current-week bucket: {value}"
+    );
+
+    // The near-term commitment shows in the six-week timeline.
+    let commitments = value["commitments"]
+        .as_array()
+        .expect("commitments is an array");
+    assert!(
+        commitments.iter().any(|c| c["title"] == "Renew passport"),
+        "the commitment is in the window: {value}"
     );
 }

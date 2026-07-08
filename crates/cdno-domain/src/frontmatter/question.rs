@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 /// decision rather than a typo silently creating a new folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum QuestionDomain {
     Research,
     Life,
@@ -66,6 +68,8 @@ impl FromStr for QuestionDomain {
 /// changes — so backlinks from projects and portfolios survive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum QuestionStatus {
     Active,
     Parked,

@@ -9,16 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
-import {
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
-import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
 import {
   errorMessage,
   getStewardshipDetail,
@@ -27,23 +18,15 @@ import {
   openInEditor,
   resolveWikilink,
 } from "../../api/commands";
+import {
+  SERIES_COLORS,
+  TrendChart,
+  usePrefersReducedMotion,
+} from "../../components/charts/TrendChart";
 import Markdown from "../../components/markdown/Markdown";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
 import { useToast } from "../../shell/Toasts";
-
-// Series colours cycle through the context hues (design law: colour is
-// identity, never urgency — and no red token exists to misuse). Drawn
-// from CSS variables so they track the active theme.
-const SERIES_COLORS = [
-  "var(--color-ctx-work)",
-  "var(--color-ctx-university)",
-  "var(--color-ctx-side-project)",
-  "var(--color-ctx-personal)",
-  "var(--color-ctx-family)",
-  "var(--color-ctx-household)",
-  "var(--color-ctx-legal)",
-];
 
 /** The stewardship's on-disk note path for open-in-editor: expanded
  * dashboards live in a folder's `_index.md`, flat ones as a single file. */
@@ -77,27 +60,6 @@ function useDebounced<T>(value: T, delayMs: number): T {
     return () => clearTimeout(id);
   }, [value, delayMs]);
   return debounced;
-}
-
-/** Reactive read of the reduced-motion preference — chart animation is
- * disabled when set (plan §3.10). Defaults to "no preference" where
- * matchMedia is unavailable (e.g. the test DOM). */
-function usePrefersReducedMotion(): boolean {
-  // Seed from matchMedia in the initialiser (not a post-mount effect) so
-  // a reduced-motion user never sees the one-frame animation flash from
-  // an initial `false`. The effect below keeps it reactive to changes.
-  const [reduced, setReduced] = useState(
-    () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-  );
-  useEffect(() => {
-    const mq = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
-    if (!mq) return;
-    setReduced(mq.matches);
-    const onChange = () => setReduced(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return reduced;
 }
 
 export default function StewardshipDetail() {
@@ -240,68 +202,6 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
         </Link>
       </p>
     </div>
-  );
-}
-
-/** One compact trend chart (~160px). Muted caption, axis text in
- * ink-faint, no grid — calm by construction. No reference/target lines:
- * these show status, not goals. */
-function TrendChart({
-  series,
-  color,
-  animate,
-}: {
-  series: TrackingSeries;
-  color: string;
-  animate: boolean;
-}) {
-  const points = series.points.map((p) => ({ date: p.date, value: p.value }));
-  // A single-point series draws no line segment, so a normal r:2 dot is
-  // nearly invisible — a first tracking entry would read as an empty
-  // chart. Render a clearly visible dot instead.
-  const dotRadius = points.length === 1 ? 4 : 2;
-  return (
-    <figure>
-      <figcaption className="text-xs text-ink-muted">{series.name}</figcaption>
-      <div className="mt-1 h-40">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={points} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
-            <XAxis
-              dataKey="date"
-              tickFormatter={shortDate}
-              tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
-              tickLine={false}
-              axisLine={{ stroke: "var(--color-line)" }}
-              minTickGap={24}
-            />
-            <YAxis
-              width={36}
-              tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <Tooltip
-              labelFormatter={(label) => shortDate(String(label))}
-              contentStyle={{
-                background: "var(--color-bg-surface)",
-                border: "1px solid var(--color-line)",
-                borderRadius: 6,
-                fontSize: 12,
-                color: "var(--color-ink)",
-              }}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke={color}
-              strokeWidth={2}
-              dot={{ r: dotRadius, fill: color }}
-              isAnimationActive={animate}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </figure>
   );
 }
 

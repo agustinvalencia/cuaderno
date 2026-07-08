@@ -135,6 +135,44 @@
   }
 }
 
+/* Centred dialog motion (the cap modal, M9). Opacity-only on the panel:
+ * the panel centres itself with a Tailwind `-translate-x/y-1/2`
+ * transform, and animating `transform` in a keyframe would clobber that
+ * centring — a fade keeps the panel put. Overlay fades like the sheet's.
+ * The reduced-motion rule below collapses these to an instant swap. */
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

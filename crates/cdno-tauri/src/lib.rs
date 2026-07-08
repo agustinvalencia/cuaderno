@@ -179,6 +179,7 @@ pub fn run() {
             commands::portfolios::list_portfolios,
             commands::portfolios::get_portfolio,
             commands::portfolios::add_evidence,
+            commands::strategic::get_strategic_bundle,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");
