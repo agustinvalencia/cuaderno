@@ -99,6 +99,10 @@ fn mock_app_configured(
             cdno_tauri::commands::capture::list_inbox,
             cdno_tauri::commands::capture::discard_inbox_item,
             cdno_tauri::commands::capture::open_in_editor,
+            cdno_tauri::commands::stewardships::list_stewardships,
+            cdno_tauri::commands::stewardships::get_stewardship_detail,
+            cdno_tauri::commands::stewardships::get_tracking_template_fields,
+            cdno_tauri::commands::stewardships::log_tracking_entry,
         ])
         .manage(AppState {
             vault: Arc::new(vault),
@@ -886,6 +890,145 @@ fn promote_action_missing_bullet_serialises_not_found() {
     let err = get_ipc_response(&webview, request_with("promote_action", body))
         .expect_err("no matching bullet must fail");
     assert_eq!(err["kind"], "not_found", "{err}");
+}
+
+// ---------------------------------------------------------------------
+// Stewardship views (M7, #59). The list, the composed detail (expanded
+// fixture with tracking + a table so the series is non-empty), the log
+// write (happy path + the flat-stewardship error), and the
+// template-field discovery.
+// ---------------------------------------------------------------------
+
+// An expanded stewardship folder with one tracking note carrying a body
+// table — enough for a non-empty trend series in the detail round-trip.
+const HEALTH_INDEX: &str = "---\ntype: stewardship\ncontext: personal\n---\n\n# Health\n\n## Current Status\nConsistent.\n";
+const GYM_ENTRY: &str = "---\ntype: tracking\nstewardship: health\nactivity: gym\ndate: 2026-07-01\nduration_min: 60\nroutine: null\n---\n\n# Gym\n\n| Sets | Reps |\n|------|------|\n| 3 | 5 |\n\n## Notes\nSolid.\n";
+// A flat stewardship: tracking on it must fail as Invalid.
+const FINANCES: &str =
+    "---\ntype: stewardship\ncontext: household\n---\n\n# Finances\n\n## Current Status\nSteady.\n";
+
+#[test]
+fn list_stewardships_round_trips_and_stamps_the_variant() {
+    let (app, _store) = mock_app_with(&[
+        ("stewardships/health/_index.md", HEALTH_INDEX),
+        ("stewardships/health/tracking/2026-07-01-gym.md", GYM_ENTRY),
+    ]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-list-stew", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let response =
+        get_ipc_response(&webview, request("list_stewardships")).expect("command succeeds");
+    let value = response_json(response);
+    let rows = value.as_array().expect("list is an array");
+    let health = rows
+        .iter()
+        .find(|s| s["slug"] == "health")
+        .expect("the health stewardship is listed");
+    assert_eq!(health["variant"], "expanded");
+    assert_eq!(health["tracking_count"], 1);
+    assert_eq!(health["context"], "personal");
+}
+
+#[test]
+fn get_stewardship_detail_round_trips_series_and_recent() {
+    let (app, _store) = mock_app_with(&[
+        ("stewardships/health/_index.md", HEALTH_INDEX),
+        ("stewardships/health/tracking/2026-07-01-gym.md", GYM_ENTRY),
+    ]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-stew-detail", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "slug": "health" }));
+    let response = get_ipc_response(&webview, request_with("get_stewardship_detail", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["slug"], "health");
+    assert_eq!(value["name"], "Health");
+    assert_eq!(value["variant"], "expanded");
+    assert_eq!(value["tracking_count"], 1);
+    let series = value["series"].as_array().expect("series is an array");
+    assert!(
+        !series.is_empty(),
+        "the table yields at least one series: {value}"
+    );
+    let recent = value["recent"].as_array().expect("recent is an array");
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0]["activity"], "gym");
+    assert_eq!(
+        recent[0]["path"],
+        "stewardships/health/tracking/2026-07-01-gym.md"
+    );
+}
+
+#[test]
+fn log_tracking_entry_round_trips_args_and_writes_the_note() {
+    let (app, store) = mock_app_with(&[("stewardships/health/_index.md", HEALTH_INDEX)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-log-track", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "stewardship": "health",
+        "activity": "gym",
+        "routine": null,
+        "content": "Great session.",
+        "vars": {},
+    }));
+    get_ipc_response(&webview, request_with("log_tracking_entry", body)).expect("command succeeds");
+
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let path = VaultPath::new(format!("stewardships/health/tracking/{today}-gym.md")).unwrap();
+    assert!(
+        store.exists(&path).expect("store query"),
+        "the tracking note lands under the stewardship's tracking/ subdir"
+    );
+    let content = store.read_file(&path).expect("tracking note readable");
+    assert!(content.contains("Great session."), "{content}");
+}
+
+#[test]
+fn log_tracking_entry_on_a_flat_stewardship_serialises_invalid() {
+    // Flat stewardships have no tracking/ subdir — the domain refuses
+    // with TrackingOnFlatStewardship, mapped to a user-fixable Invalid.
+    let (app, _store) = mock_app_with(&[("stewardships/finances.md", FINANCES)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-log-flat", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "stewardship": "finances",
+        "activity": "audit",
+        "routine": null,
+        "content": "",
+        "vars": {},
+    }));
+    let err = get_ipc_response(&webview, request_with("log_tracking_entry", body))
+        .expect_err("tracking on a flat stewardship must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
+    assert!(err["data"].is_string());
+}
+
+#[test]
+fn get_tracking_template_fields_round_trips_the_generic_empty_set() {
+    // No custom template and no prompt vars → the generic tracking
+    // template carries no prompts, so the fields list is empty.
+    let (app, _store) = mock_app_with(&[("stewardships/health/_index.md", HEALTH_INDEX)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-track-fields", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "activity": "gym" }));
+    let response = get_ipc_response(&webview, request_with("get_tracking_template_fields", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+    let fields = value.as_array().expect("fields is an array");
+    assert!(
+        fields.is_empty(),
+        "the generic template has no prompts: {value}"
+    );
 }
 
 #[test]

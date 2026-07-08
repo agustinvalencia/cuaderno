@@ -98,6 +98,8 @@ pub struct ProjectBacklinks {
 
 /// One numeric time series lifted from a stewardship's tracking
 /// notes, ready for a trend chart. See [`Vault::tracking_series`].
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TrackingSeries {
     /// `"{activity} · {column header}"` — e.g. `"gym · Weight (kg)"`.
@@ -108,6 +110,8 @@ pub struct TrackingSeries {
 }
 
 /// One dated value in a [`TrackingSeries`].
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct TrackingPoint {
     pub date: NaiveDate,

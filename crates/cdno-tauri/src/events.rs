@@ -88,9 +88,16 @@ pub fn classify(path: &VaultPath) -> Option<VaultArea> {
             }
         }
         ".cuaderno" => {
-            // Only the config file matters to the UI; the index db,
-            // lock file, and templates churn constantly and mean
-            // nothing to a view.
+            // The config file and the template files both drive the UI
+            // (config.toml holds vault settings; templates decide which
+            // fields the tracking log form gathers), so both map to
+            // Config. The index db and lock file are churn no view
+            // renders.
+            if p.starts_with(cdno_core::paths::TEMPLATES_DIR)
+                && p.extension().and_then(|e| e.to_str()) == Some("md")
+            {
+                return Some(VaultArea::Config);
+            }
             (p.file_name().and_then(|f| f.to_str()) == Some("config.toml"))
                 .then_some(VaultArea::Config)
         }

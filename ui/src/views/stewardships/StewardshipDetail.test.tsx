@@ -1,0 +1,174 @@
+// Stewardship Detail: charts appear only for an expanded stewardship
+// with series; a flat one has no charts pane; recent entries open the
+// reader; the log form submits with the template-derived vars.
+import { afterEach, expect, test } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
+import { ReaderProvider, useReader } from "../../shell/reader";
+import { ToastProvider } from "../../shell/Toasts";
+import StewardshipDetail from "./StewardshipDetail";
+
+const EXPANDED: StewardshipDetailData = {
+  slug: "health",
+  name: "Health",
+  context: "personal",
+  variant: "expanded",
+  body_markdown: "## Current Status\nConsistent.",
+  series: [
+    {
+      name: "gym · Sets",
+      points: [
+        { date: "2026-07-01", value: 6 },
+        { date: "2026-07-05", value: 4 },
+      ],
+    },
+  ],
+  recent: [
+    {
+      path: "stewardships/health/tracking/2026-07-05-gym.md",
+      stewardship: "health",
+      activity: "gym",
+      date: "2026-07-05",
+      duration_min: 55,
+      routine: null,
+      body_excerpt: "Felt strong",
+    },
+  ],
+  tracking_count: 2,
+};
+
+const FLAT: StewardshipDetailData = {
+  slug: "finances",
+  name: "Finances",
+  context: "household",
+  variant: "flat",
+  body_markdown: "## Current Status\nSteady.",
+  series: [],
+  recent: [],
+  tracking_count: 0,
+};
+
+// Surfaces the reader's open path so a test can assert a click opened it.
+function ReaderProbe() {
+  const { openPath } = useReader();
+  return <div data-testid="reader-path">{openPath ?? ""}</div>;
+}
+
+function renderDetail(
+  fixture: StewardshipDetailData,
+  onCall?: (cmd: string, args: unknown) => void,
+) {
+  mockIPC((cmd, args) => {
+    onCall?.(cmd, args);
+    if (cmd === "get_stewardship_detail") return fixture;
+    if (cmd === "get_tracking_template_fields")
+      return [{ name: "mood", prompt: "How did it feel?" }];
+    return undefined;
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <ReaderProvider>
+          <ReaderProbe />
+          <MemoryRouter initialEntries={[`/stewardships/${fixture.slug}`]}>
+            <Routes>
+              <Route path="/stewardships/:slug" element={<StewardshipDetail />} />
+            </Routes>
+          </MemoryRouter>
+        </ReaderProvider>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+afterEach(() => {
+  cleanup();
+  clearMocks();
+});
+
+test("an expanded stewardship with series shows the charts pane", async () => {
+  renderDetail(EXPANDED);
+  expect(await screen.findByText("Health")).toBeDefined();
+  // The Trends section and its series caption render.
+  expect(screen.getByRole("region", { name: "Trends" })).toBeDefined();
+  expect(screen.getByText("gym · Sets")).toBeDefined();
+});
+
+test("a flat stewardship has no charts pane", async () => {
+  renderDetail(FLAT);
+  expect(await screen.findByText("Finances")).toBeDefined();
+  // No Trends region at all — absent, not an empty frame.
+  expect(screen.queryByRole("region", { name: "Trends" })).toBeNull();
+  // And the flat variant offers no log form (no tracking/ subdir).
+  expect(screen.queryByRole("button", { name: "Log entry" })).toBeNull();
+});
+
+test("a recent entry opens the note reader at its path", async () => {
+  renderDetail(EXPANDED);
+  fireEvent.click(await screen.findByText("Felt strong"));
+  expect(screen.getByTestId("reader-path").textContent).toBe(
+    "stewardships/health/tracking/2026-07-05-gym.md",
+  );
+});
+
+test("the log form fetches template fields and submits with the vars map", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderDetail(EXPANDED, (cmd, args) => calls.push({ cmd, args }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+
+  // The debounced fetch populates the dynamic "mood" field.
+  const mood = await screen.findByLabelText("How did it feel?");
+  fireEvent.change(mood, { target: { value: "strong" } });
+  fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Good one." } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+  expect(await screen.findByText(/one more on the record/)).toBeDefined();
+
+  const logged = calls.find((c) => c.cmd === "log_tracking_entry");
+  expect(logged?.args).toMatchObject({
+    stewardship: "health",
+    activity: "gym",
+    content: "Good one.",
+    vars: { mood: "strong" },
+  });
+});
+
+test("switching activity clears prior field values and submits only the new activity's vars", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  // Both activities' templates return a field of the SAME name ("mood"),
+  // so an un-reset value would silently ride across the switch.
+  renderDetail(EXPANDED, (cmd, args) => calls.push({ cmd, args }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+
+  // Activity A: fill the "mood" field.
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  const moodA = await screen.findByLabelText("How did it feel?");
+  fireEvent.change(moodA, { target: { value: "strong" } });
+  expect((moodA as HTMLInputElement).value).toBe("strong");
+
+  // Switch to activity B — the same-named field must come up empty.
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "swim" } });
+  await waitFor(() =>
+    expect((screen.getByLabelText("How did it feel?") as HTMLInputElement).value).toBe(""),
+  );
+
+  const moodB = screen.getByLabelText("How did it feel?");
+  fireEvent.change(moodB, { target: { value: "calm" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+  expect(await screen.findByText(/one more on the record/)).toBeDefined();
+
+  const logged = calls.find((c) => c.cmd === "log_tracking_entry");
+  expect(logged?.args).toMatchObject({
+    activity: "swim",
+    vars: { mood: "calm" },
+  });
+  // A's value never rode along.
+  expect((logged?.args as { vars: Record<string, string> }).vars).toEqual({ mood: "calm" });
+});

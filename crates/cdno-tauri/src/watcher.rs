@@ -151,12 +151,19 @@ fn run_reconcile(deps: &WatcherDeps) -> bool {
 }
 
 /// Paths the UI could care about: markdown notes outside `.cuaderno/`
-/// (plus the config file itself). The `.cdno-wip-*` atomic-write temp
-/// files carry no `.md` extension, so this also drops our own write
-/// staging.
+/// (plus the config file and the template files, which drive the log
+/// form's dynamic fields). The `.cdno-wip-*` atomic-write temp files
+/// carry no `.md` extension, so this also drops our own write staging.
 fn is_note_path(path: &VaultPath) -> bool {
     let p = path.as_path();
     if p.starts_with(cdno_core::paths::CUADERNO_DIR) {
+        // Template edits change which fields the log form gathers, so a
+        // `.cuaderno/templates/*.md` touch must survive filtering; the
+        // config file matters too. Everything else under `.cuaderno`
+        // (index db, lock file) is churn no view renders.
+        if p.starts_with(cdno_core::paths::TEMPLATES_DIR) {
+            return p.extension().and_then(|e| e.to_str()) == Some("md");
+        }
         return p.file_name().and_then(|f| f.to_str()) == Some("config.toml");
     }
     p.extension().and_then(|e| e.to_str()) == Some("md")

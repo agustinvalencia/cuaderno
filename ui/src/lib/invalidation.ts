@@ -24,10 +24,26 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   weekly: ["get_weekly_bundle"],
   commitments: ["get_orientation", "get_commitments", "get_weekly_bundle"],
   portfolios: ["list_portfolios", "get_portfolio"],
-  stewardships: ["get_orientation", "list_stewardships", "get_stewardship", "get_weekly_bundle"],
+  // A tracking-log write (or an external edit under stewardships/)
+  // touches both the list and the open detail — the detail composes the
+  // series, recent entries, and count that a new note changes.
+  stewardships: [
+    "get_orientation",
+    "list_stewardships",
+    // No "get_stewardship" here: react-query matches query keys
+    // element-wise, and there is no query with that prefix — the live
+    // detail query is "get_stewardship_detail". A dead entry matches
+    // nothing, so it's dropped rather than kept as noise.
+    "get_stewardship_detail",
+    "get_weekly_bundle",
+  ],
   questions: ["get_strategic_bundle"],
   inbox: ["list_inbox"],
-  config: ["get_orientation"],
+  // The config area covers both config.toml and the template files
+  // under .cuaderno/templates/. An edit to a custom tracking template
+  // (or config.toml) changes which fields the log form gathers, so it
+  // refreshes the template-field query.
+  config: ["get_orientation", "get_tracking_template_fields"],
 };
 
 export function invalidateAreas(client: QueryClient, areas: VaultArea[]): void {
