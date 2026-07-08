@@ -6,9 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-08
+
+First fix from real-device user testing.
+
 ### Fixed
 
-- **Action bullets no longer double their energy tag or leak wikilink syntax** (#PR-pending) -
+- **Action bullets no longer double their energy tag or leak wikilink syntax** (#328) -
   the stored bullet text is the verbatim matching key (it carries the `(deep)` suffix and any
   raw `[[target|label]]` link), and the views rendered it as-is next to their own energy tag.
   A display-only `actionLabel` helper strips the suffix and renders wikilinks by label or last
