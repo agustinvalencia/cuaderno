@@ -335,21 +335,30 @@ function Panel({
         <span aria-hidden className="mx-1 text-ink-faint">
           |
         </span>
-        {(["daily", "weekly", "monthly"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            aria-pressed={mode === m}
-            onClick={() => setMode(m)}
-            className={`rounded px-2 py-1 text-xs ${
-              mode === m
-                ? "bg-bg-sunken font-medium text-ink"
-                : "text-ink-muted hover:text-ink"
-            }`}
-          >
-            {m === "daily" ? "Day" : m === "weekly" ? "Week" : "Month"}
-          </button>
-        ))}
+        {(["daily", "weekly", "monthly"] as const).map((m) => {
+          // The week/month jumps read their target date (week_of / month)
+          // off the daily view, so gate them on the same daily-resolved
+          // condition the prev/next-day buttons use — otherwise clicking
+          // Week/Month for an uncached day flashes a wrong empty state
+          // before the daily read lands. Day is always available.
+          const gated = m !== "daily" && !canJump;
+          return (
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              disabled={gated}
+              onClick={() => setMode(m)}
+              className={`rounded px-2 py-1 text-xs disabled:opacity-50 ${
+                mode === m
+                  ? "bg-bg-sunken font-medium text-ink"
+                  : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              {m === "daily" ? "Day" : m === "weekly" ? "Week" : "Month"}
+            </button>
+          );
+        })}
       </nav>
 
       <div className="px-4 py-3">

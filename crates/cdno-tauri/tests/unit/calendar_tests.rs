@@ -110,6 +110,30 @@ fn read_monthly_echoes_the_month_and_tolerates_absence() {
 }
 
 #[test]
+fn read_weekly_reads_an_existing_note() {
+    // A weekly note filed at the ISO-week path (Mon 2026-07-13 is week
+    // 29) — the read must surface exists:true and its markdown.
+    let weekly = "---\ntype: weekly\n---\n\n# Week 29\n\n## Wins\nShipped.\n";
+    let vault = vault_with(&[("journal/2026/weekly/2026-W29.md", weekly)]);
+
+    let view = read_weekly_impl(&vault, ymd(2026, 7, 15)).expect("read succeeds");
+    assert!(view.exists);
+    assert_eq!(view.week_of, ymd(2026, 7, 13));
+    assert!(view.markdown.contains("Shipped."));
+}
+
+#[test]
+fn read_monthly_reads_an_existing_note() {
+    let monthly = "---\ntype: monthly\n---\n\n# July 2026\n\n## Wins\nA good month.\n";
+    let vault = vault_with(&[("journal/2026/monthly/2026-07.md", monthly)]);
+
+    let view = read_monthly_impl(&vault, ymd(2026, 7, 1)).expect("read succeeds");
+    assert!(view.exists);
+    assert_eq!(view.month, "2026-07");
+    assert!(view.markdown.contains("A good month."));
+}
+
+#[test]
 fn list_daily_dates_returns_the_months_note_bearing_days() {
     let vault = vault_with(&[
         ("journal/2026/daily/2026-07-03.md", DAILY),

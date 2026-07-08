@@ -68,3 +68,42 @@ test("arrowing off the start clamps at the first day", () => {
   // Held at day 1 rather than crossing into the previous month.
   expect(screen.getByRole("button", { name: /July 2026 1$/ }).getAttribute("tabindex")).toBe("0");
 });
+
+test("ArrowUp on the first day clamps (a -7 delta holds at day 1)", () => {
+  renderJuly();
+  const grid = screen.getByRole("group");
+  // Day 1 seeds the marker; a week up would land on day -6, so it clamps.
+  fireEvent.keyDown(grid, { key: "ArrowUp" });
+  expect(screen.getByRole("button", { name: /July 2026 1$/ }).getAttribute("tabindex")).toBe("0");
+});
+
+test("ArrowDown on the last day clamps (a +7 delta holds at day 31)", () => {
+  // Seed the marker on the last day (July has 31, sitting in a partial
+  // final row), then arrow down a week — day 38 doesn't exist, so it
+  // holds at 31 rather than spilling into August.
+  renderJuly(vi.fn(), 31);
+  const grid = screen.getByRole("group");
+  expect(screen.getByRole("button", { name: /July 2026 31$/ }).getAttribute("tabindex")).toBe("0");
+  fireEvent.keyDown(grid, { key: "ArrowDown" });
+  expect(screen.getByRole("button", { name: /July 2026 31$/ }).getAttribute("tabindex")).toBe("0");
+});
+
+test("renders leading blank pad cells for the month's Monday-first offset", () => {
+  const { container } = render(
+    <MonthGrid
+      year={2026}
+      month={7}
+      noteDays={new Set()}
+      selectedDay={null}
+      onSelectDay={vi.fn()}
+    />,
+  );
+  // July 2026's 1st is a Wednesday; Monday-first that is offset 2, so
+  // there are two aria-hidden pad cells before day 1. (The weekday-header
+  // row is a single aria-hidden container, so scope the count to the grid
+  // group to count only the pad cells.)
+  const grid = screen.getByRole("group");
+  const pads = grid.querySelectorAll(":scope > [aria-hidden]");
+  expect(pads).toHaveLength(2);
+  expect(container).toBeDefined();
+});

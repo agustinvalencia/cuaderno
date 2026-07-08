@@ -24,8 +24,12 @@ const TODAY_DAILY = {
 
 /** A mockIPC handler recording every call, returning calendar fixtures.
  * `dailyExists` toggles the daily read between a populated note and the
- * empty state. */
-function installMock(calls: Array<{ cmd: string; args: unknown }>, dailyExists = true) {
+ * empty state; `weeklyExists` does the same for the weekly read (so the
+ * week empty-state branch can be exercised). */
+function installMock(
+  calls: Array<{ cmd: string; args: unknown }>,
+  { dailyExists = true, weeklyExists = true }: { dailyExists?: boolean; weeklyExists?: boolean } = {},
+) {
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
     switch (cmd) {
@@ -53,8 +57,8 @@ function installMock(calls: Array<{ cmd: string; args: unknown }>, dailyExists =
       case "read_weekly":
         return {
           week_of: (args as { weekOf: string }).weekOf,
-          exists: true,
-          markdown: "# Week 29\n\nThe week in review.",
+          exists: weeklyExists,
+          markdown: weeklyExists ? "# Week 29\n\nThe week in review." : "",
           path: "journal/2026/weekly/2026-W29.md",
         };
       case "read_monthly":
@@ -100,7 +104,7 @@ test("opens on today's note in the embedded panel", async () => {
 });
 
 test("a note-less day shows the calm empty state, not an error", async () => {
-  installMock([], false);
+  installMock([], { dailyExists: false });
   renderView();
 
   expect(await screen.findByText("No note for this day yet.")).toBeDefined();
@@ -123,6 +127,31 @@ test("the week jump reads the weekly note at the backend-stamped week_of", async
   expect(weekly?.args).toMatchObject({ weekOf: "2026-07-13" });
 });
 
+test("the week jump shows the calm empty state when the week has no note", async () => {
+  installMock([], { weeklyExists: false });
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  (await screen.findByRole("button", { name: "Week" })).click();
+
+  expect(await screen.findByText("No note for this week yet.")).toBeDefined();
+});
+
+test("the month jump reads read_monthly and shows the month empty state", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  (await screen.findByRole("button", { name: "Month" })).click();
+
+  // The monthly fixture is note-less, so the month empty-state copy
+  // renders — and read_monthly is invoked at the backend-stamped month.
+  expect(await screen.findByText("No note for this month yet.")).toBeDefined();
+  const monthly = calls.find((c) => c.cmd === "read_monthly");
+  expect(monthly?.args).toMatchObject({ month: "2026-07" });
+});
+
 test("next-day steps to the neighbour the backend stamped", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);
@@ -136,4 +165,18 @@ test("next-day steps to the neighbour the backend stamped", async () => {
   expect(await screen.findByText("No note for this day yet.")).toBeDefined();
   const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
   expect(reads).toContain("2026-07-16");
+});
+
+test("prev-day steps to the neighbour the backend stamped", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  (await screen.findByRole("button", { name: "‹ Prev day" })).click();
+
+  // The panel reads the previous day (2026-07-14), a note-less day.
+  expect(await screen.findByText("No note for this day yet.")).toBeDefined();
+  const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
+  expect(reads).toContain("2026-07-14");
 });
