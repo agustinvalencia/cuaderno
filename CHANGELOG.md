@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-08
+
+The vault picker - the app asks for its vault instead of requiring launchctl.
+
 ### Added
 
 - **Desktop-app vault picker for Finder launches** (#331) (#332) — a Finder-launched app
