@@ -10,8 +10,34 @@
 // prefers-reduced-motion (plan §3.10) — the caller passes `animate`,
 // seeded from `usePrefersReducedMotion` below.
 import { useEffect, useState } from "react";
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
+
+/** Which mark a series draws with. A `"line"` traces a continuous
+ * measure; a `"column"` reads as a discrete count/volume. */
+export type ChartKind = "line" | "column";
+
+/** Pick the mark for a series from a robust, non-semantic signal: a
+ * series whose every value is integer-valued reads as a count/volume
+ * (reps, laps, sessions) and draws as a calm column; any fractional
+ * value (a weight, a pace, a duration) keeps the line. This carries no
+ * domain knowledge — `TrackingSeries` deliberately does not infer column
+ * semantics — so a misclassification is purely cosmetic. An empty series
+ * has nothing to classify and falls back to the line. */
+export function markForSeries(series: TrackingSeries): ChartKind {
+  return series.points.length > 0 && series.points.every((p) => Number.isInteger(p.value))
+    ? "column"
+    : "line";
+}
 
 // Series colours cycle through the context hues, drawn from CSS
 // variables so they track the active theme.
@@ -56,60 +82,91 @@ export function usePrefersReducedMotion(): boolean {
 
 /** One compact trend chart (~160px). Muted caption, axis text in
  * ink-faint, no grid — calm by construction. No reference/target lines:
- * these show status, not goals. */
+ * these show status, not goals. The mark is chosen by the caller via
+ * `kind`: `"line"` (default) traces a continuous measure, `"column"`
+ * draws a calm count/volume. Both variants obey the same design laws —
+ * same context hue, same axes, no target lines, no red, animation
+ * suppressed under reduced motion. */
 export function TrendChart({
   series,
   color,
   animate,
+  kind = "line",
 }: {
   series: TrackingSeries;
   color: string;
   animate: boolean;
+  kind?: ChartKind;
 }) {
   const points = series.points.map((p) => ({ date: p.date, value: p.value }));
   // A single-point series draws no line segment, so a normal r:2 dot is
   // nearly invisible — a first tracking entry would read as an empty
-  // chart. Render a clearly visible dot instead.
+  // chart. Render a clearly visible dot instead. (Column mark ignores
+  // this — a bar is visible on its own.)
   const dotRadius = points.length === 1 ? 4 : 2;
+
+  // Axes and tooltip are identical across marks, so define them once and
+  // reuse in both branches — the only difference is the mark itself.
+  const xAxis = (
+    <XAxis
+      dataKey="date"
+      tickFormatter={shortDate}
+      tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+      tickLine={false}
+      axisLine={{ stroke: "var(--color-line)" }}
+      minTickGap={24}
+    />
+  );
+  const yAxis = (
+    <YAxis
+      width={36}
+      tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+      tickLine={false}
+      axisLine={false}
+    />
+  );
+  const tooltip = (
+    <Tooltip
+      labelFormatter={(label) => shortDate(String(label))}
+      contentStyle={{
+        background: "var(--color-bg-surface)",
+        border: "1px solid var(--color-line)",
+        borderRadius: 6,
+        fontSize: 12,
+        color: "var(--color-ink)",
+      }}
+    />
+  );
+
   return (
-    <figure>
+    <figure data-chart-kind={kind}>
       <figcaption className="text-xs text-ink-muted">{series.name}</figcaption>
       <div className="mt-1 h-40">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={points} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
-            <XAxis
-              dataKey="date"
-              tickFormatter={shortDate}
-              tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
-              tickLine={false}
-              axisLine={{ stroke: "var(--color-line)" }}
-              minTickGap={24}
-            />
-            <YAxis
-              width={36}
-              tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
-              tickLine={false}
-              axisLine={false}
-            />
-            <Tooltip
-              labelFormatter={(label) => shortDate(String(label))}
-              contentStyle={{
-                background: "var(--color-bg-surface)",
-                border: "1px solid var(--color-line)",
-                borderRadius: 6,
-                fontSize: 12,
-                color: "var(--color-ink)",
-              }}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke={color}
-              strokeWidth={2}
-              dot={{ r: dotRadius, fill: color }}
-              isAnimationActive={animate}
-            />
-          </LineChart>
+          {kind === "column" ? (
+            <BarChart data={points} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
+              {xAxis}
+              {yAxis}
+              {tooltip}
+              {/* Same context hue as the line — colour is identity, not
+                  urgency. No target lines, no red. */}
+              <Bar dataKey="value" fill={color} isAnimationActive={animate} />
+            </BarChart>
+          ) : (
+            <LineChart data={points} margin={{ top: 8, right: 8, bottom: 4, left: 0 }}>
+              {xAxis}
+              {yAxis}
+              {tooltip}
+              <Line
+                type="monotone"
+                dataKey="value"
+                stroke={color}
+                strokeWidth={2}
+                dot={{ r: dotRadius, fill: color }}
+                isAnimationActive={animate}
+              />
+            </LineChart>
+          )}
         </ResponsiveContainer>
       </div>
     </figure>

@@ -40,6 +40,34 @@ const EXPANDED: StewardshipDetailData = {
   tracking_count: 2,
 };
 
+// Two series that exercise the mark heuristic: an all-integer count
+// (draws as a column) alongside a fractional measure (keeps the line).
+const MIXED: StewardshipDetailData = {
+  slug: "health",
+  name: "Health",
+  context: "personal",
+  variant: "expanded",
+  body_markdown: "## Current Status\nConsistent.",
+  series: [
+    {
+      name: "gym · Sets",
+      points: [
+        { date: "2026-07-01", value: 6 },
+        { date: "2026-07-05", value: 4 },
+      ],
+    },
+    {
+      name: "weigh-in · Weight (kg)",
+      points: [
+        { date: "2026-07-01", value: 78.4 },
+        { date: "2026-07-05", value: 77.9 },
+      ],
+    },
+  ],
+  recent: [],
+  tracking_count: 4,
+};
+
 const FLAT: StewardshipDetailData = {
   slug: "finances",
   name: "Finances",
@@ -96,6 +124,18 @@ test("an expanded stewardship with series shows the charts pane", async () => {
   // The Trends section and its series caption render.
   expect(screen.getByRole("region", { name: "Trends" })).toBeDefined();
   expect(screen.getByText("gym · Sets")).toBeDefined();
+});
+
+test("an all-integer series draws as a column and a fractional series keeps the line", async () => {
+  renderDetail(MIXED);
+  await screen.findByText("Health");
+  // The mark shows through as the figure's data-chart-kind — a
+  // DOM-level signal that does not depend on Recharts' SVG internals
+  // (which do not lay out under jsdom's zero-size container).
+  const integerFigure = screen.getByText("gym · Sets").closest("figure");
+  const fractionalFigure = screen.getByText("weigh-in · Weight (kg)").closest("figure");
+  expect(integerFigure?.getAttribute("data-chart-kind")).toBe("column");
+  expect(fractionalFigure?.getAttribute("data-chart-kind")).toBe("line");
 });
 
 test("a flat stewardship has no charts pane", async () => {
