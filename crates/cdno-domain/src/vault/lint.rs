@@ -304,6 +304,12 @@ impl Vault {
 /// line the parser could ever accept always reaches the parser, while
 /// prose, blank lines and the section heading never do and so can never
 /// be flagged.
+///
+/// Known limit, shared with the parsers by construction: `*`/`+` list
+/// markers and `-` without a trailing space are invisible to both, so a
+/// wrong-marker near-miss still vanishes without a diagnostic. Closing
+/// that would mean widening this gate beyond what the canonical grammar
+/// accepts — out of scope for #312.
 fn is_dashboard_bullet(line: &str) -> bool {
     line.trim_start().starts_with("- ")
 }
@@ -321,12 +327,15 @@ fn bullet_body(line: &str) -> &str {
 /// typo so the fix is obvious. Ordered most-specific first.
 fn habit_line_hint(line: &str) -> &'static str {
     let body = bullet_body(line);
-    if body.contains('\u{2013}') {
+    if body.contains('\u{2014}') {
+        // The separator is present, so one side must be empty. Checked
+        // before any dash guess: an en-dash inside the habit *name* is
+        // legitimate, and the hint must not blame a dash that isn't
+        // broken when the real defect is elsewhere.
+        "the habit text or the status either side of the em-dash is empty"
+    } else if body.contains('\u{2013}') {
         // En-dash: the near-miss the naked eye can't tell from an em-dash.
         "found an en-dash (\u{2013}) where an em-dash (\u{2014}) separates habit from status"
-    } else if body.contains('\u{2014}') {
-        // The separator is present, so one side must be empty.
-        "the habit text or the status either side of the em-dash is empty"
     } else if body.contains(" - ") {
         // ASCII hyphen standing in for the em-dash separator.
         "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates habit from status"
@@ -341,12 +350,16 @@ fn habit_line_hint(line: &str) -> &'static str {
 /// [`parse_periodic_line`]'s. Staged so the most actionable pointer wins.
 fn periodic_line_hint(line: &str) -> &'static str {
     let body = bullet_body(line);
-    if body.contains('\u{2013}') {
-        return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) is expected";
-    }
     // The grammar needs two em-dashes: `title — recurrence — next: date`.
     let parts: Vec<&str> = body.splitn(3, '\u{2014}').collect();
     if parts.len() < 3 {
+        // Only blame a dash once the em-dash structure is known to be
+        // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
+        // is legitimate, and a line failing on a missing `next:` or a bad
+        // date must not be pointed at a dash that isn't broken.
+        if body.contains('\u{2013}') {
+            return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) is expected";
+        }
         if body.contains(" - ") {
             return "found an ASCII hyphen (-) where an em-dash (\u{2014}) is expected";
         }

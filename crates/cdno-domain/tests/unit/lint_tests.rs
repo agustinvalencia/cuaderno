@@ -1025,3 +1025,102 @@ fn lint_ignores_dashboard_without_scanned_sections() {
         report.issues
     );
 }
+
+#[test]
+fn lint_flags_active_habits_line_missing_separator_entirely() {
+    // No dash of any kind: the bullet is just prose. The parser rejects
+    // it and the hint names the missing em-dash.
+    let body = stewardship("## Active Habits\n- Swimming every week\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("missing the em-dash"),
+        "hint should name the missing separator: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_active_habits_line_with_empty_habit_and_lapse_scan_skips_it() {
+    // The degenerate `- {em-dash} lapsed ...` bullet: the old lapse scan
+    // detected it; the shared grammar now rejects it (empty habit text),
+    // so the lapse scan skips it AND lint compensates with a warning.
+    // This pins the one behavioural change the parse_habit_line
+    // extraction introduced -- the silent skip is made visible, never lost.
+    let body = stewardship("## Active Habits\n- \u{2014} lapsed since March\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let lapsed = vault.lapsed_habits().expect("lapse scan succeeds");
+    assert!(
+        lapsed.is_empty(),
+        "empty-habit bullet must not count as a lapse: {lapsed:?}"
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0]
+            .message
+            .contains("either side of the em-dash is empty"),
+        "hint should name the empty side: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_periodic_line_with_en_dash_separators() {
+    // En-dashes standing in for both em-dash separators.
+    let body = stewardship(
+        "## Periodic Commitments\n- Eye exam \u{2013} yearly \u{2013} next: 2026-04-01\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("en-dash"),
+        "hint should name the en-dash: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_periodic_line_with_ascii_hyphen_separators() {
+    // ASCII hyphens standing in for the em-dash separators.
+    let body = stewardship("## Periodic Commitments\n- Eye exam - yearly - next: 2026-04-01\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("ASCII hyphen"),
+        "hint should name the hyphen: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
+    // An en-dash *range* in the title is legitimate; the line fails
+    // because the third field lacks the `next:` marker. The hint must
+    // point at the real defect, not the dash (PR #334 review finding).
+    let body = stewardship(
+        "## Periodic Commitments\n- Q1\u{2013}Q2 review \u{2014} quarterly \u{2014} 2026-04-01\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("next:") && !warnings[0].message.contains("en-dash"),
+        "hint must name the missing marker, not the title's en-dash: {}",
+        warnings[0].message
+    );
+}
