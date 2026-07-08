@@ -154,7 +154,7 @@ pub fn reconcile(
             })?;
             tx.remove_note(path.clone());
             match tx.commit() {
-                Ok(()) => report.removed += 1,
+                Ok(_) => report.removed += 1,
                 Err(e) => report.errors.push(ReconciliationIssue {
                     path,
                     reason: format!("failed to remove orphan: {e}"),
@@ -202,7 +202,7 @@ pub fn reconcile(
         })?;
         tx.remove_note(path.clone());
         match tx.commit() {
-            Ok(()) => report.fts_removed += 1,
+            Ok(_) => report.fts_removed += 1,
             Err(e) => report.errors.push(ReconciliationIssue {
                 path: path.clone(),
                 reason: format!("failed to remove orphan FTS row: {e}"),

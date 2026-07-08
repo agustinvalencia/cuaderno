@@ -283,9 +283,12 @@ fn complete(
         return Ok(());
     }
 
+    // The CLI reports the primary path only; the outcome's full
+    // touched-path set is desktop-journal machinery (#315).
     let project_path = vault
         .complete_action(at, &project, &query)
-        .context("completing action")?;
+        .context("completing action")?
+        .primary;
     crate::output::emit_write_result(
         json,
         &project_path.to_string(),

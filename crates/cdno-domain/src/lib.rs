@@ -27,5 +27,5 @@ pub use vault::{
     OrientationContext, PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange,
     ProjectSummary, QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary,
     StewardshipVariant, TemplatePlaceholder, TopAction, TrackingEntry, Vault, WeeklyNoteView,
-    WeeklySection,
+    WeeklySection, WriteOutcome,
 };

@@ -128,9 +128,28 @@ fn complete_action_archives_attached_note() {
         )
         .unwrap();
 
-    vault
+    let outcome = vault
         .complete_action(dt(2026, 5, 27, 17, 0), "foo", "characterise")
         .expect("complete succeeds");
+
+    // The touched set must carry the archival move's BOTH endpoints — the
+    // vanished `actions/<slug>.md` and the new `_done/<year>/<slug>.md` —
+    // alongside the project map and the daily-log note. This is the whole
+    // point of #315: the desktop layer journals exactly these so the
+    // watcher can't echo the archive writes back as external edits.
+    assert!(outcome.touched());
+    assert_eq!(outcome.primary, vp("projects/foo.md"));
+    let touched: std::collections::HashSet<_> = outcome.paths.iter().cloned().collect();
+    assert_eq!(
+        touched,
+        std::collections::HashSet::from([
+            vp("projects/foo.md"),
+            vp("actions/characterise-sample-efficiency.md"),
+            vp("actions/_done/2026/characterise-sample-efficiency.md"),
+            vp("journal/2026/daily/2026-05-27.md"),
+        ]),
+        "touched set is project + archive source + archive dest + daily",
+    );
 
     // The active note is gone; the archived copy lives under _done/<year>/.
     assert!(
@@ -170,9 +189,21 @@ fn complete_action_on_plain_bullet_is_unchanged() {
         )
         .unwrap();
 
-    vault
+    let outcome = vault
         .complete_action(dt(2026, 5, 27, 17, 0), "foo", "write the tests")
         .expect("complete succeeds");
+
+    // A plain bullet has no attached note, so the touched set is just the
+    // project map and the daily — no archival endpoints.
+    let touched: std::collections::HashSet<_> = outcome.paths.iter().cloned().collect();
+    assert_eq!(
+        touched,
+        std::collections::HashSet::from([
+            vp("projects/foo.md"),
+            vp("journal/2026/daily/2026-05-27.md"),
+        ]),
+        "plain-bullet completion touches only project + daily",
+    );
 
     let project = store.read_file(&vp("projects/foo.md")).unwrap();
     assert!(

@@ -13,6 +13,7 @@ use crate::frontmatter::{ProjectFrontmatter, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
+use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
 use super::CURRENT_STATE_SECTION;
 
@@ -34,7 +35,14 @@ impl Vault {
     ///
     /// When `new_state.trim()` equals the existing trimmed state, the
     /// call is a silent no-op — no log entry, no project rewrite —
-    /// because logging "was X, now X" is just noise.
+    /// because logging "was X, now X" is just noise. The returned
+    /// [`WriteOutcome`] reports the no-op via `touched() == false` (its
+    /// `paths` empty), so the desktop layer skips journalling and its
+    /// self-change emit rather than planting a false echo-suppression
+    /// entry over paths nothing was written to (#315).
+    ///
+    /// On a real write, `primary` is the project map and `paths` carries
+    /// both it and the daily-log note the previous state was logged to.
     ///
     /// `at` is taken as a parameter so tests can pin the log timestamp
     /// and the daily-note date; production callers pass
@@ -44,7 +52,7 @@ impl Vault {
         at: NaiveDateTime,
         slug: &str,
         new_state: &str,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
@@ -74,7 +82,10 @@ impl Vault {
         let old_state = doc.section(CURRENT_STATE_SECTION)?.trim().to_owned();
         let new_trimmed = new_state.trim();
         if old_state == new_trimmed {
-            return Ok(path);
+            // Silent no-op: report the resolved path but signal (empty
+            // `paths`) that nothing was written, so the caller doesn't
+            // journal or emit for a write that never happened.
+            return Ok(WriteOutcome::noop(path));
         }
 
         // Normalise so the section ends with a blank line — preserves
@@ -90,9 +101,9 @@ impl Vault {
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
-        tx.commit()?;
+        let touched = tx.commit()?;
 
-        Ok(path)
+        Ok(WriteOutcome::written(path, touched))
     }
 }
 

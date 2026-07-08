@@ -556,9 +556,19 @@ fn update_project_state_is_noop_when_state_unchanged() {
     let (vault, store) =
         vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
 
-    vault
+    let outcome = vault
         .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "Same state.\n")
         .expect("noop returns Ok");
+
+    // The no-op signal: nothing written, so the desktop layer knows to
+    // skip journalling and its self-change emit (#315). `primary` still
+    // resolves to the project map for CLI/MCP messaging.
+    assert!(
+        !outcome.touched(),
+        "an unchanged-state call touches nothing"
+    );
+    assert!(outcome.paths.is_empty(), "no paths on a no-op");
+    assert_eq!(outcome.primary, vp("projects/icml-paper.md"));
 
     assert!(
         !store
@@ -568,6 +578,33 @@ fn update_project_state_is_noop_when_state_unchanged() {
     );
     let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
     assert_eq!(raw, body, "noop must not rewrite the project file");
+}
+
+#[test]
+fn update_project_state_reports_touched_paths_on_a_real_write() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Old state.");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "New state.")
+        .expect("update succeeds");
+
+    // A real write reports both the project map and the daily-log note it
+    // appended the previous state to — the exact set the desktop echo
+    // journal needs, with the daily path coming from the domain rather
+    // than a client-side reconstruction (#315).
+    assert!(outcome.touched());
+    assert_eq!(outcome.primary, vp("projects/icml-paper.md"));
+    let touched: std::collections::HashSet<_> = outcome.paths.iter().cloned().collect();
+    assert_eq!(
+        touched,
+        std::collections::HashSet::from([
+            vp("projects/icml-paper.md"),
+            vp("journal/2026/daily/2026-05-01.md"),
+        ]),
+        "touched set is the project map plus the daily it logged to",
+    );
 }
 
 // ---------------------------------------------------------------------

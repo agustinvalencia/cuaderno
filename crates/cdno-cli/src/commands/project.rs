@@ -300,9 +300,12 @@ fn state(
         println!("Aborted.");
         return Ok(());
     }
+    // Report the primary path; the outcome's touched-path set and no-op
+    // signal are for the desktop echo journal (#315), not the CLI.
     let path = vault
         .update_project_state(at, &slug, &text)
-        .context("updating project state")?;
+        .context("updating project state")?
+        .primary;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
     Ok(())
 }
