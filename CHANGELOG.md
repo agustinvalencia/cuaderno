@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **M10 packaging remainder (plan §5 M10 — the final desktop-app milestone)** (#PR-pending) — the
+- **M10 packaging remainder (plan §5 M10 — the final desktop-app milestone)** (#326) — the
   polish slice left after the dmg/ad-hoc-signing/release pipeline shipped with v0.5.0–0.7.0.
   Phase 5/6 UI is now COMPLETE. Deliberately left out of v1: notarization, an auto-updater, an
   NSPanel capture overlay, and an Intel dmg.
