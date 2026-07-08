@@ -32,27 +32,33 @@ xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 (Or use System Settings → Privacy & Security → "Open Anyway" after the first blocked attempt.)
 
-## Before first launch: two caveats
+## Before first launch: two notes
 
 1. **Gatekeeper** — covered above: strip the quarantine
    attribute from a manual install. There is no notarization and no auto-updater yet; upgrades go
    through `brew upgrade --cask cuaderno-app` or a fresh `.dmg`.
 
-2. **Vault discovery** — the app reads the vault path from the `CUADERNO_VAULT_PATH` environment
-   variable, same as the CLI and the MCP server. A Finder-launched app inherits no shell
-   environment, so set it for GUI apps once per login:
+2. **Vault discovery** — on first launch the app asks for your vault folder with a native picker,
+   validates that it is a cuaderno vault (a `.cuaderno/` marker — pick the vault root, or run
+   `cdno init` first if you have not created one), and remembers it for next time. If the folder
+   you pick isn't a vault it re-asks; if you cancel, it explains that it needs a vault and exits.
+
+   The `CUADERNO_VAULT_PATH` environment variable remains an **override** for terminals and dev,
+   same as the CLI and the MCP server. A Finder-launched app inherits no shell environment, so if
+   you want to pin the vault without the picker you can still set it for GUI apps once per login:
 
    ```bash
    launchctl setenv CUADERNO_VAULT_PATH "$HOME/Documents/notebook"
    ```
 
-   then (re)launch the app. One-off alternative from a terminal:
+   or for a one-off run from a terminal:
 
    ```bash
    CUADERNO_VAULT_PATH=~/Documents/notebook open -a cuaderno
    ```
 
-   Without the variable the app aborts on startup (the message is visible in Console.app).
+   When set, the variable wins over the remembered folder (and an invalid override fails loudly,
+   rather than falling back to the picker).
 
 ## A quick tour
 

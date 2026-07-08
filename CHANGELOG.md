@@ -6,6 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop-app vault picker for Finder launches** (#331) (#332) — a Finder-launched app
+  inherits no shell environment, so the app used to abort silently (to Console.app) unless
+  `launchctl setenv CUADERNO_VAULT_PATH ...` had been run. Startup now resolves the vault through
+  three layers: the `CUADERNO_VAULT_PATH` override (unchanged, and still fails loudly on a bad
+  path), then a persisted setting at `<app_config_dir>/vault.json`, then a native folder picker
+  (`tauri-plugin-dialog`). The picker validates that the chosen folder is a cuaderno vault
+  (`.cuaderno/` marker), re-asks on a non-vault, remembers a valid pick, and — on cancel —
+  explains that the app needs a vault and exits gracefully instead of a silent abort. A stored
+  path that fails to open — whether it fails the cheap `.cuaderno/` marker check (vault
+  moved/deleted) or passes it but fails the full open (corrupt config, unopenable index, or a
+  TOCTOU delete) — falls through to the picker rather than crashing; only the explicit env
+  override still hard-fails. The main window stays hidden until initialisation completes, so a
+  first-launch no-vault error no longer flashes on screen before the picker appears. The
+  `launchctl` step in the install docs and cask caveats becomes optional. Resolution ordering
+  lives in a testable `vault_locator` seam (`crates/cdno-tauri/src/vault_locator.rs`); the dialog
+  loop stays in `lib.rs`.
+
 ## [0.8.1] - 2026-07-08
 
 First fix from real-device user testing.

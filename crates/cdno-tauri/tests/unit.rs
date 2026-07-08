@@ -10,6 +10,7 @@ mod unit {
     mod projects_tests;
     mod stewardships_tests;
     mod strategic_tests;
+    mod vault_locator_tests;
     mod watcher_plan_tests;
     mod weekly_tests;
 }

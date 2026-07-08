@@ -166,6 +166,15 @@ tauri-plugin-single-instance = "2"
 # VaultPath check before the vault-root join so it can't escape.
 tauri-plugin-opener = "2"
 
+# Native folder picker + message dialogs for first-launch vault
+# discovery (GH #331). A Finder-launched app inherits no shell
+# environment, so `CUADERNO_VAULT_PATH` is unset and the app used to
+# abort silently; the picker gives it a vault instead. Invoked from
+# Rust `setup()` (via a background thread — the blocking pick posts to
+# the main event loop, which is not pumping while `setup` runs), so no
+# JS capability is needed — same as the opener plugin.
+tauri-plugin-dialog = "2"
+
 # TypeScript bindings generated from the Rust wire types (plan §3.5).
 # `serde-compat` (default) honours the serde attrs; `chrono-impl` maps
 # NaiveDate to `string`. Optional everywhere — only the `ts-bindings`

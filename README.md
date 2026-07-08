@@ -30,13 +30,9 @@ That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mc
 # without it Gatekeeper blocks the first launch.
 brew install --cask agustinvalencia/tap/cuaderno-app
 xattr -dr com.apple.quarantine /Applications/cuaderno.app
-
-# A Finder-launched app inherits no shell environment, so tell GUI
-# apps where the vault lives (once per login):
-launchctl setenv CUADERNO_VAULT_PATH "$HOME/Documents/notebook"
 ```
 
-Then launch cuaderno from Applications. Full install notes (manual `.dmg`, caveats) in the [Desktop app guide](https://agustinvalencia.github.io/cuaderno/getting-started/desktop-app.html).
+Then launch cuaderno from Applications. On first launch the app asks for your vault folder with a native picker and remembers it. `CUADERNO_VAULT_PATH` still overrides it for terminals and dev (`CUADERNO_VAULT_PATH=~/Documents/notebook open -a cuaderno`), but it is no longer required for a Finder launch. Full install notes (manual `.dmg`, caveats) in the [Desktop app guide](https://agustinvalencia.github.io/cuaderno/getting-started/desktop-app.html).
 
 **From source** (everywhere else, or if you want to track `main`):
 
