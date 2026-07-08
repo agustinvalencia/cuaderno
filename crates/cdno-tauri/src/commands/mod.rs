@@ -10,4 +10,5 @@ pub mod notes;
 pub mod orientation;
 pub mod projects;
 pub mod search;
+pub mod stewardships;
 pub mod weekly;

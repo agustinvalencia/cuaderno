@@ -12,6 +12,9 @@ import type { ProjectActions } from "./bindings/ProjectActions";
 import type { ProjectDetail } from "./bindings/ProjectDetail";
 import type { ResolvedLink } from "./bindings/ResolvedLink";
 import type { SearchResultEntry } from "./bindings/SearchResultEntry";
+import type { StewardshipDetail } from "./bindings/StewardshipDetail";
+import type { StewardshipSummary } from "./bindings/StewardshipSummary";
+import type { TemplateField } from "./bindings/TemplateField";
 import type { WeeklyBundle } from "./bindings/WeeklyBundle";
 
 export class CuadernoError extends Error {
@@ -208,4 +211,46 @@ export function saveWeeklySection(
   weekOf?: string,
 ): Promise<void> {
   return call("save_weekly_section", { weekOf: weekOf ?? null, section, content });
+}
+
+// --- M7: Stewardship views ---
+
+/** Every indexed stewardship with its staleness line, sorted by slug.
+ * Backs the `/stewardships` list. */
+export function listStewardships(): Promise<StewardshipSummary[]> {
+  return call("list_stewardships");
+}
+
+/** The composed Stewardship Detail bundle behind `/stewardships/:slug`:
+ * dashboard body, trend series (empty for a flat stewardship), the
+ * last-few tracking entries, and the total tracking count. */
+export function getStewardshipDetail(slug: string): Promise<StewardshipDetail> {
+  return call("get_stewardship_detail", { slug });
+}
+
+/** The prompted fields the tracking log form should render for
+ * `activity` — the resolved `tracking-<activity>` template's
+ * `[variables.prompt]` names (empty for the generic template). */
+export function getTrackingTemplateFields(activity: string): Promise<TemplateField[]> {
+  return call("get_tracking_template_fields", { activity });
+}
+
+/** File one tracking note under an expanded stewardship. `vars` carries
+ * the prompted-field values gathered from `getTrackingTemplateFields`.
+ * A flat stewardship or a same-day duplicate comes back as a
+ * `CuadernoError` the caller toasts. */
+export function logTrackingEntry(
+  stewardship: string,
+  activity: string,
+  content: string,
+  vars: Record<string, string>,
+  routine?: string,
+): Promise<void> {
+  return call("log_tracking_entry", {
+    stewardship,
+    activity,
+    routine: routine ?? null,
+    content,
+    vars,
+  });
 }

@@ -172,6 +172,10 @@ pub fn run() {
             commands::capture::list_inbox,
             commands::capture::discard_inbox_item,
             commands::capture::open_in_editor,
+            commands::stewardships::list_stewardships,
+            commands::stewardships::get_stewardship_detail,
+            commands::stewardships::get_tracking_template_fields,
+            commands::stewardships::log_tracking_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

@@ -14,6 +14,37 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Stewardship Detail (M7, plan §1.7; closes #59)** — the `/stewardships` and `/stewardships/:slug`
+  routes replace the placeholder: a calm list of perpetual responsibilities and a per-stewardship
+  dashboard with read-only trend charts, recent tracking, and an inline log form.
+  - **Backend** (`crates/cdno-tauri/src/commands/stewardships.rs`): `list_stewardships()` (today
+    stamped in Rust) and a composed `get_stewardship_detail(slug)` — the dashboard body, the numeric
+    `series` (from the existing `tracking_series`; empty for a flat stewardship), the last five
+    tracking entries (a wide-window `list_tracking` scan, newest-first) with a `tracking_count`, all
+    in one invoke. `get_tracking_template_fields(activity)` reports the prompted fields the log form
+    must gather — it calls `Vault::template_prompts("tracking", slugify(activity))`, which resolves
+    `tracking-<activity>` with a fallback to the generic template exactly as `add_tracking_entry`
+    does, so the fields match what the later create call enforces (the generic template has none).
+    `log_tracking_entry(...)` wraps `add_tracking_entry_with_vars`; it touches only the new tracking
+    note (no daily-log line is staged by that domain call), so that single path is journalled and the
+    Stewardships area is emitted. Filing on a flat stewardship and a same-day duplicate surface as
+    calm `Invalid` toasts. `TrackingSeries`/`TrackingPoint` gained `ts-rs` derives.
+  - **Frontend** (`ui/src/views/stewardships/`): the list shows a context dot, name, variant chip
+    (expanded/flat), and a muted staleness line ("last tracked N days ago" / "no tracking yet" /
+    "dashboard only"). The detail renders the dashboard body through the shared `Markdown` component
+    (wikilinks route as elsewhere), then — for an expanded stewardship with numeric tracking — a
+    Trends pane of compact Recharts line charts (one per series, ~160px, colours drawn from the
+    context-hue CSS variables, no grid, no target/reference lines, animation off under
+    `prefers-reduced-motion`). Recent entries open in the note reader; a Log Entry button reveals an
+    inline (not modal) form whose dynamic fields are fetched (debounced) from
+    `get_tracking_template_fields` for the typed activity. Charts ship as core status visualisations
+    (§1.7), *not* gated behind the metrics toggle; the denser metrics variant is deferred.
+  - **Known limitation (from #59's comment thread, still open):** the issue named an "exercise volume
+    per week" chart (sets × reps × weight). `tracking_series` sums each table column independently, so
+    a cross-column product like volume is not derivable from it; it would need a computed volume
+    column in the gym tracking template or a richer domain query. Not built here — the shipped charts
+    are weight-over-time and per-column count trends (Sets/Reps totals).
+
 - **Weekly Review (M6, plan §1.4; closes #55)** — the `/weekly` route is now a guided, deliberately
   anti-chore 5-step flow, backed by one composed `get_weekly_bundle` read and a single
   `save_weekly_section` write.
