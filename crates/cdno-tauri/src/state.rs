@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use cdno_core::path::VaultPath;
-use cdno_domain::Vault;
+use cdno_domain::{Vault, WriteOutcome};
 
 /// Everything the command layer needs, registered once via
 /// `.manage(...)`. `Vault` is shared as a bare `Arc` — no wrapper
@@ -52,6 +52,24 @@ impl WriteJournal {
     /// Record paths this process just committed.
     pub fn record(&self, paths: impl IntoIterator<Item = VaultPath>) {
         self.record_at(Instant::now(), paths);
+    }
+
+    /// Journal a write [`WriteOutcome`]'s touched paths, returning
+    /// whether anything was recorded.
+    ///
+    /// A no-op outcome (nothing written) records nothing and returns
+    /// `false`: the caller must then also skip its `origin: self` emit,
+    /// or it would announce — and, for the echo window, suppress genuine
+    /// external edits to — paths this process never wrote (#315). This is
+    /// the single seam that ties "did we write?" to "should we journal
+    /// and emit?", so no command can get the pairing wrong.
+    pub fn record_write(&self, outcome: &WriteOutcome) -> bool {
+        if outcome.touched() {
+            self.record(outcome.paths.iter().cloned());
+            true
+        } else {
+            false
+        }
     }
 
     /// Was `path` written by us within the echo window? Prunes stale

@@ -207,12 +207,16 @@ impl CuadernoServer {
         Parameters(input): Parameters<UpdateProjectStateInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        // The MCP surface reports a single path; take the outcome's
+        // primary (the project map). The richer touched-path set is for
+        // the desktop echo journal (#315) and is ignored here.
         let path = self
             .with_vault(move |vault| {
                 vault.update_project_state(at, &input.project, &input.new_state)
             })
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(into_mcp_error)?
+            .primary;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Updated state on {}", path),
@@ -289,10 +293,14 @@ impl CuadernoServer {
         Parameters(input): Parameters<ActionQueryInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        // Only the primary project path is surfaced here; the outcome's
+        // full touched set (which includes any archival move) is for the
+        // desktop echo journal (#315), not the MCP reply.
         let path = self
             .with_vault(move |vault| vault.complete_action(at, &input.project, &input.query))
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(into_mcp_error)?
+            .primary;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Completed action on {}", path),

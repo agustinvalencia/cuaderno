@@ -19,6 +19,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   scans use — never a parallel regex — so the grammar stays canonical and lint can never drift
   from it; only list bullets are checked, so section prose and headings are untouched.
 
+### Fixed
+
+- **Desktop write journal now suppresses exactly the paths a write touched** (#315) — the
+  Tauri layer's `WriteJournal` records the paths this process wrote so the file-watcher can tell
+  its own echoes from external edits. It used to reconstruct that set by hand from a single
+  primary path the domain returned, which leaked three ways: a `complete_action` that archived an
+  attached note (`actions/<slug>.md` -> `actions/_done/<year>/<slug>.md`) never journalled those
+  two paths, so the watcher echoed them back and forced a redundant refetch; an
+  `update_project_state` that silently no-ops on unchanged text still journalled the project and
+  daily paths, planting a false suppression entry that could swallow a genuine external edit for
+  the ~2s echo window; and the daily-note path was rebuilt client-side, duplicating a domain
+  rule. Domain write methods `complete_action` and `update_project_state` now return a
+  `WriteOutcome { primary, paths }` (`VaultTransaction::commit` reports the touched file set),
+  so the desktop layer journals the exact paths the domain wrote — archival moves included — and
+  skips journalling and its self-change emit entirely on a no-op. CLI and MCP surfaces are
+  unchanged: they read only `outcome.primary`.
+
 ## [0.9.0] - 2026-07-08
 
 The vault picker - the app asks for its vault instead of requiring launchctl.

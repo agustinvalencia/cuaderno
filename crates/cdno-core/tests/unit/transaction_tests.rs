@@ -99,11 +99,38 @@ fn commit_applies_move_and_delete() {
     .expect("write lock");
     tx.move_file(vp("a.md"), vp("c.md"));
     tx.delete_file(vp("b.md"));
-    tx.commit().unwrap();
+    let touched = tx.commit().unwrap();
 
     assert_eq!(store.read_file(&vp("c.md")).unwrap(), "A");
     assert!(!store.exists(&vp("a.md")).unwrap());
     assert!(!store.exists(&vp("b.md")).unwrap());
+
+    // commit reports every touched file path in stage order. A move
+    // counts BOTH endpoints — the source vanishes and the destination
+    // appears, so a watcher sees a change at each (this is what the
+    // desktop echo journal needs, #315).
+    assert_eq!(touched, vec![vp("a.md"), vp("c.md"), vp("b.md")]);
+}
+
+#[test]
+fn commit_touched_paths_dedupes_repeated_writes() {
+    // A note written then re-written in the same batch is one touched
+    // path, not two: the journal only needs each path once.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.write_file(vp("projects/foo.md"), "first\n");
+    tx.write_file(vp("projects/foo.md"), "second\n");
+    tx.write_file(vp("journal/2026/daily/2026-05-01.md"), "log\n");
+    let touched = tx.commit().unwrap();
+
+    assert_eq!(
+        touched,
+        vec![
+            vp("projects/foo.md"),
+            vp("journal/2026/daily/2026-05-01.md"),
+        ],
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -492,7 +519,7 @@ fn import_external_commits_alongside_a_stub_write() {
         vp("portfolios/p/2026-06-13-d.md"),
         "---\ntype: evidence\n---\n# d\n",
     );
-    tx.commit().unwrap();
+    let touched = tx.commit().unwrap();
 
     assert!(
         store
@@ -500,6 +527,42 @@ fn import_external_commits_alongside_a_stub_write() {
             .unwrap()
     );
     assert!(store.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
+
+    // The touched set must carry the imported artefact's DESTINATION (the
+    // in-vault path a watcher sees appear) alongside the stub write. The
+    // import's source is a real filesystem path outside the vault, so it
+    // is deliberately absent. Order is first-staged: import, then stub.
+    assert_eq!(
+        touched,
+        vec![
+            vp("portfolios/p/2026-06-13-d/derivation.pdf"),
+            vp("portfolios/p/2026-06-13-d.md"),
+        ],
+    );
+}
+
+#[test]
+fn commit_touched_paths_excludes_index_only_ops() {
+    // The touched set is the *file* effect of a commit — a watcher only
+    // observes on-disk changes. A transaction that stages only index ops
+    // (no file write) must therefore commit to an EMPTY set, or the echo
+    // journal would suppress paths nothing was written to.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    // Seed a note so the index op has a subject; write it OUTSIDE the
+    // transaction so the transaction itself stages no file op.
+    store
+        .write_file(&vp("projects/foo.md"), "---\ntype: project\n---\n# Foo\n")
+        .unwrap();
+
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.replace_tags(vp("projects/foo.md"), vec!["urgent".to_owned()]);
+    let touched = tx.commit().unwrap();
+
+    assert!(
+        touched.is_empty(),
+        "an index-only commit touches no files: {touched:?}"
+    );
 }
 
 #[test]

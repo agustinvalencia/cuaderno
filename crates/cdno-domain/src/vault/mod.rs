@@ -52,6 +52,7 @@ mod stewardships;
 mod templating;
 mod tracking;
 mod weekly;
+mod write_outcome;
 
 /// The level-2 heading of a daily note's running history. Shared across
 /// the modules that read it (`context`), write it (`log`), and keep it
@@ -76,6 +77,7 @@ pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
 pub use templating::{PlaceholderSource, TemplatePlaceholder};
 pub use weekly::{WeeklyNoteView, WeeklySection};
+pub use write_outcome::WriteOutcome;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`
 // to reach the helper's defensive error branches without any

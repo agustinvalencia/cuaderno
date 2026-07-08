@@ -14,6 +14,7 @@ use crate::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
+use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -151,12 +152,19 @@ impl Vault {
     /// before matching). Zero matches → `ActionNotFound`. More than
     /// one match → `AmbiguousAction` carrying the candidate texts so
     /// the user can re-query with enough context to disambiguate.
+    ///
+    /// Returns a [`WriteOutcome`]: `primary` is the project map, and
+    /// `paths` carries every file the commit wrote — the map, the
+    /// daily-log note, and (when the bullet wikilinked an action note)
+    /// the archival move's source and destination. The desktop layer
+    /// journals that full set so the watcher can't echo the archive
+    /// writes back as external edits (#315).
     pub fn complete_action(
         &self,
         at: NaiveDateTime,
         slug: &str,
         query: &str,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
@@ -220,9 +228,9 @@ impl Vault {
             self.stage_action_archival(at, action_slug, &mut tx)?;
         }
         self.stage_daily_log(at, &log_entry, &mut tx)?;
-        tx.commit()?;
+        let touched = tx.commit()?;
 
-        Ok(path)
+        Ok(WriteOutcome::written(path, touched))
     }
 
     /// Promote an open bullet to a manifest action note (design §5.11).

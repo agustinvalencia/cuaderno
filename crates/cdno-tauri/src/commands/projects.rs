@@ -17,7 +17,7 @@ use crate::events::VaultArea;
 use crate::state::AppState;
 use crate::with_vault::with_vault;
 
-use super::actions::{daily_path_for, record_and_emit};
+use super::actions::{daily_path_for, record_and_emit, record_outcome_and_emit};
 
 /// How far back Project Detail looks for daily-log mentions of the
 /// project. Matches the MCP `get_project_context` window (30 days) so
@@ -223,19 +223,19 @@ pub async fn update_project_state<R: tauri::Runtime>(
     new_state: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    // Journal the daily for the same instant the domain call received,
-    // so a state update straddling midnight records the day it wrote to
-    // rather than the day the path is reconstructed (midnight TOCTOU).
-    let date = now.date();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let outcome = with_vault(&state.vault, move |vault| {
         vault.update_project_state(now, &project, &new_state)
     })
     .await??;
-    let daily = daily_path_for(date);
-    record_and_emit(
+    // `record_outcome_and_emit` journals and emits only when the domain
+    // actually wrote (a no-op on unchanged text touches nothing), so an
+    // unchanged-state call plants no false echo-suppression entry, and
+    // the daily path we journal is the one the domain wrote — never a
+    // client-side reconstruction that could drift across midnight (#315).
+    record_outcome_and_emit(
         &app,
         &state,
-        vec![project_path, daily],
+        &outcome,
         vec![VaultArea::Projects, VaultArea::Daily],
     );
     Ok(())

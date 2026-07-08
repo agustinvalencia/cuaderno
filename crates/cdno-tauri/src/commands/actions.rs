@@ -24,15 +24,45 @@ use crate::state::AppState;
 use crate::with_vault::with_vault;
 
 /// Record `paths` as self-writes and emit the matching
-/// `origin: self` change event. Shared by every write command.
+/// `origin: self` change event. Shared by every write command that
+/// always writes on success.
 pub(crate) fn record_and_emit<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     state: &AppState,
     paths: Vec<VaultPath>,
     areas: Vec<VaultArea>,
 ) {
+    state.journal.record(paths.iter().cloned());
+    emit_self_change(app, &paths, areas);
+}
+
+/// Journal a write [`WriteOutcome`] and emit the matching `origin: self`
+/// event — but only when the write actually touched something.
+///
+/// A silent domain no-op (e.g. `update_project_state` with unchanged
+/// text) records nothing and emits nothing, so it can't plant a false
+/// echo-suppression entry over paths that never changed (#315). The
+/// emitted paths are exactly the domain's touched set, not a client-side
+/// reconstruction, so archival moves and daily-log notes are covered.
+pub(crate) fn record_outcome_and_emit<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &AppState,
+    outcome: &cdno_domain::WriteOutcome,
+    areas: Vec<VaultArea>,
+) {
+    if state.journal.record_write(outcome) {
+        emit_self_change(app, &outcome.paths, areas);
+    }
+}
+
+/// Emit a precise `origin: self` `vault:changed` for `paths`. Journalling
+/// is the caller's responsibility; this is only the frontend notify.
+fn emit_self_change<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    paths: &[VaultPath],
+    areas: Vec<VaultArea>,
+) {
     let path_strings = paths.iter().map(|p| p.to_string()).collect();
-    state.journal.record(paths);
     // A dropped invalidation event leaves the frontend showing stale
     // data until the next reload — rare (the channel is in-process) but
     // silent, so surface it in the log rather than swallowing the Err.
@@ -78,30 +108,20 @@ pub async fn complete_action<R: tauri::Runtime>(
     action: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    // Derive the journalled daily path from the SAME instant the domain
-    // call received, not a fresh `Local::now()` afterwards: a completion
-    // that lands a hair before midnight must journal the day it wrote to,
-    // not the day the read-back happens (the midnight TOCTOU).
-    let date = now.date();
     let slug = project.clone();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let outcome = with_vault(&state.vault, move |vault| {
         vault.complete_action(now, &slug, &action)
     })
     .await??;
-    // complete_action stages the daily log line in the same transaction,
-    // so the daily is ours to journal. When the completed bullet
-    // wikilinks an action note, the domain ALSO archives
-    // `actions/<slug>.md` to `actions/_done/<year>/<slug>.md` in that
-    // same transaction — those paths are ours too, but the domain
-    // returns only the project path, so we cannot journal them here. The
-    // watcher will echo those archive writes back as external changes and
-    // trigger a redundant refetch. Fixing this needs the domain to return
-    // its full touched-path set — see #315.
-    let daily = daily_path_for(date);
-    record_and_emit(
+    // Journal exactly what the domain wrote: the project map, the daily
+    // log line, and — when the completed bullet wikilinked an action note
+    // — the archival move's source and destination. Taking the domain's
+    // reported set (rather than reconstructing it here) is what stops the
+    // watcher echoing those archive writes back as external edits (#315).
+    record_outcome_and_emit(
         &app,
         &state,
-        vec![project_path, daily],
+        &outcome,
         vec![VaultArea::Projects, VaultArea::Daily, VaultArea::Actions],
     );
     Ok(())

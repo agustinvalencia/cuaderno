@@ -195,6 +195,44 @@ impl VaultTransaction {
         self.index_ops.push(IndexOp::ReplaceFts(path, title, body));
     }
 
+    /// Every distinct vault path this transaction's *file* ops touch,
+    /// in first-staged order.
+    ///
+    /// A move counts both endpoints — the source disappears and the
+    /// destination appears, so a watcher (and the desktop echo journal,
+    /// #315) sees a change at each. Index-only ops are excluded: they
+    /// leave no file on disk for a watcher to observe.
+    ///
+    /// Deduplicated because a single logical write can stage the same
+    /// path more than once (e.g. a note written then re-written in the
+    /// same batch); the journal only needs each path once.
+    ///
+    /// Crate-private: [`commit`](Self::commit) is the only consumer and
+    /// returns this set on success, so a caller never needs to snapshot it
+    /// separately (and snapshotting before commit would report paths even
+    /// on a rolled-back write).
+    pub(crate) fn touched_paths(&self) -> Vec<VaultPath> {
+        let mut paths: Vec<VaultPath> = Vec::with_capacity(self.file_ops.len());
+        let mut push = |p: &VaultPath| {
+            if !paths.contains(p) {
+                paths.push(p.clone());
+            }
+        };
+        for op in &self.file_ops {
+            match op {
+                FileOp::Write { path, .. }
+                | FileOp::Append { path, .. }
+                | FileOp::Delete { path } => push(path),
+                FileOp::Move { src, dest } => {
+                    push(src);
+                    push(dest);
+                }
+                FileOp::Import { dest, .. } => push(dest),
+            }
+        }
+        paths
+    }
+
     // ---- commit -----------------------------------------------------
 
     /// Apply every buffered operation. File ops run first, in
@@ -202,7 +240,17 @@ impl VaultTransaction {
     /// back best-effort. Index ops run only if every file op
     /// succeeded; failures collect into a single `IndexStale` error
     /// so the caller can log and move on.
-    pub fn commit(mut self) -> Result<(), TransactionError> {
+    ///
+    /// On success returns the transaction's touched file paths (see
+    /// [`touched_paths`](Self::touched_paths)) so a caller can report
+    /// exactly what changed — the desktop layer journals these for echo
+    /// suppression (#315). Callers that don't need them discard the
+    /// returned `Vec`.
+    pub fn commit(mut self) -> Result<Vec<VaultPath>, TransactionError> {
+        // Capture the touched set before consuming the op buffers below,
+        // so a successful commit can hand it back to the caller.
+        let touched = self.touched_paths();
+
         // Phase 1: file ops with undo capture.
         let mut applied: Vec<Undo> = Vec::with_capacity(self.file_ops.len());
         for op in &self.file_ops {
@@ -279,7 +327,7 @@ impl VaultTransaction {
         }
 
         if index_errors.is_empty() {
-            Ok(())
+            Ok(touched)
         } else {
             Err(TransactionError::IndexStale(index_errors))
         }
