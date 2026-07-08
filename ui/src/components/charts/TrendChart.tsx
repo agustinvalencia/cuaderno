@@ -117,6 +117,10 @@ export function TrendChart({
       minTickGap={24}
     />
   );
+  // No explicit `domain` is set, so Recharts defaults to a zero-based
+  // numeric axis ([0, 'auto']). Keep it that way: a column mark is only
+  // honest against a zero baseline — a truncated axis would exaggerate
+  // differences between counts. Do not add a non-zero `domain` here.
   const yAxis = (
     <YAxis
       width={36}
