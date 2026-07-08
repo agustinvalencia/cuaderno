@@ -30,15 +30,19 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   stewardships: [
     "get_orientation",
     "list_stewardships",
-    "get_stewardship",
+    // No "get_stewardship" here: react-query matches query keys
+    // element-wise, and there is no query with that prefix — the live
+    // detail query is "get_stewardship_detail". A dead entry matches
+    // nothing, so it's dropped rather than kept as noise.
     "get_stewardship_detail",
     "get_weekly_bundle",
   ],
   questions: ["get_strategic_bundle"],
   inbox: ["list_inbox"],
-  // Template placeholders are config-derived: an edit to a custom
-  // tracking template or config.toml changes which fields the log form
-  // gathers, so the config area refreshes them.
+  // The config area covers both config.toml and the template files
+  // under .cuaderno/templates/. An edit to a custom tracking template
+  // (or config.toml) changes which fields the log form gathers, so it
+  // refreshes the template-field query.
   config: ["get_orientation", "get_tracking_template_fields"],
 };
 

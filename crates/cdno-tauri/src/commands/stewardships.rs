@@ -165,15 +165,12 @@ pub fn get_tracking_template_fields_impl(
     vault: &Vault,
     activity: &str,
 ) -> Result<Vec<TemplateField>, CmdError> {
+    // `slugify` is total — it returns `"untitled"` for input with no
+    // alphanumerics, never an empty string — so the slug is always a
+    // resolvable variant. `template_prompts` looks up `tracking-<slug>`
+    // and falls back to the generic template when it's absent.
     let slug = cdno_domain::slugify(activity);
-    // An empty activity has no variant to resolve — fall back to the
-    // generic template rather than looking up `tracking-.md`.
-    let variant = if slug.is_empty() {
-        None
-    } else {
-        Some(slug.as_str())
-    };
-    let prompts = vault.template_prompts("tracking", variant)?;
+    let prompts = vault.template_prompts("tracking", Some(slug.as_str()))?;
     Ok(prompts
         .into_iter()
         .map(|(name, prompt)| TemplateField { name, prompt })

@@ -83,7 +83,12 @@ function useDebounced<T>(value: T, delayMs: number): T {
  * disabled when set (plan §3.10). Defaults to "no preference" where
  * matchMedia is unavailable (e.g. the test DOM). */
 function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+  // Seed from matchMedia in the initialiser (not a post-mount effect) so
+  // a reduced-motion user never sees the one-frame animation flash from
+  // an initial `false`. The effect below keeps it reactive to changes.
+  const [reduced, setReduced] = useState(
+    () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+  );
   useEffect(() => {
     const mq = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
     if (!mq) return;
@@ -251,6 +256,10 @@ function TrendChart({
   animate: boolean;
 }) {
   const points = series.points.map((p) => ({ date: p.date, value: p.value }));
+  // A single-point series draws no line segment, so a normal r:2 dot is
+  // nearly invisible — a first tracking entry would read as an empty
+  // chart. Render a clearly visible dot instead.
+  const dotRadius = points.length === 1 ? 4 : 2;
   return (
     <figure>
       <figcaption className="text-xs text-ink-muted">{series.name}</figcaption>
@@ -286,7 +295,7 @@ function TrendChart({
               dataKey="value"
               stroke={color}
               strokeWidth={2}
-              dot={{ r: 2, fill: color }}
+              dot={{ r: dotRadius, fill: color }}
               isAnimationActive={animate}
             />
           </LineChart>
@@ -327,6 +336,16 @@ function LogEntry({
     [recentActivities],
   );
 
+  const templateFields = fields.data ?? [];
+
+  // Each activity has its own template fields, which unmount and refetch
+  // on switch. Reset the collected vars whenever the (debounced)
+  // activity settles on a new value so a value typed for activity A can
+  // never linger into activity B's note.
+  useEffect(() => {
+    setVars({});
+  }, [debouncedActivity]);
+
   function reset() {
     setActivity("");
     setRoutine("");
@@ -335,8 +354,22 @@ function LogEntry({
   }
 
   const submit = useMutation({
-    mutationFn: () =>
-      logTrackingEntry(slug, activity.trim(), content, vars, routine.trim() || undefined),
+    mutationFn: () => {
+      // Belt and braces alongside the reset-on-switch above: submit only
+      // vars whose keys belong to the CURRENT activity's template, so an
+      // orphaned key can never ride into the note.
+      const names = new Set(templateFields.map((f) => f.name));
+      const scopedVars = Object.fromEntries(
+        Object.entries(vars).filter(([name]) => names.has(name)),
+      );
+      return logTrackingEntry(
+        slug,
+        activity.trim(),
+        content,
+        scopedVars,
+        routine.trim() || undefined,
+      );
+    },
     onError: (err) => toast(errorMessage(err), "attention"),
     onSuccess: () => {
       toast(`Logged ${activity.trim()} — one more on the record.`);
@@ -360,8 +393,6 @@ function LogEntry({
     );
   }
 
-  const templateFields = fields.data ?? [];
-
   return (
     <section aria-label="Log a tracking entry" className="mt-10 border-t border-line pt-6">
       <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Log entry</h2>
@@ -369,7 +400,9 @@ function LogEntry({
         className="mt-3 space-y-3"
         onSubmit={(event) => {
           event.preventDefault();
-          if (activity.trim()) submit.mutate();
+          // Guard against a double-submit (fast second click / Enter
+          // before the mutation settles).
+          if (activity.trim() && !submit.isPending) submit.mutate();
         }}
       >
         <div>

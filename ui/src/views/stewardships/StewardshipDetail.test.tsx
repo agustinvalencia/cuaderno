@@ -2,7 +2,7 @@
 // with series; a flat one has no charts pane; recent entries open the
 // reader; the log form submits with the template-derived vars.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -137,4 +137,38 @@ test("the log form fetches template fields and submits with the vars map", async
     content: "Good one.",
     vars: { mood: "strong" },
   });
+});
+
+test("switching activity clears prior field values and submits only the new activity's vars", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  // Both activities' templates return a field of the SAME name ("mood"),
+  // so an un-reset value would silently ride across the switch.
+  renderDetail(EXPANDED, (cmd, args) => calls.push({ cmd, args }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+
+  // Activity A: fill the "mood" field.
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  const moodA = await screen.findByLabelText("How did it feel?");
+  fireEvent.change(moodA, { target: { value: "strong" } });
+  expect((moodA as HTMLInputElement).value).toBe("strong");
+
+  // Switch to activity B — the same-named field must come up empty.
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "swim" } });
+  await waitFor(() =>
+    expect((screen.getByLabelText("How did it feel?") as HTMLInputElement).value).toBe(""),
+  );
+
+  const moodB = screen.getByLabelText("How did it feel?");
+  fireEvent.change(moodB, { target: { value: "calm" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+  expect(await screen.findByText(/one more on the record/)).toBeDefined();
+
+  const logged = calls.find((c) => c.cmd === "log_tracking_entry");
+  expect(logged?.args).toMatchObject({
+    activity: "swim",
+    vars: { mood: "calm" },
+  });
+  // A's value never rode along.
+  expect((logged?.args as { vars: Record<string, string> }).vars).toEqual({ mood: "calm" });
 });

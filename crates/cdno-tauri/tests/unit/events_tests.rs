@@ -41,13 +41,23 @@ fn classify_splits_journal_by_daily_and_weekly() {
 }
 
 #[test]
-fn classify_cuaderno_dir_is_config_only() {
+fn classify_cuaderno_config_and_templates_are_config() {
     assert_eq!(
         classify(&vp(".cuaderno/config.toml")),
         Some(VaultArea::Config)
     );
+    // Template edits change the log form's fields, so they refresh the
+    // config area alongside config.toml.
+    assert_eq!(
+        classify(&vp(".cuaderno/templates/daily.md")),
+        Some(VaultArea::Config)
+    );
+    assert_eq!(
+        classify(&vp(".cuaderno/templates/tracking-gym.md")),
+        Some(VaultArea::Config)
+    );
+    // But the index db and other non-markdown churn stays invisible.
     assert_eq!(classify(&vp(".cuaderno/index.db")), None);
-    assert_eq!(classify(&vp(".cuaderno/templates/daily.md")), None);
 }
 
 #[test]
