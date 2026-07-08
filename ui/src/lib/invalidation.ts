@@ -25,12 +25,12 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   actions: ["get_orientation", "list_all_actions"],
   daily: ["get_orientation", "read_daily", "get_weekly_bundle"],
   weekly: ["get_weekly_bundle"],
-  commitments: ["get_orientation", "get_commitments", "get_weekly_bundle"],
-  portfolios: ["list_portfolios", "get_portfolio"],
+  commitments: ["get_strategic_bundle", "get_orientation", "get_commitments", "get_weekly_bundle"],
+  portfolios: ["list_portfolios", "get_portfolio", "get_strategic_bundle"],
   // A tracking-log write (or an external edit under stewardships/)
   // touches both the list and the open detail — the detail composes the
   // series, recent entries, and count that a new note changes.
-  stewardships: [
+  stewardships: ["get_strategic_bundle", 
     "get_orientation",
     "list_stewardships",
     // No "get_stewardship" here: react-query matches query keys

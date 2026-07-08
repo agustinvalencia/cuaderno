@@ -299,12 +299,12 @@ function CapModal({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-label="Room to activate">
+      <DialogContent>
         <DialogTitle className="text-base font-medium text-ink">
           Room for {numberWord(maxActive)}. Park one to make space.
         </DialogTitle>
         <DialogDescription className="mt-1 text-sm text-ink-muted">
-          You're focused on {maxActive} projects. Park one and the slot opens up.
+          You're focused on {numberWord(maxActive)} projects. Park one and the slot opens up.
         </DialogDescription>
         <ul className="mt-4 space-y-2">
           {active.map((slot) => (
