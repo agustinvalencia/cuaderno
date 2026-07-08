@@ -55,6 +55,62 @@ fn read_daily_note_returns_markdown_when_present() {
     assert!(view.markdown.contains("did a thing"));
 }
 
+// --- daily_dates_in_month --------------------------------------------
+
+/// Seed a bare daily note file directly at its canonical path — enough
+/// for the month scan, which keys on the filename, not the content.
+fn seed_daily(store: &Arc<dyn VaultStore>, y: i32, m: u32, d: u32) {
+    let path = cdno_core::path::VaultPath::new(cdno_core::paths::daily_note_relpath(
+        NaiveDate::from_ymd_opt(y, m, d).unwrap(),
+    ))
+    .unwrap();
+    store
+        .write_file(&path, "---\ntype: daily\n---\n\n# Day\n")
+        .unwrap();
+}
+
+#[test]
+fn daily_dates_in_month_is_empty_for_a_note_less_month() {
+    let (vault, _store) = make_vault();
+    let dates = vault.daily_dates_in_month(2026, 4).expect("scan succeeds");
+    assert!(dates.is_empty(), "no notes filed yet");
+}
+
+#[test]
+fn daily_dates_in_month_lists_only_that_months_notes_sorted() {
+    let (vault, store) = make_vault();
+    // Two in April (out of order on disk), one in May, one in the prior
+    // year's April — only the two April-2026 notes should come back, in
+    // chronological order.
+    seed_daily(&store, 2026, 4, 26);
+    seed_daily(&store, 2026, 4, 3);
+    seed_daily(&store, 2026, 5, 1);
+    seed_daily(&store, 2025, 4, 15);
+
+    let dates = vault.daily_dates_in_month(2026, 4).expect("scan succeeds");
+    assert_eq!(
+        dates,
+        vec![
+            NaiveDate::from_ymd_opt(2026, 4, 3).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 4, 26).unwrap(),
+        ],
+        "only April 2026, sorted",
+    );
+}
+
+#[test]
+fn daily_dates_in_month_ignores_non_date_files() {
+    let (vault, store) = make_vault();
+    seed_daily(&store, 2026, 4, 10);
+    // A stray non-date file in the same directory must be skipped, not
+    // panic the parse.
+    let stray = cdno_core::path::VaultPath::new("journal/2026/daily/README.md").unwrap();
+    store.write_file(&stray, "notes").unwrap();
+
+    let dates = vault.daily_dates_in_month(2026, 4).expect("scan succeeds");
+    assert_eq!(dates, vec![NaiveDate::from_ymd_opt(2026, 4, 10).unwrap()]);
+}
+
 // --- upsert_daily_section --------------------------------------------
 
 #[test]
