@@ -1,6 +1,6 @@
 //! Monthly-review note reads and section writes.
 //!
-//! The monthly note (design §5.2) is one artefact per calendar month at
+//! The monthly note (design §5.2.1) is one artefact per calendar month at
 //! `journal/<year>/monthly/<YYYY-MM>.md`, composed during the
 //! monthly-review ritual. It carries three review sections — Wins,
 //! Themes, and Next Month's Focus — plus a scaffolded `## Weeks` block
@@ -47,7 +47,7 @@ pub struct MonthlyNoteView {
     pub markdown: String,
 }
 
-/// The writable sections of a monthly note (design §5.2). All three are
+/// The writable sections of a monthly note (design §5.2.1). All three are
 /// review content composed during the ritual. There is no append-only
 /// history section, so — like the weekly note — nothing is held back
 /// from the writer. Deliberately celebration-first and lean: no Metrics
@@ -224,7 +224,7 @@ pub(in crate::vault) fn mondays_in_month(date: NaiveDate) -> Vec<NaiveDate> {
 }
 
 impl Vault {
-    /// Scaffold a fresh monthly note per design §5.2: calendar-month
+    /// Scaffold a fresh monthly note per design §5.2.1: calendar-month
     /// frontmatter (`month` = `YYYY-MM`, `date_start` = first of month,
     /// `date_end` = last of month), a `# <Month> YYYY` heading, the three
     /// empty review sections, and a `## Weeks` block linking every weekly

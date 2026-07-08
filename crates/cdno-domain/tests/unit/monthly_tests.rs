@@ -230,6 +230,77 @@ fn scaffold_weeks_handle_month_boundaries() {
 }
 
 #[test]
+fn scaffold_weeks_link_across_the_iso_year_boundary() {
+    // December 2025's last Monday (29 Dec 2025) belongs to ISO week 1 of
+    // *2026* — ISO weeks straddle calendar years. The weeks block must
+    // point at the next ISO year's folder and filename (2026-W01), not at
+    // a non-existent 2025-W01, proving the wikilink is built from
+    // `weekly_note_relpath` (ISO-year keyed), not the month's calendar
+    // year.
+    let (vault, store) = make_vault();
+
+    let dec = vault
+        .upsert_monthly_section(
+            NaiveDate::from_ymd_opt(2025, 12, 10).unwrap(),
+            MonthlySection::Wins,
+            "x",
+            false,
+        )
+        .unwrap();
+    // The note itself lives under the month's calendar year (2025).
+    assert_eq!(
+        dec.to_string(),
+        "journal/2025/monthly/2025-12.md",
+        "monthly note is keyed by calendar year: {dec}"
+    );
+    let dec_raw = store.read_file(&dec).unwrap();
+    assert!(
+        dec_raw.contains("- [[journal/2026/weekly/2026-W01]]"),
+        "29 Dec 2025 (a Monday) links the next ISO year's W01:\n{dec_raw}"
+    );
+}
+
+#[test]
+fn scaffold_date_end_handles_non_leap_and_leap_february() {
+    // The last-of-month computation (first of next month minus one day)
+    // must give the right February length in both a non-leap and a leap
+    // year, with no per-month special-casing.
+    let (vault, store) = make_vault();
+
+    let feb_2026 = vault
+        .upsert_monthly_section(
+            NaiveDate::from_ymd_opt(2026, 2, 15).unwrap(),
+            MonthlySection::Wins,
+            "x",
+            false,
+        )
+        .unwrap();
+    let feb_2026_raw = store.read_file(&feb_2026).unwrap();
+    assert!(
+        feb_2026_raw.contains("date_start: 2026-02-01"),
+        "{feb_2026_raw}"
+    );
+    assert!(
+        feb_2026_raw.contains("date_end: 2026-02-28"),
+        "non-leap February ends on the 28th:\n{feb_2026_raw}"
+    );
+
+    let feb_2028 = vault
+        .upsert_monthly_section(
+            NaiveDate::from_ymd_opt(2028, 2, 15).unwrap(),
+            MonthlySection::Wins,
+            "x",
+            false,
+        )
+        .unwrap();
+    let feb_2028_raw = store.read_file(&feb_2028).unwrap();
+    assert!(
+        feb_2028_raw.contains("date_end: 2028-02-29"),
+        "leap February ends on the 29th:\n{feb_2028_raw}"
+    );
+}
+
+#[test]
 fn upsert_is_keyed_by_month_so_any_day_writes_the_same_note() {
     let (vault, store) = make_vault();
     let first = NaiveDate::from_ymd_opt(2026, 7, 1).unwrap();

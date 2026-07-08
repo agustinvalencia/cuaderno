@@ -1,6 +1,6 @@
 //! `cdno monthly`: show the monthly review note for a calendar month.
 //!
-//! The monthly note (design §5.2) is written by the monthly-review
+//! The monthly note (design §5.2.1) is written by the monthly-review
 //! ritual via the MCP `upsert_monthly_section` tool; this is the read
 //! window onto it from the terminal — the only CLI surface for monthly
 //! content besides `cdno review monthly`. Rendering is split from I/O

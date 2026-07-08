@@ -71,7 +71,7 @@ A standalone promise with a hard `due:` date and a `context`. On fulfilment it m
 `commitments/_done/<year>/`. Standalone commitments are one of four sources feeding the aggregated
 [commitments view](../tutorials/commitments.md).
 
-These eleven are a closed set with built-in behaviour. For an entity they don't cover (people,
+These twelve are a closed set with built-in behaviour. For an entity they don't cover (people,
 books, clients), you can declare a **schema-only** [custom note type](../reference/custom-note-types.md)
 in `config.toml` — a folder, field rules, and a template, with no recompile (see the worked
 [Tracking people](../tutorials/tracking-people.md) recipe).

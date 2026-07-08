@@ -32,7 +32,7 @@ Restart the client. Cuaderno's tools then appear in the client's tool list.
 
 ## What the assistant can do
 
-The server advertises **42 tools**, grouped by purpose:
+The server advertises **44 tools**, grouped by purpose:
 
 - **Context-gathering reads** — `get_orientation`, `get_project_context`, `get_portfolio_contents`,
   `get_weekly_context`, `search_notes`, `read_daily_note`, and more.

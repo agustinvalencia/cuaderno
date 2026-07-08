@@ -50,7 +50,7 @@ This means the same command serves a human at a prompt and a script with no chan
   `action`, `portfolio`, `stewardship`, `question`, `commit`) emit a `{ "path": ..., "message": ... }`
   result, and **run non-interactively** (so prompts can't corrupt the JSON on a terminal).
 - **Maintenance / interactive / bootstrap commands** (`init`, `lint`, `reindex`, `normalise`,
-  `triage`, `review`, `weekly`) ignore `--json`.
+  `triage`, `review`, `weekly`, `monthly`) ignore `--json`.
 
 The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 [JSON output](../json-output.md) for every shape.
@@ -66,10 +66,11 @@ The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 | [`orient`](orient.md) | Morning orientation |
 | [`status`](status.md) | Active projects + top actions |
 | [`weekly`](weekly.md) | Show the weekly note |
+| [`monthly`](monthly.md) | Show the monthly note |
 | [`commitments`](commitments.md) | Aggregated deadlines |
 | [`questions`](questions.md) | List active questions |
 | [`search`](search.md) | Full-text search |
-| [`review`](review.md) | Guided weekly review |
+| [`review`](review.md) | Guided weekly/monthly review |
 | [`project`](project.md) | Manage project maps |
 | [`action`](action.md) | Manage next actions |
 | [`portfolio`](portfolio.md) | Manage evidence portfolios |

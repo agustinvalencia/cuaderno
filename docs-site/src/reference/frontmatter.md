@@ -25,6 +25,15 @@ date_start: 2026-04-20
 date_end: 2026-04-26
 ```
 
+## `monthly`
+
+```yaml
+type: monthly
+month: 2026-04
+date_start: 2026-04-01
+date_end: 2026-04-30
+```
+
 ## `project`
 
 ```yaml

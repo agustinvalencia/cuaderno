@@ -43,6 +43,7 @@
 - [orient](reference/cli/orient.md)
 - [status](reference/cli/status.md)
 - [weekly](reference/cli/weekly.md)
+- [monthly](reference/cli/monthly.md)
 - [commitments](reference/cli/commitments.md)
 - [questions](reference/cli/questions.md)
 - [search](reference/cli/search.md)
