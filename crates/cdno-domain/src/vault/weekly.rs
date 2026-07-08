@@ -194,7 +194,7 @@ impl Vault {
         // `week:` wants the padded ISO form `YYYY-Www`, the `# Week N`
         // heading wants the bare number. Templates are pure substitution
         // (no logic), so the padding can't be expressed in-template.
-        ctx.set_contextual("week", format!("{}-W{:02}", iso.year(), iso.week()));
+        ctx.set_contextual("week", super::iso_week_label(date));
         ctx.set_contextual("week_num", iso.week().to_string());
         ctx.set_contextual("year", iso.year().to_string());
         ctx.set_contextual("date_start", monday.format("%Y-%m-%d").to_string());

@@ -146,7 +146,7 @@ Each type provides these:
 
 | Note type | Available `{{placeholders}}` |
 |-----------|------------------------------|
-| `daily` | `date`, `heading`, `weekday` |
+| `daily` | `date`, `heading`, `weekday`, `day_name`, `week` |
 | `weekly` | `week`, `week_num`, `year`, `date_start`, `date_end` |
 | `monthly` | `month`, `month_name`, `year`, `date_start`, `date_end`, `weeks` |
 | `project` | `title`, `context`, `status`, `created`, `core_question` |
@@ -160,6 +160,10 @@ Each type provides these:
 | `inbox` | `body`, `created` |
 
 You can use any subset, in any order, and add as much static Markdown around them as you like.
+
+> **Daily specifics.** `weekday` and `day_name` are aliases for the same value — the weekday name (e.g.
+> `Sunday`) — so use whichever reads better. `week` is the ISO-week label `YYYY-Www` (e.g. `2026-W27`),
+> matching the weekly note for that date, so `[[{{week}}]]` in a daily template links straight to it.
 
 > **Discover them from the CLI.** `cdno templates vars <type>` lists exactly this table for a type —
 > the complete set its create path supplies — and folds in any `[variables]` / `[variables.prompt]`
