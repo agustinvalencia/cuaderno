@@ -1080,9 +1080,10 @@ cdno questions           # Show active questions grouped by domain
 ```bash
 cdno reindex             # Rebuild SQLite index from vault files
 cdno lint                # Validate all notes against schemas (also warns on
-                         # broken wikilinks and frontmatter-order drift)
+                         # broken wikilinks, frontmatter-order drift, and
+                         # malformed stewardship-dashboard bullets)
 cdno lint --strict       # Treat warnings (broken wikilinks, frontmatter-order
-                         # drift) as failures too
+                         # drift, malformed dashboard bullets) as failures too
 cdno normalise           # Reorder note frontmatter to canonical per-type order
 cdno normalise --check   # Report out-of-order notes (non-zero exit), write nothing
 ```

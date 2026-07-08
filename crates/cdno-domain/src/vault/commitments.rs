@@ -617,7 +617,7 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
 /// cares about *when* the next occurrence is due. Trailing
 /// `(overdue)` is tolerated and stripped before the date parse so
 /// hand-annotated lines still round-trip.
-fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
+pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
     let rest = line.trim_start().strip_prefix("- ")?;
     let parts: Vec<&str> = rest.splitn(3, '\u{2014}').collect();
     if parts.len() != 3 {

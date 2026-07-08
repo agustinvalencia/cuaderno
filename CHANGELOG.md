@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Lint surfaces malformed stewardship-dashboard bullets** (#312) — `Vault::lapsed_habits`
+  and the periodic-commitment parser both skip dashboard lines they cannot parse *by design*,
+  so a hand-typed near-miss (an ASCII hyphen or en-dash where the em-dash belongs, a missing
+  `next:` marker, an unparseable date) used to vanish from the lapse scan and the commitments
+  aggregation with no diagnostic anywhere. `cdno lint` (and the `lint` MCP tool) now scans each
+  stewardship's `## Active Habits` and `## Periodic Commitments` sections and emits a `warning`
+  for every bullet the canonical parser rejects, pointing at the stewardship and the offending
+  line with a cheap hint at the likely typo. Acceptance is delegated to the same parsers the
+  scans use — never a parallel regex — so the grammar stays canonical and lint can never drift
+  from it; only list bullets are checked, so section prose and headings are untouched.
+
 ## [0.9.0] - 2026-07-08
 
 The vault picker - the app asks for its vault instead of requiring launchctl.

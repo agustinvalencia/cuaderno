@@ -187,7 +187,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), and broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
+        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope), and malformed stewardship-dashboard bullets (`warning`; `## Active Habits` / `## Periodic Commitments` lines the canonical parsers reject). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
     )]
     pub async fn lint(
         &self,

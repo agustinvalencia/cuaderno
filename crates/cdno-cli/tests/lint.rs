@@ -59,3 +59,32 @@ fn lint_errors_when_target_is_not_a_vault() {
     let msg = format!("{err}");
     assert!(msg.contains("no Cuaderno vault"), "unexpected error: {msg}");
 }
+
+#[test]
+fn lint_warns_on_malformed_stewardship_dashboard_line_and_strict_makes_it_fatal() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    // A stewardship whose Periodic Commitments bullet omits the `next:`
+    // marker. The canonical parser rejects it, so the new dashboard rule
+    // warns — proving it flows through the CLI surface with no per-rule
+    // wiring (the frontmatter is in canonical order and there are no other
+    // sections, so this is the only issue in the report).
+    let steward = dir.path().join("stewardships/health.md");
+    fs::create_dir_all(steward.parent().unwrap()).unwrap();
+    fs::write(
+        &steward,
+        "---\ntype: stewardship\ncontext: personal\n---\n\n# Health\n\n## Periodic Commitments\n- Dental check-up \u{2014} every 6 months \u{2014} next 2026-04-01\n",
+    )
+    .unwrap();
+
+    // Non-strict: a warning is non-fatal, so lint still succeeds.
+    lint::run(dir.path(), false).expect("dashboard warning is non-fatal without --strict");
+
+    // --strict: the warning becomes a failure.
+    let err =
+        lint::run(dir.path(), true).expect_err("strict lint should fail on the dashboard warning");
+    assert!(
+        format!("{err}").contains("1 warning(s)"),
+        "unexpected error: {err}"
+    );
+}

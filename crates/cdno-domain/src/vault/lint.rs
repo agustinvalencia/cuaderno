@@ -4,15 +4,22 @@ use std::collections::{HashMap, HashSet};
 use std::path::Component;
 use std::sync::Arc;
 
+use chrono::NaiveDate;
+
 use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
 
 use crate::error::DomainError;
 use crate::lint::{LintIssue, LintReport};
+use crate::note_type::NoteType;
 
 use super::Vault;
+use super::commitments::parse_periodic_line;
+use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
+use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 
 impl Vault {
     /// Validate every indexed note and return a structured report.
@@ -33,6 +40,10 @@ impl Vault {
     ///   (a `Warning`, not an `Error` -- the note is structurally fine);
     /// - frontmatter-order drift: keys not in the effective template's
     ///   canonical order (a `Warning`; `cdno normalise` fixes it, #236).
+    /// - malformed stewardship-dashboard bullets: `## Active Habits` and
+    ///   `## Periodic Commitments` lines the canonical parsers reject —
+    ///   the near-misses that would otherwise vanish silently from the
+    ///   lapse scan and the commitments aggregation (a `Warning`, #312).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -216,9 +227,157 @@ impl Vault {
         }
 
         issues.extend(orphan_artefact_issues(&self.store)?);
+        issues.extend(self.stewardship_dashboard_issues()?);
 
         Ok(LintReport { issues })
     }
+
+    /// Scan every stewardship dashboard for malformed `## Active Habits`
+    /// and `## Periodic Commitments` bullets (#312).
+    ///
+    /// The lapse scan ([`Vault::lapsed_habits`]) and the periodic
+    /// commitment aggregator both skip lines they can't parse *by
+    /// design* — a hand-typed near-miss (an ASCII hyphen or en-dash
+    /// where the em-dash belongs, a missing `next:` marker, an
+    /// unparseable date) therefore disappears with no diagnostic
+    /// anywhere. This rule turns that silent skip into a visible
+    /// `Warning`.
+    ///
+    /// Acceptance is delegated to the *canonical* parsers, never a
+    /// parallel regex that could drift: a bullet is a near-miss exactly
+    /// when [`parse_habit_line`] (habits) or [`parse_periodic_line`]
+    /// (commitments) rejects it. Only list bullets (`- ...`) are
+    /// checked, so section prose, blank lines and the heading itself are
+    /// never flagged. The hint that follows is a cheap heuristic guess
+    /// at the likely typo; it never changes the accept/reject verdict.
+    fn stewardship_dashboard_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        let mut issues = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Stewardship.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            // A dashboard whose markdown won't parse is already surfaced
+            // by the read/frontmatter checks in the main loop; a section
+            // scan has nothing further to add, so move on.
+            let Ok(doc) = MarkdownDocument::parse(raw) else {
+                continue;
+            };
+
+            // Active Habits — canonical shape `- {habit} — {status}`.
+            if let Ok(section) = doc.section(ACTIVE_HABITS_SECTION) {
+                for line in section.lines() {
+                    if is_dashboard_bullet(line) && parse_habit_line(line).is_none() {
+                        issues.push(LintIssue::warning(
+                            entry.path.clone(),
+                            format!(
+                                "malformed Active Habits line `{}` -- {}",
+                                line.trim(),
+                                habit_line_hint(line)
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // Periodic Commitments — canonical shape
+            // `- {title} — {recurrence} — next: YYYY-MM-DD`.
+            if let Ok(section) = doc.section(PERIODIC_COMMITMENTS_SECTION) {
+                for line in section.lines() {
+                    if is_dashboard_bullet(line) && parse_periodic_line(line).is_none() {
+                        issues.push(LintIssue::warning(
+                            entry.path.clone(),
+                            format!(
+                                "malformed Periodic Commitments line `{}` -- {}",
+                                line.trim(),
+                                periodic_line_hint(line)
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(issues)
+    }
+}
+
+/// A dashboard-section line is a candidate bullet when, ignoring leading
+/// whitespace, it opens with the markdown list marker `- ` — the exact
+/// prefix both canonical parsers key on. Gating on this first means a
+/// line the parser could ever accept always reaches the parser, while
+/// prose, blank lines and the section heading never do and so can never
+/// be flagged.
+///
+/// Known limit, shared with the parsers by construction: `*`/`+` list
+/// markers and `-` without a trailing space are invisible to both, so a
+/// wrong-marker near-miss still vanishes without a diagnostic. Closing
+/// that would mean widening this gate beyond what the canonical grammar
+/// accepts — out of scope for #312.
+fn is_dashboard_bullet(line: &str) -> bool {
+    line.trim_start().starts_with("- ")
+}
+
+/// The bullet body a hint inspects: everything after the `- ` marker.
+/// The callers only reach a hint for lines that already passed
+/// [`is_dashboard_bullet`], so the prefix is always present.
+fn bullet_body(line: &str) -> &str {
+    line.trim_start().strip_prefix("- ").unwrap_or("").trim()
+}
+
+/// Best-effort guess at *why* an `## Active Habits` bullet fails the
+/// `- {habit} — {status}` grammar. Heuristic only — the accept/reject
+/// verdict is [`parse_habit_line`]'s; this just names the most likely
+/// typo so the fix is obvious. Ordered most-specific first.
+fn habit_line_hint(line: &str) -> &'static str {
+    let body = bullet_body(line);
+    if body.contains('\u{2014}') {
+        // The separator is present, so one side must be empty. Checked
+        // before any dash guess: an en-dash inside the habit *name* is
+        // legitimate, and the hint must not blame a dash that isn't
+        // broken when the real defect is elsewhere.
+        "the habit text or the status either side of the em-dash is empty"
+    } else if body.contains('\u{2013}') {
+        // En-dash: the near-miss the naked eye can't tell from an em-dash.
+        "found an en-dash (\u{2013}) where an em-dash (\u{2014}) separates habit from status"
+    } else if body.contains(" - ") {
+        // ASCII hyphen standing in for the em-dash separator.
+        "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates habit from status"
+    } else {
+        "missing the em-dash (\u{2014}) that separates habit from status"
+    }
+}
+
+/// Best-effort guess at *why* a `## Periodic Commitments` bullet fails
+/// the `- {title} — {recurrence} — next: YYYY-MM-DD` grammar. Heuristic
+/// only, mirroring [`habit_line_hint`]: the verdict is
+/// [`parse_periodic_line`]'s. Staged so the most actionable pointer wins.
+fn periodic_line_hint(line: &str) -> &'static str {
+    let body = bullet_body(line);
+    // The grammar needs two em-dashes: `title — recurrence — next: date`.
+    let parts: Vec<&str> = body.splitn(3, '\u{2014}').collect();
+    if parts.len() < 3 {
+        // Only blame a dash once the em-dash structure is known to be
+        // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
+        // is legitimate, and a line failing on a missing `next:` or a bad
+        // date must not be pointed at a dash that isn't broken.
+        if body.contains('\u{2013}') {
+            return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) is expected";
+        }
+        if body.contains(" - ") {
+            return "found an ASCII hyphen (-) where an em-dash (\u{2014}) is expected";
+        }
+        return "expected `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD` (needs two em-dashes)";
+    }
+    let next_part = parts[2].trim();
+    let Some(after_marker) = next_part.strip_prefix("next:") else {
+        return "missing the `next:` marker before the date";
+    };
+    // Mirror the parser: a trailing `(overdue)` annotation is tolerated,
+    // so only the first whitespace-delimited token is the date.
+    let date_str = after_marker.split_whitespace().next().unwrap_or("");
+    if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_err() {
+        return "unparseable date after `next:` (expected YYYY-MM-DD)";
+    }
+    // Structure looks right but the parser still rejected it (e.g. an
+    // empty title) — a generic pointer beats a confidently wrong guess.
+    "does not match `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD`"
 }
 
 /// Attachment stub ↔ artefact-folder pairing, reverse direction (#154).
