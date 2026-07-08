@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-08
+
+Desktop polish: portfolio chips on questions, column charts for count-style trends, and a disambiguation picker instead of a dead-end toast.
+
 ### Added
 
 - **Desktop: portfolio link chips on the Strategic questions grid** (#339) — each question card
