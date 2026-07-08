@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-08
+
+Quieter internals - lint now catches malformed stewardship-dashboard bullets that used to vanish silently, and the desktop watcher stops echoing the app's own writes back as external edits.
+
 ### Added
 
 - **Lint surfaces malformed stewardship-dashboard bullets** (#312) — `Vault::lapsed_habits`
