@@ -145,8 +145,10 @@ notify-debouncer-mini = "0.6"
 # wrappers over cdno-domain methods — no DTO layer; domain types
 # serialise directly over the IPC bridge. `macos-private-api` matches
 # tauri.conf.json's macOSPrivateApi (transparent capture window);
-# accepted cost: no Mac App Store distribution.
-tauri = { version = "2", features = ["macos-private-api"] }
+# accepted cost: no Mac App Store distribution. `tray-icon` backs the
+# minimal menu-bar tray (M10); the tray reuses the codegen-embedded
+# app icon, so no `image-png` runtime decoding is needed.
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
 tauri-build = "2"
 
 # Global capture hotkey (⌘⇧C, M3). Registered from Rust `setup()` —

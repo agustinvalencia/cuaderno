@@ -33,6 +33,7 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^7",
-    "vitest": "^3"
+    "vitest": "^3",
+    "vitest-axe": "^0.1.0"
   }
 }

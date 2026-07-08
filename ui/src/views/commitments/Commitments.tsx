@@ -77,7 +77,12 @@ export default function Commitments() {
           Nothing promised in this window.
         </p>
       ) : (
-        <CommitmentsTimeline entries={data.entries} today={data.today} filter={filter} />
+        <CommitmentsTimeline
+          entries={data.entries}
+          today={data.today}
+          filter={filter}
+          monthHeading="h2"
+        />
       )}
     </div>
   );

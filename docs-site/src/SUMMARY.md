@@ -8,6 +8,7 @@
 - [Initialise a vault](getting-started/initialise-a-vault.md)
 - [Quickstart: the daily loop](getting-started/quickstart.md)
 - [Connect to Claude (MCP)](getting-started/connect-to-claude.md)
+- [Desktop app](getting-started/desktop-app.md)
 
 # Concepts
 
