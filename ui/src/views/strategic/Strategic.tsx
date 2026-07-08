@@ -157,14 +157,23 @@ function QuestionsGrid({
                       // title is the reader-opening control and the chips
                       // are accessible sibling links — interactive elements
                       // must not nest inside a button (a11y / DOM validity).
+                      // The card is a plain container, not a button: the
+                      // title is the reader-opening control and the chips
+                      // are accessible sibling links — interactive elements
+                      // must not nest inside a button (a11y / DOM validity).
+                      // The hover highlight and padding live on the title
+                      // button (full-bleed via the container's overflow
+                      // clip), so the highlighted area matches the click
+                      // target — the old card-wide hover left the padding
+                      // ring a dead zone that implied a click it didn't do.
                       <li
                         key={q.slug}
-                        className="flex flex-col items-start gap-1 rounded-md border border-line bg-bg-surface px-3 py-2 hover:bg-bg-sunken"
+                        className="overflow-hidden rounded-md border border-line bg-bg-surface"
                       >
                         <button
                           type="button"
                           onClick={() => openReader(`questions/${q.domain}/${q.slug}.md`)}
-                          className="flex w-full flex-col items-start gap-1 rounded text-left"
+                          className="flex w-full flex-col items-start gap-1 px-3 py-2 text-left hover:bg-bg-sunken"
                         >
                           <span className="text-sm text-ink">{q.question_text || q.slug}</span>
                           <span className="text-xs text-ink-faint">
@@ -172,7 +181,7 @@ function QuestionsGrid({
                           </span>
                         </button>
                         {linked.length > 0 && (
-                          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pb-2">
                             {linked.map((p) => (
                               <PortfolioChip key={p.slug} slug={p.slug} />
                             ))}
