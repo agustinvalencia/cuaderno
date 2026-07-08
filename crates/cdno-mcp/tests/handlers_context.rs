@@ -513,6 +513,101 @@ async fn get_weekly_context_payload_is_bounded_for_a_heavy_week() {
     );
 }
 
+/// Run `get_weekly_context` over a store seeded with a single state
+/// change on today, returning the first state change's `old_state`
+/// string. A focused helper for the boundary tests below.
+async fn first_old_state(was: &str, now: &str) -> String {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    seed_daily_week_fixture(&store, today(), 0, Some(("nfm", was, now)));
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+    let value = decode_json(&result);
+    value["state_changes"][0]["old_state"]
+        .as_str()
+        .expect("state change should carry an old_state string")
+        .to_owned()
+}
+
+#[tokio::test]
+async fn get_weekly_context_truncates_on_a_multibyte_char_boundary() {
+    // A state body of 250 multibyte (3-byte) codepoints: char index 200
+    // sits mid-way through the string, and byte offset 200 is NOT a char
+    // boundary. A naive `&s[..200]` byte-slice would panic here; the
+    // char-based truncation must not. Guards against a regression to
+    // byte-slicing that would otherwise leave the suite green (the
+    // ASCII fixtures never straddle a codepoint boundary).
+    let body = "\u{3042}".repeat(250); // 'あ' x250 = 750 bytes, 250 chars
+    let old_state = first_old_state(&body, &body).await;
+
+    // Did not panic, and the result is a valid string bounded to the cap
+    // plus the one-char ellipsis marker.
+    assert_eq!(
+        old_state.chars().count(),
+        201,
+        "200 content chars + one ellipsis marker"
+    );
+    assert!(
+        old_state.ends_with('\u{2026}'),
+        "truncated multibyte snippet should end with the ellipsis marker: {old_state:?}"
+    );
+    // Every retained char is the seeded codepoint — no split/replacement.
+    assert!(
+        old_state.chars().take(200).all(|c| c == '\u{3042}'),
+        "retained chars should be the intact seeded codepoint"
+    );
+}
+
+#[tokio::test]
+async fn get_weekly_context_passes_through_a_body_at_exactly_the_cap() {
+    // Exactly STATE_SNIPPET_MAX_CHARS (200) chars: the `<=` early-return
+    // branch must return it unchanged with NO ellipsis. Guards the
+    // off-by-one at the truncation boundary.
+    let body = "a".repeat(200);
+    let old_state = first_old_state(&body, &body).await;
+    assert_eq!(old_state, body, "a body at the cap passes through verbatim");
+    assert!(
+        !old_state.ends_with('\u{2026}'),
+        "a body at the cap must not gain a truncation marker"
+    );
+}
+
+#[tokio::test]
+async fn get_weekly_context_leaves_a_normal_small_week_untouched() {
+    // A light week: one short state change plus a handful of log lines,
+    // all well under the caps. Nothing should be truncated — the short
+    // state body round-trips verbatim and the logs vec is returned whole.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let short_state = "shipped the parser; next up is the boundary handling";
+    // One day: 10 plain log lines + one state change. The state-change
+    // header parses as a log line too (its `was:`/`now:` fold in as
+    // continuations), so the expected count is 10 + 1 = 11.
+    seed_daily_week_fixture(&store, today(), 10, Some(("nfm", short_state, short_state)));
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_weekly_context(Parameters(EmptyInput::default()))
+        .await
+        .expect("get_weekly_context");
+    let value = decode_json(&result);
+
+    // Short state body returned byte-for-byte, no truncation marker.
+    let old_state = value["state_changes"][0]["old_state"].as_str().unwrap();
+    assert_eq!(old_state, short_state);
+    assert!(!old_state.ends_with('\u{2026}'));
+
+    // Logs vec returned whole (cap is a no-op below WEEKLY_LOGS_MAX).
+    let logs = value["logs"].as_array().unwrap();
+    assert_eq!(logs.len(), 11, "10 plain lines + 1 state-change header");
+    assert!(logs.len() < cdno_mcp::dto::WEEKLY_LOGS_MAX);
+}
+
 // ---------------------------------------------------------------------
 // get_monthly_context
 // ---------------------------------------------------------------------

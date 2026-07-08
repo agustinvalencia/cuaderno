@@ -23,20 +23,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 =======
 ### Fixed
 
-- **`get_weekly_context` no longer blows the MCP client's token cap** (#298) — the tool could
-  serialise to tens of KB on a single line (82.7k chars in the reported case), overflowing the
-  client's max-token limit and defeating its primary consumers (the weekly-review and
-  weekly-planning skills). Two slices were unbounded. The dominant one, `state_changes`, embedded
-  the *full* before *and* after `## Current State` body per change — two near-identical
-  multi-hundred-word bodies that stacked across a busy week; each side is now truncated to a
-  ~200-char gist marked with a trailing `…`. The secondary one, `logs`, shipped every daily-log
-  line of the week verbatim; it is now capped to the 100 most-recent lines (the back half of the
-  week a review reasons forward from), with the oldest dropped. The full detail stays one
-  `get_project_context` / `read_daily_note` away. On a heavier-than-real fixture (a long state
-  change every day of the week plus 175 log lines) the payload drops from ~34k to ~20.6k chars,
-  and the reported real-world 82.7k case is dominated by the now-bounded state bodies. The DTO
-  field shape (`WeeklyContextDto`, `ProjectStateChangeDto`) is unchanged — only content sizes are
-  bounded, so the change is non-breaking for the skills that consume it.
+- **`get_weekly_context` is now bounded to fit the MCP client's token cap** (#298) — the payload
+  could overflow the client's max-token limit. Each project state change now carries a ~200-char
+  gist of its before/after `## Current State` rather than the full bodies, and `logs` is capped to
+  the 100 most-recent lines. Non-breaking — the DTO field shape is unchanged.
 
 >>>>>>> 62b2670 (Bound get_weekly_context payload size to fit the MCP token cap)
 ## [0.12.0] - 2026-07-08
