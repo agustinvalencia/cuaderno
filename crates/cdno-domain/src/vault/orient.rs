@@ -20,8 +20,9 @@ use super::{CommitmentEntry, ProjectSummary, Vault};
 const ORIENTATION_LOOKAHEAD_DAYS: i64 = 2;
 
 /// Heading of the section that holds habit status lines on a
-/// stewardship dashboard (design §5.6).
-const ACTIVE_HABITS_SECTION: &str = "Active Habits";
+/// stewardship dashboard (design §5.6). Exposed within `crate::vault`
+/// so the dashboard lint scans the same section this module reads.
+pub(in crate::vault) const ACTIVE_HABITS_SECTION: &str = "Active Habits";
 
 /// The composed snapshot for the daily orient flow.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -123,21 +124,53 @@ impl Vault {
     }
 }
 
+/// A well-formed `## Active Habits` bullet, decomposed by
+/// [`parse_habit_line`].
+pub(in crate::vault) struct HabitLine<'a> {
+    /// The bullet's trimmed body — everything after the `- ` marker.
+    pub body: &'a str,
+    /// The status region after the first em-dash. It may itself hold
+    /// further em-dashes (e.g. `cadence — lapsed since March`), so it is
+    /// kept whole rather than split here.
+    pub status: &'a str,
+}
+
+/// The canonical grammar of an `## Active Habits` line (design §5.6): a
+/// bullet whose habit text and status prose are separated by an em-dash,
+/// e.g. `- Swimming 1x/week — on track`. Only the first em-dash is the
+/// separator; anything after it (including more em-dashes) is the status.
+///
+/// Any bullet that does not fit this shape returns `None`. This is the
+/// single source of truth for "is this a well-formed habit line":
+/// [`parse_lapsed_habit_line`] routes through it, and so does the
+/// stewardship-dashboard lint, so the lapse scan and the lint can never
+/// disagree about what counts as valid.
+pub(in crate::vault) fn parse_habit_line(line: &str) -> Option<HabitLine<'_>> {
+    let body = line.trim_start().strip_prefix("- ")?.trim();
+    let (habit, status) = body.split_once('\u{2014}')?;
+    // Both sides must carry text: `- Habit —` (empty status) and
+    // `- — status` (empty habit) are malformed, not minimal.
+    if habit.trim().is_empty() || status.trim().is_empty() {
+        return None;
+    }
+    Some(HabitLine {
+        body,
+        status: status.trim(),
+    })
+}
+
 /// Parse one `## Active Habits` line, returning its full text when the
-/// status segment declares a lapse. The canonical shape is
-/// `- {habit} — {status}`; a line is lapsed when any em-dash-separated
-/// segment after the first starts with "lapsed" (case-insensitive), so
-/// "lapsed since March" and "Lapsed (2w)" both match while a habit
-/// *named* "lapsed-thing" does not.
+/// status segment declares a lapse. A line is lapsed when any
+/// em-dash-separated segment of the status starts with "lapsed"
+/// (case-insensitive), so "lapsed since March" and "Lapsed (2w)" both
+/// match while a habit *named* "lapsed-thing" does not.
 fn parse_lapsed_habit_line(line: &str) -> Option<String> {
-    let rest = line.trim_start().strip_prefix("- ")?.trim();
-    let mut segments = rest.split('\u{2014}');
-    segments.next()?; // the habit text itself; status segments follow
-    let lapsed = segments.any(|segment| {
+    let habit = parse_habit_line(line)?;
+    let lapsed = habit.status.split('\u{2014}').any(|segment| {
         segment
             .trim()
             .get(..6)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("lapsed"))
     });
-    lapsed.then(|| rest.to_owned())
+    lapsed.then(|| habit.body.to_owned())
 }

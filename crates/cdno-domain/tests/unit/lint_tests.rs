@@ -869,3 +869,159 @@ fn lint_flags_custom_type_frontmatter_out_of_order() {
         report.issues
     );
 }
+
+// --- Stewardship-dashboard near-miss lint (#312) -------------------------
+//
+// `Vault::lapsed_habits` and the periodic-commitment parser skip malformed
+// dashboard bullets silently by design; this rule turns that silent skip
+// into a visible `Warning`. Acceptance is the canonical parsers' verdict —
+// these tests exercise each near-miss class plus the negatives (a valid
+// line, prose, and dashboards without the sections).
+
+/// Wrap dashboard `sections` in a minimal stewardship note.
+fn stewardship(sections: &str) -> String {
+    format!("---\ntype: stewardship\ncontext: personal\n---\n\n# Steward\n\n{sections}")
+}
+
+/// The dashboard warnings in a report — those naming one of the two scanned
+/// sections. Filtering keeps these assertions independent of unrelated lint
+/// output (e.g. frontmatter-order drift).
+fn dashboard_warnings(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| {
+            i.message.contains("Active Habits") || i.message.contains("Periodic Commitments")
+        })
+        .collect()
+}
+
+#[test]
+fn lint_flags_active_habits_line_with_ascii_hyphen() {
+    // The `- ` marker is a real bullet; the *internal* separator is an ASCII
+    // hyphen where an em-dash belongs, so the lapse scan drops it silently.
+    let body = stewardship("## Active Habits\n- Swimming 1x/week - lapsed since March\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    let issue = warnings[0];
+    assert_eq!(issue.severity, LintSeverity::Warning);
+    assert_eq!(issue.path, vp("stewardships/health.md"));
+    assert!(
+        issue.message.contains("ASCII hyphen"),
+        "hint should name the hyphen: {}",
+        issue.message
+    );
+}
+
+#[test]
+fn lint_flags_active_habits_line_with_en_dash() {
+    // An en-dash (U+2013) is visually almost indistinguishable from the
+    // em-dash (U+2014) the grammar requires — the classic invisible typo.
+    let body = stewardship("## Active Habits\n- Swimming 1x/week \u{2013} lapsed since March\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("en-dash"),
+        "hint should name the en-dash: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_periodic_line_missing_next_marker() {
+    // Two em-dashes, right shape — but the third field says `next 2026-...`
+    // without the `next:` marker, so `parse_periodic_line` rejects it.
+    let body = stewardship(
+        "## Periodic Commitments\n- Dental check-up \u{2014} every 6 months \u{2014} next 2026-04-01\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("next:"),
+        "hint should name the missing marker: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_periodic_line_with_unparseable_date() {
+    // Correct structure and a `next:` marker, but the date is not
+    // YYYY-MM-DD, so the aggregator would have skipped it silently.
+    let body = stewardship(
+        "## Periodic Commitments\n- Eye exam \u{2014} yearly \u{2014} next: sometime\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("unparseable date"),
+        "hint should name the bad date: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_accepts_valid_dashboard_lines() {
+    // A perfectly canonical habit line and periodic-commitment line: the
+    // parsers accept both, so no near-miss warning is emitted.
+    let body = stewardship(
+        "## Active Habits\n- Resistance training 3x/week \u{2014} on track\n\n\
+         ## Periodic Commitments\n- Blood work \u{2014} yearly \u{2014} next: 2099-11-01\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        dashboard_warnings(&report).is_empty(),
+        "valid lines must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_ignores_prose_lines_and_missing_sections() {
+    // A non-bullet prose line inside `## Active Habits` is not a bullet, so
+    // it is never fed to the parser and never flagged. The dashboard also
+    // carries no `## Periodic Commitments` section at all, which the scan
+    // simply skips.
+    let body = stewardship(
+        "## Active Habits\nHabits I am nurturing this quarter:\n- Stretching \u{2014} on track\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        dashboard_warnings(&report).is_empty(),
+        "prose and absent sections must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_ignores_dashboard_without_scanned_sections() {
+    // A stewardship with neither scanned section produces no dashboard
+    // warnings — the scan has nothing to look at.
+    let body = stewardship("## Current Status\nHolding steady.\n");
+    let vault = vault_with_notes(
+        &[("stewardships/finances.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        dashboard_warnings(&report).is_empty(),
+        "a dashboard without the sections must not warn: {:?}",
+        report.issues
+    );
+}
