@@ -48,6 +48,7 @@ pub enum VaultArea {
     Actions,
     Daily,
     Weekly,
+    Monthly,
     Commitments,
     Portfolios,
     Stewardships,
@@ -63,9 +64,11 @@ pub struct WatcherStatus {
 
 /// Classify a vault-relative path into its area, or `None` for paths
 /// no view renders (attachments at the root, unknown directories).
-/// Daily/weekly notes live under `journal/<year>/{daily,weekly}/`, so
-/// the journal split keys on the third-from-last component rather
-/// than the first.
+/// Daily/weekly/monthly notes live under
+/// `journal/<year>/{daily,weekly,monthly}/`, so the journal split keys on
+/// an inner path component rather than the first — the calendar view
+/// reads all three note types, so each maps to its own area the
+/// invalidation map wires back to the calendar's queries.
 pub fn classify(path: &VaultPath) -> Option<VaultArea> {
     let p = path.as_path();
     let mut components = p.components().filter_map(|c| c.as_os_str().to_str());
@@ -83,6 +86,8 @@ pub fn classify(path: &VaultPath) -> Option<VaultArea> {
                 Some(VaultArea::Daily)
             } else if p.components().any(|c| c.as_os_str() == "weekly") {
                 Some(VaultArea::Weekly)
+            } else if p.components().any(|c| c.as_os_str() == "monthly") {
+                Some(VaultArea::Monthly)
             } else {
                 None
             }

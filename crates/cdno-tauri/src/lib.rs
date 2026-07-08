@@ -372,6 +372,10 @@ pub fn run() {
             commands::portfolios::get_portfolio,
             commands::portfolios::add_evidence,
             commands::strategic::get_strategic_bundle,
+            commands::calendar::read_daily,
+            commands::calendar::read_weekly,
+            commands::calendar::read_monthly,
+            commands::calendar::list_daily_dates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");
