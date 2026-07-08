@@ -139,7 +139,7 @@ impl NoteType {
     /// of keys no built-in template uses are covered by dedicated resolve tests.
     pub fn supplied_placeholders(self) -> &'static [&'static str] {
         match self {
-            NoteType::Daily => &["date", "heading", "weekday"],
+            NoteType::Daily => &["date", "heading", "weekday", "day_name", "week"],
             NoteType::Weekly => &["week", "week_num", "year", "date_start", "date_end"],
             NoteType::Monthly => &[
                 "month",

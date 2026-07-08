@@ -232,6 +232,86 @@ fn daily_template_supplies_the_weekday_variable() {
 }
 
 #[test]
+fn daily_template_supplies_day_name_and_week_via_log() {
+    // #300: a custom daily template referencing `{{day_name}}` and
+    // `{{week}}` must render both. `day_name` is a supplied alias of
+    // `weekday`; `week` is the ISO-week label `YYYY-Www`. This exercises
+    // the `log_to_daily_note` (append-to-log) scaffold path.
+    let custom = "---\ntype: daily\ndate: {{date}}\nweek: {{week}}\n---\n\n# {{day_name}}, {{date}}\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    // today() is 2026-04-26, a Sunday in ISO week 2026-W17 — assert the
+    // literals rather than re-deriving, so a coordinated format change in
+    // both source and test can't pass silently.
+    assert!(
+        content.contains("# Sunday, 2026-04-26"),
+        "day_name should render as the weekday name:\n{content}"
+    );
+    assert!(
+        content.contains("week: 2026-W17"),
+        "week should render as the ISO-week label:\n{content}"
+    );
+    assert!(
+        !content.contains("{{"),
+        "no unrendered placeholder should remain:\n{content}"
+    );
+}
+
+#[test]
+fn daily_template_supplies_day_name_and_week_via_upsert_section() {
+    // #300: the same scaffold feeds `upsert_daily_section`, so a daily
+    // note first created by writing a planning section (not a log line)
+    // must render `{{day_name}}` and `{{week}}` just the same.
+    use cdno_domain::DailySection;
+    let custom = "---\ntype: daily\ndate: {{date}}\nweek: {{week}}\n---\n\n# {{day_name}}, {{date}}\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+
+    let path = vault
+        .upsert_daily_section(today(), DailySection::Meeting, "sync notes", false)
+        .expect("upsert");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("# Sunday, 2026-04-26"),
+        "day_name should render via the upsert path:\n{content}"
+    );
+    assert!(
+        content.contains("week: 2026-W17"),
+        "week should render via the upsert path:\n{content}"
+    );
+    assert!(
+        !content.contains("{{"),
+        "no unrendered placeholder should remain:\n{content}"
+    );
+}
+
+#[test]
+fn daily_week_is_iso_correct_across_a_year_boundary() {
+    // #300: the ISO week-numbering year differs from the calendar year at
+    // a year boundary — 2025-12-29 (a Monday) belongs to ISO week
+    // 2026-W01, not 2025-W53. The shared helper must reflect that so a
+    // daily note's `week:` frontmatter points at the right weekly note.
+    let custom = "---\ntype: daily\ndate: {{date}}\nweek: {{week}}\n---\n\n## Logs\n";
+    let (vault, store) = vault_with(&[(".cuaderno/templates/daily.md", custom)]);
+    let boundary = NaiveDate::from_ymd_opt(2025, 12, 29).unwrap();
+
+    let path = vault
+        .log_to_daily_note(boundary.and_hms_opt(9, 0, 0).unwrap(), "new-year eve-ish")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("week: 2026-W01"),
+        "2025-12-29 is in ISO week 2026-W01:\n{content}"
+    );
+}
+
+#[test]
 fn weekly_creation_uses_a_custom_template_override() {
     use cdno_domain::WeeklySection;
     let custom = "---\ntype: weekly\nweek: {{week}}\ndate_start: {{date_start}}\ndate_end: {{date_end}}\n---\n\n# Week {{week_num}}, {{year}}\n\nCUSTOM WEEKLY PREAMBLE\n\n## Wins\n";
@@ -935,9 +1015,13 @@ fn template_placeholders_reports_keys_the_default_template_omits() {
         .into_iter()
         .map(|p| p.name)
         .collect();
-    // Exact vec: `weekday` is present (create-path-supplied though daily.md
-    // omits it), and no key is over-reported.
-    assert_eq!(names, vec!["date", "heading", "weekday"]);
+    // Exact vec: `weekday`, `day_name`, and `week` are present
+    // (create-path-supplied though daily.md omits them), and no key is
+    // over-reported.
+    assert_eq!(
+        names,
+        vec!["date", "heading", "weekday", "day_name", "week"]
+    );
 }
 
 #[test]

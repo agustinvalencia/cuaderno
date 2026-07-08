@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Daily scaffold now supplies `day_name` and `week`** (#300) — a customised
+  `.cuaderno/templates/daily.md` referencing `{{day_name}}` or `{{week}}` used to render those
+  placeholders literally, because the daily scaffold supplied only `date`, `heading`, and
+  `weekday`. The scaffold (shared by `append_to_log` and `upsert_daily_section`) now also fills
+  `day_name` — an alias of `weekday`, the weekday name — and `week`, the ISO-week label `YYYY-Www`
+  reusing the exact formatting the weekly scaffold uses, so a daily note's `week:` frontmatter
+  matches the weekly note it points at (correct across a year boundary — e.g. 2025-12-29 is
+  `2026-W01`). `cdno templates vars daily` and the template docs now list the full daily set:
+  `date`, `heading`, `weekday`, `day_name`, `week`.
+
 ## [0.12.0] - 2026-07-08
 
 Desktop polish: portfolio chips on questions, column charts for count-style trends, and a disambiguation picker instead of a dead-end toast.

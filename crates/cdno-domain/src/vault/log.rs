@@ -118,6 +118,11 @@ impl Vault {
     /// - `{{date}}` — ISO date, e.g. `2026-06-28`
     /// - `{{heading}}` — long form, e.g. `Sunday, 28 June 2026`
     /// - `{{weekday}}` — weekday name, e.g. `Sunday`
+    /// - `{{day_name}}` — alias of `weekday`, the same value (people reach
+    ///   for either name); both resolve to `%A`
+    /// - `{{week}}` — ISO week label `YYYY-Www`, e.g. `2026-W27`, so a
+    ///   custom daily template can render its own `week:` frontmatter that
+    ///   matches the weekly note it points at (#300)
     ///
     /// Unsupplied placeholders are left verbatim by the engine, so a
     /// custom template referencing a variable not in this set renders it
@@ -133,7 +138,16 @@ impl Vault {
         let mut ctx = VariableContext::new();
         ctx.set_contextual("date", date.format("%Y-%m-%d").to_string());
         ctx.set_contextual("heading", date.format("%A, %-d %B %Y").to_string());
-        ctx.set_contextual("weekday", date.format("%A").to_string());
+        // `weekday` and `day_name` are deliberate aliases for the same `%A`
+        // value: `weekday` is the original name, `day_name` is what people
+        // naturally reach for when customising the template (#300).
+        let weekday = date.format("%A").to_string();
+        ctx.set_contextual("weekday", weekday.clone());
+        ctx.set_contextual("day_name", weekday);
+        // ISO-week label reused from the weekly scaffold via the shared
+        // helper, so a daily note's `week:` frontmatter matches the weekly
+        // note for the same date.
+        ctx.set_contextual("week", super::iso_week_label(date));
         self.scaffold("daily", None, &mut ctx)
     }
 

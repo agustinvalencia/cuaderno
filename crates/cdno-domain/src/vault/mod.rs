@@ -60,6 +60,20 @@ mod write_outcome;
 /// pinned to the bottom (`daily`) so the heading text lives in one place.
 pub(in crate::vault) const DAILY_LOGS_SECTION: &str = "Logs";
 
+/// The ISO-week label `YYYY-Www` for the week containing `date` — e.g.
+/// `2026-W01`. The year is the ISO week-numbering year (which can differ
+/// from the calendar year around a year boundary, so 2025-12-29 is
+/// `2026-W01`), and the week is zero-padded to two digits.
+///
+/// Shared so the daily scaffold (`log`) and the weekly scaffold
+/// (`weekly`) render the `week` placeholder identically — the daily
+/// note's `week:` frontmatter must match the weekly note it points at.
+pub(in crate::vault) fn iso_week_label(date: chrono::NaiveDate) -> String {
+    use chrono::Datelike;
+    let iso = date.iso_week();
+    format!("{}-W{:02}", iso.year(), iso.week())
+}
+
 pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use context::{
