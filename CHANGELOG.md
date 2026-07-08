@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-08
+
+The Portfolio Browser milestone (M8 of the desktop-app plan).
+
 ### Added
 
 - **Portfolio Browser (M8, plan §1.6; closes #58)** (#322) — the `/portfolios` and
