@@ -26,9 +26,10 @@ That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mc
 **Desktop app** (macOS, Apple Silicon):
 
 ```bash
-# --no-quarantine because the app is ad-hoc signed, not notarized —
+# the xattr because the app is ad-hoc signed, not notarized —
 # without it Gatekeeper blocks the first launch.
-brew install --cask agustinvalencia/tap/cuaderno-app --no-quarantine
+brew install --cask agustinvalencia/tap/cuaderno-app
+xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 # A Finder-launched app inherits no shell environment, so tell GUI
 # apps where the vault lives (once per login):
