@@ -29,6 +29,10 @@ const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"))
 // sparklines, and the six-week timeline. Pulls in recharts (sparklines)
 // and the shared timeline, so it splits onto navigation.
 const Strategic = lazy(() => import("./views/strategic/Strategic"));
+// Calendar (#340): the month grid + embedded daily/weekly/monthly panel.
+// Pulls in react-markdown (the note renderer), so it splits onto
+// navigation like the other secondary surfaces.
+const Calendar = lazy(() => import("./views/calendar/Calendar"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -49,6 +53,14 @@ export default function App() {
           }
         />
         <Route path="commitments" element={<Commitments />} />
+        <Route
+          path="calendar"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Calendar />
+            </Suspense>
+          }
+        />
         <Route
           path="weekly"
           element={

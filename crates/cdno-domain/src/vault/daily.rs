@@ -21,7 +21,7 @@
 
 use std::str::FromStr;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
@@ -112,6 +112,44 @@ impl Vault {
                 markdown: String::new(),
             })
         }
+    }
+
+    /// The dates in `year`/`month` that already have a daily note, sorted
+    /// chronologically.
+    ///
+    /// Scans only that year's daily directory (`journal/<year>/daily/`) —
+    /// every daily note for the month lives there, since the note is filed
+    /// under its calendar year — rather than walking the whole vault, then
+    /// keeps only the filenames that parse as a `YYYY-MM-DD` date landing
+    /// in the requested calendar month. Backs the desktop calendar grid's
+    /// note-bearing-day marks.
+    ///
+    /// A year with no daily directory yet reads back as an empty listing
+    /// from both stores, so a fresh (or note-less) month yields an empty
+    /// vec rather than an error. The caller is responsible for passing a
+    /// valid `month` (1..=12); an out-of-range value simply matches
+    /// nothing, since no real date can fall in it.
+    pub fn daily_dates_in_month(
+        &self,
+        year: i32,
+        month: u32,
+    ) -> Result<Vec<NaiveDate>, DomainError> {
+        let dir = VaultPath::new(cdno_core::paths::journal_daily_dir(year))?;
+        let mut dates: Vec<NaiveDate> = self
+            .store
+            .list_dir(&dir)?
+            .into_iter()
+            .filter_map(|p| {
+                // Keep only children whose file stem parses as a real date
+                // in the requested month; ignore any other file (or a
+                // subdirectory) that happens to live alongside the notes.
+                let stem = p.as_path().file_stem()?.to_str()?;
+                let date = NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok()?;
+                (date.year() == year && date.month() == month).then_some(date)
+            })
+            .collect();
+        dates.sort_unstable();
+        Ok(dates)
     }
 
     /// Write a non-history section of the daily note for `date`,

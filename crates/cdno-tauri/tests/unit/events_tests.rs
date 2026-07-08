@@ -28,7 +28,7 @@ fn classify_maps_top_level_directories() {
 }
 
 #[test]
-fn classify_splits_journal_by_daily_and_weekly() {
+fn classify_splits_journal_by_daily_weekly_and_monthly() {
     assert_eq!(
         classify(&vp("journal/2026/daily/2026-07-07.md")),
         Some(VaultArea::Daily)
@@ -36,6 +36,13 @@ fn classify_splits_journal_by_daily_and_weekly() {
     assert_eq!(
         classify(&vp("journal/2026/weekly/2026-W27.md")),
         Some(VaultArea::Weekly)
+    );
+    // The monthly note (#228) must classify too, so a calendar edit or an
+    // external nvim edit to it refreshes the calendar's month panel
+    // (#340).
+    assert_eq!(
+        classify(&vp("journal/2026/monthly/2026-07.md")),
+        Some(VaultArea::Monthly)
     );
     assert_eq!(classify(&vp("journal/2026/notes.md")), None);
 }

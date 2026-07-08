@@ -8,6 +8,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Desktop: calendar view for daily notes** (#340) — a new `/calendar` surface (sidebar entry
+  between Actions and Commitments). A from-scratch, seven-column, Monday-first month grid marks
+  the days that have a daily note with a calm dot (never red), is keyboard-navigable with a
+  roving tabindex (arrow keys step by day and week, clamped within the month), and pages by
+  month. Clicking a day loads its note into an **embedded panel** (deliberately not the shared
+  NoteReader overlay, which has no navigation chrome) that renders the markdown read-only via
+  the shared renderer, with quick jumps to the **previous day**, **next day**, the day's
+  **week**, and its **month** — each landing note read at a date the *backend* stamped, so the
+  frontend never computes a domain date (§3.7). A day, week, or month with no note shows a calm
+  empty state carrying its open-in-editor path, not an error. New Tauri commands `read_daily`
+  (the note plus `prev_date` / `next_date` / `week_of` / `month`), `read_weekly` and
+  `read_monthly` (raw note reads, distinct from the composed `get_weekly_bundle`), and
+  `list_daily_dates` over a new `Vault::daily_dates_in_month` domain query that scans only the
+  requested month's daily directory. The watcher's path classifier now maps
+  `journal/<year>/monthly/…` to a new `VaultArea::Monthly` (daily and weekly already had their
+  own areas), so a calendar edit or an external nvim/CLI edit to any daily, weekly, or monthly
+  note refreshes the calendar live.
 - **Monthly note type + `cdno review monthly`** (#228) — a new first-class `monthly` note
   type, mirroring the weekly-note seam throughout. One artefact per calendar month at
   `journal/<year>/monthly/<YYYY-MM>.md`, keyed by month so any day resolves to the same note.

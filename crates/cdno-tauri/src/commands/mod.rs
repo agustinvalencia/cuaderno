@@ -4,6 +4,7 @@
 //! `cargo test` against the Memory doubles, no Tauri runtime needed.
 
 pub mod actions;
+pub mod calendar;
 pub mod capture;
 pub mod commitments;
 pub mod notes;

@@ -107,6 +107,10 @@ fn mock_app_configured(
             cdno_tauri::commands::portfolios::get_portfolio,
             cdno_tauri::commands::portfolios::add_evidence,
             cdno_tauri::commands::strategic::get_strategic_bundle,
+            cdno_tauri::commands::calendar::read_daily,
+            cdno_tauri::commands::calendar::read_weekly,
+            cdno_tauri::commands::calendar::read_monthly,
+            cdno_tauri::commands::calendar::list_daily_dates,
         ])
         .manage(AppState {
             vault: Arc::new(vault),
@@ -829,6 +833,105 @@ fn get_weekly_bundle_round_trips_and_composes_the_review() {
         projects.iter().any(|p| p["slug"] == "alpha"),
         "the active project shows in the scan: {value}"
     );
+}
+
+// ---------------------------------------------------------------------
+// Calendar view (#340). The neighbour-stamping daily read, the week and
+// month jumps, and the note-bearing-days grid query. The `week_of` and
+// `year`/`month` args are the camelCase seam the frontend pins.
+// ---------------------------------------------------------------------
+
+const CALENDAR_DAILY: &str = "---\ntype: daily\ndate: 2026-07-15\n---\n\n# Wednesday\n\n## Logs\n- **09:00**: shipped the grid\n";
+
+#[test]
+fn read_daily_round_trips_and_stamps_neighbours() {
+    // The panel's whole quick-nav rides on these backend-stamped dates,
+    // so the round-trip pins that they cross the wire as ISO strings.
+    let (app, _store) = mock_app_with(&[("journal/2026/daily/2026-07-15.md", CALENDAR_DAILY)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-read-daily", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "date": "2026-07-15" }));
+    let response =
+        get_ipc_response(&webview, request_with("read_daily", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["date"], "2026-07-15");
+    assert_eq!(value["exists"], true);
+    assert_eq!(value["prev_date"], "2026-07-14");
+    assert_eq!(value["next_date"], "2026-07-16");
+    assert_eq!(value["week_of"], "2026-07-13");
+    assert_eq!(value["month"], "2026-07");
+    assert!(
+        value["markdown"]
+            .as_str()
+            .is_some_and(|m| m.contains("shipped the grid")),
+        "the daily markdown rides the wire: {value}"
+    );
+}
+
+#[test]
+fn read_weekly_round_trips_the_camel_cased_week_of_arg() {
+    // `week_of` in Rust is `weekOf` on the wire — the marshalling seam.
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-read-weekly", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "weekOf": "2026-07-15" }));
+    let response =
+        get_ipc_response(&webview, request_with("read_weekly", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    // Absence is non-error; the Monday is echoed back.
+    assert_eq!(value["week_of"], "2026-07-13");
+    assert_eq!(value["exists"], false);
+}
+
+#[test]
+fn read_monthly_round_trips_the_month_arg() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-read-monthly", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "month": "2026-07" }));
+    let response =
+        get_ipc_response(&webview, request_with("read_monthly", body)).expect("command succeeds");
+    let value = response_json(response);
+
+    assert_eq!(value["month"], "2026-07");
+    assert_eq!(value["exists"], false);
+}
+
+#[test]
+fn list_daily_dates_round_trips_year_and_month() {
+    let (app, _store) = mock_app_with(&[("journal/2026/daily/2026-07-15.md", CALENDAR_DAILY)]);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-list-daily", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "year": 2026, "month": 7 }));
+    let response = get_ipc_response(&webview, request_with("list_daily_dates", body))
+        .expect("command succeeds");
+    let value = response_json(response);
+
+    let dates = value.as_array().expect("list_daily_dates returns an array");
+    assert_eq!(dates, &[serde_json::json!("2026-07-15")]);
+}
+
+#[test]
+fn list_daily_dates_out_of_range_month_serialises_invalid() {
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-list-daily-bad", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({ "year": 2026, "month": 13 }));
+    let err = get_ipc_response(&webview, request_with("list_daily_dates", body))
+        .expect_err("month 13 must fail");
+    assert_eq!(err["kind"], "invalid", "{err}");
 }
 
 #[test]

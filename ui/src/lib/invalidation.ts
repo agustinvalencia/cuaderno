@@ -23,8 +23,22 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "get_strategic_bundle",
   ],
   actions: ["get_orientation", "list_all_actions"],
-  daily: ["get_orientation", "read_daily", "get_weekly_bundle"],
-  weekly: ["get_weekly_bundle"],
+  // A daily-note edit (in the app, the CLI, or nvim) refreshes the
+  // orientation, the open note reader, the composed review, AND the
+  // calendar's grid marks + embedded daily panel (read_daily,
+  // list_daily_dates) — so a fresh edit shows up on the calendar (#340).
+  daily: [
+    "get_orientation",
+    "read_daily",
+    "list_daily_dates",
+    "get_weekly_bundle",
+  ],
+  // The calendar panel's week jump reads the raw weekly note
+  // (read_weekly), distinct from the composed get_weekly_bundle.
+  weekly: ["get_weekly_bundle", "read_weekly"],
+  // The monthly note (#228) is only read by the calendar panel's month
+  // jump, so an edit refreshes just that read (#340).
+  monthly: ["read_monthly"],
   commitments: ["get_strategic_bundle", "get_orientation", "get_commitments", "get_weekly_bundle"],
   portfolios: ["list_portfolios", "get_portfolio", "get_strategic_bundle"],
   // A tracking-log write (or an external edit under stewardships/)

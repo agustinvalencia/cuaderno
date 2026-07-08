@@ -4,7 +4,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
 import type { CommitmentsView } from "./bindings/CommitmentsView";
+import type { DailyView } from "./bindings/DailyView";
 import type { EnergyLevel } from "./bindings/EnergyLevel";
+import type { MonthlyView } from "./bindings/MonthlyView";
 import type { InboxItem } from "./bindings/InboxItem";
 import type { NoteView } from "./bindings/NoteView";
 import type { OrientationView } from "./bindings/OrientationView";
@@ -19,6 +21,7 @@ import type { StewardshipSummary } from "./bindings/StewardshipSummary";
 import type { StrategicBundle } from "./bindings/StrategicBundle";
 import type { TemplateField } from "./bindings/TemplateField";
 import type { WeeklyBundle } from "./bindings/WeeklyBundle";
+import type { WeeklyView } from "./bindings/WeeklyView";
 
 export class CuadernoError extends Error {
   readonly payload: CmdError;
@@ -284,6 +287,41 @@ export function addEvidence(
   content: string,
 ): Promise<void> {
   return call("add_evidence", { portfolio, source, origin, content });
+}
+
+// --- Calendar view (#340) ---
+
+/** The daily note for `date` (an `YYYY-MM-DD` string) plus the neighbour
+ * identities the calendar panel's quick-nav uses — prev/next day, the
+ * Monday of the week, and the `YYYY-MM` month — all stamped in Rust so
+ * the frontend never computes a domain date for a read (§3.7). A day
+ * with no note comes back `exists: false` (a calm empty state), never an
+ * error. */
+export function readDaily(date: string): Promise<DailyView> {
+  return call("read_daily", { date });
+}
+
+/** The raw weekly note covering `weekOf` (an `YYYY-MM-DD` string naming
+ * any day in the week) — the calendar panel's week jump. Distinct from
+ * `getWeeklyBundle`, which composes the guided review. Rust `week_of` is
+ * `weekOf` on the wire — pinned by the backend IPC round-trip. Absence
+ * is non-error. */
+export function readWeekly(weekOf: string): Promise<WeeklyView> {
+  return call("read_weekly", { weekOf });
+}
+
+/** The raw monthly note covering `month` (a `YYYY-MM` string) — the
+ * calendar panel's month jump (#228). Absence is non-error. */
+export function readMonthly(month: string): Promise<MonthlyView> {
+  return call("read_monthly", { month });
+}
+
+/** The `YYYY-MM-DD` dates in `year`/`month` that already have a daily
+ * note, so the calendar grid can mark note-bearing days. `month` is
+ * 1..=12; out of range comes back as a `CuadernoError` (kind "invalid").
+ */
+export function listDailyDates(year: number, month: number): Promise<string[]> {
+  return call("list_daily_dates", { year, month });
 }
 
 // --- M9: Strategic / Monthly ---
