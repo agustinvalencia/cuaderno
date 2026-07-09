@@ -389,6 +389,7 @@ pub fn run() {
             commands::templates::create_template,
             commands::config::read_config,
             commands::config::validate_config,
+            commands::config::save_config,
             commands::config::reload_config,
         ])
         .run(tauri::generate_context!())

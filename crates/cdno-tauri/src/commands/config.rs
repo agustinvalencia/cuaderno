@@ -1,9 +1,11 @@
-//! Config inspector (#365, PR1) + live reload (#365, PR2).
+//! Config inspector (#365, PR1) + live reload (#365, PR2) + raw editor
+//! save (#365, PR3).
 //!
 //! `read_config`/`validate_config` are pure reads — no journal, no
 //! events — mirroring the Templates read posture. `read_config` hands the
-//! UI the verbatim file plus a content hash (the hash is inert until PR3's
-//! compare-and-swap write). `validate_config` runs the exact composition
+//! UI the verbatim file plus a content hash that PR3's `save_config`
+//! echoes back for its compare-and-swap. `validate_config` runs the exact
+//! composition
 //! `Vault::new` performs (`toml::from_str` → `ignore_set` →
 //! `TypeRegistry::validate`) against a candidate string, reporting
 //! `Ok(())` or a structured `{ message, line?, col? }` — the same error
@@ -19,13 +21,18 @@
 use std::sync::Arc;
 
 use cdno_core::config::VaultConfig;
+use cdno_core::path::VaultPath;
+use cdno_core::paths::CONFIG_FILE;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::vault::{ConfigDocument, ConfigValidationError, validate_config_str};
+use cdno_domain::vault::{
+    ConfigDocument, ConfigSaveError, ConfigValidationError, validate_config_str,
+};
 use tauri::{Emitter, Manager};
 
+use crate::commands::actions::record_and_emit;
 use crate::error::CmdError;
-use crate::events::{Origin, VAULT_CHANGED, VaultChanged};
+use crate::events::{Origin, VAULT_CHANGED, VaultArea, VaultChanged};
 use crate::state::AppState;
 use crate::watcher::all_areas;
 use crate::with_vault::with_vault;
@@ -44,6 +51,23 @@ pub async fn read_config(state: tauri::State<'_, AppState>) -> Result<ConfigDocu
     with_vault(&state.vault(), read_config_impl).await?
 }
 
+/// The validate → compare-and-swap → write core of the config save
+/// (#365, PR3), public and synchronous — the test seam, exercised
+/// directly over the Memory doubles. This is where the never-brick
+/// invariant is proven: it validates `content` before any write and,
+/// on a validation or conflict rejection, leaves the file untouched.
+///
+/// The `#[tauri::command]` [`save_config`] wraps this with the two
+/// steps that need the app handle — the self-write journal + emit, and
+/// the live reload — which a synchronous, disk-free test cannot reach.
+pub fn save_config_impl(
+    vault: &Vault,
+    content: &str,
+    expected_hash: &str,
+) -> Result<ConfigDocument, ConfigSaveError> {
+    vault.save_config_raw(content, expected_hash)
+}
+
 /// Dry-run the config validation `Vault::new` runs against `content`,
 /// without touching the vault. `Ok(())` means the config would open;
 /// `Err` carries a human-readable message (and, for a TOML syntax
@@ -55,6 +79,77 @@ pub async fn validate_config(content: String) -> Result<(), ConfigValidationErro
     // touch the store or index, so it runs inline rather than through
     // `with_vault` (there is no vault to borrow).
     validate_config_str(&content)
+}
+
+/// Save an edited `.cuaderno/config.toml` (#365, PR3) — the raw editor's
+/// write, and the ONLY path that persists a config edit from the app.
+/// Structured so it is impossible to commit a config the vault could not
+/// reopen: the very first thing it does (inside [`save_config_impl`] →
+/// `Vault::save_config_raw`) is run the exact validation `Vault::new`
+/// runs, and any failure returns before a single byte is written.
+///
+/// The full order, as one indivisible command so no client can write
+/// without validating:
+///
+/// 1. **VALIDATE** the candidate `content` server-side. On any error
+///    return [`ConfigSaveError::Validation`] and write nothing.
+/// 2. **COMPARE-AND-SWAP** on `expected_hash` against the current
+///    on-disk config. On a mismatch (a concurrent hand-edit) return
+///    [`ConfigSaveError::Conflict`] and write nothing.
+/// 3. **WRITE** the buffer verbatim to `.cuaderno/config.toml`.
+///    (Steps 1-3 are `save_config_impl`, run on the blocking pool.)
+/// 4. **JOURNAL + EMIT** the write as a `Config` self-write so the
+///    watcher suppresses its own echo while the frontend still refetches.
+/// 5. **RELOAD** the vault live via [`reload_vault_config`] so the new
+///    config applies without a restart. Step 1 already validated, so
+///    this reload's `Vault::new` re-validation is belt-and-braces — it
+///    passes by construction.
+///
+/// Returns the persisted [`ConfigDocument`] (re-read content + fresh
+/// hash) so the UI can update its compare-and-swap baseline for the next
+/// save without a separate read.
+#[tauri::command]
+pub async fn save_config<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    content: String,
+    expected_hash: String,
+) -> Result<ConfigDocument, ConfigSaveError> {
+    // Steps 1-3 (validate → CAS → write verbatim) run in the domain on the
+    // blocking pool. `with_vault`'s own `Err` is a blocking-pool panic
+    // (JoinError) — mapped to `Internal` here so the command's error type
+    // stays `ConfigSaveError` end to end.
+    let vault = state.vault();
+    let saved = {
+        let content = content.clone();
+        let expected_hash = expected_hash.clone();
+        match with_vault(&vault, move |vault| {
+            save_config_impl(vault, &content, &expected_hash)
+        })
+        .await
+        {
+            Ok(result) => result?,
+            Err(cmd_err) => return Err(ConfigSaveError::Internal(cmd_err.to_string())),
+        }
+    };
+
+    // Step 4 — journal the self-write + emit a `Config` change. The path is
+    // always CONFIG_FILE (the domain confines the write to it), so it is
+    // reconstructed here rather than threaded back from the domain.
+    let path =
+        VaultPath::new(CONFIG_FILE).map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
+    record_and_emit(&app, &state, vec![path], vec![VaultArea::Config]);
+
+    // Step 5 — reload so the edit applies live. A reload failure after a
+    // validated write is genuinely unexpected (the file we just wrote
+    // passed step 1's gate), so surface it as Internal; the belt-and-braces
+    // reload keeps the OLD vault live on any error, never leaving the
+    // session vault-less.
+    reload_vault_config(&app)
+        .await
+        .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
+
+    Ok(saved)
 }
 
 /// Reload `.cuaderno/config.toml` from disk and swap the live vault

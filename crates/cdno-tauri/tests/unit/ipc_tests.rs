@@ -1774,3 +1774,172 @@ fn reload_config_leaves_an_in_flight_old_arc_serving_the_previous_config() {
         "a load after the swap sees the new config"
     );
 }
+
+// ---------------------------------------------------------------------
+// Config save (#365, PR3). The raw editor's write: validate -> CAS ->
+// write verbatim -> journal/emit -> live reload. Unlike the reload
+// tests, these use a DISK-backed store rooted at the tempdir, so the
+// write (store), the compare-and-swap re-read (store), and the reload's
+// `VaultConfig::load` (disk) all hit the SAME bytes — exactly the
+// production coupling. The Memory store the other tests use would split
+// the write (memory) from the reload's read (disk).
+// ---------------------------------------------------------------------
+
+/// A mock app over a real on-disk store rooted at `root`, seeded with
+/// `initial_config` written both to the vault and to `.cuaderno/config.toml`
+/// on disk, so a save's CAS baseline and the reload agree from the first
+/// call. Registers the save + read config commands the tests drive.
+fn mock_app_fs_rooted(
+    root: std::path::PathBuf,
+    initial_config: &str,
+) -> tauri::App<tauri::test::MockRuntime> {
+    write_config_to_disk(&root, initial_config);
+    let store: Arc<dyn VaultStore> = Arc::new(cdno_core::store::FsVaultStore::new(root.clone()));
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    // The initial in-memory config is immaterial to these tests (the CAS
+    // reads the store, the reload re-reads disk) — default is fine.
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+    mock_builder()
+        .invoke_handler(tauri::generate_handler![
+            cdno_tauri::commands::config::save_config,
+            cdno_tauri::commands::config::read_config,
+        ])
+        .manage(AppState {
+            vault: arc_swap::ArcSwap::from_pointee(vault),
+            store,
+            index,
+            journal: WriteJournal::default(),
+            root,
+        })
+        .build(mock_context(noop_assets()))
+        .expect("mock app builds")
+}
+
+#[test]
+fn save_config_round_trips_args_and_applies_the_edit_live() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let seed = "# vault config\n[note_types.person]\nfolder = \"people\"\n";
+    let app = mock_app_fs_rooted(tmp.path().to_path_buf(), seed);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-config", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // The editor read handed the UI this hash for the on-disk seed.
+    let expected_hash = cdno_core::hash::content_hash(seed);
+    let new_config = "# vault config\n[note_types.widget]\nfolder = \"widgets\"\n";
+
+    // `expected_hash` in Rust is `expectedHash` on the wire — the
+    // camelCase marshalling seam these tests exist to catch.
+    let body = InvokeBody::Json(serde_json::json!({
+        "content": new_config,
+        "expectedHash": expected_hash,
+    }));
+    let response =
+        get_ipc_response(&webview, request_with("save_config", body)).expect("save succeeds");
+    let value = response_json(response);
+
+    // The returned document is the persisted content + its fresh hash —
+    // the UI's next compare-and-swap baseline.
+    assert_eq!(value["content"], new_config, "{value}");
+    assert_eq!(
+        value["hash"],
+        cdno_core::hash::content_hash(new_config),
+        "the returned hash matches the persisted file: {value}"
+    );
+
+    // The file on disk is the buffer verbatim.
+    let on_disk = std::fs::read_to_string(
+        tmp.path()
+            .join(cdno_core::paths::CUADERNO_DIR)
+            .join("config.toml"),
+    )
+    .expect("config.toml readable");
+    assert_eq!(on_disk, new_config, "the write is verbatim");
+
+    // Step 5's live reload swapped the vault: the new custom type is live
+    // with no restart.
+    let vault = app.state::<AppState>().vault();
+    assert!(
+        vault.config().custom_type("widget").is_some(),
+        "the saved custom type is live after the reload"
+    );
+}
+
+#[test]
+fn save_config_rejects_an_invalid_candidate_with_the_validation_shape() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let seed = "[note_types.person]\nfolder = \"people\"\n";
+    let app = mock_app_fs_rooted(tmp.path().to_path_buf(), seed);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-invalid", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // A candidate shadowing a built-in — the validation gate rejects it.
+    let body = InvokeBody::Json(serde_json::json!({
+        "content": "[note_types.Project]\nfolder = \"myprojects\"\n",
+        "expectedHash": cdno_core::hash::content_hash(seed),
+    }));
+    let err = get_ipc_response(&webview, request_with("save_config", body))
+        .expect_err("an invalid candidate must be rejected");
+
+    // The error rides the wire as the tagged ConfigSaveError: a Validation
+    // variant carrying the same `{ message, line, col }` the dry-run
+    // returns, so the UI renders a save rejection and a check identically.
+    assert_eq!(err["kind"], "validation", "{err}");
+    assert!(
+        err["data"]["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "the validation message rides the wire: {err}"
+    );
+
+    // The file was NOT touched.
+    let on_disk = std::fs::read_to_string(
+        tmp.path()
+            .join(cdno_core::paths::CUADERNO_DIR)
+            .join("config.toml"),
+    )
+    .expect("config.toml readable");
+    assert_eq!(
+        on_disk, seed,
+        "a rejected save leaves the file byte-identical"
+    );
+}
+
+#[test]
+fn save_config_rejects_a_stale_hash_with_the_conflict_shape() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let seed = "[note_types.person]\nfolder = \"people\"\n";
+    let app = mock_app_fs_rooted(tmp.path().to_path_buf(), seed);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-save-stale", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // A hash that does not match the on-disk seed — as if a concurrent
+    // hand-edit had landed. The candidate itself is valid, so only the
+    // compare-and-swap can reject it.
+    let body = InvokeBody::Json(serde_json::json!({
+        "content": "[note_types.widget]\nfolder = \"widgets\"\n",
+        "expectedHash": "0000000000000000",
+    }));
+    let err = get_ipc_response(&webview, request_with("save_config", body))
+        .expect_err("a stale hash must be rejected");
+
+    assert_eq!(err["kind"], "conflict", "{err}");
+
+    // The file was NOT touched.
+    let on_disk = std::fs::read_to_string(
+        tmp.path()
+            .join(cdno_core::paths::CUADERNO_DIR)
+            .join("config.toml"),
+    )
+    .expect("config.toml readable");
+    assert_eq!(on_disk, seed, "a conflict leaves the file byte-identical");
+}
