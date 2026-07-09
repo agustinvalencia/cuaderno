@@ -306,7 +306,13 @@ values = ["low", "ok", "good"]
 
 Now a `daily` note whose `meds:` isn't a boolean, or whose `mood:` isn't one of the three allowed
 values, gets a `cdno lint` warning. Typed fields are also recognised by the desktop Templates editor,
-so a custom template referencing `{{meds}}` no longer warns that it "renders literally". See
+so a custom template referencing `{{meds}}` no longer warns that it "renders literally".
+
+A typed field's `default` is **populated at create**, too: add `meds: {{meds}}` to your custom
+`daily.md` and every new daily note is scaffolded with `meds: false` — the declared default — rather
+than a literal `{{meds}}`. A field with no default renders `null`. (As with any placeholder, the
+field only appears in a note if the template references it; and if the note's create path already
+supplies that name, or a `[variables]` static var does, that value wins over the default.) See
 [Typed schema fields](../reference/configuration.md#typed-schema-fields) in the configuration
 reference for the full grammar and its limits.
 

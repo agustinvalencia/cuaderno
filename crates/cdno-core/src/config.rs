@@ -105,15 +105,21 @@ pub struct FieldSpec {
     #[serde(default)]
     pub default: Option<toml::Value>,
     /// Whether the field must be present. Only an *explicit* `required = true`
-    /// opts a field into create-time erroring (PR-B); the desugared
+    /// will opt a field into create-time erroring; the desugared
     /// `extra_required` view keeps this `false` (lint-only).
     ///
-    /// INERT in PR-A — nothing reads this yet. Create-time enforcement is
-    /// deferred to PR-B. Before `required` gains create-time teeth, PR-B MUST
-    /// add the load-time guard "`required` without a `default` is a load error
-    /// on lazily-scaffolded types (daily/weekly/monthly/inbox)"; otherwise the
+    /// INERT through PR-B — nothing reads this yet. PR-B populates declared
+    /// *defaults* at create but deliberately leaves `required` toothless,
+    /// because Phase 1 has no create surface that supplies a caller value for a
+    /// built-in's schema field: erroring on absence would break every create.
+    /// Create-time required-enforcement lands in **Phase 2** (the
+    /// `set_frontmatter` setter / `--var` supply path), together with its
+    /// load-time guard "`required` without a `default` is a load error on
+    /// lazily-scaffolded types (daily/weekly/monthly/inbox)" — otherwise the
     /// first `append_to_log` of a day would scaffold a daily note missing a
-    /// required-no-default field and fail — the checkpoint-logging cliff.
+    /// required-no-default field and fail (the checkpoint-logging cliff). Both
+    /// arrive in the same phase so the cliff cannot open in PR-B by
+    /// construction.
     #[serde(default)]
     pub required: bool,
     /// An allowed-value constraint on a `string` field — the "enum" shape
@@ -152,6 +158,30 @@ impl FieldSpec {
             settable: None,
             log_on_change: None,
         }
+    }
+
+    /// The static `default` rendered as the scalar string a template
+    /// substitutes for `{{field}}` at create time (`#301` PR-B): a bool
+    /// `false` → `"false"`, an int → its digits, a `string`/`date` → its text.
+    /// Returns `None` when the field declares no default — the caller then
+    /// supplies the absent-value convention (the built-in templates render a
+    /// literal `null`, e.g. `action`'s `completed`/`blocker`).
+    ///
+    /// `validate_schemas` has already rejected any float/array/table or
+    /// mistyped default before a note is ever created, so the non-scalar arms
+    /// are unreachable in practice; they stringify defensively rather than
+    /// panic.
+    pub fn default_template_value(&self) -> Option<String> {
+        self.default.as_ref().map(|value| match value {
+            toml::Value::String(s) => s.clone(),
+            toml::Value::Integer(i) => i.to_string(),
+            toml::Value::Boolean(b) => b.to_string(),
+            // A `date` default is authored as a quoted `YYYY-MM-DD` string
+            // (String arm above); a bare TOML date would be a Datetime, which
+            // `default_mismatch` already rejects — handled here for totality.
+            toml::Value::Datetime(dt) => dt.to_string(),
+            other => other.to_string(),
+        })
     }
 
     /// Type-check a frontmatter value (as the index parsed it into JSON)

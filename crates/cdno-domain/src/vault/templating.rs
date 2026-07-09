@@ -219,6 +219,10 @@ impl Vault {
         ctx: &mut VariableContext,
     ) -> Result<(String, TemplateSource), DomainError> {
         let engine = self.template_engine();
+        // Schema-field defaults first (tier 3), then `[variables]` (also tier
+        // 3): a same-named static var overwrites the collision below, so an
+        // explicit `[variables]` entry wins over a declared default.
+        self.load_schema_defaults(note_type, ctx);
         ctx.load_from_config(self.config());
         let (template, source) = engine.load_template(note_type, variant)?;
         let rendered = engine.render(&template, ctx, &self.config().variables.prompt);
@@ -233,6 +237,55 @@ impl Vault {
             });
         }
         Ok((rendered.content, source))
+    }
+
+    /// Inject `note_type`'s declared schema-field values (`#301` PR-B) into
+    /// `ctx` at **tier 3** (`set_vault_level`) — the same rung as `[variables]`.
+    ///
+    /// Tier 3, *not* tier 2 (`set_contextual`), is the correctness lynchpin.
+    /// Every create path sets its engine/caller values contextually (tier 2)
+    /// *before* calling `scaffold`, and tier 2 shadows tier 3 in
+    /// [`VariableContext::resolve`]. So a declared value only fills a
+    /// `{{field}}` the create path did not already supply: an engine value
+    /// always wins, and no create-path signature has to change. Injecting at
+    /// tier 2 would instead CLOBBER those engine values — never do that.
+    ///
+    /// Value source per declared field: a static `default` contributes that
+    /// value (`FieldSpec::default_template_value`); a field *without* a default
+    /// (optional or the still-inert `required`) contributes the literal `null`
+    /// — the built-in templates' convention for an absent optional (see
+    /// `action`'s `completed`/`blocker`). Either way the token resolves, so a
+    /// custom template referencing `{{field}}` never renders a literal
+    /// `{{field}}`.
+    ///
+    /// A built-in's declared field only lands in frontmatter if a *custom*
+    /// `.cuaderno/templates/<type>.md` override references `{{field}}` — render
+    /// substitutes referenced tokens, it never adds a frontmatter line, and the
+    /// shipped built-in templates can't reference vault-specific fields. A
+    /// vault with no `[schemas.*.fields]` block for this type is a no-op.
+    ///
+    /// A name that is BOTH a declared schema field and a `[variables.prompt]`
+    /// prompt var is SKIPPED here: the prompt owns the name. The `_with_vars`
+    /// create paths set the caller's prompted answer at tier 4 *before*
+    /// scaffold, and tier 3 shadows tier 4 in [`VariableContext::resolve`], so
+    /// injecting a tier-3 default (or `null`) would silently discard that
+    /// answer. Interactive supply is the more specific intent, so the prompt
+    /// path collects the value and the schema default is intentionally unused.
+    fn load_schema_defaults(&self, note_type: &str, ctx: &mut VariableContext) {
+        let Some(schema) = self.config().schema_for(note_type) else {
+            return;
+        };
+        let prompt_vars = &self.config().variables.prompt;
+        for (name, spec) in schema.declared_fields() {
+            // The prompt path owns any name it defines — see the doc comment.
+            if prompt_vars.contains_key(&name) {
+                continue;
+            }
+            let value = spec
+                .default_template_value()
+                .unwrap_or_else(|| "null".to_owned());
+            ctx.set_vault_level(name, value);
+        }
     }
 
     /// The prompt-defined variables (`[variables.prompt]`) a note's effective

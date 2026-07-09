@@ -61,10 +61,13 @@ collaborators = "Who are the collaborators?"
 
 `[schemas.<type>.fields.<name>]` declares a **typed** frontmatter field on a built-in note type. It
 is the richer sibling of `extra_required`: instead of just a name, each field carries a type (and
-optionally a default and an allowed-value set). Two things consume it today:
+optionally a default and an allowed-value set). Three things consume it today:
 
 - the desktop **Templates editor** recognises the field, so a custom template referencing
   `{{<name>}}` no longer warns "renders literally";
+- **note creation** populates the field's `default` at create — a custom template referencing
+  `{{<name>}}` renders that default (a field with no default renders `null`), so the value lands in
+  the new note's frontmatter instead of a literal `{{<name>}}`;
 - **`cdno lint`** type-checks the field — a note whose value doesn't match the declared type (or
   isn't one of `values`) gets a warning.
 
@@ -83,13 +86,24 @@ required = false                 # optional; default false
 | Field key | Type | Default | Purpose |
 |-----------|------|---------|---------|
 | `type` | `"bool"` \| `"int"` \| `"string"` \| `"date"` | *(required)* | The field's scalar type. An unknown value is a hard load error. |
-| `default` | matching `type` | — | A static default value, type-checked at load. A `date` is a quoted `"YYYY-MM-DD"`. |
-| `required` | bool | `false` | Reserved for create-time enforcement (a later release); parsed now. |
+| `default` | matching `type` | — | A static default value, type-checked at load. **Populated at create** when a custom template references `{{<name>}}`. A `date` is a quoted `"YYYY-MM-DD"`. |
+| `required` | bool | `false` | Reserved for create-time enforcement (a later release); parsed now, but inert — it does not yet block creation. |
 | `values` | list of strings | — | An allowed-value constraint. Valid only on a `string` field. |
 
 Notes and limits:
 
 - **Defaults are static** — there is no `"today"` token; a `date` default is a literal calendar date.
+- **A field only lands in frontmatter if a custom template references it** — rendering substitutes
+  the `{{<name>}}` tokens a template contains; it never adds a frontmatter line. The shipped built-in
+  templates can't reference vault-specific fields, so populate a declared field by adding a custom
+  `.cuaderno/templates/<type>.md` that references `{{<name>}}`.
+- **A create-path value wins over a declared default** — if the note type's create path already
+  supplies a value for that name (an engine-supplied placeholder), that value takes precedence and
+  the declared default does not apply. Likewise a `[variables]` static var of the same name wins over
+  a schema default.
+- **A `[variables.prompt]` name is owned by the prompt** — if a field name is also a prompted
+  variable, its value is collected via the prompt (from `--var`, an interactive prompt, or a static
+  default), and the schema default is not used. This ensures a supplied answer is never discarded.
 - **No `enum` type** — model a closed set as a `string` with `values`.
 - **List fields are reserved but not yet implemented** — a `list = true` is a load error today.
 - **Engine-owned keys are protected** — you can't declare a field named `type`, or a calendar type's

@@ -20,10 +20,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   lint-only and never becomes a create-time error; on a name clash an explicit `fields` block wins.
   Malformed declarations fail at vault-open: an unknown `type`, a mistyped key, `values` on a
   non-string field, a `default` that doesn't type-check, `list = true` (reserved but unimplemented),
-  or a field that shadows an engine-owned key (`type`, or a calendar type's period key). Create-time
-  default population and the `set_frontmatter` setter (the `meds: true` toggle) remain to come in the
-  later phases of #301. The undeclared-key lint is deferred (the correct allowed-set isn't exposed
-  yet). Documented in the configuration reference and the templates tutorial.
+  or a field that shadows an engine-owned key (`type`, or a calendar type's period key). The
+  undeclared-key lint is deferred (the correct allowed-set isn't exposed yet). Documented in the
+  configuration reference and the templates tutorial.
+- **Create-time population of declared field defaults** (#301, PR-B) — a declared field's `default`
+  now populates the new note's frontmatter at creation. When a custom `.cuaderno/templates/<type>.md`
+  references `{{<field>}}`, the token renders the declared default (e.g. `[schemas.daily.fields.meds]`
+  with `default = false` → `meds: false`); a declared field with no default renders `null` rather
+  than a literal `{{<field>}}`. Defaults are injected below the note's own create-path values, so an
+  engine-supplied value (and a `[variables]` static var of the same name) still wins over a declared
+  default — no create surface changes. A name that is also a `[variables.prompt]` variable is left to
+  the prompt path, so a supplied prompted answer is never discarded by a schema default. `required`
+  remains **inert** in this slice: with no way yet to
+  supply a caller value for a built-in's schema field, it does not block creation, so the first
+  checkpoint-log of a day cannot fail. The `set_frontmatter` setter and create-time
+  `required`-enforcement (the `meds: true` toggle) remain for the next phase of #301.
 
 ## [0.15.0] - 2026-07-09
 
