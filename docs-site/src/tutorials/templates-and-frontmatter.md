@@ -288,6 +288,31 @@ New projects are now born with `owner: unassigned` (edit it as needed) and pass 
 > `extra_required` with a template default and the occasional `cdno lint` and your vault stays
 > uniform without any per-note ceremony.
 
+## Edit templates in the desktop app
+
+Everything above works from the CLI, but the desktop app also has a **Templates** view (in the
+sidebar's *Browse* group) that does the same job without a terminal.
+
+Open it and you get a list of every note type — the built-ins plus any custom types you declared
+under `[note_types.<name>]` — each with a badge:
+
+- **Built-in** — the type is using its built-in default (no override yet).
+- **Custom** — a custom override exists in `.cuaderno/templates/`.
+- **No template** — a custom type that has no template file yet.
+
+Select a type to see its effective template in the editor. Edit the text and press **Save**: the
+app writes `.cuaderno/templates/<type>.md`. For a type currently on the built-in default, that first
+save *creates* the custom override — the same edit-and-save model as `cdno templates eject` followed
+by an edit, but in one step. A custom type showing **No template** offers **Create**, which
+scaffolds a starter from the type's declared required fields.
+
+The side panel lists the placeholders you can use, grouped by where their value comes from —
+*supplied* keys the create path fills, a custom type's own *schema fields*, and any *config
+variables* or *prompted* variables. If you type a `{{token}}` that isn't in that set, the editor
+shows a calm inline notice so you can catch a typo before it renders literally — but it never blocks
+you from saving. An edit made outside the app (in your editor, or by another tool) refreshes the
+view automatically.
+
 ## See also
 
 - [Configuration](../concepts/configuration.md) — the configurable surface.

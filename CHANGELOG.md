@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop Templates view** (#357) — a new `/templates` surface (in the sidebar's Browse group)
+  to browse, edit, and create note templates. It lists every note type — the built-ins plus any
+  config-defined custom types — with a badge showing whether its template is a custom override, the
+  built-in default, or (for a custom type) not yet created. Selecting a type shows its effective
+  content in an in-app editor (the app's first free-text file editor); editing and saving writes
+  `.cuaderno/templates/<type>.md`, transparently creating a custom override for a built-in-backed
+  type on first save (no separate `eject` step). A config-defined custom type with no template yet
+  offers **Create**, which scaffolds a starter from the type's declared fields. A side panel lists
+  the type's available placeholders grouped by source (supplied, schema fields, config variables,
+  prompted), and the editor flags any unrecognised `{{token}}` with a calm, non-blocking notice —
+  saving is never blocked. For a config custom type the known set includes its
+  `[note_types.<name>]` required and optional fields, so its own schema fields never false-warn. An
+  external edit to a template file refreshes the view. New domain methods (`list_templates`,
+  `read_template`, `save_template`, `create_template`, and a `Schema` placeholder source) back the
+  matching Tauri commands.
+
 ## [0.14.0] - 2026-07-09
 
 The MCP server now logs its resolved local timezone at startup, so a silent UTC fallback is visible immediately.
