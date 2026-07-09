@@ -15,8 +15,8 @@
 // The backend stays the single authority on validity. The client-side
 // pre-checks below (reserved folders, built-in type names) only block
 // obviously-bad input for a calmer UX — the server error always renders.
-import { useEffect, useState } from "react";
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { CustomNoteType } from "../../api/bindings/CustomNoteType";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
@@ -93,16 +93,38 @@ export default function ConfigStructuredView({ cfg }: { cfg: ConfigDraft }) {
     placeholderData: keepPreviousData,
   });
 
-  // Every committed edit runs through this one mutation: it applies a
-  // surgical command to the CURRENT draft and feeds the new string back
-  // into the shared draft. A failure (e.g. the draft is not parseable TOML
-  // because it was hand-broken in Raw) is a calm toast, never a crash.
-  const edit = useMutation({
-    mutationFn: (make: (content: string) => Promise<string>) => make(cfg.draft),
-    onSuccess: (next) => cfg.setDraft(next),
-    onError: (err) => toast(errorMessage(err), "attention"),
-  });
-  const applyEdit = (make: (content: string) => Promise<string>) => edit.mutate(make);
+  // Every committed edit runs through a SERIALISED queue. Each surgical
+  // command rewrites the one table it touches on the string it is handed,
+  // so edits MUST apply one-at-a-time against the latest result — checkboxes
+  // and the type select commit instantly, so two edits can fire inside a
+  // single command's IPC round-trip. Reading `cfg.draft` at call time would
+  // hand the second edit a stale base (React state lags the in-flight
+  // command) and its rewrite would silently drop the first edit's table.
+  // Instead the queue threads the true accumulated string through
+  // `draftRef`, advanced synchronously as each command resolves, so every
+  // edit builds on the previous one. External reseeds — a conflict reload
+  // changing the on-disk hash, or a toggle back from Raw — remount this
+  // view (the `key={hash}` on ConfigView, and the Raw/Form ternary), giving
+  // a fresh `draftRef` seeded from the current draft; so the ref is never
+  // stale against the shared draft while the view is mounted.
+  const draftRef = useRef(cfg.draft);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const applyEdit = (make: (content: string) => Promise<string>) => {
+    queueRef.current = queueRef.current.then(async () => {
+      try {
+        const next = await make(draftRef.current);
+        // Advance the ref BEFORE the next queued edit reads it — this is
+        // what makes successive rapid edits compose instead of clobber.
+        draftRef.current = next;
+        cfg.setDraft(next);
+      } catch (err) {
+        // A failure (e.g. the draft was hand-broken into invalid TOML in
+        // Raw) is a calm toast, never a crash. The ref is not advanced, so
+        // the next edit retries from the last good draft.
+        toast(errorMessage(err), "attention");
+      }
+    });
+  };
 
   if (model.isPending) {
     return (

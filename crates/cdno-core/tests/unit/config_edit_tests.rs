@@ -302,3 +302,107 @@ fn a_wrong_shaped_key_is_refused_not_overwritten() {
         .expect_err("a scalar where a table is needed must be refused");
     assert!(matches!(err, ConfigEditError::NotATable(_)));
 }
+
+#[test]
+fn an_inline_table_note_type_is_refused_not_duplicated() {
+    // A note type authored as an INLINE table is an `Item::Value`, not a
+    // `[header]` table — editing it must refuse (NotATable) rather than
+    // append a second `[note_types.person]` and silently split the type.
+    let inline = "note_types.person = { folder = \"people\" }\n";
+    let err = set_note_type(inline, "person", &note_type("folks"))
+        .expect_err("an inline-table type must be refused, never duplicated");
+    assert!(matches!(err, ConfigEditError::NotATable(_)));
+}
+
+#[test]
+fn set_schema_field_edits_a_dotted_key_field_in_place() {
+    // A field authored with dotted keys (no `[header]`) is edited in place:
+    // the type flips and a hand-set reserved key on the same field survives,
+    // with no duplicate table materialised.
+    let dotted = "[schemas.project.fields]\nstage.type = \"string\"\nstage.settable = true\n";
+    let out = set_schema_field(dotted, "project", "stage", &field_spec(FieldType::Date))
+        .expect("edit dotted-key field");
+
+    assert!(out.contains("\"date\""), "the type flipped to date: {out}");
+    assert!(!out.contains("\"string\""), "the old type is gone: {out}");
+    assert!(
+        out.contains("settable = true"),
+        "the hand-set reserved key survives: {out}"
+    );
+    // No second field table was materialised — the whole candidate still
+    // parses and carries exactly the one `stage` field.
+    let doc: toml::Value = toml::from_str(&out).expect("candidate parses");
+    let fields = doc["schemas"]["project"]["fields"]
+        .as_table()
+        .expect("fields table");
+    assert_eq!(fields.len(), 1, "still exactly one field: {out}");
+}
+
+#[test]
+fn set_schema_field_writes_a_date_default_as_a_quoted_string() {
+    // The `Datetime` arm of `default_item` must render a QUOTED string, not
+    // a bare TOML date — a bare date would re-parse as a `Datetime`, which
+    // `validate_schemas` then rejects. Quoting keeps the candidate both
+    // parseable and valid (dates are authored as quoted `YYYY-MM-DD`).
+    let dt: toml::value::Datetime = "2026-07-09".parse().expect("parse date");
+    let mut spec = field_spec(FieldType::Date);
+    spec.default = Some(toml::Value::Datetime(dt));
+
+    let out = set_schema_field("", "project", "due", &spec).expect("date default");
+    assert!(
+        out.contains("default = \"2026-07-09\""),
+        "a date default is a quoted string, not a bare date: {out}"
+    );
+    // It round-trips as a string value, not a datetime.
+    let doc: toml::Value = toml::from_str(&out).expect("candidate parses");
+    let default = &doc["schemas"]["project"]["fields"]["due"]["default"];
+    assert!(default.is_str(), "default is a string scalar: {default:?}");
+}
+
+#[test]
+fn edits_a_table_between_two_siblings_leaving_both_intact() {
+    // Editing the MIDDLE of three sibling note types must leave the one
+    // before and the one after byte-identical — no reordering, no bleed.
+    let three = "\
+[note_types.alpha]
+folder = \"alpha\"
+
+[note_types.beta]
+folder = \"beta\"
+
+[note_types.gamma]
+folder = \"gamma\"
+";
+    let out = set_note_type(three, "beta", &note_type("beta-renamed")).expect("edit middle");
+
+    assert!(out.contains("folder = \"beta-renamed\""));
+    // Both neighbours survive verbatim, and alpha still precedes gamma.
+    assert!(out.contains("[note_types.alpha]\nfolder = \"alpha\""));
+    assert!(out.contains("[note_types.gamma]\nfolder = \"gamma\""));
+    let alpha_at = out.find("alpha").expect("alpha");
+    let gamma_at = out.find("gamma").expect("gamma");
+    assert!(alpha_at < gamma_at, "sibling order preserved");
+}
+
+#[test]
+fn a_variables_block_survives_a_note_type_edit() {
+    // The `[variables]` block (which the form never edits) must be preserved
+    // byte-for-byte across a note-type edit — it is Raw-only, so a form save
+    // must not disturb it.
+    let with_vars = "\
+[variables]
+author = \"A. Writer\"
+
+[variables.prompt]
+collaborators = \"Who worked on this?\"
+
+[note_types.person]
+folder = \"people\"
+";
+    let out = set_note_type(with_vars, "person", &note_type("folks")).expect("edit");
+
+    assert!(out.contains("folder = \"folks\""));
+    // Every variables line is intact.
+    assert!(out.contains("[variables]\nauthor = \"A. Writer\""));
+    assert!(out.contains("[variables.prompt]\ncollaborators = \"Who worked on this?\""));
+}

@@ -130,6 +130,32 @@ test("renders the parsed draft: the note type and the schema field", async () =>
   expect(screen.getByText("stage")).toBeDefined();
 });
 
+test("the parsed model fills the form inputs (folder, type)", async () => {
+  installMock([]);
+  renderView(draftStub());
+
+  const folder = (await screen.findByLabelText("Folder for reading")) as HTMLInputElement;
+  expect(folder.value).toBe("reading");
+  const type = screen.getByLabelText("Type for stage") as HTMLSelectElement;
+  expect(type.value).toBe("string");
+});
+
+test("a schema declaring only extra_required (no fields) is hidden", async () => {
+  // The field editor has nothing to show for an extra_required-only schema,
+  // so it is filtered out and the empty state stands — the guarantee the
+  // read-only PR5a shipped, still held now the view is editable.
+  const model: ConfigModel = {
+    vault: { name: "Demo Vault", max_active_projects: 3 },
+    note_types: [],
+    schemas: [{ name: "proj-a", schema: { extra_required: ["author"], fields: {} } }],
+  };
+  installMock([], model);
+  renderView(draftStub());
+
+  expect(await screen.findByText("No schema field definitions.")).toBeDefined();
+  expect(screen.queryByRole("heading", { name: "proj-a" })).toBeNull();
+});
+
 test("editing a note type's folder fires config_set_note_type and setDrafts the result", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   const cfg = draftStub();
@@ -152,6 +178,42 @@ test("editing a note type's folder fires config_set_note_type and setDrafts the 
   });
   // The returned string is fed back into the shared draft.
   expect(cfg.setDraft).toHaveBeenCalledWith(NEW_DRAFT);
+});
+
+test("rapid successive edits serialise: the second builds on the first's result", async () => {
+  // Each surgical command echoes the content it was HANDED plus a marker,
+  // so the chain is observable: a correctly serialised second edit is handed
+  // the first edit's OUTPUT (not the stale starting draft). The old
+  // read-cfg.draft-at-call-time code handed both edits the same base and
+  // dropped the first.
+  const seen: string[] = [];
+  let n = 0;
+  mockIPC((cmd, args: unknown) => {
+    if (cmd === "parse_config_model") return MODEL;
+    if (cmd.startsWith("config_")) {
+      const content = (args as { content: string }).content;
+      seen.push(content);
+      n += 1;
+      return `${content}#${n}`;
+    }
+    return undefined;
+  });
+  const cfg = draftStub();
+  renderView(cfg);
+
+  // Two instant-commit edits fired back-to-back, before the first command
+  // resolves: toggle append-only (a note-type edit), then flip the field
+  // type (a schema edit).
+  fireEvent.click(await screen.findByLabelText("Append-only"));
+  fireEvent.change(screen.getByLabelText("Type for stage"), { target: { value: "int" } });
+
+  await waitFor(() => expect(seen.length).toBe(2));
+  // The load-bearing assertion: the second command was handed the FIRST
+  // command's result, proving the queue threaded the accumulated draft.
+  expect(seen[0]).toBe(DRAFT);
+  expect(seen[1]).toBe(`${DRAFT}#1`);
+  // And the final draft carries BOTH edits, in order.
+  expect(cfg.setDraft).toHaveBeenLastCalledWith(`${DRAFT}#1#2`);
 });
 
 test("removing a note type fires config_remove_note_type", async () => {
@@ -182,11 +244,13 @@ test("the allowed-values editor shows for a string field and hides for others", 
 
   await waitFor(() => {
     const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    // Switching type clears BOTH the values list and the now-type-mismatched
+    // default, so no stale value reaches (and is rejected by) the server.
     expect(call?.args).toMatchObject({
       content: DRAFT,
       noteType: "proj-a",
       field: "stage",
-      spec: { type: "int", values: null },
+      spec: { type: "int", values: null, default: null },
     });
   });
 });

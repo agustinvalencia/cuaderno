@@ -21,6 +21,13 @@
 //! block obviously-bad input for a calmer UX, but the server error is
 //! always the one that decides.
 //!
+//! One caveat to "comments preserved": a comment attached to a key the
+//! edit REMOVES goes with it — a `# why this default` line above a
+//! `default` the form clears has no surviving key to anchor to, so it is
+//! dropped. Comments on untouched keys, on the table header, and on every
+//! other table are kept. This is inherent to surgical key removal, not a
+//! bug; a form that only ever sets keys never hits it.
+//!
 //! Minimal keys by design: a `set_*` writes only the keys that carry
 //! meaning (`folder` always; `required`/`optional`/`values` only when
 //! non-empty; `template`/`title_field`/`date_field`/`default` only when

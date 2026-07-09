@@ -57,10 +57,12 @@ pub enum ConfigEditError {
     Parse(String),
 
     /// A key on the dotted path to the edited table already exists but is
-    /// not a table — e.g. `note_types = 5` where `[note_types.<name>]` was
-    /// expected. Rewriting it would silently drop the user's value, so the
-    /// edit refuses rather than clobber. Names the offending dotted path.
-    #[error("`{0}` is not a table; refusing to overwrite it")]
+    /// not a `[table]` the form can edit in place — a scalar like
+    /// `note_types = 5`, or an INLINE table (`person = { folder = "..." }`)
+    /// where a `[note_types.person]` header was expected. Rewriting either
+    /// would silently drop the user's value, so the edit refuses; the user
+    /// can still change it from the Raw editor. Names the offending key.
+    #[error("`{0}` is not an editable table; edit it from the Raw view instead")]
     NotATable(String),
 }
 
