@@ -78,7 +78,7 @@ pub(in crate::vault) fn iso_week_label(date: chrono::NaiveDate) -> String {
 
 pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
-pub use config::{ConfigDocument, ConfigValidationError, validate_config_str};
+pub use config::{ConfigDocument, ConfigSaveError, ConfigValidationError, validate_config_str};
 pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
     TrackingPoint, TrackingSeries,

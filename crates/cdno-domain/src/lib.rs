@@ -23,10 +23,11 @@ pub use type_registry::{NoteTypeDescriptor, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    ConfigDocument, ConfigValidationError, DailyLogLine, DailyNoteView, DailySection, InboxItem,
-    LapsedHabit, MonthlyNoteView, MonthlySection, NormaliseReport, OrientationContext,
-    PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary,
-    QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary, StewardshipVariant,
-    TemplateContent, TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction,
-    TrackingEntry, Vault, WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
+    ConfigDocument, ConfigSaveError, ConfigValidationError, DailyLogLine, DailyNoteView,
+    DailySection, InboxItem, LapsedHabit, MonthlyNoteView, MonthlySection, NormaliseReport,
+    OrientationContext, PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange,
+    ProjectSummary, QuestionSummary, SearchFilters, SearchResultEntry, StewardshipSummary,
+    StewardshipVariant, TemplateContent, TemplatePlaceholder, TemplateSourceKind, TemplateSummary,
+    TopAction, TrackingEntry, Vault, WeeklyNoteView, WeeklySection, WriteOutcome,
+    validate_config_str,
 };
