@@ -33,6 +33,9 @@ const Strategic = lazy(() => import("./views/strategic/Strategic"));
 // Pulls in react-markdown (the note renderer), so it splits onto
 // navigation like the other secondary surfaces.
 const Calendar = lazy(() => import("./views/calendar/Calendar"));
+// Templates (#357): the note-type template browser + editor. Splits onto
+// navigation like the other secondary surfaces.
+const Templates = lazy(() => import("./views/templates/Templates"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -114,6 +117,14 @@ export default function App() {
           element={
             <Suspense fallback={<ViewFallback />}>
               <ProjectDetail />
+            </Suspense>
+          }
+        />
+        <Route
+          path="templates"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Templates />
             </Suspense>
           }
         />

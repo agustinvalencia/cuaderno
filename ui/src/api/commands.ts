@@ -19,7 +19,10 @@ import type { SearchResultEntry } from "./bindings/SearchResultEntry";
 import type { StewardshipDetail } from "./bindings/StewardshipDetail";
 import type { StewardshipSummary } from "./bindings/StewardshipSummary";
 import type { StrategicBundle } from "./bindings/StrategicBundle";
+import type { TemplateContent } from "./bindings/TemplateContent";
 import type { TemplateField } from "./bindings/TemplateField";
+import type { TemplatePlaceholder } from "./bindings/TemplatePlaceholder";
+import type { TemplateSummary } from "./bindings/TemplateSummary";
 import type { WeeklyBundle } from "./bindings/WeeklyBundle";
 import type { WeeklyView } from "./bindings/WeeklyView";
 
@@ -333,4 +336,44 @@ export function listDailyDates(year: number, month: number): Promise<string[]> {
  * commitments window. One read paints the whole page. */
 export function getStrategicBundle(): Promise<StrategicBundle> {
   return call("get_strategic_bundle");
+}
+
+// --- Templates view (#357) ---
+
+/** Every note type and the status of its template — the Templates list.
+ * Built-ins first, then config-defined custom types. A built-in always
+ * has an effective template (`source` set); a custom type with no file
+ * comes back `source: null`, which the view offers to `Create`. */
+export function listTemplates(): Promise<TemplateSummary[]> {
+  return call("list_templates");
+}
+
+/** The effective content of `noteType`'s template (custom override if
+ * present, else the built-in default; a synthesised starter for a custom
+ * type with no file) plus its source rung. `variant` targets a specific
+ * variant template (the list view always reads the base — omit it). */
+export function readTemplate(noteType: string, variant?: string): Promise<TemplateContent> {
+  return call("read_template", { noteType, variant: variant ?? null });
+}
+
+/** The full placeholder set `noteType` supports — built-in supplied keys,
+ * a custom type's declared schema fields, and config variables/prompts —
+ * for the editor's reference panel and its unknown-token check. */
+export function listTemplatePlaceholders(noteType: string): Promise<TemplatePlaceholder[]> {
+  return call("list_template_placeholders", { noteType });
+}
+
+/** Save `content` verbatim as the custom template for `noteType`.
+ * Transparently creates the override for a built-in-backed type on first
+ * save (the edit-and-save model). Never blocks on unknown tokens — the
+ * editor only warns. */
+export function saveTemplate(noteType: string, content: string, variant?: string): Promise<void> {
+  return call("save_template", { noteType, variant: variant ?? null, content });
+}
+
+/** Scaffold a starter template for a config-defined custom type that has
+ * none yet. A built-in type comes back a `CuadernoError` (kind "invalid")
+ * — edit-and-save its override instead. */
+export function createTemplate(noteType: string): Promise<void> {
+  return call("create_template", { noteType });
 }
