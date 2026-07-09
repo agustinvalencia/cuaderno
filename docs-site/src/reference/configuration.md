@@ -101,6 +101,9 @@ Notes and limits:
   supplies a value for that name (an engine-supplied placeholder), that value takes precedence and
   the declared default does not apply. Likewise a `[variables]` static var of the same name wins over
   a schema default.
+- **A `[variables.prompt]` name is owned by the prompt** — if a field name is also a prompted
+  variable, its value is collected via the prompt (from `--var`, an interactive prompt, or a static
+  default), and the schema default is not used. This ensures a supplied answer is never discarded.
 - **No `enum` type** — model a closed set as a `string` with `values`.
 - **List fields are reserved but not yet implemented** — a `list = true` is a load error today.
 - **Engine-owned keys are protected** — you can't declare a field named `type`, or a calendar type's

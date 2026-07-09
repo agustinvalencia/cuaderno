@@ -263,11 +263,24 @@ impl Vault {
     /// substitutes referenced tokens, it never adds a frontmatter line, and the
     /// shipped built-in templates can't reference vault-specific fields. A
     /// vault with no `[schemas.*.fields]` block for this type is a no-op.
+    ///
+    /// A name that is BOTH a declared schema field and a `[variables.prompt]`
+    /// prompt var is SKIPPED here: the prompt owns the name. The `_with_vars`
+    /// create paths set the caller's prompted answer at tier 4 *before*
+    /// scaffold, and tier 3 shadows tier 4 in [`VariableContext::resolve`], so
+    /// injecting a tier-3 default (or `null`) would silently discard that
+    /// answer. Interactive supply is the more specific intent, so the prompt
+    /// path collects the value and the schema default is intentionally unused.
     fn load_schema_defaults(&self, note_type: &str, ctx: &mut VariableContext) {
         let Some(schema) = self.config().schema_for(note_type) else {
             return;
         };
+        let prompt_vars = &self.config().variables.prompt;
         for (name, spec) in schema.declared_fields() {
+            // The prompt path owns any name it defines — see the doc comment.
+            if prompt_vars.contains_key(&name) {
+                continue;
+            }
             let value = spec
                 .default_template_value()
                 .unwrap_or_else(|| "null".to_owned());

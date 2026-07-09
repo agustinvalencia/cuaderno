@@ -1763,6 +1763,124 @@ fn a_vault_without_schema_fields_is_unaffected_by_the_defaults_load() {
 }
 
 #[test]
+fn declared_int_default_populates_at_create() {
+    // Exercises the `Integer(i) => i.to_string()` arm of
+    // `default_template_value`: an `int` default of 3 renders as `count: 3`.
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "daily",
+        "count",
+        field_spec(FieldType::Int, Some(toml::Value::Integer(3)), false),
+    );
+    let custom =
+        "---\ntype: daily\ndate: {{date}}\ncount: {{count}}\n---\n\n# {{heading}}\n\n## Logs\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/daily.md", custom)], config);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("count: 3"),
+        "declared int default should populate at create:\n{content}"
+    );
+    assert!(!content.contains("{{count}}"), "{content}");
+}
+
+#[test]
+fn a_declared_default_is_inert_when_the_template_does_not_reference_it() {
+    // Locks the load-bearing semantics: rendering substitutes only the tokens a
+    // template contains — it never ADDS a frontmatter line. A field WITH a
+    // default whose `{{field}}` the template doesn't reference leaves the note
+    // byte-identical to a vanilla vault's.
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "project",
+        "reviewer",
+        field_spec(
+            FieldType::String,
+            Some(toml::Value::String("A. Reviewer".to_owned())),
+            false,
+        ),
+    );
+    // The custom template does NOT reference {{reviewer}}.
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n\nBODY\n";
+    let (with_field, wf_store) =
+        vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+    let (plain, plain_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+
+    let p1 = with_field
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+    let p2 = plain
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+
+    let content = wf_store.read_file(&p1).unwrap();
+    assert!(
+        !content.contains("reviewer") && !content.contains("A. Reviewer"),
+        "an unreferenced default must not add a frontmatter line:\n{content}"
+    );
+    assert_eq!(
+        content,
+        plain_store.read_file(&p2).unwrap(),
+        "an unreferenced default leaves the note byte-identical to a vanilla vault"
+    );
+}
+
+#[test]
+fn a_prompted_value_wins_over_a_schema_field_of_the_same_name() {
+    // Regression: a name that is BOTH a `[variables.prompt]` var AND a declared
+    // schema field must be owned by the prompt path, not clobbered by the
+    // schema default. The `_with_vars` create path sets the caller's prompted
+    // answer at tier 4; `load_schema_defaults` skips any prompt-var name, so the
+    // answer survives (a tier-3 `null`/default would otherwise shadow it).
+    use cdno_core::config::FieldType;
+    use cdno_domain::frontmatter::QuestionDomain;
+    let mut config = config_with_field(
+        "question",
+        "extra",
+        // No default — the pre-fix bug injected `null` at tier 3 and discarded
+        // the prompted answer.
+        field_spec(FieldType::String, None, false),
+    );
+    config
+        .variables
+        .prompt
+        .insert("extra".to_owned(), "Extra?".to_owned());
+    let custom = "---\ntype: question\nextra: {{extra}}\n---\n# {{title}}\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/question.md", custom)], config);
+
+    // The name is still a genuine prompt var, so `template_prompts` asks for it
+    // (no under-ask from the schema-injection skip).
+    assert_eq!(
+        vault.template_prompts("question", None).unwrap(),
+        vec![("extra".to_owned(), "Extra?".to_owned())],
+        "the collision name is still collected as a prompt"
+    );
+
+    let path = vault
+        .create_question_with_vars(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            QuestionDomain::Research,
+            "Does it hold?",
+            &prompted(&[("extra", "USER-ANSWER")]),
+        )
+        .expect("create question");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("extra: USER-ANSWER"),
+        "the prompted answer must win over the schema field:\n{content}"
+    );
+    assert!(
+        !content.contains("extra: null"),
+        "the schema default must not discard the prompted answer:\n{content}"
+    );
+}
+
+#[test]
 fn template_placeholders_includes_a_custom_types_schema_fields() {
     let (vault, _store) = vault_with_config(&[], config_with_person());
     let placeholders = vault.template_placeholders("person").unwrap();
