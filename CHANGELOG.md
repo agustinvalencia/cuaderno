@@ -19,6 +19,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   in-app editor. Template edits under `.cuaderno/templates/` still refresh the affected views but do
   not trigger a registry rebuild.
 
+## [0.18.0] - 2026-07-09
+
 Edit your `config.toml` from the desktop app: a Config view that validates before it writes (so it can never brick the vault) and applies the change live via a hot-swappable vault.
 
 ### Added
