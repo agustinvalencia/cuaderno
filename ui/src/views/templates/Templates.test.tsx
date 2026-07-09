@@ -182,6 +182,53 @@ test("a custom type with no template offers Create", async () => {
   });
 });
 
+test("a custom type's schema field is not flagged as an unknown token", async () => {
+  // A config custom type WITH a template file (so the editor renders) whose
+  // placeholder set includes `name` as a schema field — the config-schema
+  // integration. Using {{name}} must NOT raise the unknown-token notice.
+  const person: TemplateSummary = {
+    note_type: "person",
+    display_name: "Person",
+    is_custom_type: true,
+    source: "custom_base",
+    has_custom_file: true,
+    path: ".cuaderno/templates/person.md",
+  };
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "list_templates":
+        return [person];
+      case "read_template":
+        return { content: "---\ntype: person\n---\n", source: "custom_base" };
+      case "list_template_placeholders":
+        return [
+          { name: "title", source: { kind: "supplied" } },
+          { name: "name", source: { kind: "schema" } },
+        ] satisfies TemplatePlaceholder[];
+      default:
+        return undefined;
+    }
+  });
+  renderView();
+
+  const editor = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+  // Wait for the placeholder set to have loaded (the panel renders the
+  // "Schema fields" group) — otherwise a "no notice" assertion would pass
+  // for the wrong reason (the warning is held back until the known set
+  // arrives). The schema field chip proves `name` is in the known set.
+  await screen.findByText("Schema fields");
+  expect(screen.getByText("{{name}}")).toBeDefined();
+
+  // A body that references only known names — the built-in {{title}} and the
+  // custom type's declared schema field {{name}}.
+  fireEvent.change(editor, { target: { value: "# {{title}}\nname: {{name}}\n" } });
+
+  // The notice must never appear: {{name}} flows through the backend-supplied
+  // known set as a schema field.
+  await Promise.resolve();
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 test("has no axe violations", async () => {
   installMock([]);
   const { container } = renderView();

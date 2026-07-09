@@ -35,7 +35,7 @@ import { useToast } from "../../shell/Toasts";
  * "what the editor thinks is a placeholder" matches what render will
  * substitute, and the unknown-token check can't disagree with the
  * backend. */
-function templateTokens(content: string): string[] {
+export function templateTokens(content: string): string[] {
   const names: string[] = [];
   let rest = content;
   for (;;) {

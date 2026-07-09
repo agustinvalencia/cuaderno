@@ -1316,6 +1316,28 @@ fn save_template_rejects_an_unknown_type() {
 }
 
 #[test]
+fn read_template_rejects_an_unknown_type() {
+    let (vault, _store) = vault_with(&[]);
+    match vault.read_template("bogus", None) {
+        Err(cdno_domain::error::DomainError::UnknownNoteType { note_type }) => {
+            assert_eq!(note_type, "bogus");
+        }
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_template_rejects_an_unknown_type() {
+    let (vault, _store) = vault_with(&[]);
+    match vault.create_template("bogus") {
+        Err(cdno_domain::error::DomainError::UnknownNoteType { note_type }) => {
+            assert_eq!(note_type, "bogus");
+        }
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
 fn create_template_scaffolds_a_custom_type_starter_with_its_schema_fields() {
     let (vault, store) = vault_with_config(&[], config_with_person());
     let path = vault.create_template("person").expect("create");
