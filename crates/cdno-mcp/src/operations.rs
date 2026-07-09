@@ -224,6 +224,29 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Set a declared, settable typed frontmatter field on a note, writing through the index so it never desyncs. `note` is `today`, a `YYYY-MM-DD` date (daily note), or a vault-relative path. `key` must be declared `settable = true` under `[schemas.<type>.fields.<key>]`; `value` is coerced to the declared type. Engine-owned keys (`type`, `status`, the calendar period key) are rejected -- use the lifecycle tools for those. Toggles daily flags like `meds`/`workout`/`closed` without a hand-edit."
+    )]
+    pub async fn set_frontmatter(
+        &self,
+        Parameters(input): Parameters<SetFrontmatterInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // The MCP surface reports a single path; take the outcome's primary.
+        // The richer touched-path set is for the desktop echo journal (#315).
+        let path = self
+            .with_vault(move |vault| {
+                vault.set_frontmatter(at, &input.note, &input.key, &input.value)
+            })
+            .await?
+            .map_err(into_mcp_error)?
+            .primary;
+        json_result(WriteResultDto::new(
+            path.to_string(),
+            format!("Set frontmatter on {}", path),
+        ))
+    }
+
+    #[tool(
         description = "Append a next-action bullet to a project. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`."
     )]
     pub async fn add_action(

@@ -464,6 +464,18 @@ pub struct SetQuestionStatusInput {
     pub status: String,
 }
 
+/// Input for `set_frontmatter` (#301).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetFrontmatterInput {
+    /// The note to edit: `today`, a `YYYY-MM-DD` date (both resolve to the
+    /// daily note), or a vault-relative note path (e.g. `projects/foo.md`).
+    pub note: String,
+    /// The declared, settable frontmatter field to set.
+    pub key: String,
+    /// The new value as a string; coerced to the field's declared type.
+    pub value: String,
+}
+
 /// Input for `add_periodic_commitment` (GH #166).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddPeriodicCommitmentInput {

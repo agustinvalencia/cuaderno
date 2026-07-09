@@ -82,6 +82,9 @@ pub enum DomainError {
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 
+    #[error("frontmatter has no field '{0}' to rewrite")]
+    MissingFrontmatterField(String),
+
     #[error(
         "template '{note_type}' references prompted variable(s) {names:?} with no value \u{2014} \
          provide a value for each (the CLI `--var name=value` flag, the MCP `vars` parameter, or a \
@@ -111,6 +114,25 @@ pub enum DomainError {
          (e.g. `cdno {note_type} create`); `note`/`create_note` is for config-defined custom types"
     )]
     BuiltinTypeNotCustom { note_type: String },
+
+    #[error(
+        "note type '{note_type}' has no declared field '{field}' — declare it under \
+         [schemas.{note_type}.fields.{field}] to make it settable"
+    )]
+    UndeclaredSchemaField { note_type: String, field: String },
+
+    #[error(
+        "field '{field}' on note type '{note_type}' is not settable — add `settable = true` under \
+         [schemas.{note_type}.fields.{field}] to allow it"
+    )]
+    FieldNotSettable { note_type: String, field: String },
+
+    #[error("value for field '{field}' on note type '{note_type}' {reason}")]
+    InvalidFieldValue {
+        note_type: String,
+        field: String,
+        reason: String,
+    },
 
     #[error("note type '{note_type}' requires field '{field}'")]
     MissingRequiredField { note_type: String, field: String },

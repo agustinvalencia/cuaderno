@@ -178,11 +178,12 @@ pub(super) fn project_slug_from_path(path: &VaultPath) -> String {
 /// callers needing typed values must convert to a YAML-safe string
 /// first (`as_str()` for kebab-case enums, ISO-formatted dates, etc.).
 ///
-/// Errors with [`DomainError::MissingSection`] if the frontmatter is
-/// missing or doesn't contain the requested field — those situations
-/// should never happen for a note that parsed via the appropriate
-/// `*Frontmatter::try_from`, but the helper surfaces them loudly
-/// rather than silently emitting a file with no value.
+/// Errors with [`DomainError::MissingSection`] if the frontmatter block
+/// itself is missing, or [`DomainError::MissingFrontmatterField`] if the
+/// block is present but doesn't contain the requested field — those
+/// situations should never happen for a note that parsed via the
+/// appropriate `*Frontmatter::try_from`, but the helper surfaces them
+/// loudly rather than silently emitting a file with no value.
 ///
 /// Public so the integration tests in
 /// `tests/unit/projects_tests.rs` and
@@ -193,7 +194,7 @@ pub(super) fn project_slug_from_path(path: &VaultPath) -> String {
 /// not depend on this; treat it as a domain-internal helper.
 pub fn rewrite_field_in_frontmatter(
     raw: &str,
-    field: &'static str,
+    field: &str,
     new_value: &str,
 ) -> Result<String, DomainError> {
     // Locate the frontmatter region. The opening `---\n` must be at
@@ -229,7 +230,10 @@ pub fn rewrite_field_in_frontmatter(
         }
     }
     if !found {
-        return Err(DomainError::MissingSection(field));
+        // The field name is a runtime `&str` (the setter passes a
+        // config-declared key), so it can't ride the `&'static str`
+        // `MissingSection` variant — carry it as an owned string instead.
+        return Err(DomainError::MissingFrontmatterField(field.to_owned()));
     }
 
     let mut result = String::with_capacity(raw.len());
