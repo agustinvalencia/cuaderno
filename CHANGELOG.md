@@ -6,6 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Generic `set_frontmatter` setter (`cdno frontmatter set`, MCP `set_frontmatter`)** (#301, Phase 2)
+  — set a declared, typed frontmatter field on a note *through the index*, so a toggle like the daily
+  `meds: true` no longer forces a hand-edit that desyncs `.cuaderno/index.db`. `cdno frontmatter set
+  <note> <key> <value>` (and the matching MCP tool, bringing the catalogue to 45) writes the field in
+  the same single-transaction read-modify-write the lifecycle tools use, keeping the file and its
+  index row consistent. The write is driven purely by the `[schemas.<type>.fields.<key>]` spec:
+  the field must be **declared** and marked **`settable = true`** (default-deny — an absent or `false`
+  `settable` rejects), its value is **coerced and type-checked** against the declared `type`/`values`,
+  and engine-owned keys (`type`, `status`, and a calendar type's period key `date`/`week`/`month`)
+  are **hard-blocked** regardless of config so the lifecycle tools stay their sole writers. When the
+  field declares `log_on_change = true`, a real change stamps a `key: old → new` line into today's
+  daily note in the same commit; an unchanged value is a silent no-op (no write, no log). `note`
+  resolves as `today`, a `YYYY-MM-DD` date (both → the daily note), or a vault-relative note path;
+  slug resolution for projects/questions and ordered-insert of an absent key are noted follow-ups (v1
+  requires the key to already exist). Documented in the CLI reference, the MCP writes reference, and
+  the configuration reference (`settable`/`log_on_change` are now live).
+
 ## [0.16.0] - 2026-07-09
 
 Config-driven frontmatter (Phase 1): declare typed `[schemas.<type>.fields]`, and their defaults populate at note creation, are recognised by the Templates editor, and are type-checked by lint.
