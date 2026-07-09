@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
 import type { CommitmentsView } from "./bindings/CommitmentsView";
 import type { ConfigDocument } from "./bindings/ConfigDocument";
+import type { ConfigSaveError } from "./bindings/ConfigSaveError";
 import type { ConfigValidationError } from "./bindings/ConfigValidationError";
 import type { DailyView } from "./bindings/DailyView";
 import type { EnergyLevel } from "./bindings/EnergyLevel";
@@ -408,5 +409,40 @@ export async function validateConfig(content: string): Promise<ValidationResult>
     // — it has no `kind` tag, so `call()`'s CuadernoError wrapping never
     // applies; we surface it verbatim as the failed branch.
     return { ok: false, error: raw as ConfigValidationError };
+  }
+}
+
+// --- Config editor save (#365, PR3) ---
+
+/** The typed error a `saveConfig` rejection surfaces — a discriminated
+ * union mirroring the backend `ConfigSaveError`: a `validation` failure
+ * carries the same `{ message, line, col }` the dry-run returns; a
+ * `conflict` means the file changed on disk since it was read (reload
+ * before saving); `internal` is a generic backend fault. Thrown as-is by
+ * `saveConfig` so the caller can `switch` on `.kind`. */
+export type ConfigSaveErrorPayload = ConfigSaveError;
+
+/** Save an edited `.cuaderno/config.toml`. The backend validates the
+ * candidate FIRST (a config that would not reopen is rejected before any
+ * write — the never-brick guarantee), then compares `expectedHash`
+ * against the current on-disk file (rejecting a concurrent hand-edit),
+ * writes verbatim, and live-reloads so the edit applies with no restart.
+ *
+ * Resolves to the persisted document (content + fresh hash) — the UI's
+ * next compare-and-swap baseline. Rejects with the tagged
+ * `ConfigSaveError` (validation / conflict / internal), which this
+ * surfaces verbatim (it has a `kind` tag but is NOT the `CmdError`
+ * taxonomy, so it is thrown raw rather than wrapped). */
+export async function saveConfig(
+  content: string,
+  expectedHash: string,
+): Promise<ConfigDocument> {
+  try {
+    return await invoke<ConfigDocument>("save_config", { content, expectedHash });
+  } catch (raw) {
+    // `ConfigSaveError` serialises tagged as `{ kind, data? }` — surface
+    // it verbatim so the caller can distinguish validation vs conflict vs
+    // internal, rather than flattening it to a CuadernoError.
+    throw raw as ConfigSaveError;
   }
 }
