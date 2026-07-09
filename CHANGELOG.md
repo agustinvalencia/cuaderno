@@ -6,6 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Typed schema fields (`[schemas.<type>.fields]`)** (#301, PR-A) — a built-in note type can now
+  declare typed frontmatter fields in `.cuaderno/config.toml`, e.g. `[schemas.daily.fields.meds]`
+  with `type = "bool"` (`bool` | `int` | `string` | `date`), an optional static `default`, an
+  optional `required` flag, and an optional `values` allowed-set on a `string`. This slice is
+  read-only: the fields are **recognised by the desktop Templates editor** (a custom template
+  referencing `{{meds}}` no longer warns "renders literally") and **type-checked by `cdno lint`** (a
+  present field whose value doesn't match its declared type — or isn't one of `values` — warns; the
+  check is opt-in per type). The legacy `[schemas.<type>].extra_required` list keeps working
+  unchanged and desugars into the same view as an untyped, non-required string field, so it stays
+  lint-only and never becomes a create-time error; on a name clash an explicit `fields` block wins.
+  Malformed declarations fail at vault-open: an unknown `type`, a mistyped key, `values` on a
+  non-string field, a `default` that doesn't type-check, `list = true` (reserved but unimplemented),
+  or a field that shadows an engine-owned key (`type`, or a calendar type's period key). Create-time
+  default population and the `set_frontmatter` setter (the `meds: true` toggle) remain to come in the
+  later phases of #301. The undeclared-key lint is deferred (the correct allowed-set isn't exposed
+  yet). Documented in the configuration reference and the templates tutorial.
+
 ## [0.15.0] - 2026-07-09
 
 A desktop Templates view: browse, edit, and create note templates, with placeholder help and a calm unknown-placeholder warning.
