@@ -576,12 +576,27 @@ fn monday_of_iso_week(date: NaiveDate) -> NaiveDate {
 /// Convert "today minus N days" into a nanosecond timestamp suitable
 /// for comparing against `NoteEntry.mtime_ns`. Anything with
 /// `mtime_ns <= threshold` was last touched on or before that day.
+///
+/// `today` is a LOCAL calendar date (the boundary stamps it from
+/// `Local::now().date_naive()`), so the cutoff is the last instant of
+/// that local day taken in the machine's local zone — not UTC. Mixing a
+/// local date with a UTC instant shifts the boundary by the zone offset,
+/// which for a positive-offset zone just after midnight moves a file
+/// modified "today" onto the wrong side of the cutoff. The system's
+/// contract is machine-local dates throughout (see `clock.rs`), so the
+/// instant conversion honours the same zone. During a DST "spring
+/// forward" 23:59:59 always exists, so `.single()`/`.earliest()` is safe;
+/// the `unwrap_or(0)` is a defensive floor, never expected.
 fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
     let cutoff = today - Duration::days(days);
     let datetime = cutoff
         .and_hms_opt(23, 59, 59)
         .expect("23:59:59 is always a valid time");
-    let nanos = datetime.and_utc().timestamp_nanos_opt().unwrap_or(0);
+    let nanos = datetime
+        .and_local_timezone(chrono::Local)
+        .earliest()
+        .and_then(|dt| dt.timestamp_nanos_opt())
+        .unwrap_or(0);
     nanos.max(0) as u64
 }
 
@@ -591,10 +606,16 @@ fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
 /// can't be represented as a timestamp (only possible on a corrupt
 /// index row) degrades to `today`, i.e. zero days, rather than
 /// panicking a read.
+///
+/// The mtime is a UTC instant but `today` is a LOCAL date, so the mtime
+/// is converted to its LOCAL calendar date before the day subtraction —
+/// otherwise a file written "today" in local time but "yesterday" in UTC
+/// (any positive-offset zone in the hours after local midnight) would
+/// report one stale day too many.
 fn days_since_mtime(today: NaiveDate, mtime_ns: u64) -> i64 {
     let secs = (mtime_ns / 1_000_000_000) as i64;
     let modified = chrono::DateTime::from_timestamp(secs, 0)
-        .map(|dt| dt.date_naive())
+        .map(|dt| dt.with_timezone(&chrono::Local).date_naive())
         .unwrap_or(today);
     (today - modified).num_days()
 }
