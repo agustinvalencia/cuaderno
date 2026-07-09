@@ -9,7 +9,7 @@ import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { CustomNoteType } from "../../api/bindings/CustomNoteType";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
 import type { NamedSchema } from "../../api/bindings/NamedSchema";
-import { readConfigModel } from "../../api/commands";
+import { errorMessage, readConfigModel } from "../../api/commands";
 
 export default function ConfigStructuredView() {
   const model = useQuery({ queryKey: ["read_config_model"], queryFn: readConfigModel });
@@ -24,7 +24,7 @@ export default function ConfigStructuredView() {
   if (model.isError) {
     return (
       <p role="status" className="text-sm text-ink-muted">
-        The config could not be read: {String(model.error)}
+        The config could not be read: {errorMessage(model.error)}
       </p>
     );
   }

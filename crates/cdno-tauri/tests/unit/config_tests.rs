@@ -362,6 +362,39 @@ fn field_spec_serialises_type_key_and_scalar_default() {
     assert_eq!(json.get("default").and_then(|v| v.as_str()), Some("idea"));
 }
 
+/// Pins the `default: string | number | boolean | null` wire contract the
+/// structured view's TS binding declares: an absent default must serialise
+/// as JSON `null` (the `| null` arm), and an integer default as a JSON
+/// number. Without `skip_serializing_if`, a `None` is emitted as `null`
+/// rather than omitted — so the frontend can rely on the key always being
+/// present.
+#[test]
+fn field_spec_serialises_absent_and_integer_defaults() {
+    let raw = "[schemas.project.fields.priority]\ntype = \"int\"\ndefault = 3\n\n\
+               [schemas.project.fields.blocked]\ntype = \"bool\"\n";
+    let config: VaultConfig = toml::from_str(raw).expect("parse config");
+    let fields = &config
+        .schemas
+        .get("project")
+        .expect("project schema")
+        .fields;
+
+    let with_default =
+        serde_json::to_value(fields.get("priority").expect("priority")).expect("serialise");
+    assert_eq!(
+        with_default.get("default").and_then(|v| v.as_i64()),
+        Some(3)
+    );
+
+    let without_default =
+        serde_json::to_value(fields.get("blocked").expect("blocked")).expect("serialise");
+    // The key is present and null (not omitted) — the `| null` arm.
+    assert_eq!(
+        without_default.get("default"),
+        Some(&serde_json::Value::Null)
+    );
+}
+
 /// A syntactically broken config surfaces an error — nothing to swap, so
 /// the never-brick guarantee holds (the caller keeps the old vault live).
 #[test]

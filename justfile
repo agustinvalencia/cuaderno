@@ -57,6 +57,12 @@ gen-bindings:
         cargo test -p cdno-tauri --features ts-bindings export_bindings
     TS_RS_EXPORT_DIR="{{justfile_directory()}}/ui/src/api/bindings" \
         cargo test -p cdno-domain --features ts-bindings export_bindings
+    # cdno-core owns the config field-model leaf types (VaultMeta, FieldSpec,
+    # ...). They export transitively via ConfigModel today, but running their
+    # own #[ts(export)] tests here means a future decoupling can't silently
+    # stop regenerating a binding with no failing test to catch it.
+    TS_RS_EXPORT_DIR="{{justfile_directory()}}/ui/src/api/bindings" \
+        cargo test -p cdno-core --features ts-bindings export_bindings
 
 # Run the desktop app in dev mode against the vault at CUADERNO_VAULT_PATH.
 # Runs from the repo root: the Tauri CLI locates the project by scanning

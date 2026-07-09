@@ -113,6 +113,58 @@ test("renders vault meta, the note type, and the schema field", async () => {
   expect(screen.getByText("idea, active, done")).toBeDefined();
 });
 
+test("renders a dash for an absent default and absent values", async () => {
+  // A minimal field: no default, no values — both must render as the
+  // muted "—" placeholder, distinct from a present falsey value.
+  const model: ConfigModel = {
+    vault: { name: "Demo Vault", max_active_projects: 3 },
+    note_types: [],
+    schemas: [
+      {
+        name: "proj-a",
+        schema: {
+          extra_required: [],
+          fields: {
+            done: {
+              type: "bool",
+              default: null,
+              required: false,
+              values: null,
+              list: null,
+              settable: null,
+              log_on_change: null,
+            },
+          },
+        },
+      },
+    ],
+  };
+  installMock(model);
+  renderView();
+
+  expect(await screen.findByText("done")).toBeDefined();
+  // Both the default cell and the values cell fall back to the dash.
+  expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+});
+
+test("hides a schema that declares only extra_required (no typed fields)", async () => {
+  // A `[schemas.<type>]` with legacy extra_required but no `fields` block
+  // carries nothing the field table can show, so it is filtered out and the
+  // empty state stands.
+  const model: ConfigModel = {
+    vault: { name: "Demo Vault", max_active_projects: 3 },
+    note_types: [],
+    schemas: [
+      { name: "proj-a", schema: { extra_required: ["author"], fields: {} } },
+    ],
+  };
+  installMock(model);
+  renderView();
+
+  expect(await screen.findByText("No schema field definitions.")).toBeDefined();
+  expect(screen.queryByRole("heading", { name: "proj-a" })).toBeNull();
+});
+
 test("shows the empty states when nothing is declared", async () => {
   installMock(EMPTY_MODEL);
   renderView();
