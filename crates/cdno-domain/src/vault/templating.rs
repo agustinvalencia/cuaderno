@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use cdno_core::config::CustomNoteType;
 use cdno_core::error::TemplateError;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
@@ -24,15 +25,31 @@ use cdno_core::template::{
 
 use super::Vault;
 use crate::error::DomainError;
+use crate::note_type::NoteType;
+use crate::type_registry::NoteTypeDescriptor;
 
 /// Where a template placeholder's value comes from — the classification
 /// [`Vault::template_placeholders`] attaches to each name.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialised adjacently-tagged (`{ "kind": "supplied" }`,
+/// `{ "kind": "prompt", "data": { "message": … } }`) for the desktop
+/// Templates view's placeholder-reference panel, which groups the set by
+/// `kind`.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlaceholderSource {
     /// A contextual key the note type's create path fills automatically
     /// (e.g. `title`, `created`, `status`). Derived from the built-in
     /// template, which references exactly what the scaffold supplies.
     Supplied,
+    /// A field declared under `[note_types.<name>]` (`required`/`optional`)
+    /// for a config-defined custom type. The create path fills it from the
+    /// note's frontmatter, so a custom template may reference it — kept
+    /// distinct from `Supplied` so the reference panel can label it as the
+    /// type's own schema field rather than a universal built-in.
+    Schema,
     /// A static config variable (`[variables]` in `config.toml`), available
     /// to any template.
     Config,
@@ -44,10 +61,83 @@ pub enum PlaceholderSource {
 
 /// A `{{placeholder}}` a note type's template supports, plus where its
 /// value comes from. Returned by [`Vault::template_placeholders`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TemplatePlaceholder {
     pub name: String,
     pub source: PlaceholderSource,
+}
+
+/// Which rung a template's effective content came from — the
+/// serialisable, wire-facing mirror of [`TemplateSource`] (which lives in
+/// `cdno-core` and carries no serde/ts-rs derives). Reported by
+/// [`Vault::read_template`] and [`Vault::list_templates`] so the desktop
+/// Templates view can say "custom override" vs "built-in default".
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateSourceKind {
+    /// A custom `.cuaderno/templates/<type>-<variant>.md`.
+    CustomVariant,
+    /// A custom `.cuaderno/templates/<type>.md` (or a custom type's
+    /// configured template file).
+    CustomBase,
+    /// A built-in `<type>-<variant>` default.
+    BuiltinVariant,
+    /// The built-in plain `<type>` default.
+    BuiltinDefault,
+}
+
+impl From<TemplateSource> for TemplateSourceKind {
+    fn from(source: TemplateSource) -> Self {
+        match source {
+            TemplateSource::CustomVariant => TemplateSourceKind::CustomVariant,
+            TemplateSource::CustomBase => TemplateSourceKind::CustomBase,
+            TemplateSource::BuiltinVariant => TemplateSourceKind::BuiltinVariant,
+            TemplateSource::BuiltinDefault => TemplateSourceKind::BuiltinDefault,
+        }
+    }
+}
+
+/// One row of [`Vault::list_templates`]: a note type and the status of its
+/// template. Built-in types always have an effective template (their
+/// built-in default, unless overridden); a config-defined custom type may
+/// have none yet, which the view offers to scaffold via
+/// [`Vault::create_template`].
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TemplateSummary {
+    /// The type key — `project`, `daily`, or a config custom type's name.
+    pub note_type: String,
+    /// A capitalised label for the list (`project` → `Project`).
+    pub display_name: String,
+    /// Whether this is a config-defined custom type (vs a built-in). The
+    /// view offers `Create` only for a custom type with no template.
+    pub is_custom_type: bool,
+    /// The effective template's source rung, or `None` for a custom type
+    /// that has no template file yet (nothing on disk backs it).
+    pub source: Option<TemplateSourceKind>,
+    /// Whether a custom override file exists under `.cuaderno/templates/`.
+    pub has_custom_file: bool,
+    /// The vault-relative path the custom override lives (or would live)
+    /// at — always resolved, so "Open in editor" works even before a file
+    /// exists.
+    pub path: String,
+}
+
+/// The effective (resolved) content of a template plus its source rung,
+/// returned by [`Vault::read_template`]. `source` is `None` when the
+/// content is a synthesised starter for a custom type with no template
+/// file — nothing on disk backs it yet.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TemplateContent {
+    pub content: String,
+    pub source: Option<TemplateSourceKind>,
 }
 
 const PROJECT_TEMPLATE: &str = include_str!("../../templates/project.md");
@@ -190,60 +280,83 @@ impl Vault {
         note_type: &str,
     ) -> Result<Vec<TemplatePlaceholder>, DomainError> {
         // Registry-aware: a built-in yields its static supplied set; a
-        // config-defined custom type yields its create-path built-ins plus its
-        // declared fields. A truly unknown type errors.
-        let supplied = self
-            .type_registry()
-            .resolve(note_type)
-            .ok_or_else(|| DomainError::UnknownNoteType {
+        // config-defined custom type yields its create-path built-ins
+        // (`Supplied`) plus its declared `[note_types.<name>]` fields
+        // (`Schema`). A truly unknown type errors.
+        let descriptor = self.type_registry().resolve(note_type).ok_or_else(|| {
+            DomainError::UnknownNoteType {
                 note_type: note_type.to_owned(),
-            })?
-            .supplied_placeholders();
+            }
+        })?;
 
-        let mut out: Vec<TemplatePlaceholder> = supplied
-            .iter()
-            .map(|name| TemplatePlaceholder {
-                name: name.clone(),
-                source: PlaceholderSource::Supplied,
-            })
-            .collect();
+        // Accumulate `(name, source)` pairs, de-duplicating by name: a config
+        // or prompt var that collides with an already-present name is shadowed
+        // by the contextual value (see [`Vault::scaffold`] precedence), so it
+        // would never take effect and is dropped.
+        let mut out: Vec<TemplatePlaceholder> = Vec::new();
+        let add = |out: &mut Vec<TemplatePlaceholder>, name: &str, source: PlaceholderSource| {
+            if !out.iter().any(|p| p.name == name) {
+                out.push(TemplatePlaceholder {
+                    name: name.to_owned(),
+                    source,
+                });
+            }
+        };
+
+        match descriptor {
+            NoteTypeDescriptor::Builtin(nt) => {
+                // A built-in's full create-path key set, all supplied.
+                for name in nt.supplied_placeholders() {
+                    add(&mut out, name, PlaceholderSource::Supplied);
+                }
+            }
+            NoteTypeDescriptor::Custom { def, .. } => {
+                // The create-path built-ins every custom note gets, then the
+                // type's own declared schema fields — the latter are what let
+                // a custom template reference `{{field}}` without a false
+                // "unknown token" warning in the editor.
+                for name in ["title", "slug", "created", "date"] {
+                    add(&mut out, name, PlaceholderSource::Supplied);
+                }
+                for field in def.required.iter().chain(def.optional.iter()) {
+                    add(&mut out, field, PlaceholderSource::Schema);
+                }
+            }
+        }
 
         // Config-level names available to any template, sorted for
-        // deterministic output (HashMap iteration order is not). A name that
-        // is already supplied contextually is skipped — it can't take effect.
+        // deterministic output (HashMap iteration order is not).
         let variables = &self.config().variables;
         let mut static_names: Vec<&String> = variables
             .static_vars
             .keys()
-            .filter(|name| !supplied.iter().any(|s| s.as_str() == name.as_str()))
+            .filter(|name| !out.iter().any(|p| p.name.as_str() == name.as_str()))
             .collect();
         static_names.sort();
         for name in static_names {
-            out.push(TemplatePlaceholder {
-                name: name.clone(),
-                source: PlaceholderSource::Config,
-            });
+            add(&mut out, name, PlaceholderSource::Config);
         }
 
-        // Prompted names, minus any already supplied or satisfied by a static
+        // Prompted names, minus any already present or satisfied by a static
         // default (a static default suppresses the prompt — it's effectively
         // config).
         let mut prompt_names: Vec<(&String, &String)> = variables
             .prompt
             .iter()
             .filter(|(name, _)| {
-                !supplied.iter().any(|s| s.as_str() == name.as_str())
+                !out.iter().any(|p| p.name.as_str() == name.as_str())
                     && !variables.static_vars.contains_key(*name)
             })
             .collect();
         prompt_names.sort_by(|a, b| a.0.cmp(b.0));
         for (name, message) in prompt_names {
-            out.push(TemplatePlaceholder {
-                name: name.clone(),
-                source: PlaceholderSource::Prompt {
+            add(
+                &mut out,
+                name,
+                PlaceholderSource::Prompt {
                     message: message.clone(),
                 },
-            });
+            );
         }
 
         Ok(out)
@@ -299,6 +412,10 @@ impl Vault {
     /// if present, else the built-in default. Used by the normaliser to
     /// derive the canonical frontmatter order from whatever template a
     /// note is actually created from.
+    ///
+    /// This is the built-in resolution path via the engine; the public
+    /// [`Vault::read_template`] wraps it and additionally handles a config
+    /// custom type's own template file.
     pub(in crate::vault) fn resolve_template_content(
         &self,
         note_type: &str,
@@ -309,6 +426,176 @@ impl Vault {
             .load_template(note_type, variant)?
             .0
             .content)
+    }
+
+    /// Every note type and the status of its template — the desktop
+    /// Templates view's list (#357). Built-ins first (in [`NoteType::ALL`]
+    /// order), then config-defined custom types sorted by name so the list
+    /// is stable across runs.
+    ///
+    /// A built-in always has an effective template (its built-in default,
+    /// reported as [`TemplateSourceKind::BuiltinDefault`] unless a custom
+    /// override file exists, in which case [`TemplateSourceKind::CustomBase`]).
+    /// A config custom type has an effective template only once its file
+    /// exists; until then `source` is `None` and the view offers `Create`.
+    pub fn list_templates(&self) -> Result<Vec<TemplateSummary>, DomainError> {
+        let mut out: Vec<TemplateSummary> = Vec::new();
+
+        for nt in NoteType::ALL {
+            let key = nt.as_str();
+            let path = template_path(&format!("{key}.md"))?;
+            let has_custom_file = self.store.exists(&path)?;
+            // Built-ins always ship a default, so the effective source is the
+            // override when present, else the built-in default.
+            let source = Some(if has_custom_file {
+                TemplateSourceKind::CustomBase
+            } else {
+                TemplateSourceKind::BuiltinDefault
+            });
+            out.push(TemplateSummary {
+                note_type: key.to_owned(),
+                display_name: title_case(key),
+                is_custom_type: false,
+                source,
+                has_custom_file,
+                path: path.to_string(),
+            });
+        }
+
+        // Config custom types, sorted by name (the config map is unordered).
+        let mut custom: Vec<(&String, &CustomNoteType)> = self.config().note_types.iter().collect();
+        custom.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, def) in custom {
+            let path = template_path(&custom_template_filename(name, def))?;
+            let has_custom_file = self.store.exists(&path)?;
+            // No built-in backs a custom type, so its only effective template
+            // is the file — absent it, `None` (the view shows `Create`).
+            let source = has_custom_file.then_some(TemplateSourceKind::CustomBase);
+            out.push(TemplateSummary {
+                note_type: name.clone(),
+                display_name: title_case(name),
+                is_custom_type: true,
+                source,
+                has_custom_file,
+                path: path.to_string(),
+            });
+        }
+
+        Ok(out)
+    }
+
+    /// The effective content of `note_type`'s template (+ optional `variant`)
+    /// plus its source rung, for the Templates editor (#357). Rejects an
+    /// unknown type with [`DomainError::UnknownNoteType`].
+    ///
+    /// For a built-in this is the engine's full precedence resolution (custom
+    /// override wins over built-in default). For a config custom type it reads
+    /// the type's configured template file directly — the engine's generic
+    /// step keys on `<type>.md`, which misses a custom type whose `template`
+    /// names a different file. When a custom type has no file yet, this returns
+    /// the synthesised starter with `source: None` so the editor can preview
+    /// what `Create` would write.
+    pub fn read_template(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+    ) -> Result<TemplateContent, DomainError> {
+        let descriptor = self.type_registry().resolve(note_type).ok_or_else(|| {
+            DomainError::UnknownNoteType {
+                note_type: note_type.to_owned(),
+            }
+        })?;
+
+        match descriptor.as_custom() {
+            None => {
+                let (template, source) =
+                    self.template_engine().load_template(note_type, variant)?;
+                Ok(TemplateContent {
+                    content: template.content,
+                    source: Some(source.into()),
+                })
+            }
+            Some(def) => {
+                let path = template_path(&custom_template_filename(note_type, def))?;
+                if self.store.exists(&path)? {
+                    Ok(TemplateContent {
+                        content: self.store.read_file(&path)?,
+                        source: Some(TemplateSourceKind::CustomBase),
+                    })
+                } else {
+                    Ok(TemplateContent {
+                        content: custom_starter_template(note_type, def),
+                        source: None,
+                    })
+                }
+            }
+        }
+    }
+
+    /// Write `content` verbatim as the custom template for `note_type` (+
+    /// optional `variant`), returning the written path (#357). Templates are
+    /// config, not append-only notes, so this is a plain confined
+    /// `store.write_file` — no [`VaultTransaction`](crate::VaultTransaction).
+    ///
+    /// On a built-in-backed type this transparently CREATES the custom
+    /// override (the direct edit-and-save model — no separate `eject` step)
+    /// and on a re-save overwrites it. The path is confined to
+    /// `.cuaderno/templates/` via [`VaultPath`]. Rejects an unknown type with
+    /// [`DomainError::UnknownNoteType`].
+    pub fn save_template(
+        &self,
+        note_type: &str,
+        variant: Option<&str>,
+        content: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let descriptor = self.type_registry().resolve(note_type).ok_or_else(|| {
+            DomainError::UnknownNoteType {
+                note_type: note_type.to_owned(),
+            }
+        })?;
+        let filename = match descriptor.as_custom() {
+            Some(def) => custom_template_filename(note_type, def),
+            None => match variant {
+                Some(v) => format!("{note_type}-{v}.md"),
+                None => format!("{note_type}.md"),
+            },
+        };
+        let path = template_path(&filename)?;
+        self.store.write_file(&path, content)?;
+        Ok(path)
+    }
+
+    /// Scaffold a starter template for a config-defined custom type that has
+    /// none yet, returning the written path (#357). The starter is a
+    /// frontmatter block of `type` plus each declared `required` field as a
+    /// `{{field}}` placeholder, followed by a `# {{title}}` heading — an
+    /// editable starting point the author refines.
+    ///
+    /// Genuinely distinct from [`Vault::eject_template`], which copies a
+    /// *built-in* and explicitly refuses a custom type (there's no built-in to
+    /// copy). Errors with [`DomainError::BuiltinTypeNotCustom`] for a built-in
+    /// type (edit-and-save its override via [`Vault::save_template`] instead),
+    /// and [`DomainError::TemplateAlreadyExists`] if a file is already there.
+    pub fn create_template(&self, note_type: &str) -> Result<VaultPath, DomainError> {
+        let descriptor = self.type_registry().resolve(note_type).ok_or_else(|| {
+            DomainError::UnknownNoteType {
+                note_type: note_type.to_owned(),
+            }
+        })?;
+        let def = descriptor
+            .as_custom()
+            .ok_or_else(|| DomainError::BuiltinTypeNotCustom {
+                note_type: note_type.to_owned(),
+            })?;
+        let path = template_path(&custom_template_filename(note_type, def))?;
+        if self.store.exists(&path)? {
+            return Err(DomainError::TemplateAlreadyExists {
+                path: path.to_string(),
+            });
+        }
+        self.store
+            .write_file(&path, &custom_starter_template(note_type, def))?;
+        Ok(path)
     }
 
     /// Render a config-defined custom type's note.
@@ -386,6 +673,49 @@ impl Vault {
         });
         TemplateEngine::with_loader(loader, builtin_defaults())
     }
+}
+
+/// A [`VaultPath`] for `filename` under `.cuaderno/templates/`. Centralises
+/// the confinement so every template read/write goes through the same
+/// [`VaultPath`] guard (absolute paths and `..` escapes rejected).
+fn template_path(filename: &str) -> Result<VaultPath, DomainError> {
+    Ok(VaultPath::new(format!(
+        "{}/{filename}",
+        cdno_core::paths::TEMPLATES_DIR
+    ))?)
+}
+
+/// The template filename a config custom type resolves to — its configured
+/// `template`, or `<name>.md` by default. Matches `scaffold_custom`'s
+/// resolution so the Templates view reads/writes the same file the create
+/// path renders from.
+fn custom_template_filename(name: &str, def: &CustomNoteType) -> String {
+    def.template.clone().unwrap_or_else(|| format!("{name}.md"))
+}
+
+/// Capitalise the first character for a list label (`project` → `Project`).
+/// ASCII type keys, so a char-boundary split is safe.
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// The starter template `create_template` writes for a custom type: `type`
+/// plus each declared `required` field as a `{{field}}` placeholder, then a
+/// `# {{title}}` heading. Authored as literal `{{…}}` tokens (not
+/// serde_yaml) because these are template placeholders the create path
+/// fills, not final values.
+fn custom_starter_template(type_name: &str, def: &CustomNoteType) -> String {
+    let mut out = String::from("---\n");
+    out.push_str(&format!("type: {type_name}\n"));
+    for field in &def.required {
+        out.push_str(&format!("{field}: {{{{{field}}}}}\n"));
+    }
+    out.push_str("---\n\n# {{title}}\n");
+    out
 }
 
 /// Build a minimal note for a custom type that ships no template file: a

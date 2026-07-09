@@ -221,6 +221,7 @@ pub fn json_rows(placeholders: &[TemplatePlaceholder]) -> Vec<serde_json::Value>
             PlaceholderSource::Supplied => {
                 serde_json::json!({ "name": p.name, "source": "supplied" })
             }
+            PlaceholderSource::Schema => serde_json::json!({ "name": p.name, "source": "schema" }),
             PlaceholderSource::Config => serde_json::json!({ "name": p.name, "source": "config" }),
             PlaceholderSource::Prompt { message } => {
                 serde_json::json!({ "name": p.name, "source": "prompt", "message": message })
@@ -233,6 +234,10 @@ pub fn json_rows(placeholders: &[TemplatePlaceholder]) -> Vec<serde_json::Value>
 fn source_columns(source: &PlaceholderSource) -> (&'static str, String) {
     match source {
         PlaceholderSource::Supplied => ("supplied", "filled automatically on create".to_owned()),
+        PlaceholderSource::Schema => (
+            "schema",
+            "declared field, filled from frontmatter".to_owned(),
+        ),
         PlaceholderSource::Config => ("config", "from [variables]".to_owned()),
         PlaceholderSource::Prompt { message } => ("prompt", message.clone()),
     }

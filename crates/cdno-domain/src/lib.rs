@@ -26,6 +26,7 @@ pub use vault::{
     DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, MonthlyNoteView,
     MonthlySection, NormaliseReport, OrientationContext, PlaceholderSource, PortfolioSummary,
     ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionSummary, SearchFilters,
-    SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplatePlaceholder, TopAction,
-    TrackingEntry, Vault, WeeklyNoteView, WeeklySection, WriteOutcome,
+    SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplateContent,
+    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry, Vault,
+    WeeklyNoteView, WeeklySection, WriteOutcome,
 };
