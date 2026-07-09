@@ -99,8 +99,9 @@ pub enum ConfigSaveError {
     #[error("the config changed on disk since it was opened; reload before saving")]
     Conflict,
     /// A store/disk failure while reading the current config or writing
-    /// the new one — not user-fixable. The full detail is logged
-    /// server-side; this carries a generic message for the client.
+    /// the new one — not user-fixable. The underlying error detail is
+    /// carried in the message: this is a local single-user app, so there
+    /// is no client/server boundary to withhold it from.
     #[error("{0}")]
     Internal(String),
 }
