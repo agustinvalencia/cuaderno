@@ -35,6 +35,9 @@ ts-bindings = ["dep:ts-rs", "cdno-domain/ts-bindings"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# Parse a persisted config back into `VaultConfig` in the save_config
+# reload test (mirrors what the live reload does at Vault::new).
+toml.workspace = true
 # `test` unlocks tauri::test::{mock_builder, get_ipc_response} — the
 # real-IPC round-trip tests the M1 review made mandatory.
 tauri = { workspace = true, features = ["test"] }
