@@ -2085,8 +2085,8 @@ fn rewrite_field_in_frontmatter_errors_when_field_missing() {
     let err =
         cdno_domain::vault::rewrite_field_in_frontmatter(raw, "status", "active").unwrap_err();
     match err {
-        DomainError::MissingSection(name) => assert_eq!(name, "status"),
-        other => panic!("expected MissingSection(status), got {other:?}"),
+        DomainError::MissingFrontmatterField(name) => assert_eq!(name, "status"),
+        other => panic!("expected MissingFrontmatterField(status), got {other:?}"),
     }
 }
 
