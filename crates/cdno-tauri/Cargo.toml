@@ -15,6 +15,7 @@ tauri-build.workspace = true
 [dependencies]
 cdno-core.workspace = true
 cdno-domain.workspace = true
+arc-swap.workspace = true
 tauri.workspace = true
 tauri-plugin-global-shortcut.workspace = true
 tauri-plugin-single-instance.workspace = true

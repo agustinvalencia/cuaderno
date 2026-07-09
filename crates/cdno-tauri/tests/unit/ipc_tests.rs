@@ -27,7 +27,7 @@ const ALPHA: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated:
 fn memory_vault_configured(
     notes: &[(&str, &str)],
     config: VaultConfig,
-) -> (Vault, Arc<dyn VaultStore>) {
+) -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     store
@@ -38,8 +38,9 @@ fn memory_vault_configured(
             .write_file(&VaultPath::new(path).unwrap(), body)
             .unwrap();
     }
-    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
-    (vault, store)
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), config).expect("Vault::new");
+    (vault, store, index)
 }
 
 /// A vault config that caps the active-project count at `max` — the
@@ -70,7 +71,7 @@ fn mock_app_configured(
     notes: &[(&str, &str)],
     config: VaultConfig,
 ) -> (tauri::App<tauri::test::MockRuntime>, Arc<dyn VaultStore>) {
-    let (vault, store) = memory_vault_configured(notes, config);
+    let (vault, store, index) = memory_vault_configured(notes, config);
     let app = mock_builder()
         .invoke_handler(tauri::generate_handler![
             cdno_tauri::commands::orientation::get_orientation,
@@ -113,7 +114,9 @@ fn mock_app_configured(
             cdno_tauri::commands::calendar::list_daily_dates,
         ])
         .manage(AppState {
-            vault: Arc::new(vault),
+            vault: arc_swap::ArcSwap::from_pointee(vault),
+            store: Arc::clone(&store),
+            index,
             journal: WriteJournal::default(),
             root: std::path::PathBuf::from("/nonexistent-test-vault"),
         })
@@ -1569,5 +1572,205 @@ fn get_strategic_bundle_round_trips_and_composes_every_panel() {
     assert!(
         commitments.iter().any(|c| c["title"] == "Renew passport"),
         "the commitment is in the window: {value}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Live config reload (#365, PR2). The swappable-vault plumbing: a
+// reload re-reads `.cuaderno/config.toml` from `state.root` (a real
+// tempdir here) and rebuilds the vault on the SAME Memory store/index.
+// The store staying in-memory is deliberate — the reload's config comes
+// from disk, so these exercise exactly the swap path without needing a
+// full on-disk vault.
+// ---------------------------------------------------------------------
+
+/// Write `.cuaderno/config.toml` under `root` with the given verbatim
+/// contents, creating the `.cuaderno/` dir. The on-disk config a reload
+/// re-reads.
+fn write_config_to_disk(root: &std::path::Path, contents: &str) {
+    let dir = root.join(cdno_core::paths::CUADERNO_DIR);
+    std::fs::create_dir_all(&dir).expect("create .cuaderno dir");
+    std::fs::write(dir.join("config.toml"), contents).expect("write config.toml");
+}
+
+/// A mock app rooted at a real `root` (so a reload can read config.toml
+/// from disk) over a Memory-backed vault built with `initial_config`.
+/// Registers only the config commands the reload tests drive.
+fn mock_app_rooted(
+    root: std::path::PathBuf,
+    initial_config: VaultConfig,
+) -> tauri::App<tauri::test::MockRuntime> {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&VaultPath::new("projects/alpha.md").unwrap(), ALPHA)
+        .unwrap();
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), initial_config).expect("Vault::new");
+    mock_builder()
+        .invoke_handler(tauri::generate_handler![
+            cdno_tauri::commands::config::reload_config,
+            cdno_tauri::commands::config::read_config,
+        ])
+        .manage(AppState {
+            vault: arc_swap::ArcSwap::from_pointee(vault),
+            store,
+            index,
+            journal: WriteJournal::default(),
+            root,
+        })
+        .build(mock_context(noop_assets()))
+        .expect("mock app builds")
+}
+
+/// A `VaultConfig` carrying `name` as `vault.name` — a sentinel the
+/// invalid-reload test checks survives on the still-live old vault.
+fn config_named(name: &str) -> VaultConfig {
+    VaultConfig {
+        vault: VaultMeta {
+            name: name.to_owned(),
+            max_active_projects: 5,
+        },
+        ..VaultConfig::default()
+    }
+}
+
+#[test]
+fn reload_config_applies_a_new_custom_type_without_restart() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // The new on-disk config declares a custom note type absent from the
+    // vault's initial (default) config.
+    write_config_to_disk(tmp.path(), "[note_types.person]\nfolder = \"people\"\n");
+
+    let app = mock_app_rooted(tmp.path().to_path_buf(), VaultConfig::default());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-reload-add", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // Before the reload the live vault has no `person` type.
+    {
+        let vault = app.state::<AppState>().vault();
+        assert!(
+            vault.config().custom_type("person").is_none(),
+            "the initial config has no custom person type"
+        );
+    }
+
+    get_ipc_response(&webview, request("reload_config")).expect("reload succeeds");
+
+    // After the reload the ArcSwap serves a vault built from the new
+    // config — the custom type is live with no restart.
+    let vault = app.state::<AppState>().vault();
+    let person = vault
+        .config()
+        .custom_type("person")
+        .expect("the reloaded config carries the custom person type");
+    assert_eq!(person.folder, "people");
+}
+
+#[test]
+fn reload_config_against_an_invalid_config_keeps_the_old_vault_live() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // An on-disk config that shadows the built-in `project` type —
+    // `Vault::new`'s `TypeRegistry::validate` rejects it, so the reload
+    // must fail and NOT swap.
+    write_config_to_disk(
+        tmp.path(),
+        "[note_types.project]\nfolder = \"myprojects\"\n",
+    );
+
+    // The initial (valid) config carries a sentinel name the assertion
+    // checks survives the failed reload.
+    let app = mock_app_rooted(tmp.path().to_path_buf(), config_named("sentinel-original"));
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-reload-bad", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let err = get_ipc_response(&webview, request("reload_config"))
+        .expect_err("an invalid on-disk config must fail the reload");
+    // A built-in shadow is user-fixable, mapped to Invalid.
+    assert_eq!(err["kind"], "invalid", "{err}");
+
+    // Belt-and-braces: the swap did NOT happen — the old vault is still
+    // live, still carrying its sentinel name, so the session is never
+    // left vault-less.
+    let vault = app.state::<AppState>().vault();
+    assert_eq!(
+        vault.config().vault.name,
+        "sentinel-original",
+        "the old vault stays live after a rejected reload"
+    );
+    // And it still serves a command (read_config over the live store).
+    get_ipc_response(&webview, request("read_config"))
+        .expect("the old vault still serves after a rejected reload");
+}
+
+#[test]
+fn reload_config_against_syntactically_broken_toml_keeps_the_old_vault_live() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // A SYNTACTICALLY broken config — an unterminated table header. This
+    // fails inside `VaultConfig::load`'s `toml::from_str`, BEFORE `Vault::new`
+    // ever runs — the other no-swap path from the semantic-invalid case.
+    write_config_to_disk(tmp.path(), "[note_types.person\nfolder = \"people\"\n");
+
+    let app = mock_app_rooted(tmp.path().to_path_buf(), config_named("sentinel-original"));
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-reload-syntax", Default::default())
+        .build()
+        .expect("mock webview");
+
+    get_ipc_response(&webview, request("reload_config"))
+        .expect_err("a syntactically broken config must fail the reload");
+
+    // Belt-and-braces: the parse failure short-circuited before any swap,
+    // so the old vault is still live with its sentinel name and still serves.
+    let vault = app.state::<AppState>().vault();
+    assert_eq!(
+        vault.config().vault.name,
+        "sentinel-original",
+        "the old vault stays live after a rejected reload"
+    );
+    get_ipc_response(&webview, request("read_config"))
+        .expect("the old vault still serves after a rejected reload");
+}
+
+#[test]
+fn reload_config_leaves_an_in_flight_old_arc_serving_the_previous_config() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_config_to_disk(tmp.path(), "[note_types.person]\nfolder = \"people\"\n");
+
+    let app = mock_app_rooted(tmp.path().to_path_buf(), VaultConfig::default());
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-reload-inflight", Default::default())
+        .build()
+        .expect("mock webview");
+
+    // Snapshot the vault BEFORE the swap — the owned Arc an in-flight
+    // command would be holding.
+    let old_arc = app.state::<AppState>().vault();
+    assert!(
+        old_arc.config().custom_type("person").is_none(),
+        "the snapshot predates the new custom type"
+    );
+
+    get_ipc_response(&webview, request("reload_config")).expect("reload succeeds");
+
+    // Correct by construction: the pre-swap Arc still serves the OLD
+    // config (it kept the old Vault alive), while a fresh load sees the
+    // new one. An in-flight command finishes against the vault it loaded.
+    assert!(
+        old_arc.config().custom_type("person").is_none(),
+        "the pre-swap Arc is unaffected by the reload"
+    );
+    let new_arc = app.state::<AppState>().vault();
+    assert!(
+        new_arc.config().custom_type("person").is_some(),
+        "a load after the swap sees the new config"
     );
 }

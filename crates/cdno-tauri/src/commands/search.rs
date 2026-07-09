@@ -23,7 +23,7 @@ pub async fn search_vault(
     state: tauri::State<'_, AppState>,
     query: String,
 ) -> Result<Vec<SearchResultEntry>, CmdError> {
-    Ok(with_vault(&state.vault, move |vault| {
+    Ok(with_vault(&state.vault(), move |vault| {
         vault.search(&query, &SearchFilters::default(), PALETTE_RESULT_LIMIT)
     })
     .await??)

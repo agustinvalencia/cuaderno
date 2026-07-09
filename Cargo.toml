@@ -175,6 +175,14 @@ tauri-plugin-opener = "2"
 # JS capability is needed — same as the opener plugin.
 tauri-plugin-dialog = "2"
 
+# Lock-free atomic swap for the desktop app's live-reloadable vault
+# (GH #365, PR2). `AppState.vault` is an `ArcSwap<Vault>` so a config
+# save can rebuild the vault (same store/index, fresh config) and swap
+# it in without a restart; in-flight commands finish against the Arc
+# they loaded. Read-mostly and never blocks — a config reload is rare
+# versus the vault reads every command performs.
+arc-swap = "1"
+
 # TypeScript bindings generated from the Rust wire types (plan §3.5).
 # `serde-compat` (default) honours the serde attrs; `chrono-impl` maps
 # NaiveDate to `string`. Optional everywhere — only the `ts-bindings`

@@ -18,6 +18,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   commands, `read_config` (content + content hash) and `validate_config(content)`, plus a domain
   `Vault::read_config_raw` and a shared `validate_config_str` dry-run function that the eventual
   save gate reuses, so the inspector's check and the future write can never drift.
+- **Live config reload plumbing in the desktop app** (#365, PR2) — an internal `reload_config`
+  command re-reads `.cuaderno/config.toml` from disk, rebuilds the vault on the SAME store and
+  index (no SQLite reopen), and atomically swaps it in, then emits an all-areas `vault:changed` so
+  the UI refetches. This is the plumbing a later config save (PR3) will call to apply an edit
+  live, with no restart. No config editing or UI surface ships in this PR.
+
+### Changed
+
+- **The desktop app's managed vault is now hot-swappable** (#365, PR2) — `AppState.vault` became an
+  `arc_swap::ArcSwap<Vault>` (from a bare `Arc<Vault>`), with an `AppState::vault()` accessor that
+  hands each command an owned `Arc` snapshot. A command already running against the old vault
+  finishes cleanly even as a reload swaps a new one in (correct by construction — the loaded `Arc`
+  keeps the old vault alive). The reload rebuilds via `Vault::new`, which re-runs the same
+  validation the app performs at open, and on any error it keeps the previous vault live rather
+  than leaving the session vault-less. `AppState` now also retains the store/index `Arc`s so the
+  rebuild reuses them. (A config change to the `ignore` globs does not yet refresh the file
+  watcher's compiled matcher — deferred to PR4.)
 
 ## [0.17.0] - 2026-07-09
 

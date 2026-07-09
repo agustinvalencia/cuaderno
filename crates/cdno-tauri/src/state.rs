@@ -3,26 +3,70 @@
 //! suppression.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
+
+use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
+use cdno_core::store::VaultStore;
 use cdno_domain::{Vault, WriteOutcome};
 
 /// Everything the command layer needs, registered once via
-/// `.manage(...)`. `Vault` is shared as a bare `Arc` — no wrapper
-/// lock — because its methods take `&self` and writes are already
-/// serialised by the cross-process write lock acquired at
-/// `VaultTransaction::new` (design plan §3.3; same posture as
-/// `cdno-mcp`'s `CuadernoServer`).
+/// `.manage(...)`.
+///
+/// `vault` is an [`ArcSwap`] rather than a bare `Arc` so a config edit
+/// can be applied *live* (GH #365): a save reloads `.cuaderno/config.toml`,
+/// rebuilds the `Vault` from the SAME store/index with the fresh config,
+/// and atomically swaps the new handle in — no restart, no SQLite reopen.
+/// An `ArcSwap` (not a `Mutex<Arc<Vault>>`) because the access pattern is
+/// overwhelmingly read: every command loads the vault, a swap happens only
+/// on the rare config reload. Reads never block, and — crucially —
+/// [`AppState::vault`] hands each command an owned `Arc` snapshot, so a
+/// command already running against the old vault finishes cleanly even as
+/// a reload swaps a new one in underneath (correct by construction: the
+/// loaded `Arc` keeps the old `Vault` alive until the closure returns).
+/// `Vault`'s own methods take `&self` and writes stay serialised by the
+/// cross-process lock at `VaultTransaction::new` (design plan §3.3), so no
+/// wrapper lock is needed on top of the swap.
 pub struct AppState {
-    pub vault: std::sync::Arc<Vault>,
+    pub vault: ArcSwap<Vault>,
+    /// The store and index the live vault was built on, retained so a
+    /// config reload can rebuild the `Vault` (via `Vault::new`) WITHOUT
+    /// reopening the SQLite index — the handle is reused across the swap.
+    /// They are `Arc`, so holding a clone here is cheap; `Vault` itself
+    /// deliberately does not re-expose them.
+    pub store: Arc<dyn VaultStore>,
+    pub index: Arc<dyn VaultIndex>,
     pub journal: WriteJournal,
     /// Absolute vault root, kept so `open_in_editor` can resolve a
-    /// validated vault-relative path to a real file on disk. The
+    /// validated vault-relative path to a real file on disk, and so a
+    /// config reload can re-read `.cuaderno/config.toml` from it. The
     /// domain works purely in `VaultPath`s and never needs the root,
     /// so this lives here rather than on `Vault`.
     pub root: std::path::PathBuf,
+}
+
+impl AppState {
+    /// An owned snapshot of the currently-live vault.
+    ///
+    /// Returns [`ArcSwap::load_full`] — a full `Arc<Vault>` the caller (or
+    /// the `spawn_blocking` closure it hands to `with_vault`) owns for the
+    /// duration of its work. This is what makes the swap safe: a reload can
+    /// store a new `Vault` at any moment, but a command holding this snapshot
+    /// keeps running against the exact vault it loaded, never a half-swapped
+    /// one.
+    ///
+    /// Call this ONCE per logical operation and thread the single returned
+    /// `Arc` through the whole thing. Calling it twice within one operation
+    /// could straddle a concurrent reload and hand you two *different*
+    /// vaults — the first call's snapshot and the second's, built from
+    /// different configs. Every current call site is single-load; keep it
+    /// that way.
+    pub fn vault(&self) -> Arc<Vault> {
+        self.vault.load_full()
+    }
 }
 
 /// Paths this process wrote recently, so the watcher thread can tell

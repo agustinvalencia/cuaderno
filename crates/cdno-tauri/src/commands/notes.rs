@@ -29,7 +29,7 @@ pub async fn read_note(
     let vault_path = parse_vault_path(path)?;
     // `.await??`: the outer `?` unwraps `with_vault`'s own error, the
     // inner converts the `DomainError` into `CmdError` via `From`.
-    Ok(with_vault(&state.vault, move |vault| vault.read_note(&vault_path)).await??)
+    Ok(with_vault(&state.vault(), move |vault| vault.read_note(&vault_path)).await??)
 }
 
 /// Resolve a single clicked wikilink `target` to its note (path +
@@ -41,5 +41,5 @@ pub async fn resolve_wikilink(
     state: tauri::State<'_, AppState>,
     target: String,
 ) -> Result<Option<ResolvedLink>, CmdError> {
-    Ok(with_vault(&state.vault, move |vault| vault.resolve_wikilink(&target)).await??)
+    Ok(with_vault(&state.vault(), move |vault| vault.resolve_wikilink(&target)).await??)
 }

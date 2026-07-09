@@ -59,7 +59,7 @@ pub async fn get_commitments(
 ) -> Result<CommitmentsView, CmdError> {
     let today = Local::now().date_naive();
     let lookahead = lookahead_days.unwrap_or(DEFAULT_LOOKAHEAD_DAYS);
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_commitments_impl(vault, today, lookahead)
     })
     .await?
@@ -90,7 +90,7 @@ pub async fn complete_commitment<R: tauri::Runtime>(
     // actions.rs::complete_action).
     let date = now.date();
     let slug_for_call = slug.clone();
-    let done_path = with_vault(&state.vault, move |vault| {
+    let done_path = with_vault(&state.vault(), move |vault| {
         vault.complete_commitment(now, &slug_for_call)
     })
     .await??;
@@ -126,7 +126,7 @@ pub async fn complete_milestone<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
     let date = now.date();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let project_path = with_vault(&state.vault(), move |vault| {
         vault.complete_milestone(now, &project, &milestone)
     })
     .await??;

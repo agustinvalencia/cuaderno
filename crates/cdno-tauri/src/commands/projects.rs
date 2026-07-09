@@ -206,7 +206,7 @@ pub async fn get_project(
     slug: String,
 ) -> Result<ProjectDetail, CmdError> {
     let today = Local::now().date_naive();
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_project_impl(vault, &slug, today)
     })
     .await?
@@ -223,7 +223,7 @@ pub async fn update_project_state<R: tauri::Runtime>(
     new_state: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    let outcome = with_vault(&state.vault, move |vault| {
+    let outcome = with_vault(&state.vault(), move |vault| {
         vault.update_project_state(now, &project, &new_state)
     })
     .await??;
@@ -253,7 +253,7 @@ pub async fn add_waiting_on<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
     let date = now.date();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let project_path = with_vault(&state.vault(), move |vault| {
         vault.add_waiting_on(now, &project, &item)
     })
     .await??;
@@ -283,7 +283,7 @@ pub async fn resolve_waiting<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
     let date = now.date();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let project_path = with_vault(&state.vault(), move |vault| {
         vault.resolve_waiting_on(now, &project, &query)
     })
     .await??;
@@ -309,7 +309,7 @@ pub async fn park_project<R: tauri::Runtime>(
     let now = Local::now().naive_local();
     let date = now.date();
     let slug_for_call = slug.clone();
-    let parked_path = with_vault(&state.vault, move |vault| {
+    let parked_path = with_vault(&state.vault(), move |vault| {
         vault.park_project(now, &slug_for_call)
     })
     .await??;
@@ -342,7 +342,7 @@ pub async fn activate_project<R: tauri::Runtime>(
     let now = Local::now().naive_local();
     let date = now.date();
     let slug_for_call = slug.clone();
-    let active_path = with_vault(&state.vault, move |vault| {
+    let active_path = with_vault(&state.vault(), move |vault| {
         vault.activate_project(now, &slug_for_call)
     })
     .await??;
