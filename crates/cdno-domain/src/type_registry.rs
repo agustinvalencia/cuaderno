@@ -150,12 +150,16 @@ impl<'a> TypeRegistry<'a> {
         Self { config }
     }
 
-    /// Validate a config's `[note_types.*]` table: the core structural checks
-    /// plus the reserved-name check (a custom type may not shadow a built-in).
-    /// Run once at [`Vault::new`](crate::vault::Vault::new) so a bad
-    /// declaration fails at vault-open rather than mid-operation.
+    /// Validate a config's `[note_types.*]` and `[schemas.*]` tables: the core
+    /// structural checks (which need no built-in-type knowledge) plus the two
+    /// checks that do — the reserved-name check (a custom type may not shadow a
+    /// built-in) and the reserved-engine-field check (a built-in's schema field
+    /// may not redeclare an engine-owned key). Run once at
+    /// [`Vault::new`](crate::vault::Vault::new) so a bad declaration fails at
+    /// vault-open rather than mid-operation.
     pub fn validate(config: &VaultConfig) -> Result<(), DomainError> {
         config.validate_note_types()?;
+        config.validate_schemas()?;
         for name in config.note_types.keys() {
             // Case-insensitive: `from_str` is exact-match, so `[note_types.Project]`
             // would otherwise slip past and resolve as a *distinct* type from the
@@ -166,6 +170,54 @@ impl<'a> TypeRegistry<'a> {
                 .any(|t| t.as_str().eq_ignore_ascii_case(name))
             {
                 return Err(DomainError::ReservedTypeName { name: name.clone() });
+            }
+        }
+        Self::validate_reserved_schema_fields(config)?;
+        Ok(())
+    }
+
+    /// Reject (or warn on) a `[schemas.<builtin>.fields.<name>]` that collides
+    /// with a key the engine owns for that built-in type (`#301`).
+    ///
+    /// The reserved set is **derived** from each type's metadata, never a
+    /// hardcoded global name list (which would drift and miss per-type keys):
+    /// - **Hard block** `type` (every note carries it, engine-written) and the
+    ///   type's own date/period identity key — `date` for daily, `week`/`month`
+    ///   for weekly/monthly. That key is read from
+    ///   [`NoteType::frontmatter_order`] (position 1 for the calendar types,
+    ///   which are exactly the types the engine keys and scaffolds by period),
+    ///   so the *name* is derived, not hardcoded.
+    /// - **Warn** (don't block) on a field colliding with any other supplied
+    ///   placeholder ([`NoteType::supplied_placeholders`]): the value tiering
+    ///   already shadows engine-owned defaults, so this is footgun-prevention
+    ///   with a good message, not a correctness backstop.
+    ///
+    /// Only the explicit typed `fields` block is checked — `extra_required` is
+    /// legacy lint-only and unaffected.
+    fn validate_reserved_schema_fields(config: &VaultConfig) -> Result<(), DomainError> {
+        for (type_name, schema) in &config.schemas {
+            // Only built-in types have engine-owned keys; a `[schemas.<x>]` for
+            // an unknown/custom name has nothing to reserve here.
+            let Ok(nt) = NoteType::from_str(type_name) else {
+                continue;
+            };
+            let hard_reserved = hard_reserved_fields(nt);
+            for field_name in schema.fields.keys() {
+                if hard_reserved.contains(&field_name.as_str()) {
+                    return Err(DomainError::ReservedSchemaField {
+                        note_type: type_name.clone(),
+                        field: field_name.clone(),
+                    });
+                }
+                if nt.supplied_placeholders().contains(&field_name.as_str()) {
+                    tracing::warn!(
+                        note_type = %type_name,
+                        field = %field_name,
+                        "schema field shadows an engine-supplied placeholder; the \
+                         engine-supplied value wins, so the declared default/value will \
+                         not take effect"
+                    );
+                }
             }
         }
         Ok(())
@@ -205,4 +257,22 @@ impl<'a> TypeRegistry<'a> {
         names.extend(custom);
         names
     }
+}
+
+/// The engine-owned keys a built-in type's schema field must never redeclare:
+/// `type` (every note carries it) plus, for the calendar types, their own
+/// date/period identity key. The identity key's *name* is read from
+/// [`NoteType::frontmatter_order`] (position 1 for daily/weekly/monthly) rather
+/// than hardcoded, so it can't drift from the real frontmatter shape.
+fn hard_reserved_fields(nt: NoteType) -> Vec<&'static str> {
+    let mut reserved = vec!["type"];
+    // Daily/weekly/monthly are the types the engine keys and scaffolds by
+    // period, so their period key (frontmatter_order[1]: `date`/`week`/`month`)
+    // is engine-owned and must not be shadowed by a declared field.
+    if matches!(nt, NoteType::Daily | NoteType::Weekly | NoteType::Monthly)
+        && let Some(period_key) = nt.frontmatter_order().get(1)
+    {
+        reserved.push(period_key);
+    }
+    reserved
 }

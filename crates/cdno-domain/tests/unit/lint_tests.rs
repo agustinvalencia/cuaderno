@@ -107,6 +107,7 @@ fn lint_flags_a_missing_extra_required_field() {
         "project".to_string(),
         SchemaExtension {
             extra_required: vec!["owner".to_string()],
+            ..Default::default()
         },
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
@@ -132,6 +133,7 @@ fn lint_passes_when_extra_required_field_is_present() {
         "project".to_string(),
         SchemaExtension {
             extra_required: vec!["owner".to_string()],
+            ..Default::default()
         },
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
@@ -153,6 +155,7 @@ fn lint_skips_extra_required_check_when_type_is_unknown() {
         "bogus".to_string(),
         SchemaExtension {
             extra_required: vec!["irrelevant".to_string()],
+            ..Default::default()
         },
     );
     let vault = vault_with_notes(&[("note.md", body)], config);
@@ -173,6 +176,7 @@ fn lint_treats_explicit_null_value_as_missing() {
         "project".to_string(),
         SchemaExtension {
             extra_required: vec!["owner".to_string()],
+            ..Default::default()
         },
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
@@ -185,6 +189,109 @@ fn lint_treats_explicit_null_value_as_missing() {
             .message
             .contains("missing required field `owner`")
     );
+}
+
+// ---------------------------------------------------------------------
+// Declared-field value type-mismatch lint (#301). A `[schemas.<type>.fields]`
+// block opts a built-in type into typed linting: a present field whose value
+// doesn't match its declared `FieldType` (or `values`) warns.
+// ---------------------------------------------------------------------
+
+use cdno_core::config::{FieldSpec, FieldType};
+
+/// A config with a single `[schemas.<type>.fields.<field>]` spec.
+fn config_with_field(note_type: &str, field: &str, spec: FieldSpec) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(field.to_owned(), spec);
+    config.schemas.insert(note_type.to_owned(), schema);
+    config
+}
+
+fn bool_field() -> FieldSpec {
+    FieldSpec {
+        ty: FieldType::Bool,
+        default: None,
+        required: false,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+#[test]
+fn lint_warns_on_a_mistyped_declared_field_value() {
+    // `meds` is declared `bool`, but the note carries a string.
+    let body = "---\ntype: project\ntitle: P\nmeds: \"maybe\"\n---\n# Body\n";
+    let config = config_with_field("project", "meds", bool_field());
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let issue = report
+        .issues
+        .iter()
+        .find(|i| i.message.contains("meds"))
+        .expect("a warning for the mistyped field");
+    assert!(
+        issue.message.contains("not a valid bool"),
+        "{}",
+        issue.message
+    );
+    assert_eq!(issue.severity, cdno_domain::LintSeverity::Warning);
+}
+
+#[test]
+fn lint_passes_on_a_correctly_typed_declared_field_value() {
+    let body = "---\ntype: project\ntitle: P\nmeds: true\n---\n# Body\n";
+    let config = config_with_field("project", "meds", bool_field());
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("meds")),
+        "a correctly-typed value must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_warns_on_a_value_outside_the_declared_values_set() {
+    let spec = FieldSpec {
+        ty: FieldType::String,
+        default: None,
+        required: false,
+        values: Some(vec!["low".to_owned(), "ok".to_owned(), "good".to_owned()]),
+        list: None,
+        settable: None,
+        log_on_change: None,
+    };
+    let body = "---\ntype: project\ntitle: P\nmood: elated\n---\n# Body\n";
+    let config = config_with_field("project", "mood", spec);
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("mood") && i.message.contains("allowed values")),
+        "an out-of-set value must warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_skips_the_type_check_for_an_absent_declared_field() {
+    // A declared field the note simply omits is out of scope for the
+    // type-check (presence is the required-field lint's concern). A non-required
+    // field's absence produces no issue at all.
+    let body = "---\ntype: project\ntitle: P\n---\n# Body\n";
+    let config = config_with_field("project", "meds", bool_field());
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
 
 // ---------------------------------------------------------------------

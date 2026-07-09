@@ -1387,6 +1387,68 @@ fn create_template_refuses_a_builtin_type() {
 }
 
 #[test]
+fn template_placeholders_includes_a_declared_builtin_schema_field() {
+    // #301: a `[schemas.daily.fields.meds]` declaration is emitted as `Schema`,
+    // so the desktop Templates editor stops warning "renders literally" on a
+    // custom daily template referencing `{{meds}}`. An undeclared token is
+    // absent from the set — the editor still warns on it.
+    use cdno_core::config::{FieldSpec, FieldType, SchemaExtension};
+
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "meds".to_owned(),
+        FieldSpec {
+            ty: FieldType::Bool,
+            default: None,
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    config.schemas.insert("daily".to_owned(), schema);
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("daily").unwrap();
+    let meds = placeholders
+        .iter()
+        .find(|p| p.name == "meds")
+        .expect("declared field `meds` is recognised");
+    assert_eq!(meds.source, PlaceholderSource::Schema);
+    // The built-in supplied keys are still present, tagged Supplied.
+    let date = placeholders.iter().find(|p| p.name == "date").unwrap();
+    assert_eq!(date.source, PlaceholderSource::Supplied);
+    // An undeclared token is not in the set (so the editor warns on it).
+    assert!(placeholders.iter().all(|p| p.name != "unheard_of"));
+}
+
+#[test]
+fn template_placeholders_recognises_an_extra_required_field_on_a_builtin() {
+    // The legacy `extra_required` desugars into the same recognised set, so a
+    // custom template referencing `{{collaborators}}` doesn't false-warn either.
+    use cdno_core::config::SchemaExtension;
+
+    let mut config = VaultConfig::default();
+    config.schemas.insert(
+        "project".to_owned(),
+        SchemaExtension {
+            extra_required: vec!["collaborators".to_owned()],
+            ..Default::default()
+        },
+    );
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("project").unwrap();
+    let collab = placeholders
+        .iter()
+        .find(|p| p.name == "collaborators")
+        .expect("extra_required field is recognised");
+    assert_eq!(collab.source, PlaceholderSource::Schema);
+}
+
+#[test]
 fn template_placeholders_includes_a_custom_types_schema_fields() {
     let (vault, _store) = vault_with_config(&[], config_with_person());
     let placeholders = vault.template_placeholders("person").unwrap();

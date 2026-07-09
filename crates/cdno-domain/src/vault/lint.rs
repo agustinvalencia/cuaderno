@@ -34,6 +34,11 @@ impl Vault {
     /// - every field listed in the type's `[schemas.<type>]
     ///   extra_required` config section is present in the
     ///   frontmatter;
+    /// - value type-mismatch on a declared `[schemas.<type>.fields]`
+    ///   field: a present field whose value doesn't match its declared
+    ///   `FieldType` (or `values` constraint) — a `Warning`, opt-in per
+    ///   type, #301. (The undeclared-key check is deferred — the correct
+    ///   allowed-set isn't exposed yet.)
     /// - append-only-after-completion on archived action notes;
     /// - attachment stub / artefact-folder pairing;
     /// - broken wikilinks: body links that resolve to no note
@@ -100,6 +105,42 @@ impl Vault {
                             entry.note_type
                         ),
                     ));
+                }
+            }
+
+            // Declared-field value type-check (#301). Opt-in: runs only for a
+            // type carrying an explicit `[schemas.<type>.fields]` block, so a
+            // vault using only the legacy `extra_required` (or none) is
+            // unaffected. For each declared field *present* in the note's
+            // frontmatter, warn (never error) when its value doesn't match the
+            // declared `FieldType` (or its `values` constraint). Presence is out
+            // of scope here — the `required_fields` error above covers missing
+            // built-in-schema fields, and the undeclared-key lint is deferred.
+            // Reuses the canonical `FieldSpec::check_value`, never a parallel
+            // parse. Field names are sorted so the report is deterministic.
+            if let Some(schema) = self.config.schema_for(&entry.note_type)
+                && !schema.fields.is_empty()
+            {
+                let obj = entry.frontmatter.as_object();
+                let mut declared: Vec<(String, cdno_core::config::FieldSpec)> =
+                    schema.declared_fields().into_iter().collect();
+                declared.sort_by(|a, b| a.0.cmp(&b.0));
+                for (field, spec) in declared {
+                    let Some(value) = obj.and_then(|o| o.get(&field)) else {
+                        continue;
+                    };
+                    if value.is_null() {
+                        continue;
+                    }
+                    if let Some(reason) = spec.check_value(value) {
+                        issues.push(LintIssue::warning(
+                            path.clone(),
+                            format!(
+                                "field `{field}` {reason} for note type `{}`",
+                                entry.note_type
+                            ),
+                        ));
+                    }
                 }
             }
 

@@ -101,6 +101,12 @@ pub enum DomainError {
     ReservedTypeName { name: String },
 
     #[error(
+        "schema field '[schemas.{note_type}.fields.{field}]' redeclares the engine-owned key \
+         '{field}' — the engine writes it; remove the declaration"
+    )]
+    ReservedSchemaField { note_type: String, field: String },
+
+    #[error(
         "'{note_type}' is a built-in note type — create it with its own command \
          (e.g. `cdno {note_type} create`); `note`/`create_note` is for config-defined custom types"
     )]

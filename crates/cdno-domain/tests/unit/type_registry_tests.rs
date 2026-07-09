@@ -2,9 +2,32 @@
 //! custom types, the reserved-name guard, and the config-derived frontmatter
 //! order.
 
-use cdno_core::config::{CustomNoteType, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_domain::note_type::NoteType;
 use cdno_domain::{NoteTypeDescriptor, TypeRegistry};
+
+/// A minimal `string` field spec (no default/values) for the reserved-field
+/// tests — enough to place a declared field under a built-in type's schema.
+fn string_field() -> FieldSpec {
+    FieldSpec {
+        ty: FieldType::String,
+        default: None,
+        required: false,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+/// A config with a single `[schemas.<type>.fields.<field>]` string field.
+fn config_with_schema_field(note_type: &str, field: &str) -> VaultConfig {
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(field.to_owned(), string_field());
+    config.schemas.insert(note_type.to_owned(), schema);
+    config
+}
 
 fn custom(folder: &str, required: &[&str], optional: &[&str]) -> CustomNoteType {
     CustomNoteType {
@@ -168,6 +191,47 @@ fn required_fields_reads_custom_declaration_and_builtin_schema() {
     // Built-in type → the vault's `[schemas.<type>].extra_required` (empty here).
     let project = reg.resolve("project").unwrap();
     assert!(project.required_fields(&config).is_empty());
+}
+
+#[test]
+fn validate_rejects_a_schema_field_named_type() {
+    // `type` is engine-written for every note — a declared field may not shadow
+    // it, on any built-in type.
+    let config = config_with_schema_field("project", "type");
+    let err = TypeRegistry::validate(&config).expect_err("should reject `type`");
+    assert!(format!("{err}").contains("type"), "{err}");
+}
+
+#[test]
+fn validate_rejects_a_schema_field_named_after_the_date_period_key() {
+    // The calendar types' identity key is engine-owned: daily→date,
+    // weekly→week, monthly→month. Each is derived from `frontmatter_order`, so
+    // the block is hard, not a hardcoded name list.
+    for (note_type, key) in [("daily", "date"), ("weekly", "week"), ("monthly", "month")] {
+        let config = config_with_schema_field(note_type, key);
+        assert!(
+            TypeRegistry::validate(&config).is_err(),
+            "`{key}` must be reserved on `{note_type}`"
+        );
+    }
+}
+
+#[test]
+fn validate_allows_a_schema_field_colliding_with_a_non_identity_supplied_key() {
+    // A field colliding with a non-identity supplied placeholder (daily
+    // supplies `weekday`) only WARNS — it must not block vault-open.
+    let config = config_with_schema_field("daily", "weekday");
+    assert!(
+        TypeRegistry::validate(&config).is_ok(),
+        "a non-identity supplied-key collision warns, never blocks"
+    );
+}
+
+#[test]
+fn validate_allows_a_novel_schema_field_on_a_builtin() {
+    // The common case: a genuinely new field (daily `meds`) is fine.
+    let config = config_with_schema_field("daily", "meds");
+    assert!(TypeRegistry::validate(&config).is_ok());
 }
 
 #[test]
