@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-09
+
+A desktop Templates view: browse, edit, and create note templates, with placeholder help and a calm unknown-placeholder warning.
+
 ### Added
 
 - **Desktop Templates view** (#357) — a new `/templates` surface (in the sidebar's Browse group)
