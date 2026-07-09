@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::{FieldType, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, VaultConfig};
 use cdno_core::hash::content_hash;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -12,8 +12,11 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::vault::{ConfigSaveError, validate_config_str};
 use cdno_tauri::commands::config::{
-    load_vault_and_ignore, read_config_impl, read_config_model_impl, save_config_impl,
+    config_remove_note_type, config_remove_schema_field, config_set_note_type,
+    config_set_schema_field, load_vault_and_ignore, parse_config_model_impl, read_config_impl,
+    read_config_model_impl, save_config_impl,
 };
+use cdno_tauri::error::CmdError;
 
 const CONFIG_PATH: &str = ".cuaderno/config.toml";
 
@@ -409,4 +412,119 @@ fn load_vault_and_ignore_rejects_a_broken_config() {
         load_vault_and_ignore(store, index, tmp.path()).is_err(),
         "a broken config must error, leaving nothing to swap"
     );
+}
+
+// --- Config form surgical-edit commands (#365, PR5b): thin pure
+//     string-transform wrappers over cdno_core::config_edit, one test per
+//     command. They take no vault, so they are driven directly through the
+//     async runtime; the deep comment/order-preservation proofs live in
+//     cdno-core's config_edit_tests. ---
+
+/// Run one of the pure async config commands to completion. They await
+/// nothing real (a small in-memory TOML edit), so blocking on the ready
+/// future is exact.
+fn block<F: std::future::Future>(fut: F) -> F::Output {
+    tauri::async_runtime::block_on(fut)
+}
+
+/// A minimal custom note type (folder only) — the command test's payload.
+fn note_type(folder: &str) -> CustomNoteType {
+    CustomNoteType {
+        folder: folder.to_string(),
+        required: Vec::new(),
+        optional: Vec::new(),
+        template: None,
+        append_only: false,
+        title_field: None,
+        date_field: None,
+    }
+}
+
+/// A minimal field spec of the given type.
+fn field_spec(ty: FieldType) -> FieldSpec {
+    FieldSpec {
+        ty,
+        default: None,
+        required: false,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+#[test]
+fn config_set_note_type_returns_the_transformed_string() {
+    let out = block(config_set_note_type(
+        String::new(),
+        "widget".to_string(),
+        note_type("widgets"),
+    ))
+    .expect("set note type");
+    assert!(out.contains("[note_types.widget]"));
+    assert!(out.contains("folder = \"widgets\""));
+}
+
+#[test]
+fn config_remove_note_type_returns_the_transformed_string() {
+    let content = "[note_types.widget]\nfolder = \"widgets\"\n".to_string();
+    let out = block(config_remove_note_type(content, "widget".to_string())).expect("remove");
+    assert!(!out.contains("[note_types.widget]"));
+}
+
+#[test]
+fn config_set_schema_field_returns_the_transformed_string() {
+    let out = block(config_set_schema_field(
+        String::new(),
+        "project".to_string(),
+        "stage".to_string(),
+        field_spec(FieldType::String),
+    ))
+    .expect("set field");
+    assert!(out.contains("[schemas.project.fields.stage]"));
+    assert!(out.contains("type = \"string\""));
+}
+
+#[test]
+fn config_remove_schema_field_returns_the_transformed_string() {
+    let content = "[schemas.project.fields.stage]\ntype = \"string\"\n".to_string();
+    let out = block(config_remove_schema_field(
+        content,
+        "project".to_string(),
+        "stage".to_string(),
+    ))
+    .expect("remove field");
+    assert!(!out.contains("fields.stage"));
+}
+
+#[test]
+fn parse_config_model_projects_a_candidate_draft_string() {
+    // The editable form's display seam: parse a draft STRING (not the
+    // applied config) into the same sorted, named model.
+    let raw = "[note_types.reading]\nfolder = \"reading\"\n\
+               [note_types.demo]\nfolder = \"demo\"\n";
+    let model = parse_config_model_impl(raw).expect("parse draft");
+    let names: Vec<&str> = model.note_types.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["demo", "reading"]);
+}
+
+#[test]
+fn parse_config_model_rejects_an_unparseable_draft_as_invalid() {
+    let err = parse_config_model_impl("[note_types.x\nfolder = \"y\"\n")
+        .expect_err("a broken draft must not project");
+    assert!(matches!(err, CmdError::Invalid(_)));
+}
+
+#[test]
+fn config_set_note_type_maps_a_parse_error_to_an_invalid_cmd_error() {
+    // An unparseable draft surfaces as a user-fixable Invalid (verbatim
+    // message), never an Internal that hides the reason.
+    let broken = "[note_types.widget\nfolder = \"x\"\n".to_string();
+    let err = block(config_set_note_type(
+        broken,
+        "widget".to_string(),
+        note_type("widgets"),
+    ))
+    .expect_err("a broken buffer must error");
+    assert!(matches!(err, CmdError::Invalid(_)));
 }

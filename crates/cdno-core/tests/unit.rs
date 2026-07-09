@@ -1,4 +1,5 @@
 mod unit {
+    mod config_edit_tests;
     mod config_tests;
     mod deadlines_tests;
     mod extractors_tests;

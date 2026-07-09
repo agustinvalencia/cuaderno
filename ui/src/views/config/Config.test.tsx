@@ -8,7 +8,7 @@ import { afterEach, expect, test } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -39,7 +39,7 @@ type ValidateOutcome = { ok: true } | { ok: false; error: unknown };
  * those commands answer; read_config always serves the baseline. */
 function installMock(
   calls: Array<{ cmd: string; args: unknown }>,
-  opts: { save?: SaveOutcome; validate?: ValidateOutcome } = {},
+  opts: { save?: SaveOutcome; validate?: ValidateOutcome; newDraft?: string } = {},
 ) {
   const validate = opts.validate ?? { ok: true };
   mockIPC((cmd, args) => {
@@ -48,9 +48,18 @@ function installMock(
       case "read_config":
         return { content: CONFIG_TOML, hash: CONFIG_HASH };
       case "read_config_model":
+      case "parse_config_model":
         // The structured panel's read; only hit once the Form toggle is
-        // active. A minimal empty model is enough for the toggle test.
+        // active. `parse_config_model` is the editable form's draft-parse
+        // seam (PR5b). A minimal empty model is enough for the toggle test.
         return { vault: { name: "Test", max_active_projects: 5 }, note_types: [], schemas: [] };
+      case "config_set_note_type":
+      case "config_remove_note_type":
+      case "config_set_schema_field":
+      case "config_remove_schema_field":
+        // Every surgical form edit returns the new draft string; the form
+        // feeds it back into the shared draft (PR5b).
+        return opts.newDraft ?? CONFIG_TOML;
       case "validate_config":
         if (validate.ok) return undefined;
         throw validate.error;
@@ -191,6 +200,35 @@ test("toggling to Form shows the structured panel; Raw restores the textarea", a
   // Back to Raw restores the editor.
   fireEvent.click(screen.getByRole("button", { name: "Raw" }));
   await findEditor();
+});
+
+test("a form edit flows through the shared draft into save_config", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  const newDraft = CONFIG_TOML + '[note_types.person]\nfolder = "people"\n';
+  installMock(calls, { newDraft, save: { ok: true, content: newDraft, hash: "feedface1234abcd" } });
+  renderView();
+
+  // Land on Raw, then switch to the editable Form.
+  await findEditor();
+  fireEvent.click(screen.getByRole("button", { name: "Form" }));
+  const form = within(await screen.findByRole("form", { name: "Add a note type" }));
+
+  // Add a note type: the surgical command returns the new draft, which the
+  // shared hook adopts — dirtying the draft and enabling Save.
+  fireEvent.change(form.getByLabelText("Name"), { target: { value: "person" } });
+  fireEvent.change(form.getByLabelText("Folder"), { target: { value: "people" } });
+  fireEvent.click(form.getByRole("button", { name: "Add note type" }));
+
+  const saveButton = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+  await waitFor(() => expect(saveButton.disabled).toBe(false));
+  fireEvent.click(saveButton);
+
+  await waitFor(() => {
+    const saved = calls.find((c) => c.cmd === "save_config");
+    // Save persists the surgically-produced draft (not a client
+    // re-serialise) against the original on-disk hash.
+    expect(saved?.args).toMatchObject({ content: newDraft, expectedHash: CONFIG_HASH });
+  });
 });
 
 test("has no axe violations", async () => {

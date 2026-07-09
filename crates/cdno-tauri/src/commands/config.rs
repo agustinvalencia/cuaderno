@@ -20,7 +20,10 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::{CustomNoteType, IgnoreSet, SchemaExtension, VaultConfig, VaultMeta};
+use cdno_core::config::{
+    CustomNoteType, FieldSpec, IgnoreSet, SchemaExtension, VaultConfig, VaultMeta,
+};
+use cdno_core::config_edit;
 use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::CONFIG_FILE;
@@ -113,8 +116,15 @@ pub struct NamedSchema {
 /// stays pure — no filesystem re-read, testable with an in-memory config
 /// and no tempfile root.
 pub fn read_config_model_impl(vault: &Vault) -> Result<ConfigModel, CmdError> {
-    let config = vault.config();
+    Ok(project_config_model(vault.config()))
+}
 
+/// Project a parsed [`VaultConfig`] into the form-facing [`ConfigModel`] —
+/// the vault meta plus the note-type and schema tables lifted into sorted,
+/// named lists. Shared by [`read_config_model_impl`] (the applied config)
+/// and [`parse_config_model_impl`] (a candidate draft string), so the
+/// read-only baseline and the editable form derive their model identically.
+fn project_config_model(config: &VaultConfig) -> ConfigModel {
     let mut note_types: Vec<NamedNoteType> = config
         .note_types
         .iter()
@@ -135,11 +145,11 @@ pub fn read_config_model_impl(vault: &Vault) -> Result<ConfigModel, CmdError> {
         .collect();
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(ConfigModel {
+    ConfigModel {
         vault: config.vault.clone(),
         note_types,
         schemas,
-    })
+    }
 }
 
 /// The structured projection of the parsed config for the read-only form
@@ -148,6 +158,95 @@ pub fn read_config_model_impl(vault: &Vault) -> Result<ConfigModel, CmdError> {
 #[tauri::command]
 pub async fn read_config_model(state: tauri::State<'_, AppState>) -> Result<ConfigModel, CmdError> {
     with_vault(&state.vault(), read_config_model_impl).await?
+}
+
+/// Parse a candidate config string into the form [`ConfigModel`] — the
+/// display seam behind the EDITABLE form (#365, PR5b). Public and
+/// synchronous test seam.
+///
+/// The form's source of truth for persistence is the shared draft STRING
+/// plus the surgical `config_*` edits; this parses that draft into the
+/// typed model the form renders, so the view always reflects the live
+/// (possibly multi-edit, not-yet-saved) draft rather than the applied
+/// config [`read_config_model`] returns. A candidate that is not valid
+/// TOML surfaces as [`CmdError::Invalid`] (verbatim message), which the
+/// form shows as a calm "fix it in Raw" state rather than crashing — no
+/// domain validation runs here (that stays the save gate's job), only the
+/// TOML parse the projection needs.
+pub fn parse_config_model_impl(content: &str) -> Result<ConfigModel, CmdError> {
+    let config: VaultConfig =
+        toml::from_str(content).map_err(|err| CmdError::Invalid(err.to_string()))?;
+    Ok(project_config_model(&config))
+}
+
+/// Parse a candidate draft string into the form model (#365, PR5b). Pure —
+/// depends only on its input, so it runs inline rather than through
+/// `with_vault`, mirroring `validate_config`.
+#[tauri::command]
+pub async fn parse_config_model(content: String) -> Result<ConfigModel, CmdError> {
+    parse_config_model_impl(&content)
+}
+
+// --- Config form surgical edits (#365, PR5b) ---
+//
+// Four PURE string-transform commands the editable Config form drives.
+// Each takes the current draft `content` plus the one piece the user
+// touched, applies a comment-preserving `toml_edit` edit to *only* that
+// table via [`cdno_core::config_edit`], and returns the new candidate
+// string. They write NOTHING to the vault, journal NOTHING, and emit
+// NOTHING: the form feeds the returned string back into the shared draft
+// and the subsequent `save_config` runs the whole validate ->
+// compare-and-swap -> write -> live-reload gate. This keeps the form on
+// the exact same never-brick seam as the raw editor — it can only ever
+// hand the gate a candidate string, never bypass it. The work is a small
+// in-memory TOML parse + edit (no store, no index), so it runs inline
+// rather than through `with_vault`, mirroring `validate_config`.
+
+/// Insert or replace `[note_types.<name>]` in the draft, returning the
+/// new config string for the form to `setDraft`. Pure — no write; the
+/// later `save_config` persists.
+#[tauri::command]
+pub async fn config_set_note_type(
+    content: String,
+    name: String,
+    note_type: CustomNoteType,
+) -> Result<String, CmdError> {
+    Ok(config_edit::set_note_type(&content, &name, &note_type)?)
+}
+
+/// Remove `[note_types.<name>]` from the draft, returning the new config
+/// string. Idempotent (removing an absent type is a no-op success). Pure —
+/// no write.
+#[tauri::command]
+pub async fn config_remove_note_type(content: String, name: String) -> Result<String, CmdError> {
+    Ok(config_edit::remove_note_type(&content, &name)?)
+}
+
+/// Insert or replace `[schemas.<note_type>.fields.<field>]` in the draft,
+/// returning the new config string. Pure — no write.
+#[tauri::command]
+pub async fn config_set_schema_field(
+    content: String,
+    note_type: String,
+    field: String,
+    spec: FieldSpec,
+) -> Result<String, CmdError> {
+    Ok(config_edit::set_schema_field(
+        &content, &note_type, &field, &spec,
+    )?)
+}
+
+/// Remove `[schemas.<note_type>.fields.<field>]` from the draft, returning
+/// the new config string. Idempotent. Pure — no write.
+#[tauri::command]
+pub async fn config_remove_schema_field(
+    content: String,
+    note_type: String,
+    field: String,
+) -> Result<String, CmdError> {
+    Ok(config_edit::remove_schema_field(
+        &content, &note_type, &field,
+    )?)
 }
 
 /// The validate → compare-and-swap → write core of the config save

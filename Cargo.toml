@@ -20,6 +20,10 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
 toml = "0.8"
+# Surgical, comment-preserving TOML editing for the desktop Config form
+# (#365, PR5b). Pinned to the 0.22 line `toml 0.8` already resolves
+# transitively, so the tree carries a single `toml_edit` version.
+toml_edit = "0.22"
 
 # Error handling
 thiserror = "2"

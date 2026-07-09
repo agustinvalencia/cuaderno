@@ -37,6 +37,33 @@ pub enum ConfigError {
     InvalidSchema(String),
 }
 
+/// Errors from the surgical config editor ([`crate::config_edit`], #365
+/// PR5b) — the `toml_edit`-backed writers the desktop Config form drives.
+///
+/// Deliberately tiny: these functions do NOT validate the config (the
+/// save gate owns that — see `Vault::save_config_raw`). They can only
+/// fail two ways: the incoming buffer is not parseable TOML, or an
+/// existing key on the path to the edited table is the wrong shape (a
+/// scalar where a table is required), which would otherwise be silently
+/// clobbered.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigEditError {
+    /// The incoming `config.toml` buffer failed to parse as TOML. Carries
+    /// `toml_edit`'s own rendered message (which names the line/column and
+    /// shows the offending snippet). In practice the form only ever hands
+    /// in a buffer the app itself produced or the user validated, so this
+    /// is a defensive guard, not an expected path.
+    #[error("could not parse config as TOML: {0}")]
+    Parse(String),
+
+    /// A key on the dotted path to the edited table already exists but is
+    /// not a table — e.g. `note_types = 5` where `[note_types.<name>]` was
+    /// expected. Rewriting it would silently drop the user's value, so the
+    /// edit refuses rather than clobber. Names the offending dotted path.
+    #[error("`{0}` is not a table; refusing to overwrite it")]
+    NotATable(String),
+}
+
 /// Errors from VaultPath construction and validation.
 #[derive(Debug, thiserror::Error)]
 pub enum PathError {

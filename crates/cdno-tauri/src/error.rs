@@ -2,6 +2,7 @@
 //! `Result<T, CmdError>`, and the frontend's `commands.ts` rethrows
 //! the serialised form as a typed `CuadernoError`.
 
+use cdno_core::error::ConfigEditError;
 use cdno_domain::error::DomainError;
 
 /// Serialisable command error, tagged for the frontend to match on.
@@ -42,6 +43,17 @@ pub enum CmdError {
     /// tracing; the client sees only a generic message.
     #[error("internal error")]
     Internal(String),
+}
+
+impl From<ConfigEditError> for CmdError {
+    /// Both failure modes of a surgical config edit are user-fixable and
+    /// safe to show verbatim: a `Parse` error means the current draft is
+    /// not valid TOML (fix it in the raw editor), and `NotATable` names a
+    /// key whose shape blocks the edit. Neither leaks an internal — the
+    /// message is the whole point.
+    fn from(e: ConfigEditError) -> Self {
+        CmdError::Invalid(e.to_string())
+    }
 }
 
 impl From<DomainError> for CmdError {

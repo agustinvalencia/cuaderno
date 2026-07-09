@@ -396,9 +396,14 @@ pub fn run() {
             commands::templates::create_template,
             commands::config::read_config,
             commands::config::read_config_model,
+            commands::config::parse_config_model,
             commands::config::validate_config,
             commands::config::save_config,
             commands::config::reload_config,
+            commands::config::config_set_note_type,
+            commands::config::config_remove_note_type,
+            commands::config::config_set_schema_field,
+            commands::config::config_remove_schema_field,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Edit your note types and schemas from the desktop Config form** (#365, PR5b) — the Form side of
+  the Config view is now editable: add, edit, and remove custom `[note_types.<name>]` (folder,
+  template, append-only, required/optional fields, title/date field) and their
+  `[schemas.<type>.fields.<name>]` declarations (type, default, required, allowed values — the
+  allowed-values editor is enabled only for a `string` field, mirroring the server rule). Every edit
+  is a **surgical** `toml_edit` rewrite of just the one table it touches: comments, key order, the
+  `[variables]` block, and every untouched note type/schema are preserved byte-for-byte. The form
+  never re-serialises the whole config; it produces a candidate string that flows through the exact
+  same validate -> compare-and-swap -> write -> live-reload gate as the raw editor, so an edit from
+  the form can no more brick the vault than one from Raw. Client-side pre-checks (reserved folders,
+  built-in type-name shadowing) keep the UX calm, but the server validation stays authoritative.
+  Backed by a new `config_edit` surgical writer in `cdno-core` and thin pure `config_set_note_type`
+  / `config_remove_note_type` / `config_set_schema_field` / `config_remove_schema_field` /
+  `parse_config_model` commands.
 - **Structured view of your note types and schemas in the desktop Config editor** (#365, PR5a) — the
   Config view gains a **Raw / Form** toggle. The Raw side is the existing `config.toml` editor; the
   Form side (read-only in this release) renders the parsed config as calm cards and tables: the vault

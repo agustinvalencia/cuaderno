@@ -7,6 +7,8 @@ import type { CommitmentsView } from "./bindings/CommitmentsView";
 import type { ConfigDocument } from "./bindings/ConfigDocument";
 import type { ConfigModel } from "./bindings/ConfigModel";
 import type { ConfigSaveError } from "./bindings/ConfigSaveError";
+import type { CustomNoteType } from "./bindings/CustomNoteType";
+import type { FieldSpec } from "./bindings/FieldSpec";
 import type { ConfigValidationError } from "./bindings/ConfigValidationError";
 import type { DailyView } from "./bindings/DailyView";
 import type { EnergyLevel } from "./bindings/EnergyLevel";
@@ -399,6 +401,63 @@ export function readConfig(): Promise<ConfigDocument> {
  * keeps it in step with an external edit). */
 export function readConfigModel(): Promise<ConfigModel> {
   return call("read_config_model");
+}
+
+/** Parse a candidate config draft STRING into the structured model the
+ * editable Form renders (#365, PR5b). Distinct from `readConfigModel`,
+ * which projects the config currently in effect: this projects the live
+ * (possibly unsaved, multi-edit) draft, so the form always mirrors what
+ * Save would persist. An unparseable draft rejects with a `CuadernoError`
+ * (kind "invalid") the form shows as a calm "fix it in Raw" state. */
+export function parseConfigModel(content: string): Promise<ConfigModel> {
+  return call("parse_config_model", { content });
+}
+
+// --- Config form surgical edits (#365, PR5b) ---
+//
+// Each takes the current draft string plus the one touched piece, applies
+// a comment-preserving `toml_edit` edit to only that table server-side,
+// and resolves to the NEW draft string. The form feeds that back into the
+// shared `useConfigDraft` draft; the existing `saveConfig` gate persists
+// it. These never write — persistence is always the draft string + the
+// save gate, never a client re-serialise. Rust `note_type` is `noteType`
+// on the wire (Tauri camelCases args).
+
+/** Insert or replace `[note_types.<name>]` in `content`; resolves to the
+ * new config string. */
+export function configSetNoteType(
+  content: string,
+  name: string,
+  noteType: CustomNoteType,
+): Promise<string> {
+  return call("config_set_note_type", { content, name, noteType });
+}
+
+/** Remove `[note_types.<name>]` from `content`; resolves to the new config
+ * string. Idempotent (removing an absent type is a no-op). */
+export function configRemoveNoteType(content: string, name: string): Promise<string> {
+  return call("config_remove_note_type", { content, name });
+}
+
+/** Insert or replace `[schemas.<noteType>.fields.<field>]` in `content`;
+ * resolves to the new config string. */
+export function configSetSchemaField(
+  content: string,
+  noteType: string,
+  field: string,
+  spec: FieldSpec,
+): Promise<string> {
+  return call("config_set_schema_field", { content, noteType, field, spec });
+}
+
+/** Remove `[schemas.<noteType>.fields.<field>]` from `content`; resolves
+ * to the new config string. Idempotent. */
+export function configRemoveSchemaField(
+  content: string,
+  noteType: string,
+  field: string,
+): Promise<string> {
+  return call("config_remove_schema_field", { content, noteType, field });
 }
 
 /** The outcome of a dry-run config validation: `ok` when the config
