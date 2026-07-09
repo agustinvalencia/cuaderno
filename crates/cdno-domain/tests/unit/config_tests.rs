@@ -101,6 +101,17 @@ fn validate_rejects_a_toml_syntax_error_with_line_and_col() {
 }
 
 #[test]
+fn validate_rejects_an_unknown_field_type() {
+    // An unknown `type` value is rejected by serde's `FieldType` enum at
+    // `toml::from_str` — a distinct deserialise path from the
+    // `deny_unknown_fields` unknown-KEY rejection, so it's worth its own
+    // case: the dry-run gate must reject a `type = "float"` a user typed.
+    let raw = "[schemas.daily.fields.weight]\ntype = \"float\"\n";
+    let err = validate_config_str(raw).expect_err("should reject an unknown field type");
+    assert!(!err.message.is_empty());
+}
+
+#[test]
 fn validate_rejects_a_custom_type_shadowing_a_builtin_case_insensitively() {
     // `Project` shadows the built-in `project` (case-insensitive).
     let raw = "[note_types.Project]\nfolder = \"myprojects\"\n";
