@@ -32,7 +32,7 @@ pub async fn capture_quick<R: tauri::Runtime>(
     let now = Local::now().naive_local();
     // The domain returns the vault-relative path of the note it wrote,
     // so we journal exactly what we touched (no path reconstruction).
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         vault.capture_to_inbox(now, &text)
     })
     .await??;
@@ -50,7 +50,7 @@ pub async fn log_quick<R: tauri::Runtime>(
     text: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    let daily = with_vault(&state.vault, move |vault| {
+    let daily = with_vault(&state.vault(), move |vault| {
         vault.log_to_daily_note(now, &text)
     })
     .await??;
@@ -62,7 +62,7 @@ pub async fn log_quick<R: tauri::Runtime>(
 /// inbox drawer's data. A pure read: no journal, no emit.
 #[tauri::command]
 pub async fn list_inbox(state: tauri::State<'_, AppState>) -> Result<Vec<InboxItem>, CmdError> {
-    let items = with_vault(&state.vault, |vault| vault.list_inbox()).await??;
+    let items = with_vault(&state.vault(), |vault| vault.list_inbox()).await??;
     Ok(items)
 }
 
@@ -81,7 +81,7 @@ pub async fn discard_inbox_item<R: tauri::Runtime>(
     // call received, so a discard a hair before midnight journals the
     // day it wrote to (the midnight TOCTOU — see actions.rs).
     let date = now.date();
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         vault.discard_inbox_item(now, &slug)
     })
     .await??;

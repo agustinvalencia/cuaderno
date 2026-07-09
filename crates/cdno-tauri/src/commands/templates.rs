@@ -27,7 +27,7 @@ use crate::with_vault::with_vault;
 pub async fn list_templates(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<TemplateSummary>, CmdError> {
-    let summaries = with_vault(&state.vault, |vault| vault.list_templates()).await??;
+    let summaries = with_vault(&state.vault(), |vault| vault.list_templates()).await??;
     Ok(summaries)
 }
 
@@ -41,7 +41,7 @@ pub async fn read_template(
     note_type: String,
     variant: Option<String>,
 ) -> Result<TemplateContent, CmdError> {
-    let content = with_vault(&state.vault, move |vault| {
+    let content = with_vault(&state.vault(), move |vault| {
         vault.read_template(&note_type, variant.as_deref())
     })
     .await??;
@@ -57,7 +57,7 @@ pub async fn list_template_placeholders(
     state: tauri::State<'_, AppState>,
     note_type: String,
 ) -> Result<Vec<TemplatePlaceholder>, CmdError> {
-    let placeholders = with_vault(&state.vault, move |vault| {
+    let placeholders = with_vault(&state.vault(), move |vault| {
         vault.template_placeholders(&note_type)
     })
     .await??;
@@ -76,7 +76,7 @@ pub async fn save_template<R: tauri::Runtime>(
     variant: Option<String>,
     content: String,
 ) -> Result<(), CmdError> {
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         vault.save_template(&note_type, variant.as_deref(), &content)
     })
     .await??;
@@ -94,7 +94,10 @@ pub async fn create_template<R: tauri::Runtime>(
     state: tauri::State<'_, AppState>,
     note_type: String,
 ) -> Result<(), CmdError> {
-    let path = with_vault(&state.vault, move |vault| vault.create_template(&note_type)).await??;
+    let path = with_vault(&state.vault(), move |vault| {
+        vault.create_template(&note_type)
+    })
+    .await??;
     record_and_emit(&app, &state, vec![path], vec![VaultArea::Config]);
     Ok(())
 }

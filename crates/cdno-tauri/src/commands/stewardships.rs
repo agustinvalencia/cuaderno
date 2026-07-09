@@ -194,7 +194,7 @@ pub async fn list_stewardships(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<StewardshipSummary>, CmdError> {
     let today = Local::now().date_naive();
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         list_stewardships_impl(vault, today)
     })
     .await?
@@ -206,7 +206,7 @@ pub async fn get_stewardship_detail(
     state: tauri::State<'_, AppState>,
     slug: String,
 ) -> Result<StewardshipDetail, CmdError> {
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_stewardship_detail_impl(vault, &slug)
     })
     .await?
@@ -219,7 +219,7 @@ pub async fn get_tracking_template_fields(
     state: tauri::State<'_, AppState>,
     activity: String,
 ) -> Result<Vec<TemplateField>, CmdError> {
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_tracking_template_fields_impl(vault, &activity)
     })
     .await?
@@ -247,7 +247,7 @@ pub async fn log_tracking_entry<R: tauri::Runtime>(
     vars: HashMap<String, String>,
 ) -> Result<(), CmdError> {
     let now: NaiveDateTime = Local::now().naive_local();
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         vault
             .add_tracking_entry_with_vars(
                 now,

@@ -20,8 +20,8 @@ mod clock;
 mod tray;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -81,8 +81,14 @@ fn init_with_vault(
         );
     }
 
+    // The store and index Arcs are shared three ways: the live vault owns
+    // one clone, the watcher thread's deps another (for its reconcile
+    // pass), and AppState retains a third so a config reload can rebuild
+    // the vault on the same handles — no SQLite reopen (GH #365).
     app.manage(AppState {
-        vault: Arc::new(opened.vault),
+        vault: ArcSwap::from_pointee(opened.vault),
+        store: opened.store.clone(),
+        index: opened.index.clone(),
         journal: WriteJournal::default(),
         root: root.clone(),
     });
@@ -383,6 +389,7 @@ pub fn run() {
             commands::templates::create_template,
             commands::config::read_config,
             commands::config::validate_config,
+            commands::config::reload_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

@@ -174,7 +174,7 @@ pub async fn read_daily(
     date: String,
 ) -> Result<DailyView, CmdError> {
     let date = parse_date(&date)?;
-    with_vault(&state.vault, move |vault| read_daily_impl(vault, date)).await?
+    with_vault(&state.vault(), move |vault| read_daily_impl(vault, date)).await?
 }
 
 /// Read the weekly note covering `week_of` (an `YYYY-MM-DD` string naming
@@ -185,7 +185,10 @@ pub async fn read_weekly(
     week_of: String,
 ) -> Result<WeeklyView, CmdError> {
     let week_of = parse_date(&week_of)?;
-    with_vault(&state.vault, move |vault| read_weekly_impl(vault, week_of)).await?
+    with_vault(&state.vault(), move |vault| {
+        read_weekly_impl(vault, week_of)
+    })
+    .await?
 }
 
 /// Read the monthly note covering `month` (a `YYYY-MM` string), for the
@@ -196,7 +199,7 @@ pub async fn read_monthly(
     month: String,
 ) -> Result<MonthlyView, CmdError> {
     let month_of = parse_month(&month)?;
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         read_monthly_impl(vault, month_of)
     })
     .await?
@@ -211,7 +214,7 @@ pub async fn list_daily_dates(
     year: i32,
     month: u32,
 ) -> Result<Vec<NaiveDate>, CmdError> {
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         list_daily_dates_impl(vault, year, month)
     })
     .await?

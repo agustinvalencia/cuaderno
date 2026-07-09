@@ -246,7 +246,7 @@ pub async fn get_strategic_bundle(
     state: tauri::State<'_, AppState>,
 ) -> Result<StrategicBundle, CmdError> {
     let today = Local::now().date_naive();
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_strategic_bundle_impl(vault, today)
     })
     .await?

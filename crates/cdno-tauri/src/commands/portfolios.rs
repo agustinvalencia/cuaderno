@@ -190,7 +190,7 @@ pub async fn list_portfolios(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<PortfolioSummary>, CmdError> {
     let today = Local::now().date_naive();
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         list_portfolios_impl(vault, today)
     })
     .await?
@@ -202,7 +202,10 @@ pub async fn get_portfolio(
     state: tauri::State<'_, AppState>,
     slug: String,
 ) -> Result<PortfolioDetail, CmdError> {
-    with_vault(&state.vault, move |vault| get_portfolio_impl(vault, &slug)).await?
+    with_vault(&state.vault(), move |vault| {
+        get_portfolio_impl(vault, &slug)
+    })
+    .await?
 }
 
 /// File an evidence note into a portfolio — the quick-add composer. An
@@ -218,7 +221,7 @@ pub async fn add_evidence<R: tauri::Runtime>(
     content: String,
 ) -> Result<(), CmdError> {
     let now: NaiveDateTime = Local::now().naive_local();
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         add_evidence_impl(vault, now, &portfolio, &source, &origin, &content)
     })
     .await??;

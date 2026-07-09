@@ -332,7 +332,7 @@ pub async fn get_weekly_bundle(
 ) -> Result<WeeklyBundle, CmdError> {
     let today = Local::now().date_naive();
     let anchor = resolve_anchor(week_of, today)?;
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_weekly_bundle_impl(vault, today, anchor, STUCK_THRESHOLD_DAYS)
     })
     .await?
@@ -362,7 +362,7 @@ pub async fn save_weekly_section<R: tauri::Runtime>(
     // Parse before crossing the blocking-pool boundary: a bad section
     // name is a fast, cheap Invalid, no vault work needed.
     let parsed = WeeklySection::from_str(&section).map_err(CmdError::Invalid)?;
-    let path = with_vault(&state.vault, move |vault| {
+    let path = with_vault(&state.vault(), move |vault| {
         vault.upsert_weekly_section(anchor, parsed, &content, false)
     })
     .await??;

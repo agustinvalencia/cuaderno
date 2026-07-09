@@ -60,7 +60,7 @@ pub async fn get_orientation(
     state: tauri::State<'_, AppState>,
 ) -> Result<OrientationView, CmdError> {
     let today = Local::now().date_naive();
-    with_vault(&state.vault, move |vault| {
+    with_vault(&state.vault(), move |vault| {
         get_orientation_impl(vault, today)
     })
     .await?

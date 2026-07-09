@@ -169,7 +169,10 @@ fn is_note_path(path: &VaultPath) -> bool {
     p.extension().and_then(|e| e.to_str()) == Some("md")
 }
 
-fn all_areas() -> Vec<VaultArea> {
+/// Every area the frontend renders — the invalidate-everything set,
+/// shared by the watcher's `Rescan` plan and the config-reload command
+/// (GH #365), which both mean "refetch the whole UI".
+pub(crate) fn all_areas() -> Vec<VaultArea> {
     vec![
         VaultArea::Projects,
         VaultArea::Actions,

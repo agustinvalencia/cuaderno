@@ -88,7 +88,7 @@ pub async fn start_action<R: tauri::Runtime>(
     action: String,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    let daily = with_vault(&state.vault, move |vault| {
+    let daily = with_vault(&state.vault(), move |vault| {
         vault.start_action(now, &project, &action)
     })
     .await??;
@@ -109,7 +109,7 @@ pub async fn complete_action<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
     let slug = project.clone();
-    let outcome = with_vault(&state.vault, move |vault| {
+    let outcome = with_vault(&state.vault(), move |vault| {
         vault.complete_action(now, &slug, &action)
     })
     .await??;
@@ -158,7 +158,7 @@ pub async fn add_action<R: tauri::Runtime>(
     let energy = EnergyLevel::from_str(&energy).map_err(|e| CmdError::Invalid(e.to_string()))?;
     let now = Local::now().naive_local();
     let date = now.date();
-    let project_path = with_vault(&state.vault, move |vault| {
+    let project_path = with_vault(&state.vault(), move |vault| {
         vault.add_action(now, &project, &action, energy)
     })
     .await??;
@@ -192,7 +192,7 @@ pub async fn promote_action<R: tauri::Runtime>(
     let now = Local::now().naive_local();
     let date = now.date();
     let slug = project.clone();
-    let note_path = with_vault(&state.vault, move |vault| {
+    let note_path = with_vault(&state.vault(), move |vault| {
         vault.promote_action(now, &slug, &action)
     })
     .await??;
@@ -255,5 +255,5 @@ pub fn list_all_actions_impl(vault: &Vault) -> Result<Vec<ProjectActions>, CmdEr
 pub async fn list_all_actions(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<ProjectActions>, CmdError> {
-    with_vault(&state.vault, list_all_actions_impl).await?
+    with_vault(&state.vault(), list_all_actions_impl).await?
 }
