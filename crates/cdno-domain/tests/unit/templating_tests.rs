@@ -1487,6 +1487,281 @@ fn template_placeholders_dedupes_a_schema_field_colliding_with_a_supplied_key() 
     );
 }
 
+// ---------------------------------------------------------------------
+// Create-time population of declared schema-field DEFAULTS (#301 PR-B).
+//
+// A built-in's declared field only lands in frontmatter when a *custom*
+// `.cuaderno/templates/<type>.md` override references `{{field}}` (render
+// substitutes referenced tokens; it never adds a line). So each test installs
+// such a custom template, creates the note, then asserts the frontmatter value.
+// ---------------------------------------------------------------------
+
+/// A `VaultConfig` with a single `[schemas.<type>.fields.<name>]` declaration.
+fn config_with_field(note_type: &str, field: &str, spec: FieldSpecT) -> VaultConfig {
+    use cdno_core::config::SchemaExtension;
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(field.to_owned(), spec);
+    config.schemas.insert(note_type.to_owned(), schema);
+    config
+}
+
+// Alias so the fixtures read tersely; the real type lives in cdno-core.
+use cdno_core::config::FieldSpec as FieldSpecT;
+
+/// A `FieldSpec` of the given type with an optional TOML default and `required`
+/// flag — all reserved modifiers left unset.
+fn field_spec(
+    ty: cdno_core::config::FieldType,
+    default: Option<toml::Value>,
+    required: bool,
+) -> FieldSpecT {
+    FieldSpecT {
+        ty,
+        default,
+        required,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+#[test]
+fn declared_bool_default_populates_a_custom_template_field_at_create() {
+    // A `[schemas.daily.fields.meds] { type = bool, default = false }` plus a
+    // custom daily template referencing `{{meds}}` → the created note carries
+    // `meds: false`, never the literal `{{meds}}`.
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "daily",
+        "meds",
+        field_spec(FieldType::Bool, Some(toml::Value::Boolean(false)), false),
+    );
+    let custom =
+        "---\ntype: daily\ndate: {{date}}\nmeds: {{meds}}\n---\n\n# {{heading}}\n\n## Logs\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/daily.md", custom)], config);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("meds: false"),
+        "declared bool default should populate at create:\n{content}"
+    );
+    assert!(
+        !content.contains("{{meds}}"),
+        "no unresolved token should remain:\n{content}"
+    );
+}
+
+#[test]
+fn declared_string_default_populates_at_create() {
+    // A `string` default renders its text verbatim (no quoting) into the field.
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "project",
+        "reviewer",
+        field_spec(
+            FieldType::String,
+            Some(toml::Value::String("A. Reviewer".to_owned())),
+            false,
+        ),
+    );
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\nreviewer: {{reviewer}}\n---\n# {{title}}\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("reviewer: A. Reviewer"),
+        "declared string default should populate at create:\n{content}"
+    );
+    assert!(!content.contains("{{reviewer}}"), "{content}");
+}
+
+#[test]
+fn a_contextual_engine_value_shadows_a_declared_default_of_the_same_name() {
+    // Tier ordering (the correctness lynchpin): declared defaults inject at
+    // tier 3 (`set_vault_level`), the daily create path sets `weekday` at tier
+    // 2 (`set_contextual`). Tier 2 wins, so an engine value beats the declared
+    // default — proving tier-3 injection never clobbers a create-path value.
+    // (today() is 2026-04-26, a Sunday.)
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "daily",
+        "weekday",
+        field_spec(
+            FieldType::String,
+            Some(toml::Value::String("OVERRIDDEN".to_owned())),
+            false,
+        ),
+    );
+    let custom = "---\ntype: daily\ndate: {{date}}\n---\n\n# {{weekday}}\n\n## Logs\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/daily.md", custom)], config);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("# Sunday"),
+        "the engine's contextual `weekday` must win over the declared default:\n{content}"
+    );
+    assert!(
+        !content.contains("OVERRIDDEN"),
+        "the declared default must not clobber the engine value:\n{content}"
+    );
+}
+
+#[test]
+fn a_declared_field_without_a_default_renders_null_not_a_literal_token() {
+    // No `default` (optional or the still-inert `required`) → the field injects
+    // as the literal `null` (the built-in templates' absent-optional
+    // convention), so a custom template referencing it never renders a literal
+    // `{{field}}`.
+    use cdno_core::config::FieldType;
+    let config = config_with_field(
+        "daily",
+        "energy",
+        field_spec(FieldType::String, None, false),
+    );
+    let custom =
+        "---\ntype: daily\ndate: {{date}}\nenergy: {{energy}}\n---\n\n# {{heading}}\n\n## Logs\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/daily.md", custom)], config);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("log");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("energy: null"),
+        "a no-default field should render `null`:\n{content}"
+    );
+    assert!(
+        !content.contains("{{energy}}"),
+        "never leave the token unresolved:\n{content}"
+    );
+}
+
+#[test]
+fn first_log_of_a_day_succeeds_with_a_required_declared_daily_field() {
+    // The cliff test: `required` stays INERT in PR-B, so a `required`
+    // (even without a default) declared field on the lazily-scaffolded `daily`
+    // type does NOT make the first `append_to_log` of a day fail. Both
+    // vault-open and the first log must succeed — the checkpoint-logging cliff
+    // cannot arise in PR-B by construction (required-enforcement + its
+    // load-guard are deferred to Phase 2).
+    use cdno_core::config::FieldType;
+    let config = config_with_field("daily", "reviewed", field_spec(FieldType::Bool, None, true));
+    // No custom template referencing the field — the built-in daily template is
+    // used, so `reviewed` never reaches the frontmatter; the point is only that
+    // creation does not fail.
+    let (vault, store) = vault_with_config(&[], config);
+
+    let path = vault
+        .log_to_daily_note(today().and_hms_opt(9, 0, 0).unwrap(), "first entry")
+        .expect("first log of the day must not fail on a required declared field");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.contains("first entry"),
+        "log line written:\n{content}"
+    );
+}
+
+#[test]
+fn a_static_variable_wins_over_a_declared_schema_default_of_the_same_name() {
+    // Precedence within tier 3 (documented): when a name is BOTH a
+    // `[variables]` static var and a declared schema field with a default, the
+    // `[variables]` value wins (the more specific user intent). `[variables]`
+    // is loaded after the schema defaults, overwriting the tier-3 collision.
+    use cdno_core::config::FieldType;
+    let mut config = config_with_field(
+        "project",
+        "owner",
+        field_spec(
+            FieldType::String,
+            Some(toml::Value::String("schema-default".to_owned())),
+            false,
+        ),
+    );
+    config
+        .variables
+        .static_vars
+        .insert("owner".to_owned(), "variables-value".to_owned());
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\nowner: {{owner}}\n---\n# {{title}}\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("owner: variables-value"),
+        "the `[variables]` value must win over the schema default:\n{content}"
+    );
+    assert!(!content.contains("schema-default"), "{content}");
+}
+
+#[test]
+fn an_extra_required_desugared_field_renders_null_at_create() {
+    // The legacy `extra_required` desugars to an untyped, no-default string
+    // field, so a custom template referencing it renders `null` at create —
+    // and, being no-default, never a literal token. (It stays lint-only; this
+    // just confirms the defaults path treats it like any no-default field.)
+    use cdno_core::config::SchemaExtension;
+    let mut config = VaultConfig::default();
+    config.schemas.insert(
+        "project".to_owned(),
+        SchemaExtension {
+            extra_required: vec!["collaborators".to_owned()],
+            ..Default::default()
+        },
+    );
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\ncollaborators: {{collaborators}}\n---\n# {{title}}\n";
+    let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
+
+    let path = vault
+        .create_project(today(), "My Proj", Context::Work, None)
+        .expect("create project");
+    let content = store.read_file(&path).unwrap();
+
+    assert!(
+        content.contains("collaborators: null"),
+        "a desugared extra_required field renders null:\n{content}"
+    );
+    assert!(!content.contains("{{collaborators}}"), "{content}");
+}
+
+#[test]
+fn a_vault_without_schema_fields_is_unaffected_by_the_defaults_load() {
+    // Backward-compat: with no `[schemas.*.fields]`, the schema-defaults load is
+    // a no-op — a note renders identically to a vanilla vault.
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\n---\n# {{title}}\n\nBODY\n";
+    let (plain, plain_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+    let (also, also_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
+
+    let p1 = plain
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+    let p2 = also
+        .create_project(today(), "Proj", Context::Work, None)
+        .unwrap();
+    assert_eq!(
+        plain_store.read_file(&p1).unwrap(),
+        also_store.read_file(&p2).unwrap(),
+        "no schema fields → the defaults load changes nothing"
+    );
+}
+
 #[test]
 fn template_placeholders_includes_a_custom_types_schema_fields() {
     let (vault, _store) = vault_with_config(&[], config_with_person());

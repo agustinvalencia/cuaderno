@@ -24,3 +24,6 @@ ts-bindings = ["dep:ts-rs"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# Constructing `FieldSpec { default: Some(toml::Value…) }` in the schema-field
+# create-population tests (#301 PR-B); `default` is a `toml::Value` in cdno-core.
+toml.workspace = true
