@@ -120,10 +120,11 @@ pub fn plan_batch(journal: &WriteJournal, batch: Vec<FileEvent>) -> BatchPlan {
 
 /// The vault-relative config file the reload watches, distinct from the
 /// template files that also classify as `VaultArea::Config` but don't
-/// change the note-type registry.
+/// change the note-type registry. Matches the exact `.cuaderno/config.toml`
+/// path, not any `config.toml` under `.cuaderno/`, so a stray
+/// `.cuaderno/templates/config.toml` could never trigger a spurious rebuild.
 fn is_config_file(path: &VaultPath) -> bool {
-    path.as_path().file_name().and_then(|f| f.to_str()) == Some("config.toml")
-        && path.as_path().starts_with(cdno_core::paths::CUADERNO_DIR)
+    path.as_path() == std::path::Path::new(cdno_core::paths::CONFIG_FILE)
 }
 
 fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
