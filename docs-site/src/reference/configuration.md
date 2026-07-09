@@ -140,6 +140,25 @@ Static `[variables]` resolve in any custom template (e.g. `{{author}}`). Prompte
 static default) — see the
 [tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables).
 
+## Editing from the desktop app
+
+You can edit `.cuaderno/config.toml` directly from the desktop app's **Config** view, without
+hand-editing the file. It shows the raw config in an editable pane; **Check** dry-runs the same
+validation the app runs when it opens a vault, and **Save** commits the edit.
+
+Saving is gated so an edit can never leave the vault unopenable:
+
+1. The whole candidate is **validated first** — the exact check the app runs at open (TOML parse,
+   `ignore` globs, and the `[note_types.*]` / `[schemas.*]` rules). If it would not reopen, the save
+   is refused and the file is left untouched.
+2. A **content-hash compare-and-swap** then guards against a concurrent hand-edit: if the file
+   changed on disk since the editor read it, the save is refused with a "changed on disk — reload"
+   notice rather than overwriting the newer version.
+3. The buffer is written **verbatim** (comments, key order, and `[variables]` preserved) and the
+   vault is **reloaded live**, so the edit applies with no restart.
+
+Editing is raw-only for now; a structured form editor is planned.
+
 ## See also
 
 - [Customising templates and frontmatter](../tutorials/templates-and-frontmatter.md) — the tutorial.

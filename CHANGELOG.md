@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Edit `config.toml` from the desktop app** (#365, PR3) — the **Config** view is now an editor,
+  not just an inspector: an editable raw pane, on-demand and debounced validation shown inline, and
+  a **Save** that runs a hard server-side gate before anything is written. The gate order is
+  validate -> compare-and-swap -> write -> live-reload: the candidate is validated FIRST with the
+  exact check the app runs when it opens a vault, so a config that would not reopen is refused and
+  the file is left byte-identical (the vault can never be bricked from the editor); then a
+  content-hash compare-and-swap refuses to clobber a concurrent hand-edit (a distinct "changed on
+  disk — reload" notice); then the buffer is written verbatim (comments, ordering, and
+  `[variables]` preserved) and the vault is reloaded live, so the edit applies with no restart.
+  Backed by a new `save_config(content, expectedHash)` command over a domain
+  `Vault::save_config_raw`, and a tagged `ConfigSaveError` (validation / conflict / internal) the
+  UI reacts to. The structured form editor remains a later PR.
 - **Read-only config inspector in the desktop app** (#365, PR1) — a new **Config** view (Browse
   group) shows the vault's `.cuaderno/config.toml` verbatim in a read-only pane, with a **Check**
   button that dry-runs the exact validation the app runs when it opens a vault
