@@ -36,6 +36,9 @@ const Calendar = lazy(() => import("./views/calendar/Calendar"));
 // Templates (#357): the note-type template browser + editor. Splits onto
 // navigation like the other secondary surfaces.
 const Templates = lazy(() => import("./views/templates/Templates"));
+// Config inspector (#365): the read-only config.toml viewer + dry-run
+// validate. Splits onto navigation like the other secondary surfaces.
+const Config = lazy(() => import("./views/config/Config"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -125,6 +128,14 @@ export default function App() {
           element={
             <Suspense fallback={<ViewFallback />}>
               <Templates />
+            </Suspense>
+          }
+        />
+        <Route
+          path="config"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Config />
             </Suspense>
           }
         />

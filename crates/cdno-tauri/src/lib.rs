@@ -381,6 +381,8 @@ pub fn run() {
             commands::templates::list_template_placeholders,
             commands::templates::save_template,
             commands::templates::create_template,
+            commands::config::read_config,
+            commands::config::validate_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

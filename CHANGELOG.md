@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Read-only config inspector in the desktop app** (#365, PR1) — a new **Config** view (Browse
+  group) shows the vault's `.cuaderno/config.toml` verbatim in a read-only pane, with a **Check**
+  button that dry-runs the exact validation the app runs when it opens a vault
+  (`toml::from_str` → `ignore_set` → `TypeRegistry::validate`) and reports a calm "valid" or the
+  precise error inline (with the line/column for a TOML syntax error). No editing yet — this is an
+  inspector; the raw editor + save (with a hard validate gate and a compare-and-swap against
+  concurrent hand-edits) and the structured form land in later PRs. Backed by two pure-read
+  commands, `read_config` (content + content hash) and `validate_config(content)`, plus a domain
+  `Vault::read_config_raw` and a shared `validate_config_str` dry-run function that the eventual
+  save gate reuses, so the inspector's check and the future write can never drift.
+
 ## [0.17.0] - 2026-07-09
 
 Set a typed frontmatter field without a hand-edit: `cdno frontmatter set` (and the `set_frontmatter` MCP tool) writes the field and the SQLite index atomically, with optional auto-logging. Completes #301.

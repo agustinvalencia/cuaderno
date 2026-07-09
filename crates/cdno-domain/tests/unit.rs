@@ -3,6 +3,7 @@ mod unit {
     mod capture_tests;
     mod commitments_tests;
     mod concurrency_tests;
+    mod config_tests;
     mod context_tests;
     mod custom_notes_tests;
     mod daily_tests;
