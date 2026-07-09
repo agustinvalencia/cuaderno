@@ -7,6 +7,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
 import { attachEventBridge, type WatcherStatusPayload } from "./events";
+import { getConfigStatus, setConfigStatus } from "../lib/configStatus";
 
 const { handlers } = vi.hoisted(() => ({
   handlers: new Map<string, Array<(event: unknown) => void>>(),
@@ -30,6 +31,9 @@ function emit(event: string, payload: unknown) {
 
 afterEach(() => {
   handlers.clear();
+  // The config-status module store is a singleton; reset it so a
+  // failure written by one test never leaks into the next.
+  setConfigStatus({ valid: true, message: null });
 });
 
 test("clock:day-changed invalidates the date-dependent queries", async () => {
@@ -68,6 +72,20 @@ test("watcher:status reaches the callback with its payload", async () => {
   emit("watcher:status", { state: "ok" });
 
   expect(seen).toEqual([{ state: "degraded" }, { state: "ok" }]);
+});
+
+test("config:status writes the payload to the module store the banner reads", async () => {
+  const client = new QueryClient();
+  await attachEventBridge(client);
+
+  // An invalid external config edit: the banner should light up with the
+  // open error, normalising a missing message to null.
+  emit("config:status", { valid: false, message: "expected `=`" });
+  expect(getConfigStatus()).toEqual({ valid: false, message: "expected `=`" });
+
+  // A later valid edit clears the notice.
+  emit("config:status", { valid: true, message: null });
+  expect(getConfigStatus()).toEqual({ valid: true, message: null });
 });
 
 test("attaching ends with one global invalidation to seal the startup race", async () => {

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 
+use cdno_core::config::IgnoreSet;
 use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
 use cdno_core::store::VaultStore;
@@ -39,6 +40,11 @@ pub struct AppState {
     /// deliberately does not re-expose them.
     pub store: Arc<dyn VaultStore>,
     pub index: Arc<dyn VaultIndex>,
+    /// The active ignore-glob matcher, shared by reference with the watcher
+    /// thread's deps so a config reload (GH #365 PR4) can swap in a fresh set
+    /// and the watcher's next reconcile honours the new globs without a
+    /// restart. `ArcSwap` for the same read-mostly reason as `vault`.
+    pub ignore: Arc<ArcSwap<IgnoreSet>>,
     pub journal: WriteJournal,
     /// Absolute vault root, kept so `open_in_editor` can resolve a
     /// validated vault-relative path to a real file on disk, and so a

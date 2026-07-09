@@ -9,6 +9,10 @@ use cdno_core::path::VaultPath;
 pub const VAULT_CHANGED: &str = "vault:changed";
 /// Watcher health: `{ state: "ok" | "degraded" }`.
 pub const WATCHER_STATUS: &str = "watcher:status";
+/// The on-disk config was re-read after an external edit: `valid:false`
+/// with a message when it failed to open (the app kept the last good
+/// config), or `valid:true` to clear a prior notice (GH #365 PR4).
+pub const CONFIG_STATUS: &str = "config:status";
 /// The local calendar date rolled over (sleep past midnight, TZ
 /// change) — invalidate everything date-dependent.
 pub const CLOCK_DAY_CHANGED: &str = "clock:day-changed";
@@ -60,6 +64,18 @@ pub enum VaultArea {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WatcherStatus {
     pub state: &'static str,
+}
+
+/// Payload for [`CONFIG_STATUS`]. `valid:false` carries the open error's
+/// `message` (the app kept the last good config); `valid:true` clears any
+/// prior notice and carries no message. Exported to TS because the UI
+/// surfaces the notice as a non-red banner (GH #365 PR4).
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConfigStatus {
+    pub valid: bool,
+    pub message: Option<String>,
 }
 
 /// Classify a vault-relative path into its area, or `None` for paths

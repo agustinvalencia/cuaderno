@@ -20,9 +20,11 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{IgnoreSet, VaultConfig};
+use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::CONFIG_FILE;
+use cdno_core::store::VaultStore;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::vault::{
@@ -152,17 +154,78 @@ pub async fn save_config<R: tauri::Runtime>(
     Ok(saved)
 }
 
+/// Load `.cuaderno/config.toml` from `root` and build a fresh vault plus
+/// its ignore set on the given store/index — the disk-read + rebuild core
+/// [`rebuild_and_swap`] performs, factored out so it is testable over the
+/// Memory doubles without a Tauri `AppHandle` (GH #365 PR4).
+///
+/// Both the ignore set and the vault are built before returning, so any
+/// error (bad globs, a `TypeRegistry::validate` rejection, a TOML parse
+/// failure) surfaces here with nothing yet swapped — the seam that lets
+/// [`rebuild_and_swap`] keep its never-brick guarantee.
+///
+/// `pub` (not `pub(crate)`) so the integration test suite can prove
+/// never-brick over the Memory doubles without a Tauri `AppHandle` — the
+/// same test-seam posture as `read_config_impl` / `save_config_impl`.
+pub fn load_vault_and_ignore(
+    store: Arc<dyn VaultStore>,
+    index: Arc<dyn VaultIndex>,
+    root: &std::path::Path,
+) -> Result<(Vault, IgnoreSet), DomainError> {
+    // A missing file falls back to the default config, matching
+    // `open_vault`'s first-launch behaviour.
+    let config = VaultConfig::load(root)?;
+    // Compile the fresh ignore set before moving `config` into `Vault::new`
+    // (which recompiles its own copy for reconcile) — the watcher's swapped
+    // matcher must be the same set the rebuilt index was reconciled against.
+    let ignore = config.ignore_set()?;
+    // Rebuild on the retained store/index — no SQLite reopen.
+    let (vault, _report) = Vault::new(store, index, config)?;
+    Ok((vault, ignore))
+}
+
+/// Rebuild the vault (and its ignore set) from the on-disk config and swap
+/// both into managed state — the synchronous core shared by the async
+/// [`reload_vault_config`] command and the watcher's external-config-edit
+/// path (GH #365 PR4). Does NOT emit; the caller emits with the origin
+/// that fits it (`SelfWrite` for a command-driven reload, `External` for a
+/// watcher-driven one).
+///
+/// Never-brick: the fresh `IgnoreSet` and `Vault` are both built (via
+/// [`load_vault_and_ignore`]) BEFORE either handle is swapped, so any error
+/// returns with the OLD vault and OLD ignore set still live — the session
+/// is never left vault-less. This is the last safety net beneath PR3's
+/// pre-write validate gate.
+///
+/// Synchronous by design: the watcher thread is a plain `std::thread` and
+/// calls this directly; the async command hops it onto the blocking pool.
+pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), DomainError> {
+    let state = app.state::<AppState>();
+    let (vault, ignore) =
+        load_vault_and_ignore(state.store.clone(), state.index.clone(), &state.root)?;
+    // Both built successfully — only now swap, so a failure above leaves the
+    // old handles live. The vault swaps first, then its matching ignore set;
+    // an in-flight command holding an owned `Arc` snapshot of the old vault
+    // finishes cleanly (the swap never pulls a vault out from under it).
+    state.vault.store(Arc::new(vault));
+    state.ignore.store(Arc::new(ignore));
+    Ok(())
+}
+
 /// Reload `.cuaderno/config.toml` from disk and swap the live vault
-/// (#365, PR2). The reload plumbing behind a later config save:
+/// (#365, PR2; ignore-set swap added in PR4). The reload plumbing behind a
+/// later config save:
 ///
 /// 1. Re-read the config from `state.root` and rebuild the `Vault` on the
 ///    SAME store/index — no SQLite reopen. `Vault::new` re-runs the full
 ///    open-time safety net (`ignore_set` + `TypeRegistry::validate` +
 ///    reconcile), so a config that would not open is caught here.
-/// 2. On success, `ArcSwap::store` the new vault. Commands already running
-///    against the old vault finish cleanly — each holds an owned `Arc`
-///    snapshot from `state.vault()`, so the swap never pulls a vault out
-///    from under an in-flight call.
+/// 2. On success, `ArcSwap::store` the new vault AND the fresh ignore set
+///    (both handled by [`rebuild_and_swap`]), so the watcher's next
+///    reconcile honours any changed `ignore` globs. Commands already
+///    running against the old vault finish cleanly — each holds an owned
+///    `Arc` snapshot from `state.vault()`, so the swap never pulls a vault
+///    out from under an in-flight call.
 /// 3. Emit an all-areas `vault:changed` so the frontend refetches
 ///    everything the new config might have changed (note types, schemas,
 ///    folders).
@@ -176,45 +239,21 @@ pub async fn save_config<R: tauri::Runtime>(
 /// The blocking rebuild (`VaultConfig::load` + `Vault::new`, both
 /// synchronous disk/SQLite work) runs on the blocking pool so it never
 /// stalls the async runtime — same posture as `with_vault`.
-///
-/// NOTE (deferred to #365 PR4): the watcher thread holds an `IgnoreSet`
-/// compiled at bootstrap in its deps. A reload that changes the `ignore`
-/// globs does NOT refresh that matcher here — the watcher keeps using the
-/// original set until PR4 makes it swappable. PR2 covers only the vault
-/// swap; the reconcile inside `Vault::new` above already uses the fresh
-/// ignore set, so the index itself stays correct.
 pub async fn reload_vault_config<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<(), CmdError> {
-    // Clone the handles the rebuild needs out of managed state before the
-    // blocking hop — `tauri::State` is not `Send`, but these owned clones
-    // (cheap `Arc`s + a `PathBuf`) are.
-    let (store, index, root) = {
-        let state = app.state::<AppState>();
-        (state.store.clone(), state.index.clone(), state.root.clone())
-    };
-
-    let new_vault = tauri::async_runtime::spawn_blocking(move || -> Result<Vault, DomainError> {
-        // Re-read config.toml from disk (a missing file falls back to the
-        // default config, matching `open_vault`'s first launch behaviour).
-        let config = VaultConfig::load(&root)?;
-        // Rebuild on the retained store/index; discard the reconciliation
-        // report (the swap doesn't surface scan counts).
-        let (vault, _report) = Vault::new(store, index, config)?;
-        Ok(vault)
-    })
-    .await
-    .map_err(|e| {
-        // A JoinError almost always means the rebuild closure panicked;
-        // contain it, never leak the panic payload across the bridge.
-        tracing::error!(error = %e, "vault reload panicked on the blocking pool");
-        CmdError::Internal("internal error while reloading the config".to_owned())
-    })??;
-
-    // Rebuild succeeded — only now do we swap. Reaching this line means the
-    // new config passed the same validation `Vault::new` runs at open, so
-    // the swapped-in vault is sound by construction.
-    app.state::<AppState>().vault.store(Arc::new(new_vault));
+    // The rebuild is synchronous disk/SQLite work; run it on the blocking
+    // pool so it never stalls the async runtime. `rebuild_and_swap` both
+    // rebuilds and swaps under the never-brick guarantee.
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || rebuild_and_swap(&app2))
+        .await
+        .map_err(|e| {
+            // A JoinError almost always means the rebuild closure panicked;
+            // contain it, never leak the panic payload across the bridge.
+            tracing::error!(error = %e, "vault reload panicked on the blocking pool");
+            CmdError::Internal("internal error while reloading the config".to_owned())
+        })??;
 
     // A config change can touch any view, so invalidate every area.
     if let Err(err) = app.emit(

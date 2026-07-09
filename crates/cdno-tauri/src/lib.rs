@@ -20,6 +20,7 @@ mod clock;
 mod tray;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use tauri::{Emitter, Manager};
@@ -85,10 +86,16 @@ fn init_with_vault(
     // one clone, the watcher thread's deps another (for its reconcile
     // pass), and AppState retains a third so a config reload can rebuild
     // the vault on the same handles — no SQLite reopen (GH #365).
+    //
+    // The ignore matcher is a single `ArcSwap` shared by reference between
+    // AppState and the watcher deps: a config reload swaps a fresh set in
+    // via AppState and the watcher's next reconcile loads it (GH #365 PR4).
+    let ignore = Arc::new(ArcSwap::from(opened.ignore));
     app.manage(AppState {
         vault: ArcSwap::from_pointee(opened.vault),
         store: opened.store.clone(),
         index: opened.index.clone(),
+        ignore: ignore.clone(),
         journal: WriteJournal::default(),
         root: root.clone(),
     });
@@ -128,7 +135,7 @@ fn init_with_vault(
     let deps = WatcherDeps {
         store: opened.store,
         index: opened.index,
-        ignore: opened.ignore,
+        ignore,
     };
     let watcher_app = app.clone();
     std::thread::spawn(move || watcher::run(watcher_app, deps, rx));
