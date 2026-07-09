@@ -28,6 +28,13 @@ pub enum ConfigError {
     /// the offending type.
     #[error("invalid custom note type: {0}")]
     InvalidNoteType(String),
+
+    /// A `[schemas.<type>.fields.<name>]` declaration is structurally invalid
+    /// (an unimplemented `list = true`, `values` on a non-string field, or a
+    /// `default` that doesn't type-check). Carries a rendered message naming
+    /// the offending field.
+    #[error("invalid schema field: {0}")]
+    InvalidSchema(String),
 }
 
 /// Errors from VaultPath construction and validation.

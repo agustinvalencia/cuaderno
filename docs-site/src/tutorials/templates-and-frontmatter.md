@@ -288,6 +288,28 @@ New projects are now born with `owner: unassigned` (edit it as needed) and pass 
 > `extra_required` with a template default and the occasional `cdno lint` and your vault stays
 > uniform without any per-note ceremony.
 
+### Give a field a type
+
+`extra_required` only checks that a key is present. When you want `cdno lint` to also check the
+*value* — that `meds` is a boolean, `mood` is one of a fixed set, `since` is a real date — declare a
+**typed** field instead, under `[schemas.<type>.fields.<name>]`:
+
+```toml
+[schemas.daily.fields.meds]
+type = "bool"
+default = false
+
+[schemas.daily.fields.mood]
+type = "string"
+values = ["low", "ok", "good"]
+```
+
+Now a `daily` note whose `meds:` isn't a boolean, or whose `mood:` isn't one of the three allowed
+values, gets a `cdno lint` warning. Typed fields are also recognised by the desktop Templates editor,
+so a custom template referencing `{{meds}}` no longer warns that it "renders literally". See
+[Typed schema fields](../reference/configuration.md#typed-schema-fields) in the configuration
+reference for the full grammar and its limits.
+
 ## Edit templates in the desktop app
 
 Everything above works from the CLI, but the desktop app also has a **Templates** view (in the

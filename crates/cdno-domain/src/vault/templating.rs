@@ -309,6 +309,21 @@ impl Vault {
                 for name in nt.supplied_placeholders() {
                     add(&mut out, name, PlaceholderSource::Supplied);
                 }
+                // Config-declared schema fields for this built-in type (#301):
+                // emitted as `Schema` so the desktop Templates editor recognises
+                // `{{field}}` in a custom override instead of warning "renders
+                // literally". Sorted for deterministic output (the config map is
+                // unordered). A field colliding with a supplied contextual name
+                // is dropped by `add` — the supplied value shadows it, so the
+                // name stays in the set as `Supplied` and never false-warns.
+                if let Some(schema) = self.config().schema_for(nt.as_str()) {
+                    let mut field_names: Vec<String> =
+                        schema.declared_fields().into_keys().collect();
+                    field_names.sort();
+                    for name in field_names {
+                        add(&mut out, &name, PlaceholderSource::Schema);
+                    }
+                }
             }
             NoteTypeDescriptor::Custom { def, .. } => {
                 // The create-path built-ins every custom note gets, then the

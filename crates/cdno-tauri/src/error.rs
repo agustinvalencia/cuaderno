@@ -92,6 +92,7 @@ impl From<DomainError> for CmdError {
             | DomainError::UnresolvedPrompts { .. }
             | DomainError::UnknownNoteType { .. }
             | DomainError::ReservedTypeName { .. }
+            | DomainError::ReservedSchemaField { .. }
             | DomainError::BuiltinTypeNotCustom { .. }
             | DomainError::MissingRequiredField { .. }
             | DomainError::UnknownField { .. }

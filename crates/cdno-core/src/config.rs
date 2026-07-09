@@ -58,13 +58,175 @@ impl Default for VaultMeta {
     }
 }
 
+/// The scalar type a `[schemas.<type>.fields.<name>]` declares. Deliberately
+/// small (`#301`): a link-heavy list shape is reserved via [`FieldSpec::list`]
+/// rather than by adding array variants here, and an "enum" is expressed as a
+/// `string` constrained by [`FieldSpec::values`] rather than a distinct type.
+///
+/// An unknown `type = "…"` is a hard deserialize error (serde rejects any value
+/// outside these variants) — so a future `float`/`datetime` fails loudly on an
+/// older `cdno` rather than being silently misparsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldType {
+    Bool,
+    Int,
+    String,
+    Date,
+}
+
+impl FieldType {
+    /// The lowercase TOML spelling, for lint/validation messages.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FieldType::Bool => "bool",
+            FieldType::Int => "int",
+            FieldType::String => "string",
+            FieldType::Date => "date",
+        }
+    }
+}
+
+/// A typed frontmatter field declared under `[schemas.<type>.fields.<name>]`
+/// (`#301`).
+///
+/// `deny_unknown_fields` turns a mistyped key (`defualt = …`) into a hard
+/// parse error rather than a silently-ignored no-op — a schema typo is a
+/// footgun worth failing on.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldSpec {
+    /// The field's scalar type (TOML key `type`).
+    #[serde(rename = "type")]
+    pub ty: FieldType,
+    /// A static default value, type-checked against `ty` at load. TOML has no
+    /// null, so an absent `default` means "no default" (`None`). Populating a
+    /// note with this value is PR-B; PR-A only validates it.
+    #[serde(default)]
+    pub default: Option<toml::Value>,
+    /// Whether the field must be present. Only an *explicit* `required = true`
+    /// opts a field into create-time erroring (PR-B); the desugared
+    /// `extra_required` view keeps this `false` (lint-only).
+    ///
+    /// INERT in PR-A — nothing reads this yet. Create-time enforcement is
+    /// deferred to PR-B. Before `required` gains create-time teeth, PR-B MUST
+    /// add the load-time guard "`required` without a `default` is a load error
+    /// on lazily-scaffolded types (daily/weekly/monthly/inbox)"; otherwise the
+    /// first `append_to_log` of a day would scaffold a daily note missing a
+    /// required-no-default field and fail — the checkpoint-logging cliff.
+    #[serde(default)]
+    pub required: bool,
+    /// An allowed-value constraint on a `string` field — the "enum" shape
+    /// without a dedicated type. Rejected on a non-string field by
+    /// [`VaultConfig::validate_schemas`].
+    #[serde(default)]
+    pub values: Option<Vec<String>>,
+    /// RESERVED (`#301`): a list/array field. Parsed so the grammar is fixed
+    /// now, but `list = true` is a load error ("not yet implemented") in P1 so
+    /// the shape can be added source-compatibly later.
+    #[serde(default)]
+    pub list: Option<bool>,
+    /// RESERVED for the Phase-2 setter: whether the field may be changed by
+    /// `set_frontmatter`. Parsed but unused in P1.
+    #[serde(default)]
+    pub settable: Option<bool>,
+    /// RESERVED for the Phase-2 setter: whether a change should be auto-logged
+    /// to the daily note. Parsed but unused in P1.
+    #[serde(default)]
+    pub log_on_change: Option<bool>,
+}
+
+impl FieldSpec {
+    /// The desugared spec for a bare `extra_required` entry: an untyped
+    /// `string` field that is **never** create-time `required`. Folding
+    /// `extra_required` into the typed field view this way keeps it lint-only —
+    /// so PR-B's create-time population can't turn an existing lint warning into
+    /// a note-creation failure for a vault that already uses `extra_required`.
+    fn lint_only_string() -> Self {
+        Self {
+            ty: FieldType::String,
+            default: None,
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        }
+    }
+
+    /// Type-check a frontmatter value (as the index parsed it into JSON)
+    /// against this field's declared type and `values` constraint. Returns
+    /// `None` when the value is acceptable, or `Some(reason)` naming the
+    /// mismatch for a lint message. Callers skip `null`/absent values first:
+    /// presence is a separate concern (the `required` field / the deferred
+    /// undeclared-key lint), not a type mismatch.
+    pub fn check_value(&self, value: &serde_json::Value) -> Option<String> {
+        let type_ok = match self.ty {
+            FieldType::Bool => value.is_boolean(),
+            // A YAML integer parses to a JSON i64/u64; a float (`is_f64`) is not
+            // an int and is rejected.
+            FieldType::Int => value.is_i64() || value.is_u64(),
+            FieldType::String => value.is_string(),
+            // A date is carried as a `YYYY-MM-DD` string; it must both be a
+            // string and parse as a calendar date.
+            FieldType::Date => value
+                .as_str()
+                .is_some_and(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()),
+        };
+        if !type_ok {
+            return Some(format!("is not a valid {}", self.ty.as_str()));
+        }
+        // `values` is a string constraint (validate_schemas rejects it on a
+        // non-string field), so only check membership once the value is a
+        // string of the right type.
+        if let Some(allowed) = &self.values
+            && let Some(s) = value.as_str()
+            && !allowed.iter().any(|v| v == s)
+        {
+            return Some(format!("is not one of the allowed values {allowed:?}"));
+        }
+        None
+    }
+}
+
 /// Per-type schema extension: `[schemas.<type>]`.
 ///
-/// Adds vault-specific required fields on top of the built-in ones.
+/// Adds vault-specific required fields on top of the built-in ones — either as
+/// a bare name list (`extra_required`, lint-only) or as typed field specs
+/// (`[schemas.<type>.fields.<name>]`, `#301`).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SchemaExtension {
+    /// Bare extra-required field names. Retained for backward compatibility:
+    /// lint-only and built-in-only, never a create-time error. Desugared into
+    /// the [`SchemaExtension::declared_fields`] view as untyped, non-required
+    /// string fields.
     #[serde(default)]
     pub extra_required: Vec<String>,
+    /// Typed field declarations, keyed by field name (`#301`).
+    #[serde(default)]
+    pub fields: HashMap<String, FieldSpec>,
+}
+
+impl SchemaExtension {
+    /// The merged typed-field view: every `extra_required` name desugared into
+    /// an untyped, non-required `string` field, overlaid with the explicit
+    /// `[schemas.<type>.fields]` specs. On a name collision the **explicit**
+    /// block wins (it carries a real type and may set `required`); the
+    /// desugared `extra_required` entry stays lint-only.
+    ///
+    /// This is the single source both the editor's placeholder recognition and
+    /// the value-type lint layer on top of.
+    pub fn declared_fields(&self) -> HashMap<String, FieldSpec> {
+        let mut out: HashMap<String, FieldSpec> = HashMap::new();
+        for name in &self.extra_required {
+            out.insert(name.clone(), FieldSpec::lint_only_string());
+        }
+        // Explicit specs overwrite any desugared collision.
+        for (name, spec) in &self.fields {
+            out.insert(name.clone(), spec.clone());
+        }
+        out
+    }
 }
 
 /// A user-defined note type, declared under `[note_types.<name>]`.
@@ -238,6 +400,53 @@ impl VaultConfig {
         Ok(())
     }
 
+    /// Structural validation of the `[schemas.*.fields]` tables (`#301`) — the
+    /// checks that need no knowledge of the built-in *type* set (the
+    /// reserved-engine-field check lives in `cdno-domain`, which layers it on
+    /// top of this). Mirrors [`VaultConfig::validate_note_types`]; surfaced at
+    /// vault-open so a malformed field declaration fails fast. Rejects a field
+    /// whose:
+    /// - `list = true` — reserved but unimplemented in P1;
+    /// - `values` is set on a non-`string` field (allowed-values is a string
+    ///   constraint, not a type of its own);
+    /// - `default` does not type-check against `type` (or, when `values` is
+    ///   set, is not one of the allowed values).
+    ///
+    /// (Unknown `type` values and unknown keys are already rejected at
+    /// deserialize time by the enum and `deny_unknown_fields`.)
+    pub fn validate_schemas(&self) -> Result<(), ConfigError> {
+        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidSchema(msg));
+        for (type_name, schema) in &self.schemas {
+            for (field_name, spec) in &schema.fields {
+                let at = format!("`[schemas.{type_name}.fields.{field_name}]`");
+
+                // Reserved list shape: parsed so the grammar is fixed, but not
+                // yet implemented.
+                if spec.list == Some(true) {
+                    return invalid(format!(
+                        "{at} uses `list = true`, which is not yet implemented"
+                    ));
+                }
+
+                // `values` is only meaningful on a string field.
+                if spec.values.is_some() && spec.ty != FieldType::String {
+                    return invalid(format!(
+                        "{at} sets `values` on a `{}` field — `values` is only valid on a `string`",
+                        spec.ty.as_str()
+                    ));
+                }
+
+                // A `default` must type-check against `type` (and `values`).
+                if let Some(default) = &spec.default
+                    && let Some(reason) = default_mismatch(spec, default)
+                {
+                    return invalid(format!("{at} has a `default` that {reason}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve a variable by name. Checks static variables only.
     /// Prompted variables are not resolved here — the caller is
     /// responsible for interactive resolution.
@@ -256,6 +465,34 @@ impl VaultConfig {
     pub fn ignore_set(&self) -> Result<IgnoreSet, ConfigError> {
         IgnoreSet::compile(&self.ignore)
     }
+}
+
+/// Whether a `default` (a raw `toml::Value`) fails to type-check against its
+/// field spec. Returns `None` when the default is acceptable, or `Some(reason)`
+/// describing the mismatch for [`VaultConfig::validate_schemas`]. The `default`
+/// is a TOML value (from `config.toml`), distinct from the JSON note values
+/// [`FieldSpec::check_value`] inspects — hence the parallel shape.
+fn default_mismatch(spec: &FieldSpec, default: &toml::Value) -> Option<String> {
+    let type_ok = match spec.ty {
+        FieldType::Bool => default.as_bool().is_some(),
+        FieldType::Int => default.as_integer().is_some(),
+        FieldType::String => default.as_str().is_some(),
+        // A date default is a quoted `YYYY-MM-DD` string that must parse as a
+        // calendar date; static only (no "today").
+        FieldType::Date => default
+            .as_str()
+            .is_some_and(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()),
+    };
+    if !type_ok {
+        return Some(format!("is not a valid {}", spec.ty.as_str()));
+    }
+    if let Some(allowed) = &spec.values
+        && let Some(s) = default.as_str()
+        && !allowed.iter().any(|v| v == s)
+    {
+        return Some(format!("is not one of the allowed values {allowed:?}"));
+    }
+    None
 }
 
 /// A compiled set of `ignore` globs, matched against vault-relative

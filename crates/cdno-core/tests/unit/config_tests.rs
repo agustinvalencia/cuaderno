@@ -308,3 +308,223 @@ fn validate_accepts_append_only_true() {
     assert!(config.custom_type("log").unwrap().append_only);
     assert!(config.validate_note_types().is_ok());
 }
+
+// ---------------------------------------------------------------------
+// [schemas.<type>.fields] typed frontmatter fields (#301)
+// ---------------------------------------------------------------------
+
+use cdno_core::config::FieldType;
+
+#[test]
+fn parses_typed_schema_fields() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.daily.fields.meds]
+type = "bool"
+default = false
+
+[schemas.daily.fields.mood]
+type = "string"
+values = ["low", "ok", "good"]
+default = "ok"
+
+[schemas.daily.fields.steps]
+type = "int"
+required = true
+default = 0
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let daily = config.schema_for("daily").unwrap();
+
+    let meds = &daily.fields["meds"];
+    assert_eq!(meds.ty, FieldType::Bool);
+    assert_eq!(meds.default, Some(toml::Value::Boolean(false)));
+    assert!(!meds.required);
+
+    let mood = &daily.fields["mood"];
+    assert_eq!(mood.ty, FieldType::String);
+    assert_eq!(
+        mood.values.as_deref(),
+        Some(&["low".to_string(), "ok".to_string(), "good".to_string()][..])
+    );
+
+    let steps = &daily.fields["steps"];
+    assert_eq!(steps.ty, FieldType::Int);
+    assert!(steps.required);
+
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn deny_unknown_fields_rejects_a_field_key_typo() {
+    // A mistyped key (`defualt`) is a hard parse error, not a silent no-op.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.daily.fields.meds]\ntype = \"bool\"\ndefualt = false\n",
+    );
+    assert!(VaultConfig::load(dir.path()).is_err());
+}
+
+#[test]
+fn unknown_field_type_is_rejected_at_parse() {
+    // A future `float`/`datetime` fails loudly on an older cdno rather than
+    // being misparsed.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.daily.fields.temp]\ntype = \"float\"\n",
+    );
+    assert!(VaultConfig::load(dir.path()).is_err());
+}
+
+#[test]
+fn values_on_a_non_string_field_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.daily.fields.meds]\ntype = \"bool\"\nvalues = [\"a\", \"b\"]\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_err());
+}
+
+#[test]
+fn a_default_that_matches_its_type_passes() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.daily.fields.since]
+type = "date"
+default = "2026-01-01"
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn a_default_that_mismatches_its_type_is_rejected() {
+    // `int` field with a string default.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.daily.fields.steps]\ntype = \"int\"\ndefault = \"lots\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_err());
+}
+
+#[test]
+fn a_default_outside_the_values_set_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.daily.fields.mood]
+type = "string"
+values = ["low", "ok", "good"]
+default = "elated"
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_err());
+}
+
+#[test]
+fn a_malformed_date_default_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.daily.fields.since]\ntype = \"date\"\ndefault = \"nope\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_err());
+}
+
+#[test]
+fn list_true_is_rejected_as_unimplemented() {
+    // The list shape is reserved but not yet implemented in P1.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.evidence.fields.tags]\ntype = \"string\"\nlist = true\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_err());
+}
+
+#[test]
+fn reserved_setter_keys_parse_but_are_unused() {
+    // `settable`/`log_on_change` are reserved for the Phase-2 setter — parsed
+    // now (deny_unknown_fields would otherwise reject them) but inert in P1.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.daily.fields.meds]
+type = "bool"
+settable = true
+log_on_change = true
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let meds = &config.schema_for("daily").unwrap().fields["meds"];
+    assert_eq!(meds.settable, Some(true));
+    assert_eq!(meds.log_on_change, Some(true));
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn extra_required_still_parses_and_stays_lint_only() {
+    // A bare `extra_required` desugars into the typed field view as an untyped,
+    // NON-required string field — so folding it in never introduces
+    // create-time-error semantics.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.project]\nextra_required = [\"owner\"]\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let schema = config.schema_for("project").unwrap();
+    // The legacy accessor is unchanged.
+    assert_eq!(config.extra_required_fields("project"), &["owner"]);
+
+    let declared = schema.declared_fields();
+    let owner = &declared["owner"];
+    assert_eq!(owner.ty, FieldType::String);
+    assert!(
+        !owner.required,
+        "desugared extra_required must stay lint-only"
+    );
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn an_explicit_field_wins_over_a_colliding_extra_required() {
+    // On a name collision the explicit typed block wins (real type, may set
+    // required); the desugared extra_required entry is overwritten.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.project]
+extra_required = ["owner"]
+
+[schemas.project.fields.owner]
+type = "string"
+required = true
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let declared = config.schema_for("project").unwrap().declared_fields();
+    assert_eq!(declared.len(), 1);
+    assert!(
+        declared["owner"].required,
+        "the explicit required=true block wins over the lint-only desugar"
+    );
+}
