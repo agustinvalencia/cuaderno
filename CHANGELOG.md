@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-09
+
+Config-driven frontmatter (Phase 1): declare typed `[schemas.<type>.fields]`, and their defaults populate at note creation, are recognised by the Templates editor, and are type-checked by lint.
+
 ### Added
 
 - **Typed schema fields (`[schemas.<type>.fields]`)** (#301, PR-A) — a built-in note type can now
