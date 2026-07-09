@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-09
+
+Edit your `config.toml` from the desktop app: a Config view that validates before it writes (so it can never brick the vault) and applies the change live via a hot-swappable vault.
+
 ### Added
 
 - **Edit `config.toml` from the desktop app** (#365, PR3) — the **Config** view is now an editor,

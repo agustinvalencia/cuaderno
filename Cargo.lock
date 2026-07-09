@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-cli"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -589,7 +589,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-core"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "chrono",
  "globset",
@@ -608,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-domain"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "cdno-core",
  "chrono",
@@ -624,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-mcp"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -650,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-tauri"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "arc-swap",
  "cdno-core",
