@@ -6,42 +6,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-### Fixed
+## [0.19.0] - 2026-07-10
 
-- **Stuck-project staleness is now counted in local days, not UTC** — `stuck_projects` and the weekly
-  review's "state untouched for N days" compared a note's UTC-based modification date against the
-  local `today`, so for any positive-offset timezone in the hours after local midnight a project
-  touched "today" was reported as one stale day too many (and, at a zero-day threshold, wrongly
-  flagged). The mtime is now converted to its local calendar date before the day subtraction, and
-  the stuck-scan cutoff is taken in the machine's local zone — matching the machine-local dates the
-  rest of the app uses.
+Edit your note types and schemas from the desktop app: the Config view gains a structured, editable Form alongside the raw editor, and external `config.toml` edits now apply live.
 
 ### Added
 
-- **Edit your note types and schemas from the desktop Config form** (#365, PR5b) — the Form side of
-  the Config view is now editable: add, edit, and remove custom `[note_types.<name>]` (folder,
-  template, append-only, required/optional fields, title/date field) and their
-  `[schemas.<type>.fields.<name>]` declarations (type, default, required, allowed values — the
-  allowed-values editor is enabled only for a `string` field, mirroring the server rule). Every edit
-  is a **surgical** `toml_edit` rewrite of just the one table it touches: comments, key order, the
-  `[variables]` block, and every untouched note type/schema are preserved byte-for-byte. The form
-  never re-serialises the whole config; it produces a candidate string that flows through the exact
-  same validate -> compare-and-swap -> write -> live-reload gate as the raw editor, so an edit from
-  the form can no more brick the vault than one from Raw. Client-side pre-checks (reserved folders,
-  built-in type-name shadowing) keep the UX calm, but the server validation stays authoritative.
-  Backed by a new `config_edit` surgical writer in `cdno-core` and thin pure `config_set_note_type`
-  / `config_remove_note_type` / `config_set_schema_field` / `config_remove_schema_field` /
-  `parse_config_model` commands.
-- **Structured view of your note types and schemas in the desktop Config editor** (#365, PR5a) — the
-  Config view gains a **Raw / Form** toggle. The Raw side is the existing `config.toml` editor; the
-  Form side (read-only in this release) renders the parsed config as calm cards and tables: the vault
-  meta, each custom `[note_types.<name>]` (folder, template, append-only, required/optional fields),
-  and each `[schemas.<type>]`'s field declarations (name, type, default, required, allowed values).
-  Backed by a new `read_config_model` command projecting the in-effect config, and `Serialize` +
-  TypeScript bindings on the config field model. The draft/validate/save machinery is hoisted into a
-  shared `useConfigDraft` hook so the upcoming editable form drives the exact same
-  validate -> compare-and-swap -> write -> live-reload gate as the raw editor. Editing from the form
-  lands in the next release.
+- **Edit note types and schemas from a desktop Config form** (#365, PR5a + PR5b) — the Config view
+  gains a **Raw / Form** toggle. Raw is the existing `config.toml` editor; the Form side renders the
+  parsed config as calm cards and tables (vault meta, each custom `[note_types.<name>]`, each
+  `[schemas.<type>]`'s fields) and lets you **add, edit, and remove** custom note types (folder,
+  template, append-only, required/optional fields, title/date field) and their schema field
+  declarations (type, default, required, allowed values — the allowed-values editor is enabled only
+  for a `string` field, mirroring the server rule). Every edit is a **surgical** `toml_edit` rewrite
+  of just the one table it touches: comments, key order, the `[variables]` block, and every untouched
+  note type/schema are preserved byte-for-byte — the form never re-serialises the whole config. It
+  produces a candidate string that flows through the exact same validate -> compare-and-swap ->
+  write -> live-reload gate as the raw editor, so an edit from the form can no more brick the vault
+  than one from Raw; client-side pre-checks (reserved folders, built-in-name shadowing) keep the UX
+  calm while server validation stays authoritative. Backed by `read_config_model` /
+  `parse_config_model` projections, a `config_edit` surgical writer in `cdno-core`, the thin
+  `config_set_note_type` / `config_remove_note_type` / `config_set_schema_field` /
+  `config_remove_schema_field` commands, and `Serialize` + TypeScript bindings on the config field
+  model, with the draft/validate/save machinery hoisted into a shared `useConfigDraft` hook.
 - **External `config.toml` edits apply live in the desktop app** (#365, PR4) — hand-edit
   `.cuaderno/config.toml` in nvim, the `cdno` CLI, or via sync and the running app now rebuilds its
   live vault from the new config on the fly: added note types, schemas, and folders take effect with
@@ -52,6 +39,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   handle, so a broken edit can never brick the session — the same never-brick guarantee as the
   in-app editor. Template edits under `.cuaderno/templates/` still refresh the affected views but do
   not trigger a registry rebuild.
+
+### Fixed
+
+- **Stuck-project staleness is now counted in local days, not UTC** (#379) — `stuck_projects` and
+  the weekly review's "state untouched for N days" compared a note's UTC-based modification date
+  against the local `today`, so for any positive-offset timezone in the hours after local midnight a
+  project touched "today" was reported as one stale day too many (and, at a zero-day threshold,
+  wrongly flagged). The mtime is now converted to its local calendar date before the day
+  subtraction, and the stuck-scan cutoff is taken in the machine's local zone — matching the
+  machine-local dates the rest of the app uses.
 
 ## [0.18.0] - 2026-07-09
 
