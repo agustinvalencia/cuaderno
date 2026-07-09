@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-09
+
+The MCP server now logs its resolved local timezone at startup, so a silent UTC fallback is visible immediately.
+
 ### Added
 
 - **MCP server logs the resolved local timezone at startup** (#309) — `cdno-mcp-server` (and the
