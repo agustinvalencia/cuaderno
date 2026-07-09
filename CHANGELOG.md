@@ -6,7 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-## [0.18.0] - 2026-07-09
+### Added
+
+- **External `config.toml` edits apply live in the desktop app** (#365, PR4) — hand-edit
+  `.cuaderno/config.toml` in nvim, the `cdno` CLI, or via sync and the running app now rebuilds its
+  live vault from the new config on the fly: added note types, schemas, and folders take effect with
+  no restart, and changed `ignore` globs are honoured on the next reconcile. If the edited config is
+  invalid, the app keeps the last good config live (it is never left vault-less) and shows a calm,
+  non-red banner explaining the edit was not applied; a later valid edit clears it. The rebuild is a
+  shared `rebuild_and_swap` core that builds the fresh vault and ignore set BEFORE swapping either
+  handle, so a broken edit can never brick the session — the same never-brick guarantee as the
+  in-app editor. Template edits under `.cuaderno/templates/` still refresh the affected views but do
+  not trigger a registry rebuild.
 
 Edit your `config.toml` from the desktop app: a Config view that validates before it writes (so it can never brick the vault) and applies the change live via a hot-swappable vault.
 
