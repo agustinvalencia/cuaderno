@@ -4,6 +4,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
 import type { CommitmentsView } from "./bindings/CommitmentsView";
+import type { ConfigDocument } from "./bindings/ConfigDocument";
+import type { ConfigValidationError } from "./bindings/ConfigValidationError";
 import type { DailyView } from "./bindings/DailyView";
 import type { EnergyLevel } from "./bindings/EnergyLevel";
 import type { MonthlyView } from "./bindings/MonthlyView";
@@ -376,4 +378,35 @@ export function saveTemplate(noteType: string, content: string, variant?: string
  * — edit-and-save its override instead. */
 export function createTemplate(noteType: string): Promise<void> {
   return call("create_template", { noteType });
+}
+
+// --- Config inspector (#365, PR1) ---
+
+/** The raw `.cuaderno/config.toml` text plus its content hash — the
+ * read-only Config inspector's read. The hash is carried through for a
+ * later compare-and-swap save (PR3); PR1 only displays the content. */
+export function readConfig(): Promise<ConfigDocument> {
+  return call("read_config");
+}
+
+/** The outcome of a dry-run config validation: `ok` when the config
+ * would open, otherwise the structured backend error (message + optional
+ * line/col for a TOML syntax error). */
+export type ValidationResult = { ok: true } | { ok: false; error: ConfigValidationError };
+
+/** Dry-run the backend's config validation against `content` (the same
+ * check `Vault::new` runs). Resolves to a discriminated result rather
+ * than throwing: an invalid config is an expected answer for the Check
+ * button, not an exception. The backend rejects with the serialised
+ * `{ message, line, col }` shape, which this maps to `{ ok: false }`. */
+export async function validateConfig(content: string): Promise<ValidationResult> {
+  try {
+    await invoke<void>("validate_config", { content });
+    return { ok: true };
+  } catch (raw) {
+    // The domain validation error serialises as `{ message, line, col }`
+    // — it has no `kind` tag, so `call()`'s CuadernoError wrapping never
+    // applies; we surface it verbatim as the failed branch.
+    return { ok: false, error: raw as ConfigValidationError };
+  }
 }

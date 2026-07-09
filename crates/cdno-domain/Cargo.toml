@@ -15,6 +15,10 @@ thiserror.workspace = true
 tracing.workspace = true
 ts-rs = { workspace = true, optional = true }
 chrono.workspace = true
+# Parsing a candidate `.cuaderno/config.toml` for the read-only config
+# inspector's dry-run validator (#365) — the same `toml::from_str`
+# `VaultConfig::load` runs, composed here without touching disk.
+toml.workspace = true
 
 [features]
 # TypeScript bindings for the types the desktop app's wire surface
@@ -24,6 +28,3 @@ ts-bindings = ["dep:ts-rs"]
 
 [dev-dependencies]
 tempfile.workspace = true
-# Constructing `FieldSpec { default: Some(toml::Value…) }` in the schema-field
-# create-population tests (#301 PR-B); `default` is a `toml::Value` in cdno-core.
-toml.workspace = true

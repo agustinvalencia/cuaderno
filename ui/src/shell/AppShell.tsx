@@ -52,6 +52,7 @@ const BROWSE = [
   { to: "/portfolios", label: "Portfolios" },
   { to: "/stewardships", label: "Stewardships" },
   { to: "/templates", label: "Templates" },
+  { to: "/config", label: "Config" },
 ];
 
 export default function AppShell() {
