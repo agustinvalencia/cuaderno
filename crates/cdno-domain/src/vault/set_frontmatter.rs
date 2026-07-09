@@ -137,9 +137,13 @@ impl Vault {
                 reason,
             });
         }
-        // Serialise back to the YAML-safe scalar the frontmatter line carries —
-        // mirrors `FieldSpec::default_template_value`'s stringify.
-        let new_scalar = scalar_string(&new_json);
+        // Serialise back to the scalar the frontmatter line carries. `bool`/
+        // `int`/`date` stay bare (`meds: true`, `count: 3`, `when: 2026-07-09`);
+        // a `string` (incl. an enum value) is emitted YAML-safe so a bareword
+        // like `true`/`null`/a number, or a value containing `:`/`#`/a leading
+        // `-`, is quoted rather than silently re-parsed as a non-string on the
+        // index rebuild.
+        let new_scalar = write_scalar(&new_json, spec.ty);
 
         // 6. No-change → silent no-op. Compare the coerced value against the
         //    note's current frontmatter value; if equal, write nothing and log
@@ -159,7 +163,7 @@ impl Vault {
         //    `key: old → new` line into today's daily note.
         if spec.log_on_change == Some(true) {
             let log_entry =
-                format_field_change_log_entry(&path, key, old_value.as_ref(), &new_scalar);
+                format_field_change_log_entry(&path, key, old_value.as_ref(), &new_json);
             let today_daily = daily_note_path(at.date())?;
             if today_daily == path {
                 // The field lives on *today's* daily note. `stage_daily_log`
@@ -272,35 +276,68 @@ fn coerce_value(
     }
 }
 
-/// Render a coerced scalar back to the YAML text the frontmatter line carries.
-/// Mirrors [`cdno_core::config::FieldSpec::default_template_value`]: bool →
-/// `true`/`false`, int → digits, string/date → the text verbatim.
-fn scalar_string(value: &Value) -> String {
+/// Render a coerced scalar back to the frontmatter text for the field's
+/// declared type. `bool`/`int`/`date` are written **bare** (`meds: true`,
+/// `count: 3`, `when: 2026-07-09` — the date has already been validated as a
+/// real `YYYY-MM-DD`, so it is safe unquoted). A `string` (including an enum
+/// value) is written as a YAML-safe scalar via [`yaml_string_scalar`], so a
+/// bareword or a value carrying special characters is quoted rather than
+/// re-parsed as a non-string on the index rebuild.
+fn write_scalar(value: &Value, ty: FieldType) -> String {
+    match ty {
+        FieldType::Bool | FieldType::Int | FieldType::Date => display_value(value),
+        FieldType::String => yaml_string_scalar(value),
+    }
+}
+
+/// A plain, human-readable rendering of a scalar JSON value: bool → `true`/
+/// `false`, number → digits, string → its text verbatim (no quoting). Used for
+/// the bare types' write-back and for the daily-log display.
+fn display_value(value: &Value) -> String {
     match value {
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
-        // Coercion only ever produces the three scalar shapes above; a
-        // non-scalar here would be a bug, so stringify defensively.
+        // Coercion only ever produces the scalar shapes above; a non-scalar
+        // here would be a bug, so stringify defensively.
         other => other.to_string(),
     }
+}
+
+/// Emit a `string`/enum value as a single YAML scalar, quoting it only when the
+/// YAML emitter needs to (a bareword like `true`/`false`/`null`/a number, or a
+/// value containing `:`/`#`/a leading `-`/quotes). Delegating to `serde_yaml`
+/// covers every quoting edge case rather than hand-rolling the rules; the
+/// emitter's trailing newline is stripped so the result is one line.
+fn yaml_string_scalar(value: &Value) -> String {
+    let s = match value {
+        Value::String(s) => s.as_str(),
+        // `coerce_value` only produces `Value::String` for a String/Date field,
+        // and `write_scalar` routes non-strings elsewhere; defensive fallback.
+        other => return display_value(other),
+    };
+    serde_yaml::to_string(&s)
+        .map(|y| y.trim_end_matches('\n').to_owned())
+        .unwrap_or_else(|_| s.to_owned())
 }
 
 /// Build the daily-log line recording a field change: `key: old → new on
 /// [[note]]`. The note is wikilinked by its vault path (sans `.md`) so the link
 /// resolves from the daily note; a previously-unset or `null` value renders as
-/// `(unset)`.
+/// `(unset)`. Both values use the plain [`display_value`] form (not the
+/// YAML-quoted write-back), so the log reads naturally.
 fn format_field_change_log_entry(
     path: &VaultPath,
     key: &str,
     old: Option<&Value>,
-    new_scalar: &str,
+    new: &Value,
 ) -> String {
     let old_display = match old {
         None | Some(Value::Null) => "(unset)".to_owned(),
-        Some(v) => scalar_string(v),
+        Some(v) => display_value(v),
     };
+    let new_display = display_value(new);
     let link = path.to_string();
     let link = link.strip_suffix(".md").unwrap_or(&link);
-    format!("{key}: {old_display} \u{2192} {new_scalar} on [[{link}]]")
+    format!("{key}: {old_display} \u{2192} {new_display} on [[{link}]]")
 }

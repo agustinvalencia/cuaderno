@@ -76,6 +76,21 @@ fn daily_config() -> VaultConfig {
             Some(vec!["low".to_owned(), "ok".to_owned(), "good".to_owned()]),
         ),
     );
+    // A plain `string` field (no `values`) so a value like `"true"` or
+    // `"foo: bar"` exercises the YAML-safe write-back.
+    schema.fields.insert(
+        "note".to_owned(),
+        field(FieldType::String, Some(true), None, None),
+    );
+    // An `int` and a `date` to exercise the setter's own coercion paths.
+    schema.fields.insert(
+        "count".to_owned(),
+        field(FieldType::Int, Some(true), None, None),
+    );
+    schema.fields.insert(
+        "when".to_owned(),
+        field(FieldType::Date, Some(true), None, None),
+    );
     // `status` is *not* hard-reserved at config load, so a vault can declare it
     // settable — but `set_frontmatter` must still block it (lifecycle-owned).
     schema.fields.insert(
@@ -94,6 +109,9 @@ date: 2026-07-09\n\
 meds: false\n\
 workout: false\n\
 mood: ok\n\
+note: hi\n\
+count: 0\n\
+when: 2026-01-01\n\
 ---\n\
 \n\
 # Thursday\n\
@@ -324,5 +342,157 @@ fn a_missing_note_is_not_found() {
             DomainError::Store(cdno_core::error::StoreError::NotFound(_))
         ),
         "got {err:?}"
+    );
+}
+
+/// Re-parse the frontmatter of `raw` into JSON, so a test can assert the value
+/// a fresh parse (i.e. the index rebuild) sees — the desync surface.
+fn reparse(raw: &str) -> serde_json::Value {
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(raw).expect("parse");
+    fm.as_json()
+}
+
+#[test]
+fn a_string_value_that_looks_like_a_bool_is_quoted_and_stays_a_string() {
+    let (vault, store, index) = seeded_vault();
+    // `note` is a `string` field; setting it to the bareword "true" must NOT
+    // write `note: true` (which would re-parse as a bool and desync the index).
+    vault
+        .set_frontmatter(moment(), "today", "note", "true")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert!(
+        !raw.contains("note: true"),
+        "a string `true` must be quoted, not bare: {raw}"
+    );
+    // A fresh parse of the file yields the STRING "true", not a bool.
+    assert_eq!(
+        reparse(&raw).get("note"),
+        Some(&serde_json::Value::String("true".to_owned())),
+        "re-parse must yield the string: {raw}"
+    );
+    // The committed index row agrees — no desync.
+    assert_eq!(
+        index_frontmatter(&index, &daily_path()).get("note"),
+        Some(&serde_json::Value::String("true".to_owned())),
+    );
+}
+
+#[test]
+fn a_string_value_with_a_colon_round_trips_as_a_string() {
+    let (vault, store, _index) = seeded_vault();
+    // A value containing `: ` would break the YAML or re-parse as a map if
+    // written bare; it must be quoted.
+    vault
+        .set_frontmatter(moment(), "today", "note", "foo: bar")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert_eq!(
+        reparse(&raw).get("note"),
+        Some(&serde_json::Value::String("foo: bar".to_owned())),
+        "a colon-bearing value must round-trip as a string: {raw}"
+    );
+}
+
+#[test]
+fn a_valid_int_is_written_bare() {
+    let (vault, store, index) = seeded_vault();
+    vault
+        .set_frontmatter(moment(), "today", "count", "3")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert!(raw.contains("count: 3"), "int written bare: {raw}");
+    assert_eq!(
+        index_frontmatter(&index, &daily_path()).get("count"),
+        Some(&serde_json::Value::from(3_i64)),
+    );
+}
+
+#[test]
+fn a_valid_date_is_written_bare() {
+    let (vault, store, index) = seeded_vault();
+    vault
+        .set_frontmatter(moment(), "today", "when", "2026-07-09")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert!(raw.contains("when: 2026-07-09"), "date written bare: {raw}");
+    assert_eq!(
+        index_frontmatter(&index, &daily_path()).get("when"),
+        Some(&serde_json::Value::String("2026-07-09".to_owned())),
+    );
+}
+
+#[test]
+fn an_invalid_date_is_rejected() {
+    let (vault, _store, _index) = seeded_vault();
+    match vault.set_frontmatter(moment(), "today", "when", "2026-13-40") {
+        Err(DomainError::InvalidFieldValue { field, .. }) => assert_eq!(field, "when"),
+        other => panic!("expected InvalidFieldValue(when), got {other:?}"),
+    }
+}
+
+/// Build a vault with an active project (declaring a settable, logging `phase`
+/// field) plus today's daily note, returning the vault and store/index handles.
+/// Used to exercise the *non-today* log branch: setting `phase` on the project
+/// writes the project file and logs to today's daily as two independent writes.
+fn vault_with_project() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-07-01\n\
+                   core_question: null\nphase: design\n---\n\n# A project\n";
+    store
+        .write_file(&VaultPath::new("projects/surrogate.md").unwrap(), project)
+        .unwrap();
+    // Today's daily note is the log target for the non-today branch.
+    store.write_file(&daily_path(), DAILY_NOTE).unwrap();
+
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "phase".to_owned(),
+        field(FieldType::String, Some(true), Some(true), None),
+    );
+    let mut config = VaultConfig::default();
+    config.schemas.insert("project".to_owned(), schema);
+
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), config).expect("Vault::new");
+    (vault, store, index)
+}
+
+#[test]
+fn log_on_change_on_a_project_note_writes_the_field_and_logs_to_today_daily() {
+    let (vault, store, index) = vault_with_project();
+    let project_path = VaultPath::new("projects/surrogate.md").unwrap();
+
+    let outcome = vault
+        .set_frontmatter(moment(), "projects/surrogate.md", "phase", "review")
+        .expect("set succeeds");
+    assert!(outcome.touched());
+
+    // The project file and its index row carry the new value.
+    let proj_raw = store.read_file(&project_path).unwrap();
+    assert!(
+        proj_raw.contains("phase: review"),
+        "project file: {proj_raw}"
+    );
+    assert_eq!(
+        index_frontmatter(&index, &project_path).get("phase"),
+        Some(&serde_json::Value::String("review".to_owned())),
+    );
+
+    // Today's daily note carries the `was -> now` log line (a separate write).
+    let daily_raw = store.read_file(&daily_path()).unwrap();
+    assert!(
+        daily_raw.contains("phase: design \u{2192} review on [[projects/surrogate]]"),
+        "daily log line: {daily_raw}"
+    );
+    assert!(
+        daily_raw.contains("**09:30**"),
+        "log is timestamped: {daily_raw}"
     );
 }
