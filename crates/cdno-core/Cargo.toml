@@ -25,6 +25,15 @@ tempfile.workspace = true
 # workspace manifest for the rationale.
 notify.workspace = true
 notify-debouncer-mini.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# TypeScript bindings for the config leaf structs the desktop app's
+# structured Config view embeds (#365, PR5a). Codegen-only: off for
+# CLI/MCP builds, enabled transitively when cdno-tauri regenerates
+# ui/src/api/bindings/ (its ts-bindings turns on cdno-domain's, which
+# turns on this).
+ts-bindings = ["dep:ts-rs"]
 
 [dev-dependencies]
 rusqlite.workspace = true
