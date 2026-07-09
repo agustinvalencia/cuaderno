@@ -57,6 +57,13 @@ impl AppState {
     /// store a new `Vault` at any moment, but a command holding this snapshot
     /// keeps running against the exact vault it loaded, never a half-swapped
     /// one.
+    ///
+    /// Call this ONCE per logical operation and thread the single returned
+    /// `Arc` through the whole thing. Calling it twice within one operation
+    /// could straddle a concurrent reload and hand you two *different*
+    /// vaults — the first call's snapshot and the second's, built from
+    /// different configs. Every current call site is single-load; keep it
+    /// that way.
     pub fn vault(&self) -> Arc<Vault> {
         self.vault.load_full()
     }

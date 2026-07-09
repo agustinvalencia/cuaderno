@@ -178,6 +178,7 @@ pub(crate) fn all_areas() -> Vec<VaultArea> {
         VaultArea::Actions,
         VaultArea::Daily,
         VaultArea::Weekly,
+        VaultArea::Monthly,
         VaultArea::Commitments,
         VaultArea::Portfolios,
         VaultArea::Stewardships,

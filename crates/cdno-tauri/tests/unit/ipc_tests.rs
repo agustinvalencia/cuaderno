@@ -1710,6 +1710,36 @@ fn reload_config_against_an_invalid_config_keeps_the_old_vault_live() {
 }
 
 #[test]
+fn reload_config_against_syntactically_broken_toml_keeps_the_old_vault_live() {
+    use tauri::Manager;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // A SYNTACTICALLY broken config — an unterminated table header. This
+    // fails inside `VaultConfig::load`'s `toml::from_str`, BEFORE `Vault::new`
+    // ever runs — the other no-swap path from the semantic-invalid case.
+    write_config_to_disk(tmp.path(), "[note_types.person\nfolder = \"people\"\n");
+
+    let app = mock_app_rooted(tmp.path().to_path_buf(), config_named("sentinel-original"));
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-reload-syntax", Default::default())
+        .build()
+        .expect("mock webview");
+
+    get_ipc_response(&webview, request("reload_config"))
+        .expect_err("a syntactically broken config must fail the reload");
+
+    // Belt-and-braces: the parse failure short-circuited before any swap,
+    // so the old vault is still live with its sentinel name and still serves.
+    let vault = app.state::<AppState>().vault();
+    assert_eq!(
+        vault.config().vault.name,
+        "sentinel-original",
+        "the old vault stays live after a rejected reload"
+    );
+    get_ipc_response(&webview, request("read_config"))
+        .expect("the old vault still serves after a rejected reload");
+}
+
+#[test]
 fn reload_config_leaves_an_in_flight_old_arc_serving_the_previous_config() {
     use tauri::Manager;
 
