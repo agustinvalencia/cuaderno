@@ -404,13 +404,11 @@ fn parse_milestone_line(line: &str) -> Option<MilestoneEntry> {
     let trimmed = line.trim_start();
     let (completed, rest) = if let Some(r) = trimmed.strip_prefix("- [ ] ") {
         (false, r)
-    } else if let Some(r) = trimmed
-        .strip_prefix("- [x] ")
-        .or_else(|| trimmed.strip_prefix("- [X] "))
-    {
-        (true, r)
     } else {
-        return None;
+        let r = trimmed
+            .strip_prefix("- [x] ")
+            .or_else(|| trimmed.strip_prefix("- [X] "))?;
+        (true, r)
     };
 
     // A `hard:` or `target:` keyword splits name from date marker. The
