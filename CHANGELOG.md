@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-09
+
+Set a typed frontmatter field without a hand-edit: `cdno frontmatter set` (and the `set_frontmatter` MCP tool) writes the field and the SQLite index atomically, with optional auto-logging. Completes #301.
+
 ### Added
 
 - **Generic `set_frontmatter` setter (`cdno frontmatter set`, MCP `set_frontmatter`)** (#301, Phase 2)
