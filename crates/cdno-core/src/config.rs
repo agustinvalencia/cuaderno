@@ -107,6 +107,13 @@ pub struct FieldSpec {
     /// Whether the field must be present. Only an *explicit* `required = true`
     /// opts a field into create-time erroring (PR-B); the desugared
     /// `extra_required` view keeps this `false` (lint-only).
+    ///
+    /// INERT in PR-A — nothing reads this yet. Create-time enforcement is
+    /// deferred to PR-B. Before `required` gains create-time teeth, PR-B MUST
+    /// add the load-time guard "`required` without a `default` is a load error
+    /// on lazily-scaffolded types (daily/weekly/monthly/inbox)"; otherwise the
+    /// first `append_to_log` of a day would scaffold a daily note missing a
+    /// required-no-default field and fail — the checkpoint-logging cliff.
     #[serde(default)]
     pub required: bool,
     /// An allowed-value constraint on a `string` field — the "enum" shape

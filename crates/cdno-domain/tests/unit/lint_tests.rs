@@ -208,9 +208,10 @@ fn config_with_field(note_type: &str, field: &str, spec: FieldSpec) -> VaultConf
     config
 }
 
-fn bool_field() -> FieldSpec {
+/// A scalar field spec of the given type (no default, no `values`).
+fn typed_field(ty: FieldType) -> FieldSpec {
     FieldSpec {
-        ty: FieldType::Bool,
+        ty,
         default: None,
         required: false,
         values: None,
@@ -218,6 +219,10 @@ fn bool_field() -> FieldSpec {
         settable: None,
         log_on_change: None,
     }
+}
+
+fn bool_field() -> FieldSpec {
+    typed_field(FieldType::Bool)
 }
 
 #[test]
@@ -292,6 +297,117 @@ fn lint_skips_the_type_check_for_an_absent_declared_field() {
 
     let report = vault.lint_all_notes().expect("lint succeeds");
     assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_passes_on_a_correctly_typed_int_field() {
+    // A YAML integer parses to a JSON i64/u64 — the `is_i64() || is_u64()`
+    // branch accepts it.
+    let body = "---\ntype: project\ntitle: P\nsteps: 3\n---\n# Body\n";
+    let config = config_with_field("project", "steps", typed_field(FieldType::Int));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("steps")),
+        "an integer value must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_warns_on_a_float_for_an_int_field() {
+    // A float is not an integer — guards the documented float-rejection.
+    let body = "---\ntype: project\ntitle: P\nsteps: 3.5\n---\n# Body\n";
+    let config = config_with_field("project", "steps", typed_field(FieldType::Int));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("steps") && i.message.contains("not a valid int")),
+        "a float must warn against an int field: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_warns_on_a_string_for_an_int_field() {
+    // A quoted numeric string is a string, not an integer.
+    let body = "---\ntype: project\ntitle: P\nsteps: \"3\"\n---\n# Body\n";
+    let config = config_with_field("project", "steps", typed_field(FieldType::Int));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("steps") && i.message.contains("not a valid int")),
+        "a string must warn against an int field: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_passes_on_a_correctly_formatted_date_field() {
+    // A `YYYY-MM-DD` string that parses as a calendar date is accepted.
+    let body = "---\ntype: project\ntitle: P\nsince: 2026-01-01\n---\n# Body\n";
+    let config = config_with_field("project", "since", typed_field(FieldType::Date));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("since")),
+        "a valid date must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_warns_on_an_unparseable_date_field() {
+    // A non-date string fails the string-AND-`NaiveDate::parse` branch.
+    let body = "---\ntype: project\ntitle: P\nsince: nope\n---\n# Body\n";
+    let config = config_with_field("project", "since", typed_field(FieldType::Date));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("since") && i.message.contains("not a valid date")),
+        "an unparseable date must warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_type_check_is_gated_on_an_explicit_fields_block() {
+    // A note value that WOULD trip the type-lint (`owner: 123` against an
+    // implied string), but the schema has only `extra_required` and NO
+    // `[schemas.<type>.fields]` block — so the opt-in type-check never runs.
+    // Locks the `!schema.fields.is_empty()` gate. The `extra_required`
+    // presence check still passes (the field is present, non-null).
+    let body = "---\ntype: project\ntitle: P\nowner: 123\n---\n# Body\n";
+    let mut config = VaultConfig::default();
+    config.schemas.insert(
+        "project".to_owned(),
+        SchemaExtension {
+            extra_required: vec!["owner".to_owned()],
+            ..Default::default()
+        },
+    );
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("owner")),
+        "no type-check without an explicit fields block: {:?}",
+        report.issues
+    );
 }
 
 // ---------------------------------------------------------------------

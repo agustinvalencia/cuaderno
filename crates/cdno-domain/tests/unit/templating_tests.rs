@@ -1449,6 +1449,45 @@ fn template_placeholders_recognises_an_extra_required_field_on_a_builtin() {
 }
 
 #[test]
+fn template_placeholders_dedupes_a_schema_field_colliding_with_a_supplied_key() {
+    // A declared field named after a non-identity supplied placeholder
+    // (`weekday` on daily) is deduped at the `template_placeholders` layer:
+    // the supplied contextual value wins, so it appears once as `Supplied`,
+    // never duplicated as `Schema`. (Declaring it only warns at validate, so
+    // vault-open still succeeds.)
+    use cdno_core::config::{FieldSpec, FieldType, SchemaExtension};
+
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "weekday".to_owned(),
+        FieldSpec {
+            ty: FieldType::String,
+            default: None,
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    config.schemas.insert("daily".to_owned(), schema);
+    let (vault, _store) = vault_with_config(&[], config);
+
+    let placeholders = vault.template_placeholders("daily").unwrap();
+    let weekday: Vec<&PlaceholderSource> = placeholders
+        .iter()
+        .filter(|p| p.name == "weekday")
+        .map(|p| &p.source)
+        .collect();
+    assert_eq!(
+        weekday,
+        vec![&PlaceholderSource::Supplied],
+        "a supplied-key collision stays a single Supplied entry"
+    );
+}
+
+#[test]
 fn template_placeholders_includes_a_custom_types_schema_fields() {
     let (vault, _store) = vault_with_config(&[], config_with_person());
     let placeholders = vault.template_placeholders("person").unwrap();
