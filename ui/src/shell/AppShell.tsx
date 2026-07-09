@@ -7,6 +7,7 @@ import { toggleMetrics, useMetrics } from "../lib/metrics";
 import { cycleTheme } from "../lib/theme";
 import InboxDrawer from "./InboxDrawer";
 import WatcherPill from "./WatcherPill";
+import ConfigStatusBanner from "./ConfigStatusBanner";
 import { ReaderProvider, useReader } from "./reader";
 
 // The note reader pulls react-markdown + remark-gfm; the palette pulls
@@ -195,6 +196,7 @@ export default function AppShell() {
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
+        <ConfigStatusBanner />
         <Outlet />
       </main>
 

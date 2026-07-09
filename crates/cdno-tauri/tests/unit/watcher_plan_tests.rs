@@ -32,6 +32,7 @@ fn external_edits_classify_sort_and_dedup() {
                 "projects/alpha.md".into(),
                 "projects/beta.md".into(),
             ],
+            config_changed: false,
         }
     );
 }
@@ -82,8 +83,77 @@ fn mixed_batch_emits_only_the_external_subset() {
         BatchPlan::External {
             areas: vec![VaultArea::Projects],
             paths: vec!["projects/alpha.md".into()],
+            config_changed: false,
         }
     );
+}
+
+#[test]
+fn external_config_edit_sets_config_changed() {
+    let journal = WriteJournal::default();
+    let plan = plan_batch(
+        &journal,
+        vec![FileEvent::Changed(vp(".cuaderno/config.toml"))],
+    );
+    match plan {
+        BatchPlan::External {
+            areas,
+            config_changed,
+            ..
+        } => {
+            assert!(config_changed, "a config.toml edit must trigger a rebuild");
+            assert_eq!(areas, vec![VaultArea::Config]);
+        }
+        other => panic!("expected External, got {other:?}"),
+    }
+}
+
+#[test]
+fn note_only_batch_leaves_config_changed_false() {
+    let journal = WriteJournal::default();
+    let plan = plan_batch(&journal, vec![FileEvent::Changed(vp("projects/alpha.md"))]);
+    assert_eq!(
+        plan,
+        BatchPlan::External {
+            areas: vec![VaultArea::Projects],
+            paths: vec!["projects/alpha.md".into()],
+            config_changed: false,
+        }
+    );
+}
+
+#[test]
+fn template_edit_is_config_area_but_not_a_rebuild_trigger() {
+    // A `.cuaderno/templates/*.md` edit classifies as Config (it changes the
+    // log form's fields) but does NOT change the note-type registry, so it
+    // must not trigger a live vault rebuild.
+    let journal = WriteJournal::default();
+    let plan = plan_batch(
+        &journal,
+        vec![FileEvent::Changed(vp(".cuaderno/templates/demo.md"))],
+    );
+    assert_eq!(
+        plan,
+        BatchPlan::External {
+            areas: vec![VaultArea::Config],
+            paths: vec![".cuaderno/templates/demo.md".into()],
+            config_changed: false,
+        }
+    );
+}
+
+#[test]
+fn self_write_config_edit_is_suppressed_to_quiet() {
+    // A journalled (self-written) config edit is our own echo — the save
+    // command already emitted precisely and drove the live reload — so the
+    // batch is Quiet and config_changed never comes into play.
+    let journal = WriteJournal::default();
+    journal.record([vp(".cuaderno/config.toml")]);
+    let plan = plan_batch(
+        &journal,
+        vec![FileEvent::Changed(vp(".cuaderno/config.toml"))],
+    );
+    assert_eq!(plan, BatchPlan::Quiet);
 }
 
 #[test]

@@ -13,6 +13,8 @@ use std::sync::mpsc::Receiver;
 
 use tauri::{AppHandle, Emitter, Manager};
 
+use arc_swap::ArcSwap;
+
 use cdno_core::config::IgnoreSet;
 use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
@@ -20,8 +22,10 @@ use cdno_core::reconcile::reconcile;
 use cdno_core::store::VaultStore;
 use cdno_core::watcher::FileEvent;
 
+use crate::commands::config::rebuild_and_swap;
 use crate::events::{
-    self, Origin, VAULT_CHANGED, VaultArea, VaultChanged, WATCHER_STATUS, WatcherStatus,
+    self, CONFIG_STATUS, ConfigStatus, Origin, VAULT_CHANGED, VaultArea, VaultChanged,
+    WATCHER_STATUS, WatcherStatus,
 };
 use crate::state::{AppState, WriteJournal};
 
@@ -30,7 +34,12 @@ use crate::state::{AppState, WriteJournal};
 pub struct WatcherDeps {
     pub store: Arc<dyn VaultStore>,
     pub index: Arc<dyn VaultIndex>,
-    pub ignore: Arc<IgnoreSet>,
+    /// The active ignore matcher, shared by reference with [`AppState`] so a
+    /// config reload can swap a fresh set in and the next reconcile honours
+    /// the new globs without a restart (GH #365 PR4). Loaded per reconcile
+    /// call rather than cached, so a mid-session swap takes effect on the
+    /// very next batch.
+    pub ignore: Arc<ArcSwap<IgnoreSet>>,
 }
 
 /// Consume debounced batches until the sender (the `FsFileWatcher`,
@@ -58,6 +67,12 @@ pub enum BatchPlan {
     External {
         areas: Vec<VaultArea>,
         paths: Vec<String>,
+        /// Whether the batch touched `.cuaderno/config.toml` itself — the
+        /// trigger for a live vault rebuild (GH #365 PR4). Template `.md`
+        /// files under `.cuaderno/templates/` also classify as
+        /// `VaultArea::Config` but leave this `false`: they don't change the
+        /// note-type registry, so they need only the ordinary refetch.
+        config_changed: bool,
     },
 }
 
@@ -91,10 +106,24 @@ pub fn plan_batch(journal: &WriteJournal, batch: Vec<FileEvent>) -> BatchPlan {
     if areas.is_empty() {
         return BatchPlan::Quiet;
     }
+    // A surviving (non-echo) edit to the config file itself means the
+    // note-type registry may have changed — the watcher must rebuild the
+    // live vault, not just refetch. Template edits under `.cuaderno/templates/`
+    // are excluded (see `is_config_file`).
+    let config_changed = external.iter().any(is_config_file);
     BatchPlan::External {
         areas,
         paths: external.iter().map(|p| p.to_string()).collect(),
+        config_changed,
     }
+}
+
+/// The vault-relative config file the reload watches, distinct from the
+/// template files that also classify as `VaultArea::Config` but don't
+/// change the note-type registry.
+fn is_config_file(path: &VaultPath) -> bool {
+    path.as_path().file_name().and_then(|f| f.to_str()) == Some("config.toml")
+        && path.as_path().starts_with(cdno_core::paths::CUADERNO_DIR)
 }
 
 fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
@@ -114,26 +143,97 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
         },
     );
 
-    let payload = match plan {
-        BatchPlan::Quiet => return,
-        BatchPlan::Rescan => VaultChanged {
-            origin: Origin::External,
-            areas: all_areas(),
-            paths: Vec::new(),
-        },
-        BatchPlan::External { areas, paths } => VaultChanged {
-            origin: Origin::External,
+    match plan {
+        BatchPlan::Quiet => {}
+        BatchPlan::Rescan => {
+            let _ = app.emit(
+                VAULT_CHANGED,
+                VaultChanged {
+                    origin: Origin::External,
+                    areas: all_areas(),
+                    paths: Vec::new(),
+                },
+            );
+        }
+        BatchPlan::External {
             areas,
             paths,
-        },
-    };
-    let _ = app.emit(VAULT_CHANGED, payload);
+            config_changed,
+        } if config_changed => handle_external_config_edit(app, areas, paths),
+        BatchPlan::External { areas, paths, .. } => {
+            let _ = app.emit(
+                VAULT_CHANGED,
+                VaultChanged {
+                    origin: Origin::External,
+                    areas,
+                    paths,
+                },
+            );
+        }
+    }
+}
+
+/// Apply an external `.cuaderno/config.toml` edit: rebuild the live vault
+/// (and its ignore set) from the new config, then tell the frontend what
+/// happened (GH #365 PR4).
+///
+/// On a successful rebuild, one all-areas `vault:changed` refetches
+/// everything the new config might have reshaped (note types, schemas,
+/// folders), and a `config:status` valid clears any prior error banner.
+///
+/// On a rebuild failure, [`rebuild_and_swap`] has already guaranteed the
+/// OLD vault stays live (never-brick), so the session is never left
+/// vault-less. We surface the error as a `config:status` notice the UI
+/// shows as a non-red banner, then STILL emit `vault:changed` for the
+/// batch's non-config edits so those views refresh — a broken config edit
+/// bundled with a real note edit must not swallow the note edit.
+fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
+    match rebuild_and_swap(app) {
+        Ok(()) => {
+            let _ = app.emit(
+                VAULT_CHANGED,
+                VaultChanged {
+                    origin: Origin::External,
+                    areas: all_areas(),
+                    paths,
+                },
+            );
+            let _ = app.emit(
+                CONFIG_STATUS,
+                ConfigStatus {
+                    valid: true,
+                    message: None,
+                },
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "external config edit did not apply; keeping the last good config");
+            let _ = app.emit(
+                CONFIG_STATUS,
+                ConfigStatus {
+                    valid: false,
+                    message: Some(e.to_string()),
+                },
+            );
+            let _ = app.emit(
+                VAULT_CHANGED,
+                VaultChanged {
+                    origin: Origin::External,
+                    areas,
+                    paths,
+                },
+            );
+        }
+    }
 }
 
 /// Repair the index; `false` (→ degraded pill + poll fallback in the
 /// frontend) only on catastrophic failure, not per-file errors.
 fn run_reconcile(deps: &WatcherDeps) -> bool {
-    match reconcile(&deps.store, &deps.index, &deps.ignore) {
+    // Load the current ignore set per call so a config reload's swap
+    // (GH #365 PR4) is honoured on the very next reconcile.
+    let ignore = deps.ignore.load_full();
+    match reconcile(&deps.store, &deps.index, &ignore) {
         Ok(report) => {
             if !report.errors.is_empty() {
                 tracing::warn!(

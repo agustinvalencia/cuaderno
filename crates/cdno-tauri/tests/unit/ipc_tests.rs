@@ -117,6 +117,9 @@ fn mock_app_configured(
             vault: arc_swap::ArcSwap::from_pointee(vault),
             store: Arc::clone(&store),
             index,
+            ignore: Arc::new(arc_swap::ArcSwap::from_pointee(
+                cdno_core::config::IgnoreSet::empty(),
+            )),
             journal: WriteJournal::default(),
             root: std::path::PathBuf::from("/nonexistent-test-vault"),
         })
@@ -1616,6 +1619,9 @@ fn mock_app_rooted(
             vault: arc_swap::ArcSwap::from_pointee(vault),
             store,
             index,
+            ignore: Arc::new(arc_swap::ArcSwap::from_pointee(
+                cdno_core::config::IgnoreSet::empty(),
+            )),
             journal: WriteJournal::default(),
             root,
         })
@@ -1813,6 +1819,11 @@ fn mock_app_fs_rooted(
             vault: arc_swap::ArcSwap::from_pointee(vault),
             store,
             index,
+            // The seed configs carry no `ignore` globs; a reload recompiles
+            // the set from disk, so an empty starting matcher is fine.
+            ignore: Arc::new(arc_swap::ArcSwap::from_pointee(
+                cdno_core::config::IgnoreSet::empty(),
+            )),
             journal: WriteJournal::default(),
             root,
         })

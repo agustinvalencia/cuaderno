@@ -11,7 +11,7 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::vault::{ConfigSaveError, validate_config_str};
-use cdno_tauri::commands::config::{read_config_impl, save_config_impl};
+use cdno_tauri::commands::config::{load_vault_and_ignore, read_config_impl, save_config_impl};
 
 const CONFIG_PATH: &str = ".cuaderno/config.toml";
 
@@ -223,4 +223,51 @@ fn save_config_round_trips_identical_content() {
     assert_eq!(doc.content, BASELINE);
     // An unchanged file re-hashes to the same value it started with.
     assert_eq!(doc.hash, hash);
+}
+
+// --- load_vault_and_ignore (#365, PR4): the rebuild core, proven over the
+//     Memory doubles + a real on-disk config, no Tauri AppHandle ---
+
+/// Write `config` to `<root>/.cuaderno/config.toml`, mirroring what the
+/// rebuild core re-reads from disk (`VaultConfig::load`).
+fn write_config_at(root: &std::path::Path, config: &str) {
+    let cuaderno = root.join(".cuaderno");
+    std::fs::create_dir_all(&cuaderno).expect("create .cuaderno");
+    std::fs::write(cuaderno.join("config.toml"), config).expect("write config.toml");
+}
+
+/// A valid on-disk config rebuilds a sound vault whose type registry sees
+/// the newly declared custom type — the happy path the watcher's live
+/// reload takes.
+#[test]
+fn load_vault_and_ignore_builds_from_a_valid_config() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_config_at(tmp.path(), "[note_types.person]\nfolder = \"people\"\n");
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _ignore) =
+        load_vault_and_ignore(store, index, tmp.path()).expect("a valid config must build");
+
+    let types = vault.list_templates().expect("list_templates");
+    assert!(
+        types.iter().any(|t| t.note_type == "person"),
+        "the rebuilt vault should recognise the custom type"
+    );
+}
+
+/// A syntactically broken config surfaces an error — nothing to swap, so
+/// the never-brick guarantee holds (the caller keeps the old vault live).
+#[test]
+fn load_vault_and_ignore_rejects_a_broken_config() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // Unterminated table header — a raw TOML syntax error.
+    write_config_at(tmp.path(), "[note_types.person\nfolder = \"people\"\n");
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    assert!(
+        load_vault_and_ignore(store, index, tmp.path()).is_err(),
+        "a broken config must error, leaving nothing to swap"
+    );
 }
