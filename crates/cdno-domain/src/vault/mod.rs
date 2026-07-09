@@ -91,7 +91,9 @@ pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 pub use questions::QuestionSummary;
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
-pub use templating::{PlaceholderSource, TemplatePlaceholder};
+pub use templating::{
+    PlaceholderSource, TemplateContent, TemplatePlaceholder, TemplateSourceKind, TemplateSummary,
+};
 pub use weekly::{WeeklyNoteView, WeeklySection};
 pub use write_outcome::WriteOutcome;
 

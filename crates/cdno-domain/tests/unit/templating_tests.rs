@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{CustomNoteType, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::frontmatter::Context;
-use cdno_domain::{PlaceholderSource, TemplateSource, Vault};
+use cdno_domain::{PlaceholderSource, TemplateSource, TemplateSourceKind, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -1199,4 +1199,210 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
             "unsubstituted placeholder in {path} — a supplied key isn't filled by the create path:\n{content}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// list_templates / read_template / save_template / create_template — the
+// desktop Templates view surface (#357).
+// ---------------------------------------------------------------------------
+
+/// A config-defined custom type `person` with one required and one optional
+/// field, mirroring the custom-notes fixture.
+fn person_type() -> CustomNoteType {
+    CustomNoteType {
+        folder: "people".to_owned(),
+        required: vec!["name".to_owned()],
+        optional: vec!["role".to_owned()],
+        template: None,
+        append_only: false,
+        title_field: None,
+        date_field: None,
+    }
+}
+
+fn config_with_person() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert("person".to_owned(), person_type());
+    config
+}
+
+#[test]
+fn list_templates_reflects_builtin_default_vs_custom_override() {
+    // A vanilla vault: `project` reads as a built-in default, no custom file.
+    let (vault, _store) = vault_with(&[]);
+    let list = vault.list_templates().expect("list_templates");
+    let project = list
+        .iter()
+        .find(|t| t.note_type == "project")
+        .expect("project row");
+    assert!(!project.is_custom_type);
+    assert!(!project.has_custom_file);
+    assert_eq!(project.source, Some(TemplateSourceKind::BuiltinDefault));
+    assert_eq!(project.display_name, "Project");
+    assert_eq!(project.path, ".cuaderno/templates/project.md");
+
+    // With a custom override on disk, the same row flips to CustomBase.
+    let (vault2, _s2) = vault_with(&[(".cuaderno/templates/project.md", "custom project")]);
+    let project2 = vault2
+        .list_templates()
+        .unwrap()
+        .into_iter()
+        .find(|t| t.note_type == "project")
+        .unwrap();
+    assert!(project2.has_custom_file);
+    assert_eq!(project2.source, Some(TemplateSourceKind::CustomBase));
+}
+
+#[test]
+fn list_templates_shows_a_custom_type_with_no_template_as_none() {
+    let (vault, _store) = vault_with_config(&[], config_with_person());
+    let list = vault.list_templates().unwrap();
+    let person = list
+        .iter()
+        .find(|t| t.note_type == "person")
+        .expect("person row");
+    assert!(person.is_custom_type);
+    assert!(!person.has_custom_file);
+    // No built-in backs a custom type, so with no file the effective source
+    // is None — the view offers Create.
+    assert_eq!(person.source, None);
+    assert_eq!(person.path, ".cuaderno/templates/person.md");
+}
+
+#[test]
+fn read_template_returns_effective_content_and_source() {
+    // Built-in default: content is the shipped template, source BuiltinDefault.
+    let (vault, _store) = vault_with(&[]);
+    let read = vault.read_template("project", None).expect("read");
+    assert_eq!(read.source, Some(TemplateSourceKind::BuiltinDefault));
+    assert!(read.content.contains("type: project"));
+
+    // Custom override wins, reported as CustomBase.
+    let (vault2, _s2) = vault_with(&[(".cuaderno/templates/project.md", "custom body {{title}}")]);
+    let read2 = vault2.read_template("project", None).unwrap();
+    assert_eq!(read2.source, Some(TemplateSourceKind::CustomBase));
+    assert_eq!(read2.content, "custom body {{title}}");
+}
+
+#[test]
+fn save_template_creates_the_override_and_a_reread_returns_it() {
+    let (vault, store) = vault_with(&[]);
+    let path = vault
+        .save_template("project", None, "edited {{title}}")
+        .expect("save");
+    assert_eq!(path.to_string(), ".cuaderno/templates/project.md");
+    // The file landed under the templates dir.
+    assert_eq!(
+        store
+            .read_file(&vp(".cuaderno/templates/project.md"))
+            .unwrap(),
+        "edited {{title}}"
+    );
+    // A fresh read now reports the override.
+    let read = vault.read_template("project", None).unwrap();
+    assert_eq!(read.source, Some(TemplateSourceKind::CustomBase));
+    assert_eq!(read.content, "edited {{title}}");
+}
+
+#[test]
+fn save_template_rejects_an_unknown_type() {
+    let (vault, _store) = vault_with(&[]);
+    match vault.save_template("bogus", None, "x") {
+        Err(cdno_domain::error::DomainError::UnknownNoteType { note_type }) => {
+            assert_eq!(note_type, "bogus");
+        }
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
+fn read_template_rejects_an_unknown_type() {
+    let (vault, _store) = vault_with(&[]);
+    match vault.read_template("bogus", None) {
+        Err(cdno_domain::error::DomainError::UnknownNoteType { note_type }) => {
+            assert_eq!(note_type, "bogus");
+        }
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_template_rejects_an_unknown_type() {
+    let (vault, _store) = vault_with(&[]);
+    match vault.create_template("bogus") {
+        Err(cdno_domain::error::DomainError::UnknownNoteType { note_type }) => {
+            assert_eq!(note_type, "bogus");
+        }
+        other => panic!("expected UnknownNoteType, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_template_scaffolds_a_custom_type_starter_with_its_schema_fields() {
+    let (vault, store) = vault_with_config(&[], config_with_person());
+    let path = vault.create_template("person").expect("create");
+    assert_eq!(path.to_string(), ".cuaderno/templates/person.md");
+    let content = store.read_file(&path).unwrap();
+    // type + the declared required field as a {{placeholder}} + a heading.
+    assert!(content.contains("type: person"));
+    assert!(content.contains("name: {{name}}"));
+    assert!(content.contains("# {{title}}"));
+}
+
+#[test]
+fn create_template_then_read_returns_the_scaffolded_content() {
+    let (vault, _store) = vault_with_config(&[], config_with_person());
+    vault.create_template("person").unwrap();
+    let read = vault.read_template("person", None).unwrap();
+    // Now backed by a real file.
+    assert_eq!(read.source, Some(TemplateSourceKind::CustomBase));
+    assert!(read.content.contains("name: {{name}}"));
+}
+
+#[test]
+fn create_template_refuses_when_a_template_already_exists() {
+    let (vault, _store) = vault_with_config(
+        &[(".cuaderno/templates/person.md", "existing")],
+        config_with_person(),
+    );
+    match vault.create_template("person") {
+        Err(cdno_domain::error::DomainError::TemplateAlreadyExists { path }) => {
+            assert_eq!(path, ".cuaderno/templates/person.md");
+        }
+        other => panic!("expected TemplateAlreadyExists, got {other:?}"),
+    }
+}
+
+#[test]
+fn create_template_refuses_a_builtin_type() {
+    // A built-in has no config declaration to scaffold from — edit-and-save
+    // its override via save_template instead.
+    let (vault, _store) = vault_with(&[]);
+    match vault.create_template("project") {
+        Err(cdno_domain::error::DomainError::BuiltinTypeNotCustom { note_type }) => {
+            assert_eq!(note_type, "project");
+        }
+        other => panic!("expected BuiltinTypeNotCustom, got {other:?}"),
+    }
+}
+
+#[test]
+fn template_placeholders_includes_a_custom_types_schema_fields() {
+    let (vault, _store) = vault_with_config(&[], config_with_person());
+    let placeholders = vault.template_placeholders("person").unwrap();
+    // The declared required + optional fields appear, tagged Schema — so the
+    // editor's unknown-token check won't false-warn on them.
+    let name = placeholders
+        .iter()
+        .find(|p| p.name == "name")
+        .expect("name placeholder");
+    assert_eq!(name.source, PlaceholderSource::Schema);
+    let role = placeholders
+        .iter()
+        .find(|p| p.name == "role")
+        .expect("role placeholder");
+    assert_eq!(role.source, PlaceholderSource::Schema);
+    // The create-path built-ins are still there, tagged Supplied.
+    let title = placeholders.iter().find(|p| p.name == "title").unwrap();
+    assert_eq!(title.source, PlaceholderSource::Supplied);
 }

@@ -376,6 +376,11 @@ pub fn run() {
             commands::calendar::read_weekly,
             commands::calendar::read_monthly,
             commands::calendar::list_daily_dates,
+            commands::templates::list_templates,
+            commands::templates::read_template,
+            commands::templates::list_template_placeholders,
+            commands::templates::save_template,
+            commands::templates::create_template,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

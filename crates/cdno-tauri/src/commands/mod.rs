@@ -14,4 +14,5 @@ pub mod projects;
 pub mod search;
 pub mod stewardships;
 pub mod strategic;
+pub mod templates;
 pub mod weekly;

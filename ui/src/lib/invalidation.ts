@@ -59,8 +59,17 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   // The config area covers both config.toml and the template files
   // under .cuaderno/templates/. An edit to a custom tracking template
   // (or config.toml) changes which fields the log form gathers, so it
-  // refreshes the template-field query.
-  config: ["get_orientation", "get_tracking_template_fields"],
+  // refreshes the template-field query. The Templates view (#357) reads
+  // the template list, the selected template's content, and its
+  // placeholder set — so an external template edit (or the app's own
+  // save) refreshes all three.
+  config: [
+    "get_orientation",
+    "get_tracking_template_fields",
+    "list_templates",
+    "read_template",
+    "list_template_placeholders",
+  ],
 };
 
 export function invalidateAreas(client: QueryClient, areas: VaultArea[]): void {

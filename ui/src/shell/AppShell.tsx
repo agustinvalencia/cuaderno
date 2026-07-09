@@ -51,6 +51,7 @@ const NAV = [
 const BROWSE = [
   { to: "/portfolios", label: "Portfolios" },
   { to: "/stewardships", label: "Stewardships" },
+  { to: "/templates", label: "Templates" },
 ];
 
 export default function AppShell() {
