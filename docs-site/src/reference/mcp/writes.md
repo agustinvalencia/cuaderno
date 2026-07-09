@@ -38,6 +38,12 @@ rules as the CLI apply (append-only notes, auto-logged project state, the projec
 | `complete_commitment` | `commitment` (slug) | Mark a commitment done and archive it. |
 | `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?` | File a tracking note under an expanded stewardship. |
 
+## Frontmatter
+
+| Tool | Inputs | Effect |
+|------|--------|--------|
+| `set_frontmatter` | `note`, `key`, `value` | Set a declared, `settable = true` typed frontmatter field through the index (no desync). `note` is `today`, a `YYYY-MM-DD` date, or a vault-relative path. Engine-owned keys (`type`, `status`, a period key) are rejected; the value is type-checked; `log_on_change` fields stamp a daily-log line. ([`cdno frontmatter set`](../cli/frontmatter.md)) |
+
 ## Daily, weekly, and monthly sections
 
 | Tool | Inputs | Effect |

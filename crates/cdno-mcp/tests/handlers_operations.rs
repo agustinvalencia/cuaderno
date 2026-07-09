@@ -24,9 +24,9 @@ use cdno_mcp::server::{
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetQuestionStatusInput,
-    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
-    UpsertWeeklySectionInput,
+    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetFrontmatterInput,
+    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -1643,4 +1643,79 @@ async fn create_custom_note_rejects_a_missing_required_field() {
         }))
         .await;
     assert!(result.is_err(), "missing required field should error");
+}
+
+// ---------------------------------------------------------------------
+// set_frontmatter (#301)
+// ---------------------------------------------------------------------
+
+/// A config declaring a settable `meds` bool on daily notes.
+fn config_with_settable_meds() -> VaultConfig {
+    use cdno_core::config::{FieldSpec, FieldType, SchemaExtension};
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "meds".to_owned(),
+        FieldSpec {
+            ty: FieldType::Bool,
+            default: None,
+            required: false,
+            values: None,
+            list: None,
+            settable: Some(true),
+            log_on_change: None,
+        },
+    );
+    let mut config = VaultConfig::default();
+    config.schemas.insert("daily".to_owned(), schema);
+    config
+}
+
+/// Seed today's daily note carrying `meds: false`.
+fn seed_today_daily_with_meds(store: &Arc<dyn VaultStore>) {
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let body = format!(
+        "---\ndate: {date}\ntype: daily\nmeds: false\n---\n\n# {date}\n\n## Logs\n",
+        date = today.format("%Y-%m-%d"),
+    );
+    store.write_file(&path, &body).unwrap();
+}
+
+#[tokio::test]
+async fn set_frontmatter_flips_a_daily_flag() {
+    let (server, store) = server_with_config(config_with_settable_meds(), |_v, store| {
+        seed_today_daily_with_meds(&store)
+    });
+
+    let result = server
+        .set_frontmatter(Parameters(SetFrontmatterInput {
+            note: "today".to_owned(),
+            key: "meds".to_owned(),
+            value: "true".to_owned(),
+        }))
+        .await
+        .expect("set_frontmatter");
+    let value = decode_json(&result);
+    let path = value["path"].as_str().unwrap();
+    assert!(path.ends_with(".md"), "path: {path}");
+
+    let body = store.read_file(&vp(path)).unwrap();
+    assert!(body.contains("meds: true"), "flag flipped:\n{body}");
+}
+
+#[tokio::test]
+async fn set_frontmatter_errors_on_a_reserved_key() {
+    let (server, _store) = server_with_config(config_with_settable_meds(), |_v, store| {
+        seed_today_daily_with_meds(&store)
+    });
+
+    // `date` is the engine-owned period key — rejected as a domain error.
+    let result = server
+        .set_frontmatter(Parameters(SetFrontmatterInput {
+            note: "today".to_owned(),
+            key: "date".to_owned(),
+            value: "2026-01-01".to_owned(),
+        }))
+        .await;
+    assert!(result.is_err(), "a reserved/undeclared key must error");
 }

@@ -57,7 +57,6 @@ impl Vault {
         tx: &mut VaultTransaction,
     ) -> Result<VaultPath, DomainError> {
         let path = daily_note_path(at.date())?;
-        let line = format_log_line(at.time(), entry);
 
         // One path for both fresh and existing notes: get the base
         // (scaffold a new one, or read the existing file), then insert
@@ -70,14 +69,7 @@ impl Vault {
         } else {
             self.scaffold_daily_base(at.date())?
         };
-        let mut doc = MarkdownDocument::parse(base)?;
-        doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
-        // Keep the trailing section pinned to the bottom — and self-heal a
-        // note where it had drifted up (#232). The anchor is the daily
-        // template's last section, so a custom template can pin something
-        // other than `## Logs` last (#212).
-        doc.move_section_to_end(&self.daily_anchor_section()?)?;
-        let new_content = doc.render().to_owned();
+        let new_content = self.fold_daily_log_line(at.time(), base, entry)?;
 
         // Rebuild the index row from the new content so the committed
         // transaction leaves file + index in sync.
@@ -87,6 +79,31 @@ impl Vault {
         tx.upsert_note(entry_meta);
 
         Ok(path)
+    }
+
+    /// Fold one log line for `time` into `base` — an already-materialised
+    /// daily-note document — returning the rendered content. The line is
+    /// inserted into the `## Logs` section and the trailing anchor section
+    /// re-pinned to the bottom (#232/#212), matching `stage_daily_log`.
+    ///
+    /// Split out so a caller that has *already staged a write to today's
+    /// daily note* (e.g. `set_frontmatter` toggling a `log_on_change`
+    /// field on the daily note itself) can fold the log line into that
+    /// same in-flight content and write the file once. Staging a separate
+    /// daily-log write would read the pre-change content back from the
+    /// store and clobber the frontmatter edit — this seam keeps the file
+    /// and its index row consistent.
+    pub(in crate::vault) fn fold_daily_log_line(
+        &self,
+        time: NaiveTime,
+        base: String,
+        entry: &str,
+    ) -> Result<String, DomainError> {
+        let line = format_log_line(time, entry);
+        let mut doc = MarkdownDocument::parse(base)?;
+        doc.append_to_section(DAILY_LOGS_SECTION, &line)?;
+        doc.move_section_to_end(&self.daily_anchor_section()?)?;
+        Ok(doc.render().to_owned())
     }
 }
 

@@ -19,6 +19,7 @@ mod unit {
     mod questions_tests;
     mod recurrence_tests;
     mod search_tests;
+    mod set_frontmatter_tests;
     mod stewardships_tests;
     mod templating_tests;
     mod tracking_tests;

@@ -96,10 +96,12 @@ fn advertised_catalogue_matches_expected_surface() {
         "activate_project",
         "set_question_status",
         "add_periodic_commitment",
+        // Generic frontmatter setter (1, #301)
+        "set_frontmatter",
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 44);
+    assert_eq!(tools.len(), 45);
 }
 
 #[test]

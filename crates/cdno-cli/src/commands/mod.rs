@@ -3,6 +3,7 @@ pub mod capture;
 pub mod commit;
 pub mod commitments;
 pub mod file;
+pub mod frontmatter;
 pub mod init;
 pub mod lint;
 pub mod log;

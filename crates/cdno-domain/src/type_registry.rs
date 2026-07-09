@@ -264,7 +264,7 @@ impl<'a> TypeRegistry<'a> {
 /// date/period identity key. The identity key's *name* is read from
 /// [`NoteType::frontmatter_order`] (position 1 for daily/weekly/monthly) rather
 /// than hardcoded, so it can't drift from the real frontmatter shape.
-fn hard_reserved_fields(nt: NoteType) -> Vec<&'static str> {
+pub(crate) fn hard_reserved_fields(nt: NoteType) -> Vec<&'static str> {
     let mut reserved = vec!["type"];
     // Daily/weekly/monthly are the types the engine keys and scaffolds by
     // period, so their period key (frontmatter_order[1]: `date`/`week`/`month`)

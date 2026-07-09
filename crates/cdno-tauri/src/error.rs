@@ -89,10 +89,14 @@ impl From<DomainError> for CmdError {
             | DomainError::EmptyField { .. }
             | DomainError::MalformedWikilink { .. }
             | DomainError::MissingSection(_)
+            | DomainError::MissingFrontmatterField(_)
             | DomainError::UnresolvedPrompts { .. }
             | DomainError::UnknownNoteType { .. }
             | DomainError::ReservedTypeName { .. }
             | DomainError::ReservedSchemaField { .. }
+            | DomainError::UndeclaredSchemaField { .. }
+            | DomainError::FieldNotSettable { .. }
+            | DomainError::InvalidFieldValue { .. }
             | DomainError::BuiltinTypeNotCustom { .. }
             | DomainError::MissingRequiredField { .. }
             | DomainError::UnknownField { .. }

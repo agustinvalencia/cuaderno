@@ -52,7 +52,7 @@ collaborators = "Who are the collaborators?"
 | `vault.max_active_projects` | integer | `5` | The active-project cap. |
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that **built-in** note type, enforced by `cdno lint`. |
-| `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for a built-in note type (`type`, `default`, `required`, `values`). Recognised by the Templates editor and type-checked by `cdno lint`. See [Typed schema fields](#typed-schema-fields). |
+| `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for a built-in note type (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor, type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
@@ -61,7 +61,7 @@ collaborators = "Who are the collaborators?"
 
 `[schemas.<type>.fields.<name>]` declares a **typed** frontmatter field on a built-in note type. It
 is the richer sibling of `extra_required`: instead of just a name, each field carries a type (and
-optionally a default and an allowed-value set). Three things consume it today:
+optionally a default and an allowed-value set). Four things consume it today:
 
 - the desktop **Templates editor** recognises the field, so a custom template referencing
   `{{<name>}}` no longer warns "renders literally";
@@ -69,12 +69,17 @@ optionally a default and an allowed-value set). Three things consume it today:
   `{{<name>}}` renders that default (a field with no default renders `null`), so the value lands in
   the new note's frontmatter instead of a literal `{{<name>}}`;
 - **`cdno lint`** type-checks the field — a note whose value doesn't match the declared type (or
-  isn't one of `values`) gets a warning.
+  isn't one of `values`) gets a warning;
+- the **`set_frontmatter` setter** (`cdno frontmatter set`, MCP `set_frontmatter`) writes the field
+  through the index when it is marked `settable = true` — see the
+  [`cdno frontmatter` reference](cli/frontmatter.md).
 
 ```toml
 [schemas.daily.fields.meds]
 type = "bool"                     # bool | int | string | date
 default = false                  # optional; static, type-checked against `type`
+settable = true                  # optional; allow `set_frontmatter` to write it (default false)
+log_on_change = true             # optional; stamp a daily-log line when it changes
 
 [schemas.daily.fields.mood]
 type = "string"
@@ -89,6 +94,8 @@ required = false                 # optional; default false
 | `default` | matching `type` | — | A static default value, type-checked at load. **Populated at create** when a custom template references `{{<name>}}`. A `date` is a quoted `"YYYY-MM-DD"`. |
 | `required` | bool | `false` | Reserved for create-time enforcement (a later release); parsed now, but inert — it does not yet block creation. |
 | `values` | list of strings | — | An allowed-value constraint. Valid only on a `string` field. |
+| `settable` | bool | `false` | Whether `set_frontmatter` (`cdno frontmatter set`, MCP `set_frontmatter`) may write this field. **Default-deny**: absent or `false` means not settable. Never overrides an engine-owned key (`type`, `status`, a period key) — those stay blocked regardless. |
+| `log_on_change` | bool | `false` | When a `settable` field's value actually changes, stamp a `key: old → new` line into today's daily note in the same commit. |
 
 Notes and limits:
 
@@ -108,6 +115,8 @@ Notes and limits:
 - **List fields are reserved but not yet implemented** — a `list = true` is a load error today.
 - **Engine-owned keys are protected** — you can't declare a field named `type`, or a calendar type's
   own period key (`daily`→`date`, `weekly`→`week`, `monthly`→`month`); the vault refuses to open.
+  `set_frontmatter` additionally refuses to write `status` for every type — even if a vault declares
+  a `status` field `settable = true` — so the lifecycle commands stay its sole writers.
 - **`extra_required` still works** and is equivalent to an untyped, non-required `string` field; on a
   name clash an explicit `fields` block wins.
 - A malformed field declaration (unknown `type`, a mistyped key, `values` on a non-string, a

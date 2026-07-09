@@ -14,6 +14,7 @@ use clap_complete::env::CompleteEnv;
 
 use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
+use cdno_cli::commands::frontmatter::FrontmatterCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
 use cdno_cli::commands::question::QuestionCommands;
@@ -229,6 +230,14 @@ enum Commands {
     Templates {
         #[command(subcommand)]
         subcommand: TemplatesCommands,
+    },
+
+    /// Set typed frontmatter fields. `frontmatter set <note> <key> <value>`
+    /// writes a declared, settable field (e.g. a daily `meds` flag) through
+    /// the index, so no hand-edit desyncs `.cuaderno/index.db`.
+    Frontmatter {
+        #[command(subcommand)]
+        subcommand: FrontmatterCommands,
     },
 
     /// Create and list notes of config-defined custom types (declared under
@@ -471,6 +480,10 @@ fn main() -> Result<()> {
         Commands::Templates { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::templates::run(&root, subcommand, cli.json)
+        }
+        Commands::Frontmatter { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::frontmatter::run(&root, subcommand, cli.json)
         }
         Commands::Note { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
