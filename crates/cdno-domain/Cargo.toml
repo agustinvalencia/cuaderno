@@ -23,8 +23,10 @@ toml.workspace = true
 [features]
 # TypeScript bindings for the types the desktop app's wire surface
 # embeds. Codegen-only: off for CLI/MCP builds, on when cdno-tauri
-# regenerates ui/src/api/bindings/.
-ts-bindings = ["dep:ts-rs"]
+# regenerates ui/src/api/bindings/. Turns on cdno-core's own bindings
+# so the config leaf structs (VaultMeta, FieldSpec, …) the structured
+# Config view embeds derive `TS` too (#365, PR5a).
+ts-bindings = ["dep:ts-rs", "cdno-core/ts-bindings"]
 
 [dev-dependencies]
 tempfile.workspace = true

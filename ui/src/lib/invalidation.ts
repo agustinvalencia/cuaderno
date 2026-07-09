@@ -62,13 +62,18 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   // refreshes the template-field query. The Templates view (#357) reads
   // the template list, the selected template's content, and its
   // placeholder set — so an external template edit (or the app's own
-  // save) refreshes all three.
+  // save) refreshes all three. The Config view (#365) reads both the
+  // raw document and the structured projection, so an external
+  // config.toml edit refreshes both the raw editor's baseline and the
+  // structured panel.
   config: [
     "get_orientation",
     "get_tracking_template_fields",
     "list_templates",
     "read_template",
     "list_template_placeholders",
+    "read_config",
+    "read_config_model",
   ],
 };
 

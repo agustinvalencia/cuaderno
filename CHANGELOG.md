@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Structured view of your note types and schemas in the desktop Config editor** (#365, PR5a) — the
+  Config view gains a **Raw / Form** toggle. The Raw side is the existing `config.toml` editor; the
+  Form side (read-only in this release) renders the parsed config as calm cards and tables: the vault
+  meta, each custom `[note_types.<name>]` (folder, template, append-only, required/optional fields),
+  and each `[schemas.<type>]`'s field declarations (name, type, default, required, allowed values).
+  Backed by a new `read_config_model` command projecting the in-effect config, and `Serialize` +
+  TypeScript bindings on the config field model. The draft/validate/save machinery is hoisted into a
+  shared `useConfigDraft` hook so the upcoming editable form drives the exact same
+  validate -> compare-and-swap -> write -> live-reload gate as the raw editor. Editing from the form
+  lands in the next release.
 - **External `config.toml` edits apply live in the desktop app** (#365, PR4) — hand-edit
   `.cuaderno/config.toml` in nvim, the `cdno` CLI, or via sync and the running app now rebuilds its
   live vault from the new config on the fly: added note types, schemas, and folders take effect with

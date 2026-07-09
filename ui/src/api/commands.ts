@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { CmdError } from "./bindings/CmdError";
 import type { CommitmentsView } from "./bindings/CommitmentsView";
 import type { ConfigDocument } from "./bindings/ConfigDocument";
+import type { ConfigModel } from "./bindings/ConfigModel";
 import type { ConfigSaveError } from "./bindings/ConfigSaveError";
 import type { ConfigValidationError } from "./bindings/ConfigValidationError";
 import type { DailyView } from "./bindings/DailyView";
@@ -388,6 +389,16 @@ export function createTemplate(noteType: string): Promise<void> {
  * later compare-and-swap save (PR3); PR1 only displays the content. */
 export function readConfig(): Promise<ConfigDocument> {
   return call("read_config");
+}
+
+/** The structured projection of the parsed config — vault meta, the
+ * `[note_types.*]` table, and the `[schemas.*]` table (each sorted by
+ * name) — backing the read-only structured Config view (#365, PR5a).
+ * Distinct from `readConfig`, which returns the raw file text for the
+ * raw editor. Reflects the config currently in effect (a live reload
+ * keeps it in step with an external edit). */
+export function readConfigModel(): Promise<ConfigModel> {
+  return call("read_config_model");
 }
 
 /** The outcome of a dry-run config validation: `ok` when the config

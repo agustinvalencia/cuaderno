@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::{IgnoreSet, VaultConfig};
+use cdno_core::config::{CustomNoteType, IgnoreSet, SchemaExtension, VaultConfig, VaultMeta};
 use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::CONFIG_FILE;
@@ -51,6 +51,103 @@ pub fn read_config_impl(vault: &Vault) -> Result<ConfigDocument, CmdError> {
 #[tauri::command]
 pub async fn read_config(state: tauri::State<'_, AppState>) -> Result<ConfigDocument, CmdError> {
     with_vault(&state.vault(), read_config_impl).await?
+}
+
+/// A serialisable projection of the parsed config for the structured
+/// Config view (#365, PR5a) — the vault meta, the `[note_types.*]`
+/// table, and the `[schemas.*]` table, each named and sorted. Distinct
+/// from [`ConfigDocument`], which carries the raw file text for the raw
+/// editor: this is the typed, form-facing shape the read-only structured
+/// panel renders.
+///
+/// A dedicated view-model rather than serialising `VaultConfig` directly:
+/// `VaultConfig` isn't `Serialize`/`TS` (its `[variables]` block uses
+/// `#[serde(flatten)]`, which ts-rs can't follow), and PR5a renders only
+/// the meta/note-types/schemas slice — variables and `ignore` stay out of
+/// the form for now.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConfigModel {
+    /// The `[vault]` section — name and the active-project cap.
+    pub vault: VaultMeta,
+    /// Every `[note_types.<name>]`, sorted by `name` — a `HashMap`
+    /// iterates in an unspecified order, so the projection sorts for a
+    /// stable render (and stable tests).
+    pub note_types: Vec<NamedNoteType>,
+    /// Every `[schemas.<name>]`, sorted by `name` — same stable-order
+    /// rationale as `note_types`.
+    pub schemas: Vec<NamedSchema>,
+}
+
+/// One `[note_types.<name>]` entry: the map key lifted alongside its
+/// definition. Not `#[serde(flatten)]`-ed (ts-rs friction) — the name
+/// rides as its own field.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NamedNoteType {
+    pub name: String,
+    pub note_type: CustomNoteType,
+}
+
+/// One `[schemas.<name>]` entry: the map key lifted alongside its
+/// extension. Same no-flatten shape as [`NamedNoteType`].
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NamedSchema {
+    pub name: String,
+    pub schema: SchemaExtension,
+}
+
+/// Project the live vault config into a [`ConfigModel`]. Public and
+/// synchronous — the test seam, exercised directly over the Memory
+/// doubles (mirrors [`read_config_impl`]).
+///
+/// Reads `vault.config()` — the parsed config currently *in effect* —
+/// rather than re-parsing the file from disk. This is deliberate: the
+/// live reload (#365, PR2/PR4) keeps `vault.config()` in lockstep with an
+/// external `config.toml` edit, so the structured view (invalidated on
+/// the `Config` area) always reflects the applied config, and the read
+/// stays pure — no filesystem re-read, testable with an in-memory config
+/// and no tempfile root.
+pub fn read_config_model_impl(vault: &Vault) -> Result<ConfigModel, CmdError> {
+    let config = vault.config();
+
+    let mut note_types: Vec<NamedNoteType> = config
+        .note_types
+        .iter()
+        .map(|(name, note_type)| NamedNoteType {
+            name: name.clone(),
+            note_type: note_type.clone(),
+        })
+        .collect();
+    note_types.sort_by(|a, b| a.name.cmp(&b.name));
+
+    let mut schemas: Vec<NamedSchema> = config
+        .schemas
+        .iter()
+        .map(|(name, schema)| NamedSchema {
+            name: name.clone(),
+            schema: schema.clone(),
+        })
+        .collect();
+    schemas.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(ConfigModel {
+        vault: config.vault.clone(),
+        note_types,
+        schemas,
+    })
+}
+
+/// The structured projection of the parsed config for the read-only form
+/// (#365, PR5a). A pure read: no journal, no emit — same posture as
+/// [`read_config`].
+#[tauri::command]
+pub async fn read_config_model(state: tauri::State<'_, AppState>) -> Result<ConfigModel, CmdError> {
+    with_vault(&state.vault(), read_config_model_impl).await?
 }
 
 /// The validate → compare-and-swap → write core of the config save

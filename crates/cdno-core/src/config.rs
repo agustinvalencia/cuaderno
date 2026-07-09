@@ -1,5 +1,5 @@
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -42,7 +42,9 @@ pub struct VaultConfig {
 }
 
 /// The `[vault]` section — basic vault metadata.
-#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VaultMeta {
     pub name: String,
@@ -66,7 +68,9 @@ impl Default for VaultMeta {
 /// An unknown `type = "…"` is a hard deserialize error (serde rejects any value
 /// outside these variants) — so a future `float`/`datetime` fails loudly on an
 /// older `cdno` rather than being silently misparsed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldType {
     Bool,
@@ -93,7 +97,9 @@ impl FieldType {
 /// `deny_unknown_fields` turns a mistyped key (`defualt = …`) into a hard
 /// parse error rather than a silently-ignored no-op — a schema typo is a
 /// footgun worth failing on.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldSpec {
     /// The field's scalar type (TOML key `type`).
@@ -102,6 +108,10 @@ pub struct FieldSpec {
     /// A static default value, type-checked against `ty` at load. TOML has no
     /// null, so an absent `default` means "no default" (`None`). Populating a
     /// note with this value is PR-B; PR-A only validates it.
+    // `toml::Value` has no ts-rs impl, so name the wire shape by hand: a
+    // scalar default serialises as a string / number / boolean, and an
+    // absent one as `null` (the `Option` None arm).
+    #[cfg_attr(feature = "ts-bindings", ts(type = "string | number | boolean | null"))]
     #[serde(default)]
     pub default: Option<toml::Value>,
     /// Whether the field must be present. Only an *explicit* `required = true`
@@ -224,7 +234,9 @@ impl FieldSpec {
 /// Adds vault-specific required fields on top of the built-in ones — either as
 /// a bare name list (`extra_required`, lint-only) or as typed field specs
 /// (`[schemas.<type>.fields.<name>]`, `#301`).
-#[derive(Debug, Clone, Default, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SchemaExtension {
     /// Bare extra-required field names. Retained for backward compatibility:
     /// lint-only and built-in-only, never a create-time error. Desugared into
@@ -272,7 +284,9 @@ impl SchemaExtension {
 /// This struct holds only what `cdno-core` can validate *structurally* (no
 /// knowledge of the built-in type names lives here); the reserved-name check
 /// against the built-in `NoteType` set is `cdno-domain`'s job.
-#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CustomNoteType {
     /// Vault-relative folder its notes live in, e.g. `"people"`.
     pub folder: String,

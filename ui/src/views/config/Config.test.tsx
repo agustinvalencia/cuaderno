@@ -47,6 +47,10 @@ function installMock(
     switch (cmd) {
       case "read_config":
         return { content: CONFIG_TOML, hash: CONFIG_HASH };
+      case "read_config_model":
+        // The structured panel's read; only hit once the Form toggle is
+        // active. A minimal empty model is enough for the toggle test.
+        return { vault: { name: "Test", max_active_projects: 5 }, note_types: [], schemas: [] };
       case "validate_config":
         if (validate.ok) return undefined;
         throw validate.error;
@@ -171,6 +175,22 @@ test("Check dry-runs validate_config against the current draft", async () => {
     expect(status?.textContent).toContain("line 2");
     expect(status?.textContent).toContain("column 5");
   });
+});
+
+test("toggling to Form shows the structured panel; Raw restores the textarea", async () => {
+  installMock([]);
+  renderView();
+  // Raw is the default — the textarea is present.
+  await findEditor();
+
+  fireEvent.click(screen.getByRole("button", { name: "Form" }));
+  // The structured panel's sections appear; the raw textarea is gone.
+  await screen.findByRole("heading", { name: "Note types" });
+  expect(screen.queryByLabelText("config.toml content")).toBeNull();
+
+  // Back to Raw restores the editor.
+  fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+  await findEditor();
 });
 
 test("has no axe violations", async () => {

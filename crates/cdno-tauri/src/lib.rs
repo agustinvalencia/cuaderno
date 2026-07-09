@@ -395,6 +395,7 @@ pub fn run() {
             commands::templates::save_template,
             commands::templates::create_template,
             commands::config::read_config,
+            commands::config::read_config_model,
             commands::config::validate_config,
             commands::config::save_config,
             commands::config::reload_config,
