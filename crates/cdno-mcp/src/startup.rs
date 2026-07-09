@@ -21,7 +21,7 @@ pub struct LocalTimeReport {
     /// fallback). Rendered via the offset's `Display`.
     pub offset: String,
     /// A sample `Local::now()` in RFC 3339, so the wall-clock time the
-    /// process believes it is is visible alongside the offset.
+    /// process believes it is shows alongside the offset.
     pub sample_now: String,
 }
 
