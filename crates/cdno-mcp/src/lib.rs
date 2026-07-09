@@ -45,6 +45,7 @@ mod lifecycle;
 mod operations;
 pub mod server;
 pub mod smoke;
+pub mod startup;
 mod util;
 
 pub use server::CuadernoServer;

@@ -50,6 +50,9 @@ async fn main() -> Result<()> {
         tools = server.advertised_tools().len(),
         "vault opened; serving cdno-mcp tools over stdio"
     );
+    // See #309: timestamps are written in process-local time; log the
+    // resolved offset so a UTC fallback is visible from the boot logs.
+    cdno_mcp::startup::log_local_time();
 
     // `ServiceExt::serve(transport)` performs the MCP init handshake,
     // routes incoming `tools/call` requests through the

@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **MCP server logs the resolved local timezone at startup** (#309) — `cdno-mcp-server` (and the
+  stdio `cdno-mcp`) now log the process's resolved local UTC offset and a sample `Local::now()`
+  next to the "vault opened" line, e.g. `local_offset=+02:00 sample_local_now=…`. The server
+  timestamps daily/tracking entries in process-local time, so a silent UTC fallback on a host with
+  no `tzdata`/`TZ` (the 2026-07-06 incident: remote logs landed two hours behind the wall clock)
+  is now visible from the boot logs instead of surfacing days later as wrong timestamps. The line
+  is factual — a host legitimately in UTC does not raise a warning. The HTTP-server reference page
+  documents the `TZ`/`tzdata` deployment requirement.
+
 ## [0.13.0] - 2026-07-08
 
 Two daily-use fixes: custom daily templates render `day_name`/`week`, and `get_weekly_context` stays under the MCP token cap.
