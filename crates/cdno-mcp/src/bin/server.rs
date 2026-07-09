@@ -269,6 +269,10 @@ async fn main() -> Result<()> {
             read_only = args.read_only,
             "vault opened; serving cdno-mcp tools over streamable HTTP"
         );
+        // Surface the process's resolved local offset: this server writes
+        // daily/tracking timestamps in local time, so a silent UTC
+        // fallback (no tzdata / `TZ`) is a real deployment hazard (#309).
+        cdno_mcp::startup::log_local_time();
         mcp_router(server, http_config)
     };
 

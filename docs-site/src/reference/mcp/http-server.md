@@ -49,6 +49,23 @@ cache, so the server re-runs the reconciliation pass on the configured interval 
 backstop. Out-of-band edits become visible to `search_notes` and the context tools within one
 interval at most.
 
+## Timezone — set `TZ` on the host
+
+The server timestamps everything it writes — log lines, daily entries, tracking entries — with the
+process's **local** time (`chrono::Local::now()`). A container or host with no zoneinfo database and
+no `TZ` set makes chrono fall back silently to **UTC**, so remote writes land hours behind the wall
+clock with no error. Any deployment must therefore ship a zoneinfo DB (`tzdata` on Alpine, already
+present on most distros) and set `TZ`, e.g. `TZ=Europe/Stockholm`.
+
+At startup the server logs the offset it resolved, next to the "vault opened" line:
+
+```
+INFO local time zone resolved (server timestamps use process-local time) local_offset=+02:00 sample_local_now=2026-07-06T14:30:00+02:00
+```
+
+Check this line after deploying: a `local_offset=+00:00` you didn't intend is the tell-tale of a
+missing `tzdata`/`TZ`. (A host legitimately in UTC is fine — the line is factual, not a warning.)
+
 ## Transport details
 
 - Endpoint: `POST /mcp`. Clients must send `Accept: application/json, text/event-stream`
