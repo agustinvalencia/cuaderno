@@ -4,6 +4,7 @@
 //! No domain knowledge — reusable in any markdown vault tool.
 
 pub mod config;
+pub mod config_edit;
 pub mod error;
 pub mod extractors;
 pub mod file_meta;

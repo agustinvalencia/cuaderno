@@ -1,7 +1,7 @@
 // Config view (#365). PR1 shipped a read-only inspector; PR3 made it an
-// editable raw `.cuaderno/config.toml` editor; PR5a adds a Form/Raw
-// toggle whose Form side is a READ-ONLY structured rendering of the
-// parsed config (PR5b makes it editable).
+// editable raw `.cuaderno/config.toml` editor; PR5a added a Form/Raw
+// toggle whose Form side rendered the parsed config read-only; PR5b makes
+// that Form side EDITABLE (add/edit/remove note types and schema fields).
 //
 // The raw editor is a <textarea> on the draft/baseline dirty model
 // (mirroring the Templates editor), with a Save that runs the backend's
@@ -23,9 +23,11 @@ import { readConfig, type ValidationResult } from "../../api/commands";
 import ConfigStructuredView from "./ConfigStructuredView";
 import { useConfigDraft, type ConfigDraft } from "./useConfigDraft";
 
-/** Which side of the Form/Raw toggle is showing. Defaults to `"raw"` —
- * least surprise for existing users; PR5b can revisit once the form is
- * editable. */
+/** Which side of the Form/Raw toggle is showing. Defaults to `"raw"`:
+ * even though the Form is editable as of PR5b, the raw editor remains the
+ * least-surprise landing and the full-fidelity safety net (it can reach
+ * every key, including the `[variables]` block the form omits). The Form
+ * is one click away. */
 type ViewMode = "raw" | "structured";
 
 export default function Config() {
@@ -70,38 +72,44 @@ function ConfigView({ doc }: { doc: ConfigDocument }) {
             config.toml
           </h2>
           <ModeToggle mode={mode} onChange={setMode} />
-          {mode === "raw" && (
-            <>
-              <button
-                type="button"
-                onClick={cfg.check}
-                disabled={cfg.checking}
-                className="shrink-0 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
-              >
-                Check
-              </button>
-              <button
-                type="button"
-                onClick={cfg.save}
-                disabled={!cfg.dirty || cfg.saving}
-                className="shrink-0 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
-              >
-                Save
-              </button>
-            </>
-          )}
+          {/* Check + Save act on the shared draft, so they serve BOTH the
+              raw editor and the form (a form edit dirties the same draft). */}
+          <button
+            type="button"
+            onClick={cfg.check}
+            disabled={cfg.checking}
+            className="shrink-0 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
+          >
+            Check
+          </button>
+          <button
+            type="button"
+            onClick={cfg.save}
+            disabled={!cfg.dirty || cfg.saving}
+            className="shrink-0 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
+          >
+            Save
+          </button>
         </header>
 
         <div className="px-4 py-3">
-          {mode === "raw" ? <ConfigEditor cfg={cfg} /> : <ConfigStructuredView />}
+          {/* The notices (conflict or validation) are shared: a form edit
+              runs the same validate/save gate, so a rejection surfaces
+              identically whichever side is showing. */}
+          {cfg.conflict ? (
+            <ConflictNotice onReload={cfg.reloadFromDisk} />
+          ) : (
+            cfg.validation !== null && <CheckResult result={cfg.validation} />
+          )}
+          {mode === "raw" ? <ConfigEditor cfg={cfg} /> : <ConfigStructuredView cfg={cfg} />}
         </div>
       </div>
     </div>
   );
 }
 
-/** The Form/Raw segmented toggle. Structured ("Form") is read-only in
- * PR5a; raw is the editable <textarea>. Mirrors the calendar view's
+/** The Form/Raw segmented toggle. "Form" is the structured editor (PR5b);
+ * "Raw" is the editable <textarea>. Mirrors the calendar view's
  * segmented-control styling. */
 function ModeToggle({
   mode,
@@ -135,19 +143,13 @@ function ModeToggle({
   );
 }
 
-/** The presentational raw editor: the notices (conflict or validation)
- * and the <textarea>, all driven by the shared `useConfigDraft` hook. The
- * Check/Save buttons live in the view header (they act on the same
+/** The presentational raw editor: just the <textarea> over the shared
+ * draft. The validation/conflict notices and the Check/Save buttons live
+ * in the view (they are shared with the form, which drives the same
  * draft). */
 function ConfigEditor({ cfg }: { cfg: ConfigDraft }) {
   return (
     <>
-      {cfg.conflict ? (
-        <ConflictNotice onReload={cfg.reloadFromDisk} />
-      ) : (
-        cfg.validation !== null && <CheckResult result={cfg.validation} />
-      )}
-
       <label htmlFor="config-editor" className="sr-only">
         config.toml content
       </label>

@@ -1,18 +1,130 @@
-// Structured Config view (#365, PR5a) — a READ-ONLY rendering of the
-// parsed config: the vault meta, each custom note type as a card, and
-// each schema's field declarations as a small table. No edit affordances
-// in 5a; PR5b makes the same shape editable on top of the shared
-// useConfigDraft model. Calm throughout — cards, chips, muted tables, no
-// red token (a config field is data to read, not an error to flag).
-import { useQuery } from "@tanstack/react-query";
+// Structured Config view (#365) — the "Form" side of the Config editor.
+// PR5a shipped this read-only; PR5b makes it EDITABLE: add/edit/remove
+// custom note types and schema fields, add/edit/remove their declarations.
+//
+// The seam is string-in/string-out and the source of truth for
+// persistence is ALWAYS the shared `useConfigDraft` draft STRING plus the
+// surgical `config_*` commands — never a client re-serialise (that would
+// drop comments/order). Each committed edit calls the matching command
+// with the current draft, gets a new draft string back, and `setDraft`s
+// it; the existing Save button then runs the exact validate ->
+// compare-and-swap -> write -> live-reload gate as the raw editor. The
+// form derives what it renders by PARSING the draft (`parseConfigModel`),
+// so it always mirrors the live, not-yet-saved buffer.
+//
+// The backend stays the single authority on validity. The client-side
+// pre-checks below (reserved folders, built-in type names) only block
+// obviously-bad input for a calmer UX — the server error always renders.
+import { useEffect, useRef, useState } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { CustomNoteType } from "../../api/bindings/CustomNoteType";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
+import type { FieldType } from "../../api/bindings/FieldType";
 import type { NamedSchema } from "../../api/bindings/NamedSchema";
-import { errorMessage, readConfigModel } from "../../api/commands";
+import {
+  configRemoveNoteType,
+  configRemoveSchemaField,
+  configSetNoteType,
+  configSetSchemaField,
+  errorMessage,
+  parseConfigModel,
+} from "../../api/commands";
+import { useToast } from "../../shell/Toasts";
+import type { ConfigDraft } from "./useConfigDraft";
 
-export default function ConfigStructuredView() {
-  const model = useQuery({ queryKey: ["read_config_model"], queryFn: readConfigModel });
+/** Top-level folders the vault reserves; a custom type's `folder` may not
+ * collide with one. Mirrors `RESERVED_TOP_LEVEL_FOLDERS` (core/paths.rs)
+ * for a friendly pre-check — the server gate stays authoritative. */
+const RESERVED_FOLDERS = new Set([
+  "journal",
+  "projects",
+  "portfolios",
+  "stewardships",
+  "commitments",
+  "actions",
+  "questions",
+  "inbox",
+  ".cuaderno",
+]);
+
+/** Built-in note type names a custom type may not shadow (case-insensitive).
+ * Mirrors the domain `NoteType` set for a friendly pre-check. */
+const BUILTIN_NOTE_TYPES = new Set([
+  "daily",
+  "weekly",
+  "monthly",
+  "project",
+  "action",
+  "portfolio",
+  "evidence",
+  "stewardship",
+  "tracking",
+  "question",
+  "commitment",
+  "inbox",
+]);
+
+const FIELD_TYPES: FieldType[] = ["bool", "int", "string", "date"];
+
+/** A field spec with only its `type` set — the minimal shape a new field
+ * declares; the surgical writer omits every absent key. */
+function blankSpec(type: FieldType): FieldSpec {
+  return {
+    type,
+    default: null,
+    required: false,
+    values: null,
+    list: null,
+    settable: null,
+    log_on_change: null,
+  };
+}
+
+export default function ConfigStructuredView({ cfg }: { cfg: ConfigDraft }) {
+  const { toast } = useToast();
+
+  // Derive the rendered model by parsing the live DRAFT (not the applied
+  // config), so multi-edit-before-save always shows what Save would write.
+  // Keep the last good model on screen while a re-parse is in flight.
+  const model = useQuery({
+    queryKey: ["parse_config_model", cfg.draft],
+    queryFn: () => parseConfigModel(cfg.draft),
+    placeholderData: keepPreviousData,
+  });
+
+  // Every committed edit runs through a SERIALISED queue. Each surgical
+  // command rewrites the one table it touches on the string it is handed,
+  // so edits MUST apply one-at-a-time against the latest result — checkboxes
+  // and the type select commit instantly, so two edits can fire inside a
+  // single command's IPC round-trip. Reading `cfg.draft` at call time would
+  // hand the second edit a stale base (React state lags the in-flight
+  // command) and its rewrite would silently drop the first edit's table.
+  // Instead the queue threads the true accumulated string through
+  // `draftRef`, advanced synchronously as each command resolves, so every
+  // edit builds on the previous one. External reseeds — a conflict reload
+  // changing the on-disk hash, or a toggle back from Raw — remount this
+  // view (the `key={hash}` on ConfigView, and the Raw/Form ternary), giving
+  // a fresh `draftRef` seeded from the current draft; so the ref is never
+  // stale against the shared draft while the view is mounted.
+  const draftRef = useRef(cfg.draft);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const applyEdit = (make: (content: string) => Promise<string>) => {
+    queueRef.current = queueRef.current.then(async () => {
+      try {
+        const next = await make(draftRef.current);
+        // Advance the ref BEFORE the next queued edit reads it — this is
+        // what makes successive rapid edits compose instead of clobber.
+        draftRef.current = next;
+        cfg.setDraft(next);
+      } catch (err) {
+        // A failure (e.g. the draft was hand-broken into invalid TOML in
+        // Raw) is a calm toast, never a crash. The ref is not advanced, so
+        // the next edit retries from the last good draft.
+        toast(errorMessage(err), "attention");
+      }
+    });
+  };
 
   if (model.isPending) {
     return (
@@ -22,30 +134,30 @@ export default function ConfigStructuredView() {
     );
   }
   if (model.isError) {
+    // The draft is not valid TOML — the form cannot render it. Point back
+    // to Raw rather than guess; the raw editor's validation names the spot.
     return (
-      <p role="status" className="text-sm text-ink-muted">
-        The config could not be read: {errorMessage(model.error)}
+      <p role="status" className="text-sm text-attention">
+        This draft is not valid TOML, so the form cannot show it — switch to Raw to
+        fix it: {errorMessage(model.error)}
       </p>
     );
   }
 
-  return <StructuredBody model={model.data} />;
-}
-
-function StructuredBody({ model }: { model: ConfigModel }) {
   return (
     <div className="flex flex-col gap-6">
       <VaultMetaSection
-        name={model.vault.name}
-        maxActiveProjects={model.vault.max_active_projects}
+        name={model.data.vault.name}
+        maxActiveProjects={model.data.vault.max_active_projects}
       />
-      <NoteTypesSection model={model} />
-      <SchemasSection schemas={model.schemas} />
+      <NoteTypesEditor model={model.data} applyEdit={applyEdit} />
+      <SchemaFieldsEditor model={model.data} applyEdit={applyEdit} />
     </div>
   );
 }
 
-/** The `[vault]` section — name and the active-project cap. */
+/** The `[vault]` section — read-only (editing vault meta is out of scope
+ * for the form; use Raw). */
 function VaultMetaSection({
   name,
   maxActiveProjects,
@@ -72,9 +184,11 @@ function VaultMetaSection({
   );
 }
 
-/** The `[note_types.*]` table — one card per custom type, or a calm empty
- * state when none are declared. */
-function NoteTypesSection({ model }: { model: ConfigModel }) {
+type ApplyEdit = (make: (content: string) => Promise<string>) => void;
+
+// --- Note types ---
+
+function NoteTypesEditor({ model, applyEdit }: { model: ConfigModel; applyEdit: ApplyEdit }) {
   return (
     <section aria-labelledby="config-note-types-heading">
       <h3 id="config-note-types-heading" className="text-sm font-semibold text-ink">
@@ -86,70 +200,201 @@ function NoteTypesSection({ model }: { model: ConfigModel }) {
         <ul className="mt-2 flex flex-col gap-3">
           {model.note_types.map((entry) => (
             <li key={entry.name}>
-              <NoteTypeCard name={entry.name} noteType={entry.note_type} />
+              <NoteTypeCard name={entry.name} noteType={entry.note_type} applyEdit={applyEdit} />
             </li>
           ))}
         </ul>
       )}
+      <AddNoteTypeForm existing={model.note_types.map((n) => n.name)} applyEdit={applyEdit} />
     </section>
   );
 }
 
-function NoteTypeCard({ name, noteType }: { name: string; noteType: CustomNoteType }) {
+function NoteTypeCard({
+  name,
+  noteType,
+  applyEdit,
+}: {
+  name: string;
+  noteType: CustomNoteType;
+  applyEdit: ApplyEdit;
+}) {
+  // Commit a whole updated note type: the surgical writer rewrites only
+  // this `[note_types.<name>]` table with the given shape.
+  const set = (next: CustomNoteType) =>
+    applyEdit((content) => configSetNoteType(content, name, next));
+
+  const folderError =
+    noteType.folder.trim() === ""
+      ? "Folder is required."
+      : RESERVED_FOLDERS.has(noteType.folder.trim().split("/")[0])
+        ? "That folder is reserved by a built-in area."
+        : null;
+
+  const fieldNames = [...noteType.required, ...noteType.optional];
+
   return (
     <article className="rounded-lg border border-line bg-bg-surface p-4">
       <header className="flex flex-wrap items-center gap-2">
         <h4 className="text-base font-semibold text-ink">{name}</h4>
-        {noteType.append_only && <Chip>append-only</Chip>}
+        <button
+          type="button"
+          onClick={() => applyEdit((content) => configRemoveNoteType(content, name))}
+          className="ml-auto shrink-0 rounded border border-line px-2 py-1 text-xs text-ink-muted hover:bg-bg-sunken hover:text-ink"
+        >
+          Remove type
+        </button>
       </header>
 
-      <dl className="mt-2 text-sm">
-        <div className="flex gap-2">
-          <dt className="text-ink-muted">Folder</dt>
-          <dd className="text-ink">
-            <code className="text-ink-faint">{noteType.folder}</code>
-          </dd>
-        </div>
-        {noteType.template !== null && (
-          <div className="mt-1 flex gap-2">
-            <dt className="text-ink-muted">Template</dt>
-            <dd className="text-ink">
-              <code className="text-ink-faint">{noteType.template}</code>
-            </dd>
-          </div>
-        )}
-      </dl>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <CommitText
+          label="Folder"
+          ariaLabel={`Folder for ${name}`}
+          value={noteType.folder}
+          onCommit={(folder) => set({ ...noteType, folder })}
+          error={folderError}
+        />
+        <CommitText
+          label="Template"
+          ariaLabel={`Template for ${name}`}
+          value={noteType.template ?? ""}
+          placeholder="(default)"
+          onCommit={(template) => set({ ...noteType, template: template.trim() || null })}
+        />
+      </div>
 
-      <FieldChips label="Required" names={noteType.required} />
-      <FieldChips label="Optional" names={noteType.optional} />
+      <label className="mt-3 flex items-center gap-2 text-sm text-ink">
+        <input
+          type="checkbox"
+          checked={noteType.append_only}
+          onChange={(e) => set({ ...noteType, append_only: e.target.checked })}
+        />
+        Append-only
+      </label>
+
+      <div className="mt-3">
+        <ChipListEditor
+          label="Required fields"
+          items={noteType.required}
+          onChange={(required) => set({ ...noteType, required })}
+        />
+      </div>
+      <div className="mt-3">
+        <ChipListEditor
+          label="Optional fields"
+          items={noteType.optional}
+          onChange={(optional) => set({ ...noteType, optional })}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <FieldNameSelect
+          label="Title field"
+          value={noteType.title_field}
+          options={fieldNames}
+          onChange={(title_field) => set({ ...noteType, title_field })}
+        />
+        <FieldNameSelect
+          label="Date field"
+          value={noteType.date_field}
+          options={fieldNames}
+          onChange={(date_field) => set({ ...noteType, date_field })}
+        />
+      </div>
     </article>
   );
 }
 
-/** A labelled row of field-name chips, omitted entirely when the list is
- * empty (an absent required/optional set is not worth a row). */
-function FieldChips({ label, names }: { label: string; names: string[] }) {
-  if (names.length === 0) return null;
+function AddNoteTypeForm({
+  existing,
+  applyEdit,
+}: {
+  existing: string[];
+  applyEdit: ApplyEdit;
+}) {
+  const [name, setName] = useState("");
+  const [folder, setFolder] = useState("");
+
+  const trimmedName = name.trim();
+  const trimmedFolder = folder.trim();
+  const error =
+    trimmedName === "" || trimmedFolder === ""
+      ? null
+      : BUILTIN_NOTE_TYPES.has(trimmedName.toLowerCase())
+        ? `"${trimmedName}" is a built-in type name.`
+        : existing.includes(trimmedName)
+          ? `"${trimmedName}" already exists.`
+          : RESERVED_FOLDERS.has(trimmedFolder.split("/")[0])
+            ? `"${trimmedFolder}" is a reserved folder.`
+            : null;
+  const canAdd = trimmedName !== "" && trimmedFolder !== "" && error === null;
+
+  function add() {
+    if (!canAdd) return;
+    const next: CustomNoteType = {
+      folder: trimmedFolder,
+      required: [],
+      optional: [],
+      template: null,
+      append_only: false,
+      title_field: null,
+      date_field: null,
+    };
+    applyEdit((content) => configSetNoteType(content, trimmedName, next));
+    setName("");
+    setFolder("");
+  }
+
   return (
-    <div className="mt-2">
-      <span className="text-xs text-ink-muted">{label}</span>
-      <ul className="mt-1 flex flex-wrap gap-1">
-        {names.map((fieldName) => (
-          <li key={fieldName}>
-            <Chip>{fieldName}</Chip>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <form
+      aria-label="Add a note type"
+      className="mt-3 rounded-lg border border-dashed border-line p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add();
+      }}
+    >
+      <p className="text-xs font-medium text-ink-muted">Add a note type</p>
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Folder</span>
+          <input
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+      </div>
+      {error !== null && (
+        <p role="status" className="mt-2 text-sm text-attention">
+          {error}
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={!canAdd}
+        className="mt-3 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
+      >
+        Add note type
+      </button>
+    </form>
   );
 }
 
-/** The `[schemas.*]` tables — per note type, its declared fields laid out
- * as a small table, or a calm empty state when none are declared. */
-function SchemasSection({ schemas }: { schemas: NamedSchema[] }) {
-  // Only schemas carrying at least one typed field are worth a table; a
-  // bare `extra_required`-only extension has no field rows to show here.
-  const withFields = schemas.filter((s) => Object.keys(s.schema.fields).length > 0);
+// --- Schema fields ---
+
+function SchemaFieldsEditor({ model, applyEdit }: { model: ConfigModel; applyEdit: ApplyEdit }) {
+  // Only schemas that carry typed fields get a table; a bare
+  // `extra_required`-only extension has no field rows to edit here.
+  const withFields = model.schemas.filter((s) => Object.keys(s.schema.fields).length > 0);
   return (
     <section aria-labelledby="config-schemas-heading">
       <h3 id="config-schemas-heading" className="text-sm font-semibold text-ink">
@@ -161,64 +406,410 @@ function SchemasSection({ schemas }: { schemas: NamedSchema[] }) {
         <ul className="mt-2 flex flex-col gap-3">
           {withFields.map((entry) => (
             <li key={entry.name}>
-              <SchemaCard name={entry.name} fields={entry.schema.fields} />
+              <SchemaCard entry={entry} applyEdit={applyEdit} />
             </li>
           ))}
         </ul>
       )}
+      <AddSchemaFieldForm applyEdit={applyEdit} />
     </section>
   );
 }
 
-function SchemaCard({
-  name,
-  fields,
-}: {
-  name: string;
-  fields: { [key: string]: FieldSpec };
-}) {
-  // Sort field rows by name so the table order is stable (object key order
-  // from a serialised Record is unspecified).
-  const rows = Object.entries(fields).sort(([a], [b]) => a.localeCompare(b));
+function SchemaCard({ entry, applyEdit }: { entry: NamedSchema; applyEdit: ApplyEdit }) {
+  const rows = Object.entries(entry.schema.fields).sort(([a], [b]) => a.localeCompare(b));
   return (
     <article className="rounded-lg border border-line bg-bg-surface p-4">
-      <h4 className="text-base font-semibold text-ink">{name}</h4>
-      <div className="mt-2 overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="text-xs text-ink-muted">
-              <th className="pr-4 pb-1 font-medium">Field</th>
-              <th className="pr-4 pb-1 font-medium">Type</th>
-              <th className="pr-4 pb-1 font-medium">Default</th>
-              <th className="pr-4 pb-1 font-medium">Required</th>
-              <th className="pb-1 font-medium">Values</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([fieldName, spec]) => (
-              <tr key={fieldName} className="border-t border-line">
-                <td className="py-1 pr-4 text-ink">{fieldName}</td>
-                <td className="py-1 pr-4 text-ink-muted">{spec.type}</td>
-                <td className="py-1 pr-4 text-ink-muted">
-                  {spec.default === null ? "—" : String(spec.default)}
-                </td>
-                <td className="py-1 pr-4 text-ink-muted">{spec.required ? "yes" : "no"}</td>
-                <td className="py-1 text-ink-muted">
-                  {spec.values === null ? "—" : spec.values.join(", ")}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <h4 className="text-base font-semibold text-ink">{entry.name}</h4>
+      <ul className="mt-2 flex flex-col gap-3">
+        {rows.map(([fieldName, spec]) => (
+          <li key={fieldName}>
+            <SchemaFieldRow
+              type={entry.name}
+              field={fieldName}
+              spec={spec}
+              applyEdit={applyEdit}
+            />
+          </li>
+        ))}
+      </ul>
     </article>
   );
 }
 
-/** A calm, muted chip — a folder/field tag or an append-only marker.
- * Deliberately not the attention tier: config data is read, not flagged. */
-function Chip({ children }: { children: React.ReactNode }) {
+function SchemaFieldRow({
+  type,
+  field,
+  spec,
+  applyEdit,
+}: {
+  type: string;
+  field: string;
+  spec: FieldSpec;
+  applyEdit: ApplyEdit;
+}) {
+  const set = (next: FieldSpec) =>
+    applyEdit((content) => configSetSchemaField(content, type, field, next));
+
+  // Changing the type away from `string` clears `values` (the server only
+  // allows an allowed-value list on a string field).
+  function changeType(nextType: FieldType) {
+    set({
+      ...spec,
+      type: nextType,
+      default: null,
+      values: nextType === "string" ? spec.values : null,
+    });
+  }
+
   return (
-    <span className="rounded bg-bg-sunken px-2 py-0.5 text-xs text-ink-muted">{children}</span>
+    <div className="rounded border border-line bg-bg-base p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-ink">{field}</span>
+        <label className="ml-auto flex items-center gap-1 text-xs text-ink-muted">
+          Type
+          <select
+            aria-label={`Type for ${field}`}
+            value={spec.type}
+            onChange={(e) => changeType(e.target.value as FieldType)}
+            className="rounded border border-line bg-bg-base px-1 py-0.5 text-ink"
+          >
+            {FIELD_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => applyEdit((content) => configRemoveSchemaField(content, type, field))}
+          className="rounded border border-line px-2 py-0.5 text-xs text-ink-muted hover:bg-bg-sunken hover:text-ink"
+        >
+          Remove field
+        </button>
+      </div>
+
+      <div className="mt-2 grid gap-3 sm:grid-cols-2">
+        <DefaultInput
+          field={field}
+          type={spec.type}
+          value={spec.default}
+          onChange={(value) => set({ ...spec, default: value })}
+        />
+        <label className="flex items-center gap-2 self-end text-sm text-ink">
+          <input
+            type="checkbox"
+            checked={spec.required}
+            onChange={(e) => set({ ...spec, required: e.target.checked })}
+          />
+          Required
+        </label>
+      </div>
+
+      {spec.type === "string" && (
+        <div className="mt-2">
+          <ChipListEditor
+            label="Allowed values"
+            items={spec.values ?? []}
+            onChange={(values) => set({ ...spec, values: values.length > 0 ? values : null })}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The typed default input, driven by the field's `type`: a checkbox-like
+ * tri-state select for `bool`, a number for `int`, a date picker for
+ * `date`, and text for `string`. An empty/none choice maps to `null` (no
+ * default). */
+function DefaultInput({
+  field,
+  type,
+  value,
+  onChange,
+}: {
+  field: string;
+  type: FieldType;
+  value: string | number | boolean | null;
+  onChange: (next: string | number | boolean | null) => void;
+}) {
+  const label = `Default for ${field}`;
+  if (type === "bool") {
+    const current = value === null ? "" : value ? "true" : "false";
+    return (
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="text-ink-muted">Default</span>
+        <select
+          aria-label={label}
+          value={current}
+          onChange={(e) =>
+            onChange(e.target.value === "" ? null : e.target.value === "true")
+          }
+          className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+        >
+          <option value="">(no default)</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      </label>
+    );
+  }
+  if (type === "int") {
+    return (
+      <CommitText
+        label="Default"
+        inputType="number"
+        ariaLabel={label}
+        value={value === null ? "" : String(value)}
+        placeholder="(no default)"
+        onCommit={(raw) => {
+          const trimmed = raw.trim();
+          if (trimmed === "") return onChange(null);
+          const n = Number(trimmed);
+          onChange(Number.isInteger(n) ? n : null);
+        }}
+      />
+    );
+  }
+  return (
+    <CommitText
+      label="Default"
+      inputType={type === "date" ? "date" : "text"}
+      ariaLabel={label}
+      value={value === null ? "" : String(value)}
+      placeholder="(no default)"
+      onCommit={(raw) => onChange(raw.trim() === "" ? null : raw)}
+    />
+  );
+}
+
+function AddSchemaFieldForm({ applyEdit }: { applyEdit: ApplyEdit }) {
+  const [type, setType] = useState("");
+  const [field, setField] = useState("");
+  const [fieldType, setFieldType] = useState<FieldType>("string");
+
+  const trimmedType = type.trim();
+  const trimmedField = field.trim();
+  const canAdd = trimmedType !== "" && trimmedField !== "";
+
+  function add() {
+    if (!canAdd) return;
+    applyEdit((content) =>
+      configSetSchemaField(content, trimmedType, trimmedField, blankSpec(fieldType)),
+    );
+    setField("");
+  }
+
+  return (
+    <form
+      aria-label="Add a schema field"
+      className="mt-3 rounded-lg border border-dashed border-line p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add();
+      }}
+    >
+      <p className="text-xs font-medium text-ink-muted">Add a schema field</p>
+      <div className="mt-2 grid gap-3 sm:grid-cols-3">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Note type</span>
+          <input
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Field name</span>
+          <input
+            value={field}
+            onChange={(e) => setField(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Type</span>
+          <select
+            aria-label="New field type"
+            value={fieldType}
+            onChange={(e) => setFieldType(e.target.value as FieldType)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          >
+            {FIELD_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button
+        type="submit"
+        disabled={!canAdd}
+        className="mt-3 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
+      >
+        Add field
+      </button>
+    </form>
+  );
+}
+
+// --- Shared inputs ---
+
+/** A text/number/date input that holds its own draft while the user types
+ * and commits on blur or Enter — so a per-keystroke surgical write never
+ * fires, only a settled value does. */
+function CommitText({
+  label,
+  ariaLabel,
+  value,
+  placeholder,
+  inputType = "text",
+  error,
+  onCommit,
+}: {
+  label: string;
+  ariaLabel?: string;
+  value: string;
+  placeholder?: string;
+  inputType?: "text" | "number" | "date";
+  error?: string | null;
+  onCommit: (value: string) => void;
+}) {
+  const [local, setLocal] = useState(value);
+  // Re-seed when the committed value changes underneath (another edit
+  // rewrote the draft, so the parsed model handed us a new value). Keyed
+  // on `value` alone, so a keystroke — which only moves `local` — never
+  // resets what the user is typing.
+  useEffect(() => setLocal(value), [value]);
+
+  function commit() {
+    if (local !== value) onCommit(local);
+  }
+
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-ink-muted">{label}</span>
+      <input
+        type={inputType}
+        aria-label={ariaLabel ?? label}
+        value={local}
+        placeholder={placeholder}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          }
+        }}
+        className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+      />
+      {error != null && (
+        <span role="status" className="text-xs text-attention">
+          {error}
+        </span>
+      )}
+    </label>
+  );
+}
+
+/** A tag-list editor: existing items as removable chips plus an input to
+ * add one. Commits the whole new array on every add/remove. */
+function ChipListEditor({
+  label,
+  items,
+  onChange,
+}: {
+  label: string;
+  items: string[];
+  onChange: (items: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function add() {
+    const value = draft.trim();
+    if (value === "" || items.includes(value)) {
+      setDraft("");
+      return;
+    }
+    onChange([...items, value]);
+    setDraft("");
+  }
+
+  return (
+    <div>
+      <span className="text-xs text-ink-muted">{label}</span>
+      <ul className="mt-1 flex flex-wrap items-center gap-1">
+        {items.map((item) => (
+          <li key={item}>
+            <span className="inline-flex items-center gap-1 rounded bg-bg-sunken px-2 py-0.5 text-xs text-ink-muted">
+              {item}
+              <button
+                type="button"
+                aria-label={`Remove ${item} from ${label}`}
+                onClick={() => onChange(items.filter((i) => i !== item))}
+                className="text-ink-faint hover:text-ink"
+              >
+                ×
+              </button>
+            </span>
+          </li>
+        ))}
+        <li>
+          <input
+            aria-label={`Add to ${label}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={add}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            className="w-24 rounded border border-line bg-bg-base px-2 py-0.5 text-xs text-ink"
+            placeholder="add…"
+          />
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+/** A select over declared field names (required ∪ optional) for
+ * `title_field`/`date_field`, plus a "(none)" option that maps to `null`.
+ * Disabled when the type declares no fields yet. */
+function FieldNameSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  options: string[];
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-ink-muted">{label}</span>
+      <select
+        aria-label={label}
+        value={value ?? ""}
+        disabled={options.length === 0}
+        onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+        className="rounded border border-line bg-bg-base px-2 py-1 text-ink disabled:opacity-50"
+      >
+        <option value="">(none)</option>
+        {options.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
