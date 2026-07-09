@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stuck-project staleness is now counted in local days, not UTC** — `stuck_projects` and the weekly
+  review's "state untouched for N days" compared a note's UTC-based modification date against the
+  local `today`, so for any positive-offset timezone in the hours after local midnight a project
+  touched "today" was reported as one stale day too many (and, at a zero-day threshold, wrongly
+  flagged). The mtime is now converted to its local calendar date before the day subtraction, and
+  the stuck-scan cutoff is taken in the machine's local zone — matching the machine-local dates the
+  rest of the app uses.
+
 ### Added
 
 - **Edit your note types and schemas from the desktop Config form** (#365, PR5b) — the Form side of

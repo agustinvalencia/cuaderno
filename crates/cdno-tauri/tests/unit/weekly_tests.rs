@@ -57,10 +57,12 @@ fn bundle_composes_existing_wins_completed_actions_and_stuck_project() {
     // A zero-day stuck threshold: the Memory store stamps mtime at
     // construction, so only "modified today or earlier" catches a
     // just-written project — which is exactly what makes ALPHA register
-    // as stuck here. `today` must be the REAL current date for the
-    // stuck scan (its day count is measured against the wall-clock
-    // mtime), while `anchor` stays fixed to pin the completed-actions
-    // window deterministically.
+    // as stuck here. `today` is the REAL current LOCAL date, matching the
+    // wall-clock mtime the store just stamped; the day count is computed
+    // in the same local zone (mtime converted to its local date), so this
+    // stays 0 even in the hours after local midnight when the mtime's UTC
+    // date is still "yesterday". `anchor` stays fixed to pin the
+    // completed-actions window deterministically.
     let today = chrono::Local::now().date_naive();
     let bundle = get_weekly_bundle_impl(&vault, today, anchor, 0).unwrap();
 
