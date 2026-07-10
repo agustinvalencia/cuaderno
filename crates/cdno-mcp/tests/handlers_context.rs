@@ -700,11 +700,13 @@ async fn get_project_context_returns_frontmatter_body_and_empty_collections() {
     assert_eq!(value["slug"], "surrogate-model");
     assert_eq!(value["frontmatter"]["context"], "work");
     assert_eq!(value["frontmatter"]["status"], "active");
+    let body_md = value["body_markdown"].as_str().unwrap();
+    assert!(body_md.contains("# Surrogate model"));
+    // A normal-length body passes through untouched — no spurious #388
+    // truncation marker.
     assert!(
-        value["body_markdown"]
-            .as_str()
-            .unwrap()
-            .contains("# Surrogate model")
+        !body_md.ends_with('…'),
+        "a normal body must not gain a truncation marker"
     );
     assert!(value["recent_mentions"].as_array().unwrap().is_empty());
     assert!(
@@ -865,6 +867,93 @@ async fn get_project_context_caps_recent_mentions() {
             "the oldest day's mentions should have been dropped, not kept"
         );
     }
+}
+
+#[tokio::test]
+async fn get_project_context_caps_a_pathologically_long_body() {
+    // A project map whose body runs past the safety valve: the returned
+    // body_markdown must be bounded and carry the observable truncation
+    // marker, while the full body stays one read_note away (GH #388).
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let huge = "x".repeat(cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 500);
+    let body = format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate model\n\n## Current State\n{huge}\n\n## Next Actions\n"
+    );
+    store
+        .write_file(
+            &cdno_core::path::VaultPath::new("projects/surrogate-model.md").unwrap(),
+            &body,
+        )
+        .unwrap();
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    use cdno_mcp::server::ProjectSlugInput;
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("get_project_context");
+    let value = decode_json(&result);
+
+    let body_md = value["body_markdown"].as_str().unwrap();
+    // Exactly cap content chars + one ellipsis marker.
+    assert_eq!(
+        body_md.chars().count(),
+        cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 1,
+        "body should be capped to the max plus one ellipsis marker"
+    );
+    assert!(
+        body_md.ends_with('…'),
+        "a truncated body must carry the observable marker"
+    );
+}
+
+#[test]
+fn truncate_chars_at_the_cap_leaves_text_untouched() {
+    // Off-by-one guard for the shared truncation primitive used by both the
+    // #388 body cap and the state gist: a string of exactly `max` chars
+    // passes through with NO marker; one char over gains exactly one
+    // ellipsis. Mirrors the weekly-cap sibling's at-cap boundary test.
+    let max = cdno_mcp::dto::PROJECT_BODY_MAX_CHARS;
+    let at_cap = "a".repeat(max);
+    let out = cdno_mcp::dto::truncate_chars(at_cap.clone(), max);
+    assert_eq!(out, at_cap, "text at exactly the cap is unchanged");
+    assert!(!out.ends_with('…'), "no marker when nothing was dropped");
+
+    let over_cap = "a".repeat(max + 1);
+    let out = cdno_mcp::dto::truncate_chars(over_cap, max);
+    assert_eq!(
+        out.chars().count(),
+        max + 1,
+        "over-cap truncates to max content chars plus one marker"
+    );
+    assert!(out.ends_with('…'));
+}
+
+#[test]
+fn project_backlinks_dto_caps_each_group() {
+    // A heavily-referenced project: one backlink group runs past the
+    // per-group cap. The DTO must keep only PROJECT_BACKLINKS_PER_GROUP_MAX
+    // (GH #388). Exercised at the From boundary directly — no need to seed
+    // hundreds of backlinking notes.
+    let evidence: Vec<cdno_core::path::VaultPath> = (0..150)
+        .map(|i| cdno_core::path::VaultPath::new(format!("portfolios/x/ev-{i}.md")).unwrap())
+        .collect();
+    let domain = cdno_domain::ProjectBacklinks {
+        evidence,
+        ..Default::default()
+    };
+    let dto = cdno_mcp::dto::ProjectBacklinksDto::from(domain);
+    assert_eq!(
+        dto.evidence.len(),
+        cdno_mcp::dto::PROJECT_BACKLINKS_PER_GROUP_MAX,
+        "the over-cap group is trimmed to the per-group max"
+    );
+    // Under-cap groups pass through untouched.
+    assert!(dto.questions.is_empty());
 }
 
 // ---------------------------------------------------------------------

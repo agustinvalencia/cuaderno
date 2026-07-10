@@ -414,19 +414,40 @@ impl From<CompletedActionEntry> for CompletedActionEntryDto {
 /// what the state now is without shipping the whole thing.
 const STATE_SNIPPET_MAX_CHARS: usize = 200;
 
-/// Truncate `s` to at most [`STATE_SNIPPET_MAX_CHARS`] characters,
-/// appending an ellipsis (`…`) when content was dropped. Counts and
-/// slices by `char` so a multi-byte UTF-8 boundary is never split.
-/// The trailing marker is deliberately observable so a consumer (and
-/// our tests) can tell a snippet was truncated.
-fn truncate_state_snippet(s: String) -> String {
-    if s.chars().count() <= STATE_SNIPPET_MAX_CHARS {
+/// Truncate `s` to at most `max` characters, appending an ellipsis
+/// (`…`) when content was dropped. Counts and slices by `char` so a
+/// multi-byte UTF-8 boundary is never split. The trailing marker is
+/// deliberately observable so a consumer (and our tests) can tell the
+/// text was truncated.
+pub fn truncate_chars(s: String, max: usize) -> String {
+    if s.chars().count() <= max {
         return s;
     }
-    let mut out: String = s.chars().take(STATE_SNIPPET_MAX_CHARS).collect();
+    let mut out: String = s.chars().take(max).collect();
     out.push('…');
     out
 }
+
+/// Truncate a project state body to the [`STATE_SNIPPET_MAX_CHARS`] gist.
+fn truncate_state_snippet(s: String) -> String {
+    truncate_chars(s, STATE_SNIPPET_MAX_CHARS)
+}
+
+/// Safety-valve cap (in `char`s) on `get_project_context.body_markdown`
+/// — the full project-map body (GH #388). Unlike the aggressive gist
+/// caps, this is deliberately generous: a normal project map runs to a
+/// few thousand chars, so this never bites in practice; it only bounds a
+/// pathologically long map from dominating the payload and pressing the
+/// MCP client's token cap. The truncation is observable (trailing `…`),
+/// and the full body stays one `read_note` away.
+pub const PROJECT_BODY_MAX_CHARS: usize = 20_000;
+
+/// Cap on the number of backlinks carried in each group of
+/// `get_project_context.backlinks` (GH #388). Backlink paths are short,
+/// so the risk is low, but the set is unbounded — a heavily-referenced
+/// project could stack hundreds. 100 per group is generous enough to
+/// never bite normal navigation while bounding the pathological case.
+pub const PROJECT_BACKLINKS_PER_GROUP_MAX: usize = 100;
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ProjectStateChangeDto {
@@ -661,8 +682,21 @@ pub struct ProjectBacklinksDto {
 
 impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
     fn from(b: cdno_domain::ProjectBacklinks) -> Self {
+        // Cap each group for token-cap safety (GH #388). Keeps the first
+        // PROJECT_BACKLINKS_PER_GROUP_MAX paths. The drop is silent — a
+        // trimmed group carries no in-band marker, so a consumer can't tell
+        // from the payload alone that entries were dropped; acceptable
+        // because backlinks are unordered navigation aids, the risk is low
+        // (short paths, a generous per-group cap), and a project with more
+        // than that in one group is better explored via `search_notes`.
+        // This `From` is MCP-only — Tauri maps `project_backlinks` itself
+        // and keeps the full list.
         let to_strings = |paths: Vec<cdno_core::path::VaultPath>| -> Vec<String> {
-            paths.into_iter().map(|p| p.to_string()).collect()
+            paths
+                .into_iter()
+                .take(PROJECT_BACKLINKS_PER_GROUP_MAX)
+                .map(|p| p.to_string())
+                .collect()
         };
         Self {
             portfolios: to_strings(b.portfolios),
@@ -678,8 +712,12 @@ impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
 pub struct ProjectContextDto {
     pub slug: String,
     pub frontmatter: ProjectFrontmatterDto,
-    /// Full body of the project map (everything after the closing
-    /// `---` of the frontmatter).
+    /// The project map body (everything after the closing `---` of the
+    /// frontmatter), capped to the [`PROJECT_BODY_MAX_CHARS`] safety
+    /// valve for token-cap safety (GH #388). A normal map is far shorter,
+    /// so this never truncates in practice; when it does, the cut is
+    /// observable (trailing `…`) and the full body is one `read_note`
+    /// away.
     pub body_markdown: String,
     /// Log lines from daily notes (past 30 days) that wikilink the
     /// project either bare or qualified, capped to the
@@ -687,9 +725,11 @@ pub struct ProjectContextDto {
     /// (GH #352). The drop is observable (the slice shrinks); the full
     /// history stays one `read_daily_note` away.
     pub recent_mentions: Vec<DailyLogLineDto>,
-    /// Body-level backlinks grouped by source note type. Frontmatter
-    /// wikilinks aren't indexed and don't appear here — see the
-    /// [`cdno_domain::Vault::project_backlinks`] doc comment.
+    /// Body-level backlinks grouped by source note type, each group
+    /// capped to [`PROJECT_BACKLINKS_PER_GROUP_MAX`] for token-cap safety
+    /// (GH #388). Frontmatter wikilinks aren't indexed and don't appear
+    /// here — see the [`cdno_domain::Vault::project_backlinks`] doc
+    /// comment.
     pub backlinks: ProjectBacklinksDto,
     /// The question this project answers, when `core_question:` is
     /// set on the project map AND that question exists in the vault.
