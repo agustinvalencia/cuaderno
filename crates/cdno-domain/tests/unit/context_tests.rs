@@ -515,3 +515,60 @@ fn tracking_series_ignores_non_finite_numerics() {
     assert_eq!(series[0].name, "body \u{b7} Value");
     assert_eq!(series[0].points[0].value, 82.5);
 }
+
+// -------------------------------------------------------------------
+// Timezone-injected staleness boundary (#380 — the #379 regression,
+// made deterministic). The production helpers read `chrono::Local`;
+// these exercise the tz-injected seams with an explicit `FixedOffset`,
+// so the assertions hold no matter the runner's own zone or the
+// wall-clock time the suite happens to run at.
+// -------------------------------------------------------------------
+
+use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
+use chrono::FixedOffset;
+
+/// Nanoseconds since the Unix epoch for an RFC-3339 instant.
+fn utc_ns(rfc3339: &str) -> u64 {
+    chrono::DateTime::parse_from_rfc3339(rfc3339)
+        .expect("valid rfc3339")
+        .timestamp_nanos_opt()
+        .expect("timestamp in range") as u64
+}
+
+#[test]
+fn days_since_mtime_counts_in_the_injected_zone_not_utc() {
+    // UTC+2. An mtime of 22:30Z on 2026-07-09 is 00:30 *local* on
+    // 2026-07-10 — the same local calendar day as `today`. The correct
+    // count is 0. The pre-#379 logic read the mtime's UTC date
+    // (2026-07-09) against a local `today` and reported 1.
+    let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+    let mtime_ns = utc_ns("2026-07-09T22:30:00Z");
+
+    assert_eq!(days_since_mtime_in(today, mtime_ns, &tz), 0);
+
+    // The same instant read in UTC lands a day earlier — the exact
+    // off-by-one the local conversion fixes. Pinning it here documents
+    // the boundary the fix moved.
+    assert_eq!(days_since_mtime_in(today, mtime_ns, &chrono::Utc), 1);
+}
+
+#[test]
+fn mtime_threshold_boundary_follows_the_injected_zone() {
+    // At a zero-day threshold, "stuck" means mtime <= end of `today`.
+    // In UTC+2 that boundary is 2026-07-10T21:59:59Z, not 23:59:59Z.
+    let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+    let threshold = mtime_threshold_ns_in(today, 0, &tz);
+
+    // 23:30 local *today* is within the window (the project counts as
+    // touched today, so it registers as stuck at a zero-day threshold).
+    assert!(utc_ns("2026-07-10T21:30:00Z") <= threshold);
+    // 00:30 local *tomorrow* is past the window and must be excluded.
+    assert!(utc_ns("2026-07-10T22:30:00Z") > threshold);
+
+    // A UTC-interpreted threshold would wrongly admit the
+    // tomorrow-local file — the membership side of the same bug.
+    let utc_threshold = mtime_threshold_ns_in(today, 0, &chrono::Utc);
+    assert!(utc_ns("2026-07-10T22:30:00Z") <= utc_threshold);
+}

@@ -83,6 +83,10 @@ pub use context::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
     TrackingPoint, TrackingSeries,
 };
+// Timezone-injected staleness helpers, hidden from the public API but
+// reachable by the deterministic staleness test (#380).
+#[doc(hidden)]
+pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
 pub use monthly::{MonthlyNoteView, MonthlySection};
