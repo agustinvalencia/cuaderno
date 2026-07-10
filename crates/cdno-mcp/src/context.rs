@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. The payload is bounded for token-cap safety: each `state_changes` entry carries only a ~200-char gist (marked with a trailing \u{2026}) of its before/after Current State bodies, and `logs` is capped to the 100 most-recent lines. The full detail stays one `get_project_context` / `read_daily_note` away. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
+        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. The payload is bounded for token-cap safety: each `state_changes` entry carries only a ~200-char gist (marked with a trailing \u{2026}) of the state the project moved to (`new_state`; the previous state is omitted \u{2014} it is auto-logged to the daily note before every overwrite), and `logs` is capped to the 100 most-recent lines. The full detail stays one `get_project_context` / `read_daily_note` away. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
     )]
     pub async fn get_weekly_context(
         &self,

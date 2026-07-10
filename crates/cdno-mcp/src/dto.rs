@@ -398,21 +398,20 @@ impl From<CompletedActionEntry> for CompletedActionEntryDto {
     }
 }
 
-/// Max length (in `char`s) of each `old_state` / `new_state` snippet
-/// carried in a [`ProjectStateChangeDto`].
+/// Max length (in `char`s) of the `new_state` snippet carried in a
+/// [`ProjectStateChangeDto`].
 ///
-/// The dominant contributor to the oversized `get_weekly_context`
-/// payload (GH #298): every state change embeds the *full* before
-/// and after `## Current State` body, the two are ~90% identical,
-/// and a busy week stacks several changes on a project whose state
-/// runs to hundreds of words — multiplying multi-hundred-word bodies
-/// into tens of KB and blowing the MCP client's token cap.
+/// State bodies were the dominant contributor to the oversized
+/// `get_weekly_context` payload (GH #298): every change embedded the
+/// *full* `## Current State` body, and a busy week stacks several
+/// changes on a project whose state runs to hundreds of words —
+/// multiplying multi-hundred-word bodies into tens of KB and blowing the
+/// MCP client's token cap.
 ///
-/// The weekly review only needs the *gist* of what moved; the full
-/// before/after lives in the project map and the daily note, each one
-/// `get_project_context` / `read_daily_note` away. 200 chars is
-/// roughly the first sentence or two — enough to tell what changed
-/// without shipping the whole state.
+/// The weekly review only needs the *gist* of where a project landed;
+/// the full body lives in the project map, one `get_project_context`
+/// away. 200 chars is roughly the first sentence or two — enough to tell
+/// what the state now is without shipping the whole thing.
 const STATE_SNIPPET_MAX_CHARS: usize = 200;
 
 /// Truncate `s` to at most [`STATE_SNIPPET_MAX_CHARS`] characters,
@@ -433,7 +432,13 @@ fn truncate_state_snippet(s: String) -> String {
 pub struct ProjectStateChangeDto {
     pub date: NaiveDate,
     pub project: String,
-    pub old_state: String,
+    /// A gist of the state the project moved *to* (see
+    /// [`STATE_SNIPPET_MAX_CHARS`]). The previous state is deliberately
+    /// omitted (GH #351): the two sides were ~90% identical, so shipping
+    /// both discarded exactly the delta a review wants — and the old
+    /// state is already auto-logged to the daily note before every
+    /// overwrite (a core business rule), so a review can reconstruct it
+    /// from `get_weekly_context.logs` / `read_daily_note` if needed.
     pub new_state: String,
 }
 
@@ -442,9 +447,9 @@ impl From<ProjectStateChange> for ProjectStateChangeDto {
         Self {
             date: c.date,
             project: c.project,
-            // Bound both sides — see STATE_SNIPPET_MAX_CHARS. This is
-            // the change that kills the 82k payload from GH #298.
-            old_state: truncate_state_snippet(c.old_state),
+            // Bound the gist — see STATE_SNIPPET_MAX_CHARS. `old_state`
+            // is dropped (GH #351); this and the WEEKLY_LOGS_MAX cap are
+            // what kill the 82k payload from GH #298.
             new_state: truncate_state_snippet(c.new_state),
         }
     }
