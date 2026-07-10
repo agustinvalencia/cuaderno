@@ -177,10 +177,13 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
     }
 }
 
-/// How long to wait before the single retry of a transient config reload
-/// (#372). The vault write lock is normally held for well under this; a
-/// timeout means an unusually long write was in flight, which has almost
-/// always finished by the time we retry.
+/// A courtesy yield before the single retry of a transient config reload
+/// (#372). This is not the whole grace period: the retry itself calls
+/// `Vault::new` → `reconcile`, which re-acquires the write lock with a
+/// fresh 5s budget, so the effective second chance is this delay plus that
+/// full lock wait. The yield just avoids hammering the lock the instant the
+/// first attempt gave up; the lock-holder has almost always finished within
+/// the retry's own wait.
 const RELOAD_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 
 /// Does a failed config rebuild mean the on-disk config is genuinely
@@ -190,22 +193,29 @@ const RELOAD_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 ///
 /// Only the former should tell the user their `config.toml` is broken; a
 /// transient failure keeps the last good config and must never be
-/// mislabelled as invalid (#372). `Vault::new` reaches here through three
-/// failure sources: `ignore_set()` (a bad glob → `Config`),
-/// `TypeRegistry::validate` (a rejected type/schema → `Validation`, or
-/// `Config` for the config-level checks), and `reconcile` (a write-lock
-/// timeout, wrapped as `Index`). So content-invalid ⇔ a `Validation` error,
-/// or a `Config` error for any reason *other* than a raw file read; a read
-/// failure is an IO hiccup (e.g. the file caught mid-rename), and
-/// everything else — `Index`, `Store`, … — is transient.
+/// mislabelled as invalid (#372).
+///
+/// Classified as a **transient allowlist** rather than an invalid denylist,
+/// and deliberately so: misclassifying a transient error as invalid at
+/// worst flashes a visible, self-correcting banner, whereas misclassifying
+/// an *invalid* config as transient silently swallows a real error with no
+/// feedback and no self-heal. So an error we don't positively recognise as
+/// operational defaults to *invalid*. `Vault::new` reaches here through
+/// three failure sources — `ignore_set()` (a bad glob → `Config`),
+/// `TypeRegistry::validate` (a shadowed built-in → `ReservedTypeName`, a
+/// reserved schema key → `ReservedSchemaField`, other type/schema faults →
+/// `Config`), and `reconcile` (a write-lock timeout, wrapped as `Index`) —
+/// so the only genuinely transient outcomes are index/store/transaction
+/// failures and a raw config read that caught the file mid-rename.
 #[doc(hidden)]
 pub fn is_invalid_config_error(err: &DomainError) -> bool {
-    match err {
-        DomainError::Validation(_) => true,
-        DomainError::Config(ConfigError::Read { .. }) => false,
-        DomainError::Config(_) => true,
-        _ => false,
-    }
+    !matches!(
+        err,
+        DomainError::Index(_)
+            | DomainError::Store(_)
+            | DomainError::Transaction(_)
+            | DomainError::Config(ConfigError::Read { .. })
+    )
 }
 
 /// Apply an external `.cuaderno/config.toml` edit: rebuild the live vault
