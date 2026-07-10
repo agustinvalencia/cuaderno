@@ -852,12 +852,13 @@ async fn get_project_context_caps_recent_mentions() {
     );
     // The kept slice is the most-recent: with 30 lines per day, the cap of
     // 50 keeps all of today plus part of yesterday, so every surviving
-    // mention is dated today or yesterday — never the oldest day.
-    let oldest_kept = today() - chrono::Duration::days(2);
+    // mention is dated today or yesterday — never the oldest day, whose
+    // mentions are entirely dropped from the front.
+    let oldest_dropped = today() - chrono::Duration::days(2);
     for m in mentions {
         assert_ne!(
             m["date"].as_str().unwrap(),
-            oldest_kept.format("%Y-%m-%d").to_string(),
+            oldest_dropped.format("%Y-%m-%d").to_string(),
             "the oldest day's mentions should have been dropped, not kept"
         );
     }
