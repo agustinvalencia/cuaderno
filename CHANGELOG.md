@@ -6,6 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-10
+
+Token-cap safety pass over the MCP context tools, with one breaking payload-shape change.
+
+### Changed
+
+- **BREAKING: `get_weekly_context` state changes drop `old_state`** (#351) — each `state_changes`
+  entry previously carried a ~200-char gist of *both* the before and after `Current State` bodies.
+  The two are ~90% identical, so shipping both discarded exactly the delta a weekly review wants. The
+  entry now carries only the `new_state` gist; the previous state is reconstructable from the daily
+  log (it is auto-logged before every overwrite). Consumers reading `old_state` must switch to the
+  daily log / `read_daily_note`.
+- **`get_project_context` payload is bounded** (#352, #388) — the tool's growable fields are now
+  capped for token-cap safety, each drop observable and the full data one `read_note` /
+  `read_daily_note` away: `recent_mentions` to the 50 most-recent lines, `body_markdown` to a
+  generous 20k-char safety valve (a normal map never reaches it; when it does, the cut is marked with
+  a trailing `…`), and each `backlinks` group to 100. The CLI and desktop app, which read the same
+  domain queries directly, keep the full, uncapped data.
+
 ## [0.19.1] - 2026-07-10
 
 ### Fixed
