@@ -867,6 +867,71 @@ async fn get_project_context_caps_recent_mentions() {
     }
 }
 
+#[tokio::test]
+async fn get_project_context_caps_a_pathologically_long_body() {
+    // A project map whose body runs past the safety valve: the returned
+    // body_markdown must be bounded and carry the observable truncation
+    // marker, while the full body stays one read_note away (GH #388).
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let huge = "x".repeat(cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 500);
+    let body = format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate model\n\n## Current State\n{huge}\n\n## Next Actions\n"
+    );
+    store
+        .write_file(
+            &cdno_core::path::VaultPath::new("projects/surrogate-model.md").unwrap(),
+            &body,
+        )
+        .unwrap();
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    use cdno_mcp::server::ProjectSlugInput;
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("get_project_context");
+    let value = decode_json(&result);
+
+    let body_md = value["body_markdown"].as_str().unwrap();
+    // <= cap content chars + one ellipsis marker.
+    assert!(
+        body_md.chars().count() <= cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 1,
+        "body should be capped, got {} chars",
+        body_md.chars().count()
+    );
+    assert!(
+        body_md.ends_with('…'),
+        "a truncated body must carry the observable marker"
+    );
+}
+
+#[test]
+fn project_backlinks_dto_caps_each_group() {
+    // A heavily-referenced project: one backlink group runs past the
+    // per-group cap. The DTO must keep only PROJECT_BACKLINKS_PER_GROUP_MAX
+    // (GH #388). Exercised at the From boundary directly — no need to seed
+    // hundreds of backlinking notes.
+    let evidence: Vec<cdno_core::path::VaultPath> = (0..150)
+        .map(|i| cdno_core::path::VaultPath::new(format!("portfolios/x/ev-{i}.md")).unwrap())
+        .collect();
+    let domain = cdno_domain::ProjectBacklinks {
+        evidence,
+        ..Default::default()
+    };
+    let dto = cdno_mcp::dto::ProjectBacklinksDto::from(domain);
+    assert_eq!(
+        dto.evidence.len(),
+        cdno_mcp::dto::PROJECT_BACKLINKS_PER_GROUP_MAX,
+        "the over-cap group is trimmed to the per-group max"
+    );
+    // Under-cap groups pass through untouched.
+    assert!(dto.questions.is_empty());
+}
+
 // ---------------------------------------------------------------------
 // get_stewardship_tracking
 // ---------------------------------------------------------------------

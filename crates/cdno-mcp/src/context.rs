@@ -15,10 +15,10 @@ use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 
 use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
-    MonthlyNoteViewDto, OrientationContextDto, PROJECT_MENTIONS_MAX, PortfolioDetailDto,
-    ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto,
-    SearchResultDto, StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto, WeeklyNoteViewDto,
-    cap_recent_logs,
+    MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS, PROJECT_MENTIONS_MAX,
+    PortfolioDetailDto, ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto,
+    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
+    WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
 
 use crate::input::*;
@@ -221,7 +221,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the full body of the project map, recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent for token-cap safety — the full history stays one `read_daily_note` away), body backlinks grouped by source note type, and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), body backlinks grouped by source note type (each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
     )]
     pub async fn get_project_context(
         &self,
@@ -271,7 +271,10 @@ impl CuadernoServer {
         json_result(ProjectContextDto {
             slug: input.project,
             frontmatter: fm.into(),
-            body_markdown: body,
+            // Safety-valve cap on the map body (GH #388): generous enough
+            // never to bite a normal map, but bounds a pathologically long
+            // one. `backlinks` is capped per-group in its `From` impl.
+            body_markdown: truncate_chars(body, PROJECT_BODY_MAX_CHARS),
             recent_mentions,
             backlinks: backlinks.into(),
             core_question: core_question.map(QuestionSummaryDto::from),
