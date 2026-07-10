@@ -915,38 +915,21 @@ New project. No work done yet.
 
 Variables are resolved in tier order — the first tier that defines a name wins, so earlier tiers take precedence over later ones:
 
-**Tier 1 — Built-in variables.** Always available, computed by the tool:
+**Tier 1 — Supplied (contextual) placeholders.** The core of the model: there is *no* fixed, always-available computed set. Each note type's create path supplies its own specific placeholders, and a template should reference only the ones its type provides — an unknown placeholder is left **verbatim** (`{{nope}}` stays literal). A few examples:
 
-|Variable       |Example value              |
-|---------------|---------------------------|
-|`{{date}}`     |`2026-04-06`               |
-|`{{date_iso}}` |`2026-04-06T14:30:00+02:00`|
-|`{{time}}`     |`14:30`                    |
-|`{{year}}`     |`2026`                     |
-|`{{month}}`    |`04`                       |
-|`{{week}}`     |`W14`                      |
-|`{{weekday}}`  |`Sunday`                   |
-|`{{day_short}}`|`Sun`                      |
-|`{{timestamp}}`|`1743946200`               |
+|Note type   |Supplied placeholders (illustrative)                                   |
+|------------|-----------------------------------------------------------------------|
+|`daily`     |`date`, `heading`, `weekday`, `day_name`, `week`                       |
+|`weekly`    |`week`, `week_num`, `year`, `date_start`, `date_end`                   |
+|`project`   |`title`, `context`, `status`, `created`, `core_question`              |
+|`evidence`  |`source`, `origin`, `portfolio`, `content`, `created`                 |
+|`tracking`  |`stewardship`, `activity`, `activity_title`, `routine`, `content`, `date`, `date_long`|
 
-**Tier 2 — Contextual variables.** Derived from the command or vault state:
+Note that date-derived values are supplied only by the note types that need them (`daily`/`weekly`/`monthly`), not universally, and `week` is the ISO-week label `YYYY-Www` (e.g. `2026-W14`), matching the weekly note for that date. The authoritative, complete per-type list is `cdno templates vars <type>` (and the templates tutorial on the docs site) — it is deliberately not duplicated in full here, so this doc can't drift out of sync with the shipped set.
 
-|Variable             |Source                           |
-|---------------------|---------------------------------|
-|`{{title}}`          |Command argument                 |
-|`{{slug}}`           |Kebab-case of title              |
-|`{{context}}`        |`--context` flag or prompt       |
-|`{{project}}`        |Project being operated on        |
-|`{{portfolio}}`      |Portfolio being filed to         |
-|`{{stewardship}}`    |Stewardship being tracked        |
-|`{{routine}}`        |Linked routine (for gym tracking)|
-|`{{source}}`         |`--source` flag (for evidence)   |
-|`{{core_question}}`  |`--question` flag (for projects) |
-|`{{active_projects}}`|Count of active projects         |
+**Tier 2 — Vault-level variables.** From `config.toml` `[variables]` section. These are static values that apply to all notes in the vault (author name, institution, identifiers). A per-type supplied placeholder of the same name wins over one of these.
 
-**Tier 3 — Vault-level variables.** From `config.toml` `[variables]` section. These are static values that apply to all notes in the vault (author name, institution, identifiers).
-
-**Tier 4 — Prompted variables.** From `config.toml` `[variables.prompt]` section. When a template uses one of these and no value has been provided via CLI flag or context, the tool asks interactively. In the MCP context, the prompt is returned as a required parameter that Claude asks the user for.
+**Tier 3 — Prompted variables.** From `config.toml` `[variables.prompt]` section. When a template uses one of these and no value has been provided via CLI flag or context, the tool asks interactively. In the MCP context, the prompt is returned as a required parameter that Claude asks the user for.
 
 ### The `{{cursor}}` marker
 
@@ -1226,7 +1209,7 @@ triage_inbox()
 ```
 
 The optional `vars?` parameter (a `name -> value` map) supplies values for a template's
-`[variables.prompt]` placeholders (§9 Tier 4) — the MCP analogue of the CLI's repeatable
+`[variables.prompt]` placeholders (§9 Tier 3) — the MCP analogue of the CLI's repeatable
 `--var name=value`. It is accepted on every create tool that gathers prompted variables
 (`create_project`, `create_portfolio`, `create_question`, `create_stewardship`,
 `create_commitment`, `create_tracking_entry`, and the templated paths of `file_to_portfolio`,
@@ -1383,7 +1366,7 @@ The Cuaderno UI does **not** use either MCP transport. It imports `cdno-domain` 
 - Set up cargo workspace with `cdno-core` and `cdno-domain`
 - Implement note type enum and frontmatter schemas
 - Implement vault folder structure creation (`cdno init`), including `.cuaderno/` with default config and templates
-- Implement the template engine (variable resolution across all four tiers, template selection logic, `{{cursor}}` handling)
+- Implement the template engine (variable resolution across all three tiers, template selection logic, `{{cursor}}` handling)
 - Port file I/O, markdown parsing, and SQLite indexing from mdv
 - **Implement `VaultTransaction` for atomic multi-file writes with rollback**
 - **Implement startup reconciliation (mtime + content hash comparison)**
