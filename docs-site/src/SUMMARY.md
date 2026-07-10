@@ -9,6 +9,7 @@
 - [Quickstart: the daily loop](getting-started/quickstart.md)
 - [Connect to Claude (MCP)](getting-started/connect-to-claude.md)
 - [Desktop app](getting-started/desktop-app.md)
+- [Editing the config in the app](getting-started/config-editor.md)
 
 # Concepts
 
