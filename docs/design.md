@@ -870,7 +870,7 @@ Example custom evidence template (`.cuaderno/templates/evidence.md`):
 ```markdown
 ---
 type: evidence
-created: {{date}}
+created: {{created}}
 source: {{source}}
 portfolio: {{portfolio}}
 author: {{author}}
@@ -888,7 +888,7 @@ Example custom project template (`.cuaderno/templates/project.md`):
 type: project
 context: {{context}}
 status: active
-created: {{date}}
+created: {{created}}
 core_question: "{{core_question}}"
 collaborators: {{collaborators}}
 ---
@@ -921,13 +921,14 @@ Variables are resolved in tier order — the first tier that defines a name wins
 |------------|-----------------------------------------------------------------------|
 |`daily`     |`date`, `heading`, `weekday`, `day_name`, `week`                       |
 |`weekly`    |`week`, `week_num`, `year`, `date_start`, `date_end`                   |
+|`monthly`   |`month`, `month_name`, `year`, `date_start`, `date_end`, `weeks`       |
 |`project`   |`title`, `context`, `status`, `created`, `core_question`              |
 |`evidence`  |`source`, `origin`, `portfolio`, `content`, `created`                 |
 |`tracking`  |`stewardship`, `activity`, `activity_title`, `routine`, `content`, `date`, `date_long`|
 
 Note that date-derived values are supplied only by the note types that need them (`daily`/`weekly`/`monthly`), not universally, and `week` is the ISO-week label `YYYY-Www` (e.g. `2026-W14`), matching the weekly note for that date. The authoritative, complete per-type list is `cdno templates vars <type>` (and the templates tutorial on the docs site) — it is deliberately not duplicated in full here, so this doc can't drift out of sync with the shipped set.
 
-**Tier 2 — Vault-level variables.** From `config.toml` `[variables]` section. These are static values that apply to all notes in the vault (author name, institution, identifiers). A per-type supplied placeholder of the same name wins over one of these.
+**Tier 2 — Vault-level variables.** From `config.toml` `[variables]` section. These are static values that apply to all notes in the vault (author name, institution, identifiers). A per-type supplied placeholder of the same name wins over one of these. (Config-defined variables are wired per the #238 work — see the templates tutorial for the shipped surface.)
 
 **Tier 3 — Prompted variables.** From `config.toml` `[variables.prompt]` section. When a template uses one of these and no value has been provided via CLI flag or context, the tool asks interactively. In the MCP context, the prompt is returned as a required parameter that Claude asks the user for.
 
