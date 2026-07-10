@@ -171,3 +171,50 @@ fn journal_entries_expire_after_the_echo_window() {
         "an echo past the window must be treated as external (safer failure direction)"
     );
 }
+
+// -------------------------------------------------------------------
+// is_invalid_config_error — the #372 classifier that keeps a transient
+// reload failure (a held write lock, an IO/index hiccup) from being
+// mislabelled as an invalid config in the banner.
+// -------------------------------------------------------------------
+
+use cdno_core::error::{ConfigError, IndexError, StoreError, ValidationError};
+use cdno_domain::error::DomainError;
+use cdno_tauri::watcher::is_invalid_config_error;
+
+#[test]
+fn genuinely_invalid_config_errors_are_classified_invalid() {
+    // A rejected note-type / schema surfaces as a Validation error.
+    assert!(is_invalid_config_error(&DomainError::Validation(
+        ValidationError::MissingField {
+            field: "collaborators".to_owned(),
+        },
+    )));
+    // A bad ignore glob and other config-content problems are Config errors.
+    assert!(is_invalid_config_error(&DomainError::Config(
+        ConfigError::InvalidGlob("**[".to_owned()),
+    )));
+    assert!(is_invalid_config_error(&DomainError::Config(
+        ConfigError::InvalidNoteType("empty folder".to_owned()),
+    )));
+}
+
+#[test]
+fn transient_reload_failures_are_not_classified_invalid() {
+    // The write-lock timeout during reconcile is wrapped as IndexError::Update
+    // — this is the exact shape #372 must not mislabel as "invalid config".
+    assert!(!is_invalid_config_error(&DomainError::Index(
+        IndexError::Update("acquiring write lock during reconcile: timed out".to_owned()),
+    )));
+    // A raw lock-timeout store error, wherever it surfaces, is also transient.
+    assert!(!is_invalid_config_error(&DomainError::Store(
+        StoreError::LockTimeout(std::time::Duration::from_secs(5)),
+    )));
+    // A read hiccup (e.g. the file caught mid-rename) is IO, not bad content.
+    assert!(!is_invalid_config_error(&DomainError::Config(
+        ConfigError::Read {
+            path: std::path::PathBuf::from(".cuaderno/config.toml"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
+        },
+    )));
+}

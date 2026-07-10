@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **A busy vault no longer looks like a broken config** (#372) — when the desktop app rebuilt the
+  live vault after an external `config.toml` edit, a transiently held vault write lock (a long write
+  in flight elsewhere) made `Vault::new` fail, and the app showed the calm "config.toml has an error"
+  banner even though the config was perfectly valid. The watcher now distinguishes a genuinely
+  invalid config (bad TOML, glob, note-type, or schema) from transient contention: an invalid config
+  still shows the banner, while contention retries the reload once and, if still blocked, keeps the
+  last good config silently and applies the change on the next config edit — never a false "invalid"
+  notice.
+
 ## [0.19.0] - 2026-07-10
 
 Edit your note types and schemas from the desktop app: the Config view gains a structured, editable Form alongside the raw editor, and external `config.toml` edits now apply live.
