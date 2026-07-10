@@ -228,12 +228,11 @@ pub trait TemplateEngine {
     ) -> Result<RenderedNote, TemplateError>;
 }
 
-/// Layered variable resolution following the four-tier precedence.
+/// Layered variable resolution following the three-tier precedence.
 pub struct VariableContext {
-    builtins: HashMap<String, String>,        // tier 1: date, time, etc.
-    contextual: HashMap<String, String>,      // tier 2: title, slug, etc.
-    vault_level: HashMap<String, String>,     // tier 3: from config.toml
-    prompted: HashMap<String, PromptedVar>,   // tier 4: ask user if missing
+    supplied: HashMap<String, String>,        // tier 1: per-type placeholders (date, title, slug, ...)
+    vault_level: HashMap<String, String>,     // tier 2: from config.toml [variables]
+    prompted: HashMap<String, PromptedVar>,   // tier 3: [variables.prompt], ask user if missing
 }
 ```
 
@@ -917,7 +916,7 @@ Implement the `VaultIndex` trait in `cdno-core` and the `SqliteIndex` implementa
 
 **Week 3: Templates and configuration.**
 
-Implement `VaultConfig` loading from `.cuaderno/config.toml`. Implement the `TemplateEngine` with four-tier variable resolution. Ship built-in default templates compiled into the binary (using `include_str!`). Implement template selection logic (custom > built-in). Write the `cdno init` command that creates the vault folder structure and default configuration.
+Implement `VaultConfig` loading from `.cuaderno/config.toml`. Implement the `TemplateEngine` with three-tier variable resolution (per-type supplied placeholders, config `[variables]`, then prompted `[variables.prompt]`). Ship built-in default templates compiled into the binary (using `include_str!`). Implement template selection logic (custom > built-in). Write the `cdno init` command that creates the vault folder structure and default configuration.
 
 **Week 4: Domain scaffolding and basic CLI.**
 
