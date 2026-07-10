@@ -700,11 +700,13 @@ async fn get_project_context_returns_frontmatter_body_and_empty_collections() {
     assert_eq!(value["slug"], "surrogate-model");
     assert_eq!(value["frontmatter"]["context"], "work");
     assert_eq!(value["frontmatter"]["status"], "active");
+    let body_md = value["body_markdown"].as_str().unwrap();
+    assert!(body_md.contains("# Surrogate model"));
+    // A normal-length body passes through untouched — no spurious #388
+    // truncation marker.
     assert!(
-        value["body_markdown"]
-            .as_str()
-            .unwrap()
-            .contains("# Surrogate model")
+        !body_md.ends_with('…'),
+        "a normal body must not gain a truncation marker"
     );
     assert!(value["recent_mentions"].as_array().unwrap().is_empty());
     assert!(
@@ -897,16 +899,38 @@ async fn get_project_context_caps_a_pathologically_long_body() {
     let value = decode_json(&result);
 
     let body_md = value["body_markdown"].as_str().unwrap();
-    // <= cap content chars + one ellipsis marker.
-    assert!(
-        body_md.chars().count() <= cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 1,
-        "body should be capped, got {} chars",
-        body_md.chars().count()
+    // Exactly cap content chars + one ellipsis marker.
+    assert_eq!(
+        body_md.chars().count(),
+        cdno_mcp::dto::PROJECT_BODY_MAX_CHARS + 1,
+        "body should be capped to the max plus one ellipsis marker"
     );
     assert!(
         body_md.ends_with('…'),
         "a truncated body must carry the observable marker"
     );
+}
+
+#[test]
+fn truncate_chars_at_the_cap_leaves_text_untouched() {
+    // Off-by-one guard for the shared truncation primitive used by both the
+    // #388 body cap and the state gist: a string of exactly `max` chars
+    // passes through with NO marker; one char over gains exactly one
+    // ellipsis. Mirrors the weekly-cap sibling's at-cap boundary test.
+    let max = cdno_mcp::dto::PROJECT_BODY_MAX_CHARS;
+    let at_cap = "a".repeat(max);
+    let out = cdno_mcp::dto::truncate_chars(at_cap.clone(), max);
+    assert_eq!(out, at_cap, "text at exactly the cap is unchanged");
+    assert!(!out.ends_with('…'), "no marker when nothing was dropped");
+
+    let over_cap = "a".repeat(max + 1);
+    let out = cdno_mcp::dto::truncate_chars(over_cap, max);
+    assert_eq!(
+        out.chars().count(),
+        max + 1,
+        "over-cap truncates to max content chars plus one marker"
+    );
+    assert!(out.ends_with('…'));
 }
 
 #[test]

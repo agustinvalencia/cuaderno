@@ -683,9 +683,14 @@ pub struct ProjectBacklinksDto {
 impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
     fn from(b: cdno_domain::ProjectBacklinks) -> Self {
         // Cap each group for token-cap safety (GH #388). Keeps the first
-        // PROJECT_BACKLINKS_PER_GROUP_MAX paths; the drop is observable
-        // (the group shrinks). This `From` is MCP-only — Tauri maps
-        // `project_backlinks` itself and keeps the full list.
+        // PROJECT_BACKLINKS_PER_GROUP_MAX paths. The drop is silent — a
+        // trimmed group carries no in-band marker, so a consumer can't tell
+        // from the payload alone that entries were dropped; acceptable
+        // because backlinks are unordered navigation aids, the risk is low
+        // (short paths, a generous per-group cap), and a project with more
+        // than that in one group is better explored via `search_notes`.
+        // This `From` is MCP-only — Tauri maps `project_backlinks` itself
+        // and keeps the full list.
         let to_strings = |paths: Vec<cdno_core::path::VaultPath>| -> Vec<String> {
             paths
                 .into_iter()
