@@ -482,25 +482,28 @@ async fn get_weekly_context_payload_is_bounded_for_a_heavy_week() {
         raw.len()
     );
 
-    // state_changes: every before/after body is truncated to the gist.
+    // state_changes: the new_state body is truncated to the gist (old_state
+    // is dropped entirely, GH #351).
     let state_changes = value["state_changes"].as_array().unwrap();
     assert!(!state_changes.is_empty(), "fixture should yield changes");
     for change in state_changes {
-        for field in ["old_state", "new_state"] {
-            let body = change[field].as_str().unwrap();
-            // <= 200 content chars + one ellipsis marker.
-            assert!(
-                body.chars().count() <= 201,
-                "{field} should be truncated, got {} chars",
-                body.chars().count()
-            );
-            // The seeded body is far longer than the cap, so every one
-            // must carry the observable truncation marker.
-            assert!(
-                body.ends_with('…'),
-                "{field} should end with the ellipsis marker: {body:?}"
-            );
-        }
+        assert!(
+            change.get("old_state").is_none(),
+            "old_state must not be shipped: {change}"
+        );
+        let body = change["new_state"].as_str().unwrap();
+        // <= 200 content chars + one ellipsis marker.
+        assert!(
+            body.chars().count() <= 201,
+            "new_state should be truncated, got {} chars",
+            body.chars().count()
+        );
+        // The seeded body is far longer than the cap, so it must carry the
+        // observable truncation marker.
+        assert!(
+            body.ends_with('…'),
+            "new_state should end with the ellipsis marker: {body:?}"
+        );
     }
 
     // logs: capped to the most-recent WEEKLY_LOGS_MAX lines.
@@ -514,9 +517,9 @@ async fn get_weekly_context_payload_is_bounded_for_a_heavy_week() {
 }
 
 /// Run `get_weekly_context` over a store seeded with a single state
-/// change on today, returning the first state change's `old_state`
-/// string. A focused helper for the boundary tests below.
-async fn first_old_state(was: &str, now: &str) -> String {
+/// change on today, returning the first state change's `new_state`
+/// gist. A focused helper for the boundary tests below.
+async fn first_new_state(was: &str, now: &str) -> String {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     seed_daily_week_fixture(&store, today(), 0, Some(("nfm", was, now)));
@@ -527,9 +530,9 @@ async fn first_old_state(was: &str, now: &str) -> String {
         .await
         .expect("get_weekly_context");
     let value = decode_json(&result);
-    value["state_changes"][0]["old_state"]
+    value["state_changes"][0]["new_state"]
         .as_str()
-        .expect("state change should carry an old_state string")
+        .expect("state change should carry a new_state string")
         .to_owned()
 }
 
@@ -542,22 +545,22 @@ async fn get_weekly_context_truncates_on_a_multibyte_char_boundary() {
     // byte-slicing that would otherwise leave the suite green (the
     // ASCII fixtures never straddle a codepoint boundary).
     let body = "\u{3042}".repeat(250); // 'あ' x250 = 750 bytes, 250 chars
-    let old_state = first_old_state(&body, &body).await;
+    let new_state = first_new_state(&body, &body).await;
 
     // Did not panic, and the result is a valid string bounded to the cap
     // plus the one-char ellipsis marker.
     assert_eq!(
-        old_state.chars().count(),
+        new_state.chars().count(),
         201,
         "200 content chars + one ellipsis marker"
     );
     assert!(
-        old_state.ends_with('\u{2026}'),
-        "truncated multibyte snippet should end with the ellipsis marker: {old_state:?}"
+        new_state.ends_with('\u{2026}'),
+        "truncated multibyte snippet should end with the ellipsis marker: {new_state:?}"
     );
     // Every retained char is the seeded codepoint — no split/replacement.
     assert!(
-        old_state.chars().take(200).all(|c| c == '\u{3042}'),
+        new_state.chars().take(200).all(|c| c == '\u{3042}'),
         "retained chars should be the intact seeded codepoint"
     );
 }
@@ -568,10 +571,10 @@ async fn get_weekly_context_passes_through_a_body_at_exactly_the_cap() {
     // branch must return it unchanged with NO ellipsis. Guards the
     // off-by-one at the truncation boundary.
     let body = "a".repeat(200);
-    let old_state = first_old_state(&body, &body).await;
-    assert_eq!(old_state, body, "a body at the cap passes through verbatim");
+    let new_state = first_new_state(&body, &body).await;
+    assert_eq!(new_state, body, "a body at the cap passes through verbatim");
     assert!(
-        !old_state.ends_with('\u{2026}'),
+        !new_state.ends_with('\u{2026}'),
         "a body at the cap must not gain a truncation marker"
     );
 }
@@ -598,9 +601,9 @@ async fn get_weekly_context_leaves_a_normal_small_week_untouched() {
     let value = decode_json(&result);
 
     // Short state body returned byte-for-byte, no truncation marker.
-    let old_state = value["state_changes"][0]["old_state"].as_str().unwrap();
-    assert_eq!(old_state, short_state);
-    assert!(!old_state.ends_with('\u{2026}'));
+    let new_state = value["state_changes"][0]["new_state"].as_str().unwrap();
+    assert_eq!(new_state, short_state);
+    assert!(!new_state.ends_with('\u{2026}'));
 
     // Logs vec returned whole (cap is a no-op below WEEKLY_LOGS_MAX).
     let logs = value["logs"].as_array().unwrap();
