@@ -1,12 +1,15 @@
-//! The batch decision table (`plan_batch`) — pure, no AppHandle.
+//! The batch decision table (`plan_batch`) and the #372 config-error
+//! classifier (`is_invalid_config_error`) — both pure, no AppHandle.
 
 use std::time::{Duration, Instant};
 
+use cdno_core::error::{ConfigError, IndexError, StoreError, ValidationError};
 use cdno_core::path::VaultPath;
 use cdno_core::watcher::FileEvent;
+use cdno_domain::error::DomainError;
 use cdno_tauri::events::VaultArea;
 use cdno_tauri::state::{ECHO_WINDOW, WriteJournal};
-use cdno_tauri::watcher::{BatchPlan, plan_batch};
+use cdno_tauri::watcher::{BatchPlan, is_invalid_config_error, plan_batch};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -170,4 +173,63 @@ fn journal_entries_expire_after_the_echo_window() {
         !journal.is_recent_self_write_at(just_past, &vp("projects/alpha.md")),
         "an echo past the window must be treated as external (safer failure direction)"
     );
+}
+
+// -------------------------------------------------------------------
+// is_invalid_config_error — the #372 classifier that keeps a transient
+// reload failure (a held write lock, an IO/index hiccup) from being
+// mislabelled as an invalid config in the banner, while still surfacing a
+// genuinely invalid config.
+// -------------------------------------------------------------------
+
+#[test]
+fn genuinely_invalid_config_errors_are_classified_invalid() {
+    // A custom note type shadowing a built-in, and a schema field redeclaring
+    // an engine-owned key, come straight from `TypeRegistry::validate` as
+    // top-level DomainError variants — NOT Validation or Config — so the
+    // classifier must recognise them or a real invalid config gets silently
+    // swallowed as contention.
+    assert!(is_invalid_config_error(&DomainError::ReservedTypeName {
+        name: "Project".to_owned(),
+    }));
+    assert!(is_invalid_config_error(&DomainError::ReservedSchemaField {
+        note_type: "daily".to_owned(),
+        field: "date".to_owned(),
+    }));
+    // A bad ignore glob and other config-content problems are Config errors.
+    assert!(is_invalid_config_error(&DomainError::Config(
+        ConfigError::InvalidGlob("**[".to_owned()),
+    )));
+    assert!(is_invalid_config_error(&DomainError::Config(
+        ConfigError::InvalidNoteType("empty folder".to_owned()),
+    )));
+    assert!(is_invalid_config_error(&DomainError::Config(
+        ConfigError::InvalidSchema("bad default".to_owned()),
+    )));
+    // A Validation error, wherever it might arise, is content-invalid too.
+    assert!(is_invalid_config_error(&DomainError::Validation(
+        ValidationError::MissingField {
+            field: "collaborators".to_owned(),
+        },
+    )));
+}
+
+#[test]
+fn transient_reload_failures_are_not_classified_invalid() {
+    // The write-lock timeout during reconcile is wrapped as IndexError::Update
+    // — this is the exact shape #372 must not mislabel as "invalid config".
+    assert!(!is_invalid_config_error(&DomainError::Index(
+        IndexError::Update("acquiring write lock during reconcile: timed out".to_owned()),
+    )));
+    // A raw lock-timeout store error, wherever it surfaces, is also transient.
+    assert!(!is_invalid_config_error(&DomainError::Store(
+        StoreError::LockTimeout(std::time::Duration::from_secs(5)),
+    )));
+    // A read hiccup (e.g. the file caught mid-rename) is IO, not bad content.
+    assert!(!is_invalid_config_error(&DomainError::Config(
+        ConfigError::Read {
+            path: std::path::PathBuf::from(".cuaderno/config.toml"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
+        },
+    )));
 }

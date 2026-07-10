@@ -10,17 +10,20 @@
 
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
 use arc_swap::ArcSwap;
 
 use cdno_core::config::IgnoreSet;
+use cdno_core::error::ConfigError;
 use cdno_core::index::VaultIndex;
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 use cdno_core::store::VaultStore;
 use cdno_core::watcher::FileEvent;
+use cdno_domain::error::DomainError;
 
 use crate::commands::config::rebuild_and_swap;
 use crate::events::{
@@ -174,58 +177,145 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
     }
 }
 
+/// A courtesy yield before the single retry of a transient config reload
+/// (#372). This is not the whole grace period: the retry itself calls
+/// `Vault::new` → `reconcile`, which re-acquires the write lock with a
+/// fresh 5s budget, so the effective second chance is this delay plus that
+/// full lock wait. The yield just avoids hammering the lock the instant the
+/// first attempt gave up; the lock-holder has almost always finished within
+/// the retry's own wait.
+const RELOAD_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+
+/// Does a failed config rebuild mean the on-disk config is genuinely
+/// *invalid* — bad TOML, a bad ignore glob, a rejected note-type or
+/// schema — as opposed to a transient/operational failure (the vault write
+/// lock was momentarily held during reconcile, or an IO/index hiccup)?
+///
+/// Only the former should tell the user their `config.toml` is broken; a
+/// transient failure keeps the last good config and must never be
+/// mislabelled as invalid (#372).
+///
+/// Classified as a **transient allowlist** rather than an invalid denylist,
+/// and deliberately so: misclassifying a transient error as invalid at
+/// worst flashes a visible, self-correcting banner, whereas misclassifying
+/// an *invalid* config as transient silently swallows a real error with no
+/// feedback and no self-heal. So an error we don't positively recognise as
+/// operational defaults to *invalid*. `Vault::new` reaches here through
+/// three failure sources — `ignore_set()` (a bad glob → `Config`),
+/// `TypeRegistry::validate` (a shadowed built-in → `ReservedTypeName`, a
+/// reserved schema key → `ReservedSchemaField`, other type/schema faults →
+/// `Config`), and `reconcile` (a write-lock timeout, wrapped as `Index`) —
+/// so the only genuinely transient outcomes are index/store/transaction
+/// failures and a raw config read that caught the file mid-rename.
+#[doc(hidden)]
+pub fn is_invalid_config_error(err: &DomainError) -> bool {
+    !matches!(
+        err,
+        DomainError::Index(_)
+            | DomainError::Store(_)
+            | DomainError::Transaction(_)
+            | DomainError::Config(ConfigError::Read { .. })
+    )
+}
+
 /// Apply an external `.cuaderno/config.toml` edit: rebuild the live vault
 /// (and its ignore set) from the new config, then tell the frontend what
-/// happened (GH #365 PR4).
+/// happened (GH #365 PR4, revised #372).
 ///
 /// On a successful rebuild, one all-areas `vault:changed` refetches
 /// everything the new config might have reshaped (note types, schemas,
 /// folders), and a `config:status` valid clears any prior error banner.
 ///
-/// On a rebuild failure, [`rebuild_and_swap`] has already guaranteed the
-/// OLD vault stays live (never-brick), so the session is never left
-/// vault-less. We surface the error as a `config:status` notice the UI
-/// shows as a non-red banner, then STILL emit `vault:changed` for the
-/// batch's non-config edits so those views refresh — a broken config edit
-/// bundled with a real note edit must not swallow the note edit.
+/// A rebuild failure splits three ways, because [`rebuild_and_swap`] has
+/// already guaranteed the OLD vault stays live (never-brick):
+///
+/// - **Genuinely invalid config** (bad TOML/glob/schema): surface the error
+///   as a non-red `config:status` banner, and still emit `vault:changed`
+///   for the batch's non-config edits — a broken config edit bundled with a
+///   real note edit must not swallow the note edit.
+/// - **Transient contention** (the write lock was held, or an IO/index
+///   hiccup): the config itself may be fine. Retry once after a short
+///   backoff — the lock-holder has almost always finished by then.
+/// - **Still blocked after the retry**: keep the last good config *without*
+///   a false "invalid" banner, refresh the batch's non-config edits, and
+///   let the change apply on the next config edit's reconcile.
 fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
     match rebuild_and_swap(app) {
-        Ok(()) => {
-            let _ = app.emit(
-                VAULT_CHANGED,
-                VaultChanged {
-                    origin: Origin::External,
-                    areas: all_areas(),
-                    paths,
-                },
-            );
-            let _ = app.emit(
-                CONFIG_STATUS,
-                ConfigStatus {
-                    valid: true,
-                    message: None,
-                },
-            );
-        }
+        Ok(()) => emit_config_reloaded(app, paths),
+        Err(e) if is_invalid_config_error(&e) => emit_config_invalid(app, e, areas, paths),
         Err(e) => {
-            tracing::warn!(error = %e, "external config edit did not apply; keeping the last good config");
-            let _ = app.emit(
-                CONFIG_STATUS,
-                ConfigStatus {
-                    valid: false,
-                    message: Some(e.to_string()),
-                },
-            );
-            let _ = app.emit(
-                VAULT_CHANGED,
-                VaultChanged {
-                    origin: Origin::External,
-                    areas,
-                    paths,
-                },
-            );
+            // Transient: the config may be perfectly valid — we just could
+            // not apply it this instant. A single quick retry catches the
+            // common brief-contention case.
+            tracing::debug!(error = %e, "config reload deferred (vault busy); retrying once");
+            std::thread::sleep(RELOAD_RETRY_BACKOFF);
+            match rebuild_and_swap(app) {
+                Ok(()) => emit_config_reloaded(app, paths),
+                Err(e2) if is_invalid_config_error(&e2) => {
+                    emit_config_invalid(app, e2, areas, paths)
+                }
+                Err(e2) => {
+                    tracing::warn!(error = %e2, "config reload still blocked; keeping the last good config, will apply on the next config edit");
+                    // Never a false "invalid" banner for contention; still
+                    // refresh the batch's non-config edits.
+                    let _ = app.emit(
+                        VAULT_CHANGED,
+                        VaultChanged {
+                            origin: Origin::External,
+                            areas,
+                            paths,
+                        },
+                    );
+                }
+            }
         }
     }
+}
+
+/// Signal an applied config reload: refetch every area the new config might
+/// reshape, and clear any prior notice.
+fn emit_config_reloaded(app: &AppHandle, paths: Vec<String>) {
+    let _ = app.emit(
+        VAULT_CHANGED,
+        VaultChanged {
+            origin: Origin::External,
+            areas: all_areas(),
+            paths,
+        },
+    );
+    let _ = app.emit(
+        CONFIG_STATUS,
+        ConfigStatus {
+            valid: true,
+            message: None,
+        },
+    );
+}
+
+/// Signal a genuinely invalid config: the non-red banner carrying the open
+/// error, plus a `vault:changed` for the batch's non-config edits.
+fn emit_config_invalid(
+    app: &AppHandle,
+    err: DomainError,
+    areas: Vec<VaultArea>,
+    paths: Vec<String>,
+) {
+    tracing::warn!(error = %err, "external config edit is invalid; keeping the last good config");
+    let _ = app.emit(
+        CONFIG_STATUS,
+        ConfigStatus {
+            valid: false,
+            message: Some(err.to_string()),
+        },
+    );
+    let _ = app.emit(
+        VAULT_CHANGED,
+        VaultChanged {
+            origin: Origin::External,
+            areas,
+            paths,
+        },
+    );
 }
 
 /// Repair the index; `false` (→ degraded pill + poll fallback in the
