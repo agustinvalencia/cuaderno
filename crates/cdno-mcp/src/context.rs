@@ -15,9 +15,10 @@ use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 
 use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
-    MonthlyNoteViewDto, OrientationContextDto, PortfolioDetailDto, ProjectContextDto,
-    ProjectListDto, ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
-    StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs,
+    MonthlyNoteViewDto, OrientationContextDto, PROJECT_MENTIONS_MAX, PortfolioDetailDto,
+    ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto,
+    SearchResultDto, StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto, WeeklyNoteViewDto,
+    cap_recent_logs,
 };
 
 use crate::input::*;
@@ -220,7 +221,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the full body of the project map, recent daily-log mentions (past 30 days, bare or qualified wikilinks), body backlinks grouped by source note type, and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
+        description = "Full context for a single project: typed frontmatter, the full body of the project map, recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent for token-cap safety — the full history stays one `read_daily_note` away), body backlinks grouped by source note type, and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
     )]
     pub async fn get_project_context(
         &self,
@@ -259,11 +260,19 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
 
+        // Bound `recent_mentions` before serialising (GH #352): a very
+        // active project over a busy month can accumulate a large slice.
+        // Keep the most-recent lines (mentions are oldest-first), same as
+        // the weekly-logs cap.
+        let recent_mentions = cap_recent_logs(
+            mentions.into_iter().map(Into::into).collect(),
+            PROJECT_MENTIONS_MAX,
+        );
         json_result(ProjectContextDto {
             slug: input.project,
             frontmatter: fm.into(),
             body_markdown: body,
-            recent_mentions: mentions.into_iter().map(Into::into).collect(),
+            recent_mentions,
             backlinks: backlinks.into(),
             core_question: core_question.map(QuestionSummaryDto::from),
         })

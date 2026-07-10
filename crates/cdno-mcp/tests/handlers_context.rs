@@ -798,6 +798,75 @@ async fn get_project_context_errors_on_missing_project() {
     assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
 }
 
+#[tokio::test]
+async fn get_project_context_caps_recent_mentions() {
+    // A very active project: several recent daily notes each carrying a
+    // stack of log lines that wikilink it — more than PROJECT_MENTIONS_MAX
+    // in total, all inside the 30-day window. The payload must come back
+    // capped to the most-recent PROJECT_MENTIONS_MAX lines (GH #352).
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    store
+        .write_file(
+            &cdno_core::path::VaultPath::new("projects/surrogate-model.md").unwrap(),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate model\n\n## Current State\nN/A.\n\n## Next Actions\n",
+        )
+        .unwrap();
+
+    // 3 recent days x 30 mention lines = 90 mentions (> the cap of 50).
+    for day in 0..3 {
+        let date = today() - chrono::Duration::days(day);
+        let mut logs = String::new();
+        for m in 0..30 {
+            logs.push_str(&format!("- **09:{m:02}**: worked on [[surrogate-model]]\n"));
+        }
+        let body = format!(
+            "---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n{logs}",
+            date = date.format("%Y-%m-%d"),
+        );
+        store
+            .write_file(
+                &cdno_core::path::VaultPath::new(cdno_core::paths::daily_note_relpath(date))
+                    .unwrap(),
+                &body,
+            )
+            .unwrap();
+    }
+
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    use cdno_mcp::server::ProjectSlugInput;
+    let result = server
+        .get_project_context(Parameters(ProjectSlugInput {
+            project: "surrogate-model".to_owned(),
+        }))
+        .await
+        .expect("get_project_context");
+    let value = decode_json(&result);
+
+    let mentions = value["recent_mentions"].as_array().unwrap();
+    assert_eq!(
+        mentions.len(),
+        cdno_mcp::dto::PROJECT_MENTIONS_MAX,
+        "recent_mentions should be capped to the most-recent {} lines",
+        cdno_mcp::dto::PROJECT_MENTIONS_MAX
+    );
+    // The kept slice is the most-recent: with 30 lines per day, the cap of
+    // 50 keeps all of today plus part of yesterday, so every surviving
+    // mention is dated today or yesterday — never the oldest day, whose
+    // mentions are entirely dropped from the front.
+    let oldest_dropped = today() - chrono::Duration::days(2);
+    for m in mentions {
+        assert_ne!(
+            m["date"].as_str().unwrap(),
+            oldest_dropped.format("%Y-%m-%d").to_string(),
+            "the oldest day's mentions should have been dropped, not kept"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------
 // get_stewardship_tracking
 // ---------------------------------------------------------------------
