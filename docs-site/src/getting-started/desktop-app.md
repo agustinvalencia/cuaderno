@@ -73,11 +73,10 @@ grid, five-slot project allocator, portfolio health, stewardship trends. Below t
 project has a full map (`/projects/<slug>`), and **Portfolios** and **Stewardships** browse the
 knowledge and responsibility layers. A stewardship's detail draws each tracked series as a calm
 trend — counts and volumes (reps, laps, sessions) as columns, continuous measures (a weight, a
-pace) as lines, always in the context hue and never as a target to hit. **Config** is a read-only
-inspector for `.cuaderno/config.toml`: it shows the file verbatim and a **Check** button dry-runs
-the same validation the app runs when it opens the vault, reporting "valid" or the precise error
-(with the line and column for a syntax slip) inline — a safe way to confirm a hand-edit before you
-rely on it. Editing the config from the app itself is coming in a later release; for now Config
-reads, and your editor writes. Everywhere: `⌘K` opens search-and-jump, `⌘⇧C` summons the
+pace) as lines, always in the context hue and never as a target to hit. **Config** edits
+`.cuaderno/config.toml` in the app — a Raw text view and a structured Form for note types and
+schemas, every save validated before it touches disk, and a live reload whenever the config changes
+on disk. See [Editing the config in the app](config-editor.md) for the full walkthrough. Everywhere:
+`⌘K` opens search-and-jump, `⌘⇧C` summons the
 global capture window from any app (Enter files to the inbox, `⌘Enter` appends to today's log),
 and the menu-bar tray keeps Quick capture / Open / Quit reachable even with every window closed.
