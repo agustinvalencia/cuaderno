@@ -9,6 +9,8 @@ This page covers using the editor. For *what* each key means, see
 [Configuration](../concepts/configuration.md) and the
 [Configuration reference](../reference/configuration.md).
 
+Open it from **Config** in the sidebar.
+
 ## Raw and Form
 
 Config opens on a **Raw / Form** toggle:
@@ -38,8 +40,9 @@ can confirm a hand-edit before you commit to it.
 ### Edits are surgical
 
 Saving from the Form does **not** rewrite the whole file. It applies a targeted edit to just the
-table you changed, so your comments, key order, and formatting elsewhere survive untouched. Renaming
-a note type or adding a required field rewrites only that one table.
+table you changed, so your comments, key order, and formatting elsewhere survive untouched. Adding a
+required field rewrites only that one table; renaming a note type removes the old table and writes
+the new one — nothing else is touched.
 
 ### Conflict detection
 
@@ -63,7 +66,7 @@ The Form covers note types and schema extensions. A few things stay Raw-only by 
 
 - **The `[variables]` and `[variables.prompt]` blocks** — static and prompted template variables.
   Edit them in Raw; the surgical writer preserves them untouched when you save Form changes.
-- **`[vault]` keys** like `max_active_projects` and `ignore` globs — edit these in Raw.
+- **`max_active_projects` under `[vault]`, and the top-level `ignore` globs** — edit these in Raw.
 
 Everything Raw-only is still covered by the never-brick save and live reload; only the structured
 inputs are absent.
