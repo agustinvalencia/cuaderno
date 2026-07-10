@@ -588,12 +588,22 @@ fn monday_of_iso_week(date: NaiveDate) -> NaiveDate {
 /// forward" 23:59:59 always exists, so `.single()`/`.earliest()` is safe;
 /// the `unwrap_or(0)` is a defensive floor, never expected.
 fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
+    mtime_threshold_ns_in(today, days, &chrono::Local)
+}
+
+/// Timezone-injected form of [`mtime_threshold_ns`] — the boundary
+/// zone is a parameter instead of hard-coded `chrono::Local`, so a
+/// deterministic test can pin it to a `FixedOffset` regardless of the
+/// runner's own zone or the wall-clock time (#380). Production callers
+/// go through `mtime_threshold_ns`, which passes `&chrono::Local`.
+#[doc(hidden)]
+pub fn mtime_threshold_ns_in<Tz: chrono::TimeZone>(today: NaiveDate, days: i64, tz: &Tz) -> u64 {
     let cutoff = today - Duration::days(days);
     let datetime = cutoff
         .and_hms_opt(23, 59, 59)
         .expect("23:59:59 is always a valid time");
     let nanos = datetime
-        .and_local_timezone(chrono::Local)
+        .and_local_timezone(tz.clone())
         .earliest()
         .and_then(|dt| dt.timestamp_nanos_opt())
         .unwrap_or(0);
@@ -613,9 +623,20 @@ fn mtime_threshold_ns(today: NaiveDate, days: i64) -> u64 {
 /// (any positive-offset zone in the hours after local midnight) would
 /// report one stale day too many.
 fn days_since_mtime(today: NaiveDate, mtime_ns: u64) -> i64 {
+    days_since_mtime_in(today, mtime_ns, &chrono::Local)
+}
+
+/// Timezone-injected form of [`days_since_mtime`] — the zone the mtime
+/// instant is resolved into is a parameter instead of hard-coded
+/// `chrono::Local`, so a deterministic test can inject a `FixedOffset`
+/// and exercise the local-vs-UTC boundary (#380, the #379 fix) without
+/// depending on the runner's zone or the current time. Production
+/// callers go through `days_since_mtime` with `&chrono::Local`.
+#[doc(hidden)]
+pub fn days_since_mtime_in<Tz: chrono::TimeZone>(today: NaiveDate, mtime_ns: u64, tz: &Tz) -> i64 {
     let secs = (mtime_ns / 1_000_000_000) as i64;
     let modified = chrono::DateTime::from_timestamp(secs, 0)
-        .map(|dt| dt.with_timezone(&chrono::Local).date_naive())
+        .map(|dt| dt.with_timezone(tz).date_naive())
         .unwrap_or(today);
     (today - modified).num_days()
 }
