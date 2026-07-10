@@ -465,6 +465,15 @@ impl From<ProjectStateChange> for ProjectStateChangeDto {
 /// while keeping the `logs` slice to roughly 10 KB.
 pub const WEEKLY_LOGS_MAX: usize = 100;
 
+/// Cap on `get_project_context.recent_mentions` — the daily-log lines from
+/// the past 30 days that mention a single project (GH #352). Single-entity,
+/// so no multiplicative blow-up like #298, but a very active project over a
+/// busy month can still accumulate a large slice. Bounded with the same
+/// keep-most-recent [`cap_recent_logs`] the weekly logs use; 50 mentions
+/// covers a heavily-referenced month while the full history stays one
+/// `read_daily_note` away.
+pub const PROJECT_MENTIONS_MAX: usize = 50;
+
 /// Keep only the most-recent `max` entries of an oldest-first log
 /// vec, dropping from the front. A no-op when the vec is already
 /// within budget. The drop is observable (the vec shrinks) so a
@@ -668,7 +677,10 @@ pub struct ProjectContextDto {
     /// `---` of the frontmatter).
     pub body_markdown: String,
     /// Log lines from daily notes (past 30 days) that wikilink the
-    /// project either bare or qualified.
+    /// project either bare or qualified, capped to the
+    /// [`PROJECT_MENTIONS_MAX`] most-recent lines for token-cap safety
+    /// (GH #352). The drop is observable (the slice shrinks); the full
+    /// history stays one `read_daily_note` away.
     pub recent_mentions: Vec<DailyLogLineDto>,
     /// Body-level backlinks grouped by source note type. Frontmatter
     /// wikilinks aren't indexed and don't appear here — see the
