@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-07-10
+
 ### Fixed
 
 - **A busy vault no longer looks like a broken config** (#372) — when the desktop app rebuilt the
@@ -16,6 +18,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   still shows the banner, while contention retries the reload once and, if still blocked, keeps the
   last good config silently and applies the change on the next config edit — never a false "invalid"
   notice.
+
+### Documentation
+
+- **Document the desktop Config editor** (#377) — a new Getting-started page walks through the
+  Config view (Raw/Form, the validate-before-save gate, surgical comment-preserving Form edits,
+  conflict detection, and live external reload), and the desktop-app tour and configuration
+  reference no longer describe Config as a read-only inspector.
 
 ## [0.19.0] - 2026-07-10
 
