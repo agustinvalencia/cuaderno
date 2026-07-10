@@ -11,10 +11,11 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::Context;
+use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
 use cdno_domain::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
 };
-use chrono::NaiveDate;
+use chrono::{FixedOffset, NaiveDate};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -524,9 +525,6 @@ fn tracking_series_ignores_non_finite_numerics() {
 // wall-clock time the suite happens to run at.
 // -------------------------------------------------------------------
 
-use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
-use chrono::FixedOffset;
-
 /// Nanoseconds since the Unix epoch for an RFC-3339 instant.
 fn utc_ns(rfc3339: &str) -> u64 {
     chrono::DateTime::parse_from_rfc3339(rfc3339)
@@ -542,7 +540,7 @@ fn days_since_mtime_counts_in_the_injected_zone_not_utc() {
     // count is 0. The pre-#379 logic read the mtime's UTC date
     // (2026-07-09) against a local `today` and reported 1.
     let tz = FixedOffset::east_opt(2 * 3600).unwrap();
-    let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+    let today = ymd(2026, 7, 10);
     let mtime_ns = utc_ns("2026-07-09T22:30:00Z");
 
     assert_eq!(days_since_mtime_in(today, mtime_ns, &tz), 0);
@@ -558,7 +556,7 @@ fn mtime_threshold_boundary_follows_the_injected_zone() {
     // At a zero-day threshold, "stuck" means mtime <= end of `today`.
     // In UTC+2 that boundary is 2026-07-10T21:59:59Z, not 23:59:59Z.
     let tz = FixedOffset::east_opt(2 * 3600).unwrap();
-    let today = NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
+    let today = ymd(2026, 7, 10);
     let threshold = mtime_threshold_ns_in(today, 0, &tz);
 
     // 23:30 local *today* is within the window (the project counts as
