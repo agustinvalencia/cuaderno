@@ -258,7 +258,7 @@ fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Ve
                 }
                 Err(e2) => {
                     tracing::warn!(error = %e2, "config reload still blocked; keeping the last good config, will apply on the next config edit");
-                    emit_config_deferred(app, e2, areas, paths)
+                    emit_config_deferred(app, areas, paths)
                 }
             }
         }
@@ -294,38 +294,38 @@ fn emit_config_invalid(
     paths: Vec<String>,
 ) {
     tracing::warn!(error = %err, "external config edit is invalid; keeping the last good config");
-    emit_config_status_with_edits(app, ConfigHealth::Invalid, err, areas, paths);
+    // The open error is actionable ("expected `=`", a rejected type/schema),
+    // so surface it as the banner's detail line.
+    emit_config_status_with_edits(
+        app,
+        ConfigHealth::Invalid,
+        Some(err.to_string()),
+        areas,
+        paths,
+    );
 }
 
 /// Signal a transiently-deferred reload (#384): the config may be fine but a
 /// busy vault kept it from applying. A calm, distinct banner rather than the
 /// "invalid config" one; the batch's non-config edits still refresh.
-fn emit_config_deferred(
-    app: &AppHandle,
-    err: DomainError,
-    areas: Vec<VaultArea>,
-    paths: Vec<String>,
-) {
-    emit_config_status_with_edits(app, ConfigHealth::Deferred, err, areas, paths);
+fn emit_config_deferred(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
+    // No detail line: the transient error is a raw, non-actionable string
+    // (a lock timeout / index message) that would undercut the calm "vault
+    // was busy" framing. The lead sentence says all the user needs (#384).
+    emit_config_status_with_edits(app, ConfigHealth::Deferred, None, areas, paths);
 }
 
-/// Emit a non-`Valid` `config:status` carrying the error detail, then a
-/// `vault:changed` for the batch's non-config edits — the shared shape of
+/// Emit a non-`Valid` `config:status` (with an optional detail message), then
+/// a `vault:changed` for the batch's non-config edits — the shared shape of
 /// the invalid and deferred paths.
 fn emit_config_status_with_edits(
     app: &AppHandle,
     health: ConfigHealth,
-    err: DomainError,
+    message: Option<String>,
     areas: Vec<VaultArea>,
     paths: Vec<String>,
 ) {
-    let _ = app.emit(
-        CONFIG_STATUS,
-        ConfigStatus {
-            health,
-            message: Some(err.to_string()),
-        },
-    );
+    let _ = app.emit(CONFIG_STATUS, ConfigStatus { health, message });
     let _ = app.emit(
         VAULT_CHANGED,
         VaultChanged {

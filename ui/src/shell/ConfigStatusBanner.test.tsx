@@ -32,14 +32,17 @@ test("shows the calm banner with the open error when the config is invalid", () 
 
 test("shows a distinct calm banner when the reload was deferred (vault busy)", () => {
   render(<ConfigStatusBanner />);
-  act(() => setConfigStatus({ health: "deferred", message: "vault write lock timed out" }));
+  // The deferred path carries no message — the raw transient error is
+  // non-actionable noise, so only the calm lead sentence shows (#384).
+  act(() => setConfigStatus({ health: "deferred", message: null }));
 
   const banner = screen.getByRole("status");
   // The deferred wording is distinct from the invalid-config wording — it
   // must not accuse the config of being broken (#384).
   expect(banner.textContent).toContain("vault was busy");
   expect(banner.textContent).not.toContain("config.toml has an error");
-  expect(banner.textContent).toContain("vault write lock timed out");
+  // No mono detail line for a deferral.
+  expect(banner.querySelector(".font-mono")).toBeNull();
   // Same calm tier as the invalid banner.
   expect(banner.className).toContain("text-attention");
 });

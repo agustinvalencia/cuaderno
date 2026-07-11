@@ -83,12 +83,10 @@ test("config:status writes the payload to the module store the banner reads", as
   emit("config:status", { health: "invalid", message: "expected `=`" });
   expect(getConfigStatus()).toEqual({ health: "invalid", message: "expected `=`" });
 
-  // A deferred reload (busy vault) is carried through distinctly (#384).
-  emit("config:status", { health: "deferred", message: "vault write lock timed out" });
-  expect(getConfigStatus()).toEqual({
-    health: "deferred",
-    message: "vault write lock timed out",
-  });
+  // A deferred reload (busy vault) is carried through distinctly, and the
+  // backend sends no detail for it (#384).
+  emit("config:status", { health: "deferred", message: null });
+  expect(getConfigStatus()).toEqual({ health: "deferred", message: null });
 
   // A later valid edit clears the notice, normalising a missing message to null.
   emit("config:status", { health: "valid", message: null });

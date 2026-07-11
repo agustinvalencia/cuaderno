@@ -16,7 +16,7 @@ export default function ConfigStatusBanner() {
 
   const lead =
     health === "deferred"
-      ? "The vault was busy, so this config change hasn't applied yet — it'll take effect on the next change to config.toml."
+      ? "The vault was busy, so this config change hasn't applied yet — it'll be re-applied on the next change to config.toml."
       : "config.toml has an error and was not applied — the app is still using your last valid config.";
 
   return (
