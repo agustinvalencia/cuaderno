@@ -17,7 +17,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   succeeds with a suffixed slug rather than raising an "already exists" error. Stewardships are
   deliberately excluded (they don't relocate, and their flat-vs-expanded exclusivity error is a
   useful guard a suffix would mask); the relocating creators still check stewardship stems, so they
-  can't collide with one.
+  can't collide with one. The fix is forward-only — pre-existing same-stem notes keep their slugs
+  until re-created.
 - **Backlinks now catch frontmatter wikilinks, not just body ones** (#395) — the index scans a note's
   frontmatter string values for `[[wikilinks]]` alongside its body, so `find_backlinks` (and thus
   `project_backlinks` / `question_backlinks`, `cdno`'s backlink surfaces) now includes a project's

@@ -91,6 +91,33 @@ fn add_action_with_note_creates_note_and_wikilinked_bullet() {
 }
 
 #[test]
+fn add_action_with_note_suffixes_a_duplicate_title() {
+    // #225 (the flagship case): two actions with the same title get distinct
+    // stems (`email-advisor`, `email-advisor-2`), so when one is later
+    // archived to `_done/` its `[[actions/<slug>]]` backlinks stay
+    // resolvable — the stem is no longer shared.
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let first = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Email advisor",
+            EnergyLevel::Light,
+        )
+        .expect("first action");
+    let second = vault
+        .add_action_with_note(
+            dt(2026, 5, 27, 9, 0),
+            "foo",
+            "Email advisor",
+            EnergyLevel::Light,
+        )
+        .expect("second same-title action suffixes");
+    assert_eq!(first, vp("actions/email-advisor.md"));
+    assert_eq!(second, vp("actions/email-advisor-2.md"));
+}
+
+#[test]
 fn add_action_with_note_on_parked_project_errors_and_writes_nothing() {
     let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Next Actions\n";
     let (vault, store) = vault_with(&[("projects/_parked/foo.md", parked)]);

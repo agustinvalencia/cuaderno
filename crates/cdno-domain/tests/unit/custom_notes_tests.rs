@@ -162,10 +162,16 @@ fn suffixes_a_duplicate_slug() {
     let second = vault
         .create_custom_note(at(), "person", "Ada", &fields(&[("name", "Ada II")]))
         .expect("duplicate slug now suffixes");
+    // First and second land at the type's folder with `ada` / `ada-2` stems.
     assert_ne!(first, second);
-    assert!(
-        second.as_path().file_stem().and_then(|s| s.to_str()) == Some("ada-2"),
-        "second person gets an `ada-2` stem: {second:?}"
+    assert_eq!(
+        second.as_path().parent(),
+        first.as_path().parent(),
+        "same folder"
+    );
+    assert_eq!(
+        second.as_path().file_stem().and_then(|s| s.to_str()),
+        Some("ada-2"),
     );
 }
 

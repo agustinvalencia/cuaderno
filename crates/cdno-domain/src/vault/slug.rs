@@ -61,11 +61,11 @@ pub fn slugify(text: &str) -> String {
 /// inbox collision cap — a misbehaving store can't spin forever.
 pub(in crate::vault) const SLUG_COLLISION_LIMIT: usize = 1000;
 
-/// Return a stem unique against `taken`: `base` if it's free, else
-/// `base-2`, `base-3`, … up to [`SLUG_COLLISION_LIMIT`] (#225). `None` if
-/// the whole range is somehow exhausted. Pure — the vault-wide stem set is
-/// gathered by the caller ([`Vault::unique_slug`]) so this stays testable
-/// without a store.
+/// Return a stem unique against `taken`: `base` if it's free, else the first
+/// free of `base-2`, `base-3`, … (bounded by [`SLUG_COLLISION_LIMIT`] so a
+/// misbehaving store can't spin forever, #225). `None` only if that whole
+/// range is somehow exhausted. Pure — the vault-wide stem set is gathered by
+/// the caller ([`Vault::unique_slug`]) so this stays testable without a store.
 pub(in crate::vault) fn disambiguate_slug(base: &str, taken: &HashSet<String>) -> Option<String> {
     if !taken.contains(base) {
         return Some(base.to_owned());

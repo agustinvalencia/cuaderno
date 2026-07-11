@@ -227,6 +227,23 @@ fn create_two_same_title_projects_get_distinct_stems() {
 }
 
 #[test]
+fn create_project_walks_past_a_taken_2_suffix_to_the_next_free() {
+    // #225: with `foo` and `foo-2` already present (one active, one parked),
+    // a third same-title project walks to `foo-3` — exercises the
+    // disambiguation loop past the first suffix.
+    let a = project_body("work", "active", "2026-01-10", "Foo");
+    let b = project_body("work", "parked", "2026-01-11", "Foo");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/foo.md", &a), ("projects/_parked/foo-2.md", &b)],
+        VaultConfig::default(),
+    );
+    let path = vault
+        .create_project(day(2026, 4, 28), "Foo", Context::Work, None)
+        .expect("third same-title create");
+    assert_eq!(path, vp("projects/foo-3.md"));
+}
+
+#[test]
 fn create_project_seeds_parked_when_active_count_at_cap() {
     // Cap of 2 with 2 projects already active — the third still
     // succeeds, but is seeded as parked so the cap (on actives) is
