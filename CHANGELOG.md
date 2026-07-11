@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **Note slugs are now globally unique, so a relocated note keeps its backlinks** (#225) — when you
+  create a project, action, commitment, question, or custom note whose slug is already taken
+  anywhere in the vault, it gets a `-2` (`-3`, …) suffix instead of erroring on the collision. This
+  keeps the last-segment wikilink fallback unambiguous: a note that later relocates (an action
+  archived to `_done/`, a project parked) no longer loses its `[[type/slug]]` backlinks to a stem
+  shared with another note. Note the behaviour shift — creating a second note with the same title now
+  succeeds with a suffixed slug rather than raising an "already exists" error. Stewardships are
+  deliberately excluded (they don't relocate, and their flat-vs-expanded exclusivity error is a
+  useful guard a suffix would mask); the relocating creators still check stewardship stems, so they
+  can't collide with one.
 - **Backlinks now catch frontmatter wikilinks, not just body ones** (#395) — the index scans a note's
   frontmatter string values for `[[wikilinks]]` alongside its body, so `find_backlinks` (and thus
   `project_backlinks` / `question_backlinks`, `cdno`'s backlink surfaces) now includes a project's

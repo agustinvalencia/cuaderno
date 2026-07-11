@@ -152,15 +152,21 @@ fn rejects_an_empty_title() {
 }
 
 #[test]
-fn rejects_a_duplicate_slug() {
+fn suffixes_a_duplicate_slug() {
+    // #225: a second custom note with the same title suffixes to `-2` rather
+    // than erroring — two people can share a name.
     let (vault, _store) = vault_with(config_with_person(), &[]);
-    vault
+    let first = vault
         .create_custom_note(at(), "person", "Ada", &fields(&[("name", "Ada")]))
         .expect("first");
-    let err = vault
+    let second = vault
         .create_custom_note(at(), "person", "Ada", &fields(&[("name", "Ada II")]))
-        .expect_err("duplicate slug");
-    assert!(matches!(err, DomainError::Store(_)));
+        .expect("duplicate slug now suffixes");
+    assert_ne!(first, second);
+    assert!(
+        second.as_path().file_stem().and_then(|s| s.to_str()) == Some("ada-2"),
+        "second person gets an `ada-2` stem: {second:?}"
+    );
 }
 
 #[test]

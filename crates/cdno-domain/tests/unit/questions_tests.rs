@@ -54,6 +54,19 @@ fn read_body(store: &Arc<dyn VaultStore>, path: &VaultPath) -> String {
 // ---------------------------------------------------------------------
 
 #[test]
+fn create_question_uniquifies_a_stem_that_collides_with_another_note_type() {
+    // #225: global stem uniqueness spans note types — a question whose slug
+    // matches an existing project gets a `-2` stem, so the project's
+    // `[[projects/surrogate]]` fallback stays unambiguous when it parks.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\n---\n\n# Surrogate\n";
+    let (vault, _store) = vault_with_seeded_store(&[("projects/surrogate.md", project)]);
+    let path = vault
+        .create_question(dt(2026, 1, 10, 9, 0), QuestionDomain::Research, "surrogate")
+        .expect("create_question");
+    assert_eq!(path, vp("questions/research/surrogate-2.md"));
+}
+
+#[test]
 fn create_question_writes_under_research_folder_with_slug_from_text() {
     let (vault, store) = vault_with_seeded_store(&[]);
     let path = vault
@@ -103,30 +116,33 @@ fn create_question_errors_on_empty_text() {
 }
 
 #[test]
-fn create_question_errors_when_slug_already_exists_in_same_domain() {
+fn create_question_suffixes_a_duplicate_slug_in_the_same_domain() {
+    // #225: a second same-title question no longer errors — it gets a `-2`
+    // stem so both keep resolvable backlinks.
     let (vault, _store) = vault_with_seeded_store(&[]);
-    vault
+    let first = vault
         .create_question(
             dt(2026, 1, 10, 9, 0),
             QuestionDomain::Research,
             "Does sparse beat dense?",
         )
         .unwrap();
-    let err = vault
+    let second = vault
         .create_question(
             dt(2026, 1, 11, 9, 0),
             QuestionDomain::Research,
             "Does sparse beat dense?",
         )
-        .expect_err("duplicate question should error");
-    assert!(matches!(
-        err,
-        DomainError::Store(StoreError::AlreadyExists(_))
-    ));
+        .expect("a duplicate question now suffixes rather than erroring");
+    assert_eq!(first, vp("questions/research/does-sparse-beat-dense.md"));
+    assert_eq!(second, vp("questions/research/does-sparse-beat-dense-2.md"));
 }
 
 #[test]
-fn create_question_errors_on_cross_domain_slug_collision() {
+fn create_question_suffixes_a_cross_domain_slug_collision() {
+    // #225: global stem uniqueness spans the whole vault, so a life
+    // question whose slug matches an existing research one gets a `-2` stem
+    // — which also means the two never collide as an ambiguous slug.
     let (vault, _store) = vault_with_seeded_store(&[]);
     vault
         .create_question(
@@ -135,19 +151,14 @@ fn create_question_errors_on_cross_domain_slug_collision() {
             "What truly matters?",
         )
         .unwrap();
-    // Same slug attempted from the life domain — must fail, because
-    // slugs are unique across the whole questions/ tree.
-    let err = vault
+    let life = vault
         .create_question(
             dt(2026, 1, 11, 9, 0),
             QuestionDomain::Life,
             "What truly matters?",
         )
-        .expect_err("cross-domain collision should error");
-    assert!(matches!(
-        err,
-        DomainError::Store(StoreError::AlreadyExists(_))
-    ));
+        .expect("cross-domain collision now suffixes");
+    assert_eq!(life, vp("questions/life/what-truly-matters-2.md"));
 }
 
 // ---------------------------------------------------------------------

@@ -120,6 +120,12 @@ impl Vault {
         context: Context,
         prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
+        // Stewardships are deliberately excluded from the #225 global-slug
+        // suffixing: they don't relocate (so their own backlinks never
+        // degrade), and their flat-vs-expanded exclusivity error is a
+        // useful guard a `-2` suffix would silently swallow. The relocating
+        // creators still check stewardship stems, so an action/project can't
+        // collide with one.
         let (slug, flat_path, expanded_path) = resolve_paths(name)?;
         if self.store.exists(&flat_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -159,6 +165,7 @@ impl Vault {
         context: Context,
         prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
+        // Excluded from #225 global-slug suffixing — see the flat variant.
         let (slug, flat_path, expanded_path) = resolve_paths(name)?;
         if self.store.exists(&expanded_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
