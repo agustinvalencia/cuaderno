@@ -120,6 +120,14 @@ function fileStem(path: string): string {
   return base.endsWith(".md") ? base.slice(0, -3) : base;
 }
 
+/** The slug of a portfolio backlink path — `portfolios/surrogate/_index.md`
+ * → `surrogate` (the parent dir, since the file is always `_index.md`, not
+ * the slug). Routes a portfolio backlink to its detail page (#354). */
+function portfolioSlug(path: string): string {
+  const parts = path.split("/");
+  return parts[0] === "portfolios" && parts.length >= 2 ? parts[1] : fileStem(path);
+}
+
 const chipClass = "text-xs text-ink-faint hover:text-ink-muted";
 
 /** Portfolio link chip on a question card. A portfolio shares its
@@ -146,8 +154,8 @@ function ProjectChip({ slug }: { slug: string }) {
   );
 }
 
-/** A remaining backlink (evidence, or anything else) — opens the note in
- * the reader, since those have no dedicated detail route (#354). */
+/** An evidence backlink — opens the note in the reader, since evidence has
+ * no dedicated detail route (#354). */
 function ReaderBacklinkChip({ path }: { path: string }) {
   const { openReader } = useReader();
   return (
@@ -181,22 +189,28 @@ function QuestionsGrid({
                 <h3 className="text-xs capitalize text-ink-muted">{domain}</h3>
                 <ul className="mt-2 space-y-2">
                   {inDomain.map(({ summary: q, backlinks }) => {
-                    // Correlate portfolios to this question by shared slug.
-                    const linked = portfolios.filter((p) => p.slug === q.slug);
-                    // Evidence + any other backlink opens in the reader; the
-                    // portfolio backlinks are already shown as routed chips
-                    // via the slug correlation above, so drop them here to
-                    // avoid a duplicate chip.
-                    const readerBacklinks = [...backlinks.evidence, ...backlinks.other];
+                    // Portfolio chips: the portfolios created for this
+                    // question (sharing its slug), UNION the portfolios that
+                    // body-link it with a *different* slug (via
+                    // link_portfolio_to_question), deduped by slug so a
+                    // portfolio is never chipped twice.
+                    const portfolioSlugs = new Set(
+                      portfolios.filter((p) => p.slug === q.slug).map((p) => p.slug),
+                    );
+                    for (const path of backlinks.portfolios) {
+                      portfolioSlugs.add(portfolioSlug(path));
+                    }
+                    const portfolioChips = [...portfolioSlugs];
+                    // Evidence body-links open in the reader. The `other`
+                    // bucket (daily notes, actions, commitments …) is
+                    // deliberately NOT chipped here — it's noise on the calm
+                    // strategic grid; the full backlink set lives on the note.
+                    const evidence = backlinks.evidence;
                     const hasChips =
-                      linked.length > 0 ||
+                      portfolioChips.length > 0 ||
                       backlinks.projects.length > 0 ||
-                      readerBacklinks.length > 0;
+                      evidence.length > 0;
                     return (
-                      // The card is a plain container, not a button: the
-                      // title is the reader-opening control and the chips
-                      // are accessible sibling links — interactive elements
-                      // must not nest inside a button (a11y / DOM validity).
                       // The card is a plain container, not a button: the
                       // title is the reader-opening control and the chips
                       // are accessible sibling links — interactive elements
@@ -222,13 +236,13 @@ function QuestionsGrid({
                         </button>
                         {hasChips && (
                           <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 pb-2">
-                            {linked.map((p) => (
-                              <PortfolioChip key={`pf:${p.slug}`} slug={p.slug} />
+                            {portfolioChips.map((slug) => (
+                              <PortfolioChip key={`pf:${slug}`} slug={slug} />
                             ))}
                             {backlinks.projects.map((path) => (
                               <ProjectChip key={`pj:${path}`} slug={fileStem(path)} />
                             ))}
-                            {readerBacklinks.map((path) => (
+                            {evidence.map((path) => (
                               <ReaderBacklinkChip key={`bl:${path}`} path={path} />
                             ))}
                           </div>

@@ -26,8 +26,16 @@ const BUNDLE: StrategicBundle = {
       },
       // A project references this question in its body → a routed chip.
       // Use a slug that doesn't collide with the allocator's alpha/beta
-      // slots, so `getByText` in unrelated tests stays unambiguous.
-      backlinks: { projects: ["projects/delta.md"], portfolios: [], evidence: [], other: [] },
+      // slots, so `getByText` in unrelated tests stays unambiguous. A
+      // portfolio body-links it with a DIFFERENT slug
+      // (link_portfolio_to_question) → a routed portfolio chip via the
+      // parent-dir slug. A daily note in `other` must NOT be chipped (noise).
+      backlinks: {
+        projects: ["projects/delta.md"],
+        portfolios: ["portfolios/other-dossier/_index.md"],
+        evidence: [],
+        other: ["journal/2026/daily/2026-07-01.md"],
+      },
     },
     {
       summary: {
@@ -161,6 +169,23 @@ test("a question backlinked by a project shows a chip routing to that project (#
   // so its card carries a project chip linking to that project's route.
   const chip = await screen.findByRole("link", { name: "delta" });
   expect(chip.getAttribute("href")).toBe("/projects/delta");
+});
+
+test("a portfolio backlinked by a differing slug surfaces a routed chip (#354)", async () => {
+  renderStrategic(BUNDLE);
+  // A portfolio that body-links the question with a slug OTHER than the
+  // question's (link_portfolio_to_question) still shows a chip, routed via
+  // its parent-dir slug — not only the slug-correlated portfolios.
+  const chip = await screen.findByRole("link", { name: "other-dossier" });
+  expect(chip.getAttribute("href")).toBe("/portfolios/other-dossier");
+});
+
+test("an `other` backlink (e.g. a daily note) is not chipped on the grid (#354)", async () => {
+  renderStrategic(BUNDLE);
+  await screen.findByText("How faithful is the surrogate?");
+  // The daily-note backlink in the `other` bucket is deliberately not
+  // rendered — it's noise on the calm strategic grid.
+  expect(screen.queryByRole("button", { name: "2026-07-01" })).toBeNull();
 });
 
 test("the allocator draws filled slots and dashed open slots from the cap", async () => {

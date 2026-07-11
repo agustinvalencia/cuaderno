@@ -164,7 +164,11 @@ pub fn get_strategic_bundle_impl(
     // shows. `active_questions` is already sorted `(domain, slug)`.
     let mut questions = Vec::new();
     for summary in vault.active_questions()? {
-        let bl = vault.question_backlinks(&summary.slug)?;
+        // A per-question backlink lookup that fails must not blank the whole
+        // strategic view — e.g. a hand-edited vault with the same slug in
+        // both question domains resolves as `AmbiguousSlug`. Fall back to no
+        // backlinks for that one question rather than `?`-propagating.
+        let bl = vault.question_backlinks(&summary.slug).unwrap_or_default();
         questions.push(QuestionStrategicRow {
             backlinks: QuestionBacklinksView {
                 projects: paths_to_strings(&bl.projects),

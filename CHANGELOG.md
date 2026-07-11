@@ -10,11 +10,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - **Backlink chips on the Strategic questions grid** (#354) — each question card now shows chips for
   the notes that reference it: projects that wikilink the question (routing to the project detail
-  page) and evidence/other backlinks (opening in the reader), alongside the existing
-  slug-correlated portfolio chips. Backed by a new `question_backlinks` domain method (the
-  question-side mirror of `project_backlinks`), surfaced on the strategic bundle's question rows.
-  (Frontmatter links like a project's `core_question:` aren't indexed, so only body-level references
-  appear.)
+  page), portfolios (routed — both those sharing the question's slug and those linked with a
+  different slug via `link_portfolio_to_question`), and evidence (opening in the reader). Backed by a
+  new `question_backlinks` domain method (the question-side mirror of `project_backlinks`), surfaced
+  on the strategic bundle's question rows. Frontmatter links like a project's `core_question:` aren't
+  indexed, so only body-level references appear (see #395); daily-note/action backlinks are kept off
+  the card to keep it calm.
 
 ## [0.20.1] - 2026-07-11
 
