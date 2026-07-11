@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-12
+
 ### Changed
 
 - **Note slugs are now globally unique, so a relocated note keeps its backlinks** (#225) — when you
