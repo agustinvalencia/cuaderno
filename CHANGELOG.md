@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-07-11
+
 ### Added
 
 - **A "busy, will apply later" note for a deferred config reload** (#384) — when an external
