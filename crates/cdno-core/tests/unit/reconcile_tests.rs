@@ -180,6 +180,35 @@ fn reconcile_backlinks_a_relocated_note_via_last_segment_fallback() {
 }
 
 #[test]
+fn reconcile_backlinks_a_frontmatter_wikilink() {
+    // #395 end-to-end: a project's `core_question:` is a FRONTMATTER
+    // wikilink (its body has none). After reconcile the question is
+    // backlinked from the project — the frontmatter scan feeds the backlink
+    // graph at the reconcile layer, not only body links.
+    let (store, index) = fixtures();
+    let question = "---\ntype: question\ndomain: research\n---\n\n# q?\n";
+    // No body wikilink anywhere — the only link is in the frontmatter.
+    let project =
+        "---\ntype: project\ncore_question: \"[[questions/research/q]]\"\n---\n\n# Surrogate\n";
+    store
+        .write_file(&vp("questions/research/q.md"), question)
+        .unwrap();
+    store
+        .write_file(&vp("projects/surrogate.md"), project)
+        .unwrap();
+
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    let backlinks = index
+        .find_backlinks(&vp("questions/research/q.md"))
+        .unwrap();
+    assert!(
+        backlinks.contains(&vp("projects/surrogate.md")),
+        "the question should be backlinked from the project's core_question: {backlinks:?}"
+    );
+}
+
+#[test]
 fn reconcile_marks_wikilink_unresolved_when_basename_is_ambiguous() {
     let (store, index) = fixtures();
     seed_note(&store, "a/foo.md", "daily", "");

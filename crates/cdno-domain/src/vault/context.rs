@@ -97,10 +97,9 @@ pub struct ProjectBacklinks {
 }
 
 /// Backlinks to a question, grouped by source note type (#354) — the
-/// question-side mirror of [`ProjectBacklinks`]. Same caveat: only
-/// body-level references are indexed, so a project's `core_question:`
-/// frontmatter link does *not* appear here; a body wikilink to the
-/// question does.
+/// question-side mirror of [`ProjectBacklinks`]. Both body wikilinks and
+/// frontmatter wikilinks are indexed (#395), so a project that answers this
+/// question via `core_question:` appears in `projects` here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuestionBacklinks {
     pub projects: Vec<VaultPath>,
@@ -407,14 +406,11 @@ impl Vault {
     /// note type. Uses the index's `links` table — no body
     /// re-parsing.
     ///
-    /// **Scope limitation:** the index extracts wikilinks from the
-    /// body only (see `cdno-core/src/reconcile.rs`). Frontmatter
-    /// wikilinks — e.g. a portfolio's `project: "[[projects/foo]]"`
-    /// field, or an evidence note's `origin:` — are *not* indexed
-    /// today and therefore not returned here. Body-level references
-    /// like a question's `## Related Projects - [[projects/foo]]`
-    /// section work as expected. Surfacing the frontmatter links
-    /// would need an extractor extension at the core layer.
+    /// The index extracts wikilinks from both the body and the
+    /// frontmatter (#395), so a portfolio's `project: "[[projects/foo]]"`
+    /// field and an evidence note's `origin:` are returned here alongside
+    /// body-level references (e.g. a question's `## Related Projects -
+    /// [[projects/foo]]` section).
     pub fn project_backlinks(&self, slug: &str) -> Result<ProjectBacklinks, DomainError> {
         let (project_path, _doc, _project) = self.resolve_any_project(slug)?;
         let backlinks = self.index.find_backlinks(&project_path)?;
@@ -458,10 +454,10 @@ impl Vault {
     /// question-side mirror of [`project_backlinks`](Self::project_backlinks),
     /// reusing the index's `find_backlinks`. The strategic questions grid
     /// renders these as project / evidence chips alongside the portfolio
-    /// chips. Same frontmatter caveat as `project_backlinks`: a project's
-    /// `core_question:` frontmatter link isn't indexed and won't appear here;
-    /// body-level references (a portfolio's or evidence note's `[[questions/…]]`
-    /// wikilink) do.
+    /// chips. Both body and frontmatter wikilinks are indexed (#395), so a
+    /// project that answers this question via `core_question:` lands in the
+    /// `projects` bucket, as does a body reference (a portfolio's or evidence
+    /// note's `[[questions/…]]` wikilink).
     pub fn question_backlinks(&self, slug: &str) -> Result<QuestionBacklinks, DomainError> {
         let (question_path, _qf) = self.resolve_question_by_slug(slug)?;
         let backlinks = self.index.find_backlinks(&question_path)?;

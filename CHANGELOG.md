@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **Backlinks now catch frontmatter wikilinks, not just body ones** (#395) — the index scans a note's
+  frontmatter string values for `[[wikilinks]]` alongside its body, so `find_backlinks` (and thus
+  `project_backlinks` / `question_backlinks`, `cdno`'s backlink surfaces) now includes a project's
+  `core_question:`, a portfolio's `project:`, and an evidence note's `origin:`. In particular, the
+  Strategic questions grid's project chips (#354) now populate for the common case — a project that
+  answers a question via `core_question:` — instead of only hand-written body references. The scan is
+  domain-agnostic (any `[[…]]` in any frontmatter string), so non-link fields contribute nothing.
+  Existing vaults pick this up on their next reconcile (every launch). Lint's broken-link scan stays
+  deliberately body-only.
+
 ## [0.21.0] - 2026-07-11
 
 ### Added

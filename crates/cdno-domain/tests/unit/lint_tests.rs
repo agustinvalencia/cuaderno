@@ -768,9 +768,10 @@ fn lint_flags_a_folder_note_link_missing_its_index_stem() {
 
 #[test]
 fn lint_ignores_a_dangling_frontmatter_link() {
-    // `core_question` is a frontmatter wikilink; broken-link scanning is
-    // body-only (matching the reconciler's link graph), so a dangling
-    // one is not flagged.
+    // `core_question` is a frontmatter wikilink; lint's broken-link scan is
+    // deliberately body-only (even though the reconciler now indexes
+    // frontmatter links as backlinks, #395), so a dangling one is not
+    // flagged here.
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: \"[[questions/ghost]]\"\n---\n# Foo\n";
     let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
 

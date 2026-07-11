@@ -144,8 +144,9 @@ function PortfolioChip({ slug }: { slug: string }) {
   );
 }
 
-/** A project that references the question in its body — routes to the
- * project detail page (#354). */
+/** A project that references the question — via its `core_question:`
+ * frontmatter link or a body wikilink (#354, #395) — routes to the project
+ * detail page. */
 function ProjectChip({ slug }: { slug: string }) {
   return (
     <Link to={`/projects/${slug}`} className={chipClass}>

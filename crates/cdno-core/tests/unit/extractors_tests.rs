@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use cdno_core::extractors::{
-    WikilinkRaw, extract_inline_tags, extract_wikilinks, resolve_wikilinks,
+    WikilinkRaw, extract_frontmatter_wikilinks, extract_inline_tags, extract_wikilinks,
+    resolve_wikilinks,
 };
 use cdno_core::path::VaultPath;
 
@@ -199,6 +200,37 @@ fn extract_wikilinks_skips_empty_brackets() {
 #[test]
 fn extract_wikilinks_skips_links_spanning_newlines() {
     assert!(extract_wikilinks("[[foo\nbar]]").is_empty());
+}
+
+#[test]
+fn extract_frontmatter_wikilinks_scans_string_values_only() {
+    // A link-bearing scalar (core_question), a nested one, and an array —
+    // all caught; non-link scalars and non-strings contribute nothing (#395).
+    let fm = serde_json::json!({
+        "type": "project",
+        "status": "active",
+        "created": "2026-04-01",
+        "core_question": "[[questions/research/surrogate-cost]]",
+        "collaborators": ["[[people/ada]]", "not a link"],
+        "count": 3,
+        "meta": { "origin": "[[portfolios/x/_index]]" },
+    });
+    let targets: Vec<String> = extract_frontmatter_wikilinks(&fm)
+        .into_iter()
+        .map(|w| w.target)
+        .collect();
+    assert!(targets.contains(&"questions/research/surrogate-cost".to_owned()));
+    assert!(targets.contains(&"people/ada".to_owned()));
+    assert!(targets.contains(&"portfolios/x/_index".to_owned()));
+    // Non-link scalars (status/created/count) and the plain array string
+    // yield nothing beyond the three wikilinks.
+    assert_eq!(targets.len(), 3, "{targets:?}");
+}
+
+#[test]
+fn extract_frontmatter_wikilinks_empty_when_no_links() {
+    let fm = serde_json::json!({ "type": "action", "status": "active", "due": null });
+    assert!(extract_frontmatter_wikilinks(&fm).is_empty());
 }
 
 #[test]
