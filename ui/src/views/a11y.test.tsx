@@ -94,11 +94,14 @@ const STRATEGIC: StrategicBundle = {
   today: "2026-07-08",
   questions: [
     {
-      slug: "surrogate-fidelity",
-      domain: "research",
-      status: "active",
-      question_text: "How faithful is the surrogate?",
-      updated: "2026-06-15",
+      summary: {
+        slug: "surrogate-fidelity",
+        domain: "research",
+        status: "active",
+        question_text: "How faithful is the surrogate?",
+        updated: "2026-06-15",
+      },
+      backlinks: { projects: [], portfolios: [], evidence: [], other: [] },
     },
   ],
   portfolios: [

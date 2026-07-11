@@ -54,10 +54,11 @@ pub struct StrategicBundle {
     /// timeline labels months and splits past/upcoming against it, and
     /// the portfolio-health tiers read their staleness from it.
     pub today: NaiveDate,
-    /// Every `status: active` question, sorted `(domain, slug)`. The
-    /// frontend groups by domain (research / life) for the grid — the
-    /// domain rides along on each row so no second query is needed.
-    pub questions: Vec<QuestionSummary>,
+    /// Every `status: active` question, sorted `(domain, slug)`, each with
+    /// its backlinks bucketed by source note type. The frontend groups by
+    /// domain (research / life) for the grid and renders project / evidence
+    /// chips from the backlinks alongside the portfolio chips (#354).
+    pub questions: Vec<QuestionStrategicRow>,
     /// Per-question evidence dossiers with their counts and staleness,
     /// for the portfolio-health table. Reused verbatim from the M8
     /// browser so the two surfaces can't disagree on the numbers.
@@ -84,6 +85,33 @@ pub struct StrategicBundle {
     /// (the `commitments` query folds both together). Fed to the shared
     /// `CommitmentsTimeline` in read-only mode.
     pub commitments: Vec<CommitmentEntry>,
+}
+
+/// One question row in the strategic grid: the summary paired with its
+/// backlinks bucketed by source note type (#354). Mirrors
+/// [`StewardshipStrategicRow`] — a domain summary plus a precomputed
+/// companion the grid renders without a second query.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct QuestionStrategicRow {
+    pub summary: QuestionSummary,
+    pub backlinks: QuestionBacklinksView,
+}
+
+/// A question's backlinks, grouped by source note type, as path strings
+/// ready for the frontend to render and route on (#354). The frontend-side
+/// mirror of the domain `QuestionBacklinks` (which holds `VaultPath`s and
+/// carries no ts-rs derives) — the same shape `BacklinksView` gives the
+/// project detail page.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct QuestionBacklinksView {
+    pub projects: Vec<String>,
+    pub portfolios: Vec<String>,
+    pub evidence: Vec<String>,
+    pub other: Vec<String>,
 }
 
 /// One project in the allocator or on the parked shelf — a deliberately
@@ -131,7 +159,26 @@ pub fn get_strategic_bundle_impl(
     vault: &Vault,
     today: NaiveDate,
 ) -> Result<StrategicBundle, CmdError> {
-    let questions = vault.active_questions()?;
+    // Each active question carries its backlinks bucketed by source type
+    // (#354) — one extra read per question, matched to the handful the grid
+    // shows. `active_questions` is already sorted `(domain, slug)`.
+    let mut questions = Vec::new();
+    for summary in vault.active_questions()? {
+        // A per-question backlink lookup that fails must not blank the whole
+        // strategic view — e.g. a hand-edited vault with the same slug in
+        // both question domains resolves as `AmbiguousSlug`. Fall back to no
+        // backlinks for that one question rather than `?`-propagating.
+        let bl = vault.question_backlinks(&summary.slug).unwrap_or_default();
+        questions.push(QuestionStrategicRow {
+            backlinks: QuestionBacklinksView {
+                projects: paths_to_strings(&bl.projects),
+                portfolios: paths_to_strings(&bl.portfolios),
+                evidence: paths_to_strings(&bl.evidence),
+                other: paths_to_strings(&bl.other),
+            },
+            summary,
+        });
+    }
     let portfolios = vault.list_portfolios(today)?;
 
     let active = vault
@@ -227,6 +274,13 @@ pub fn entries_per_week(dates: &[NaiveDate], today: NaiveDate, weeks: usize) -> 
 /// kept trivially in sync via the ISO weekday arithmetic.
 fn monday_of(date: NaiveDate) -> NaiveDate {
     date - Duration::days(i64::from(date.weekday().num_days_from_monday()))
+}
+
+/// Render a bucket of backlink `VaultPath`s as the vault-relative path
+/// strings the frontend renders and routes on (#354). Mirrors the
+/// `to_strings` helper the project-detail command uses for `BacklinksView`.
+fn paths_to_strings(paths: &[VaultPath]) -> Vec<String> {
+    paths.iter().map(|p| p.to_string()).collect()
 }
 
 /// The slug (file stem) of a project's map path. Mirrors `weekly.rs`.

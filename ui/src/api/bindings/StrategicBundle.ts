@@ -2,7 +2,7 @@
 import type { CommitmentEntry } from "./CommitmentEntry";
 import type { PortfolioSummary } from "./PortfolioSummary";
 import type { ProjectSlot } from "./ProjectSlot";
-import type { QuestionSummary } from "./QuestionSummary";
+import type { QuestionStrategicRow } from "./QuestionStrategicRow";
 import type { StewardshipStrategicRow } from "./StewardshipStrategicRow";
 
 /**
@@ -22,11 +22,12 @@ export type StrategicBundle = {
  */
 today: string, 
 /**
- * Every `status: active` question, sorted `(domain, slug)`. The
- * frontend groups by domain (research / life) for the grid — the
- * domain rides along on each row so no second query is needed.
+ * Every `status: active` question, sorted `(domain, slug)`, each with
+ * its backlinks bucketed by source note type. The frontend groups by
+ * domain (research / life) for the grid and renders project / evidence
+ * chips from the backlinks alongside the portfolio chips (#354).
  */
-questions: Array<QuestionSummary>, 
+questions: Array<QuestionStrategicRow>, 
 /**
  * Per-question evidence dossiers with their counts and staleness,
  * for the portfolio-health table. Reused verbatim from the M8
