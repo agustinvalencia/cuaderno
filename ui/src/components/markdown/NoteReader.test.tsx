@@ -55,16 +55,19 @@ afterEach(() => {
   clearMocks();
 });
 
-test("renders the note title, frontmatter chips, and body", async () => {
+test("renders the note title, a separated frontmatter panel, and body", async () => {
   renderReader(
     () => {},
     () => {},
     () => null,
   );
   expect(await screen.findByText("Example note")).toBeDefined();
-  // Scalar frontmatter becomes chips; the array field is skipped.
-  expect(screen.getByText("context: work")).toBeDefined();
-  expect(screen.queryByText(/tags:/)).toBeNull();
+  // Scalar frontmatter shows in a distinct, labelled metadata block as
+  // key/value pairs; the array field is skipped.
+  expect(screen.getByText("Properties")).toBeDefined();
+  expect(screen.getByText("context")).toBeDefined();
+  expect(screen.getByText("work")).toBeDefined();
+  expect(screen.queryByText(/tags/)).toBeNull();
 });
 
 test("a project wikilink navigates and closes the reader", async () => {

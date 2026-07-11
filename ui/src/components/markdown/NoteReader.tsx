@@ -10,30 +10,13 @@ import { errorMessage, openInEditor, readNote, resolveWikilink } from "../../api
 import { useToast } from "../../shell/Toasts";
 import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
 import Markdown from "./Markdown";
+import { MetaPanel } from "./MetaPanel";
 
 /** The file stem of a vault path — `projects/foo.md` → `foo` — for
  * deriving a route slug from a resolved note path. */
 function pathStem(path: string): string {
   const base = path.split("/").pop() ?? path;
   return base.replace(/\.md$/i, "");
-}
-
-/** Flat scalar frontmatter as `key: value` chips. Objects and arrays
- * are skipped — a chip row is for at-a-glance metadata (type, context,
- * created), not nested structure. Returns `[]` for anything that isn't
- * a plain object (the wire type is `unknown`). */
-function frontmatterChips(frontmatter: unknown): [string, string][] {
-  if (!frontmatter || typeof frontmatter !== "object" || Array.isArray(frontmatter)) {
-    return [];
-  }
-  const chips: [string, string][] = [];
-  for (const [key, value] of Object.entries(frontmatter)) {
-    if (value === null) continue;
-    const scalar =
-      typeof value === "string" || typeof value === "number" || typeof value === "boolean";
-    if (scalar) chips.push([key, String(value)]);
-  }
-  return chips;
 }
 
 export default function NoteReader({
@@ -83,8 +66,6 @@ export default function NoteReader({
     }
   }
 
-  const chips = frontmatterChips(data?.frontmatter);
-
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
       <SheetContent className="w-[380px] max-w-[90vw]" aria-describedby={undefined}>
@@ -109,18 +90,7 @@ export default function NoteReader({
             <p className="text-sm text-ink-muted">This note could not be read.</p>
           ) : (
             <>
-              {chips.length > 0 && (
-                <div className="mb-4 flex flex-wrap gap-1.5">
-                  {chips.map(([key, value]) => (
-                    <span
-                      key={key}
-                      className="rounded bg-bg-sunken px-1.5 py-0.5 text-xs text-ink-muted"
-                    >
-                      {key}: {value}
-                    </span>
-                  ))}
-                </div>
-              )}
+              <MetaPanel frontmatter={data.frontmatter} className="mb-5" />
               <Markdown body={data.body} onWikilink={onWikilink} />
             </>
           )}
