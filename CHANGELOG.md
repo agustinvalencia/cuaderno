@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-11
+
 ### Added
 
 - **Backlink chips on the Strategic questions grid** (#354) — each question card now shows chips for
