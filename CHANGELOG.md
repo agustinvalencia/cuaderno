@@ -6,7 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
-## [0.22.0] - 2026-07-12
+### Changed
+
+- **Note metadata now reads as metadata, and log lines as cards** (desktop UI) — two
+  presentation refinements backed by shared primitives. A note's frontmatter in the reader
+  moves out of a bare chip row (which abutted the body and read like the note's first heading)
+  into a distinct, labelled `MetaPanel` — a sunken, bordered "Properties" block of key/value
+  pairs clearly separated from the prose below. And a new reusable `LogCard` gives timestamped
+  log lines a scannable "when + what" hierarchy (a fixed-width time/date column beside the text);
+  it replaces the flat bullet list under a project's "Recently in your logs". Both are pure view
+  changes — no domain or wire-format change.
 
 ### Changed
 

@@ -29,6 +29,7 @@ import {
 import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import Markdown from "../../components/markdown/Markdown";
+import { LogCard } from "../../components/ui/log-card";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
@@ -523,13 +524,17 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
             Recently in your logs
           </h2>
-          <ul className="mt-2 space-y-1">
+          <div className="mt-2 space-y-1.5">
             {data.log_mentions.map((mention, index) => (
-              <li key={`${mention.date}-${mention.time}-${index}`} className="text-sm text-ink-muted">
-                <span className="text-ink-faint">{shortDate(mention.date)}</span> {mention.text}
-              </li>
+              <LogCard
+                key={`${mention.date}-${mention.time}-${index}`}
+                date={shortDate(mention.date)}
+                time={mention.time.slice(0, 5)}
+              >
+                {mention.text}
+              </LogCard>
             ))}
-          </ul>
+          </div>
         </section>
       )}
 
