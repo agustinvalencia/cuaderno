@@ -581,7 +581,7 @@ pub struct MonthlyContextDto {
 
 // ---------------------------------------------------------------------
 // Project context — composes the full project map, recent daily-log
-// mentions, body backlinks grouped by source type, and (when set)
+// mentions, backlinks grouped by source type, and (when set)
 // the resolved core_question for the `get_project_context` MCP tool.
 // ---------------------------------------------------------------------
 
@@ -725,11 +725,10 @@ pub struct ProjectContextDto {
     /// (GH #352). The drop is observable (the slice shrinks); the full
     /// history stays one `read_daily_note` away.
     pub recent_mentions: Vec<DailyLogLineDto>,
-    /// Body-level backlinks grouped by source note type, each group
-    /// capped to [`PROJECT_BACKLINKS_PER_GROUP_MAX`] for token-cap safety
-    /// (GH #388). Frontmatter wikilinks aren't indexed and don't appear
-    /// here — see the [`cdno_domain::Vault::project_backlinks`] doc
-    /// comment.
+    /// Backlinks grouped by source note type, each group capped to
+    /// [`PROJECT_BACKLINKS_PER_GROUP_MAX`] for token-cap safety (GH #388).
+    /// Includes both body and frontmatter wikilinks (GH #395) — see the
+    /// [`cdno_domain::Vault::project_backlinks`] doc comment.
     pub backlinks: ProjectBacklinksDto,
     /// The question this project answers, when `core_question:` is
     /// set on the project map AND that question exists in the vault.

@@ -213,6 +213,12 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
 /// contain no `[[...]]` and contribute nothing. Fed alongside the body links
 /// during reconciliation so `find_backlinks` sees frontmatter references,
 /// not just body ones.
+///
+/// The one accepted cost of not knowing field semantics: a literal `[[…]]`
+/// typed into a freeform frontmatter field (e.g. an action's `criteria:`, or
+/// an arbitrary key on a custom note type) becomes a real edge too. Rare,
+/// and no worse than the same text in the body — a resolved edge is a
+/// legitimate backlink; an unresolved one is a harmless dangling edge.
 pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<WikilinkRaw> {
     fn walk(value: &serde_json::Value, out: &mut Vec<WikilinkRaw>) {
         match value {

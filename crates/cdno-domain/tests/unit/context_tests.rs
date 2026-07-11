@@ -318,11 +318,10 @@ fn daily_log_mentions_excludes_dailies_before_since() {
 
 #[test]
 fn project_backlinks_groups_body_wikilinks_by_source_note_type() {
-    // NB: only body-level wikilinks are indexed (see the method doc).
-    // Portfolios and evidence link to projects via FRONTMATTER fields
-    // (`project:`, `origin:`) which aren't currently scanned; so we
-    // test the question case — questions reference projects via the
-    // `## Related Projects` body section.
+    // This case pins the body-link path: a question references the project
+    // via a `## Related Projects` body section. (The frontmatter-link path —
+    // a portfolio's `project:`, an evidence note's `origin:` — is indexed
+    // too since #395; see `project_backlinks_includes_a_frontmatter_link`.)
     let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n\n## Current State\nN/A.\n\n## Next Actions\n";
     let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# q?\n\n## Related Projects\n- [[projects/surrogate]]\n";
     let (vault, _store) = vault_with(&[
@@ -343,6 +342,20 @@ fn project_backlinks_returns_empty_when_no_links() {
     let bl = vault.project_backlinks("lonely").unwrap();
     assert!(bl.portfolios.is_empty());
     assert!(bl.questions.is_empty());
+}
+
+#[test]
+fn project_backlinks_includes_a_frontmatter_link() {
+    // A portfolio links its project via the `project:` FRONTMATTER field,
+    // not the body; since #395 that surfaces in the `portfolios` bucket.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n";
+    let portfolio = "---\ntype: portfolio\nquestion: How does it behave?\nproject: \"[[projects/surrogate]]\"\ncreated: 2026-05-01\n---\n\n# Surrogate dossier\n";
+    let (vault, _store) = vault_with(&[
+        ("projects/surrogate.md", project),
+        ("portfolios/surrogate/_index.md", portfolio),
+    ]);
+    let bl = vault.project_backlinks("surrogate").unwrap();
+    assert_eq!(bl.portfolios.len(), 1, "frontmatter project: link: {bl:?}");
 }
 
 // ---------------------------------------------------------------------

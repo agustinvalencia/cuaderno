@@ -193,9 +193,10 @@ impl Vault {
             }
 
             // Broken-wikilink check (#205). Body-scanned (frontmatter
-            // links like `project:`/`origin:` are out of scope, matching
-            // the reconciler's link graph) and resolved against the
-            // *current* path set rather than the index's stored
+            // links like `project:`/`origin:` are out of scope for lint —
+            // the reconciler's backlink graph now indexes them (#395), but
+            // lint deliberately re-extracts the body here) and resolved
+            // against the *current* path set rather than the index's stored
             // resolution -- which goes stale when a link target is
             // deleted without the linking note changing (the
             // reconciler's mtime fast-path skips it). A dangling link

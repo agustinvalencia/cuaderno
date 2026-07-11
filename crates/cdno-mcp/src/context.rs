@@ -221,7 +221,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), body backlinks grouped by source note type (each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
     )]
     pub async fn get_project_context(
         &self,
