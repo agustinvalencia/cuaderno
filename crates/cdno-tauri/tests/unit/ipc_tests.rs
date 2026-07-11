@@ -1529,15 +1529,23 @@ fn get_strategic_bundle_round_trips_and_composes_every_panel() {
         "the parked project is on the shelf: {value}"
     );
 
-    // The active question rides with its domain for the grid grouping.
+    // The active question rides with its domain (on the summary) for the
+    // grid grouping, and its backlinks bucket for the chips (#354). The
+    // seeded portfolio's `_index.md` body wikilinks this question, so it
+    // surfaces in the `portfolios` backlink bucket.
     let questions = value["questions"]
         .as_array()
         .expect("questions is an array");
+    let q = questions
+        .iter()
+        .find(|q| q["summary"]["slug"] == "surrogate-fidelity")
+        .expect("the research question is carried");
+    assert_eq!(q["summary"]["domain"], "research", "{value}");
     assert!(
-        questions
-            .iter()
-            .any(|q| q["slug"] == "surrogate-fidelity" && q["domain"] == "research"),
-        "the research question is carried: {value}"
+        q["backlinks"]["portfolios"]
+            .as_array()
+            .is_some_and(|b| b.iter().any(|p| p == "portfolios/surrogate/_index.md")),
+        "the linking portfolio surfaces as a backlink chip: {value}"
     );
 
     // The portfolio-health row with its evidence count.

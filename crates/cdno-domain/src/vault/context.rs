@@ -96,6 +96,22 @@ pub struct ProjectBacklinks {
     pub other: Vec<VaultPath>,
 }
 
+/// Backlinks to a question, grouped by source note type (#354) — the
+/// question-side mirror of [`ProjectBacklinks`]. Same caveat: only
+/// body-level references are indexed, so a project's `core_question:`
+/// frontmatter link does *not* appear here; a body wikilink to the
+/// question does.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QuestionBacklinks {
+    pub projects: Vec<VaultPath>,
+    pub portfolios: Vec<VaultPath>,
+    pub evidence: Vec<VaultPath>,
+    /// Anything else (actions, commitments, daily notes, hand-edited
+    /// references) — so a consumer can still render every backlink even
+    /// when the source type isn't one of the call-out groups.
+    pub other: Vec<VaultPath>,
+}
+
 /// One numeric time series lifted from a stewardship's tracking
 /// notes, ready for a trend chart. See [`Vault::tracking_series`].
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
@@ -427,6 +443,49 @@ impl Vault {
             &mut out.questions,
             &mut out.evidence,
             &mut out.actions,
+            &mut out.other,
+        ] {
+            bucket.sort_by(by_path);
+        }
+        Ok(out)
+    }
+
+    // -----------------------------------------------------------------
+    // question_backlinks
+    // -----------------------------------------------------------------
+
+    /// Backlinks to a question, grouped by source note type (#354) — the
+    /// question-side mirror of [`project_backlinks`](Self::project_backlinks),
+    /// reusing the index's `find_backlinks`. The strategic questions grid
+    /// renders these as project / evidence chips alongside the portfolio
+    /// chips. Same frontmatter caveat as `project_backlinks`: a project's
+    /// `core_question:` frontmatter link isn't indexed and won't appear here;
+    /// body-level references (a portfolio's or evidence note's `[[questions/…]]`
+    /// wikilink) do.
+    pub fn question_backlinks(&self, slug: &str) -> Result<QuestionBacklinks, DomainError> {
+        let (question_path, _qf) = self.resolve_question_by_slug(slug)?;
+        let backlinks = self.index.find_backlinks(&question_path)?;
+        let mut out = QuestionBacklinks::default();
+        for source in backlinks {
+            let bucket = match self.index.find_by_path(&source)? {
+                Some(entry) => match entry.note_type.as_str() {
+                    "project" => &mut out.projects,
+                    "portfolio" => &mut out.portfolios,
+                    "evidence" => &mut out.evidence,
+                    _ => &mut out.other,
+                },
+                // Backlink source whose index row has since gone (race
+                // between query and removal). Park in `other`, don't drop.
+                None => &mut out.other,
+            };
+            bucket.push(source);
+        }
+        // Deterministic output. VaultPath isn't Ord; compare on Path.
+        let by_path = |a: &VaultPath, b: &VaultPath| a.as_path().cmp(b.as_path());
+        for bucket in [
+            &mut out.projects,
+            &mut out.portfolios,
+            &mut out.evidence,
             &mut out.other,
         ] {
             bucket.sort_by(by_path);

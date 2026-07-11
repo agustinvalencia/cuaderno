@@ -13,7 +13,8 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::Context;
 use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
 use cdno_domain::{
-    CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, TrackingEntry,
+    CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, QuestionBacklinks,
+    TrackingEntry,
 };
 use chrono::{FixedOffset, NaiveDate};
 
@@ -342,6 +343,45 @@ fn project_backlinks_returns_empty_when_no_links() {
     let bl = vault.project_backlinks("lonely").unwrap();
     assert!(bl.portfolios.is_empty());
     assert!(bl.questions.is_empty());
+}
+
+// ---------------------------------------------------------------------
+// question_backlinks (#354)
+// ---------------------------------------------------------------------
+
+#[test]
+fn question_backlinks_groups_body_wikilinks_by_source_note_type() {
+    // Only body-level wikilinks are indexed (see the method doc); a
+    // project's `core_question:` frontmatter link is not. A project that
+    // references the question in its body lands in the `projects` bucket.
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# q?\n";
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n\n## Current State\nExploring [[questions/research/q]].\n\n## Next Actions\n";
+    let (vault, _store) = vault_with(&[
+        ("questions/research/q.md", question),
+        ("projects/surrogate.md", project),
+    ]);
+    let bl: QuestionBacklinks = vault.question_backlinks("q").unwrap();
+    assert_eq!(bl.projects.len(), 1, "{bl:?}");
+    assert!(bl.portfolios.is_empty());
+    assert!(bl.evidence.is_empty());
+    assert!(bl.other.is_empty());
+}
+
+#[test]
+fn question_backlinks_returns_empty_when_no_links() {
+    let question = "---\ntype: question\ndomain: life\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# lonely q?\n";
+    let (vault, _store) = vault_with(&[("questions/life/lonely.md", question)]);
+    let bl = vault.question_backlinks("lonely").unwrap();
+    assert!(bl.projects.is_empty());
+    assert!(bl.portfolios.is_empty());
+    assert!(bl.evidence.is_empty());
+    assert!(bl.other.is_empty());
+}
+
+#[test]
+fn question_backlinks_errors_on_missing_question() {
+    let (vault, _store) = vault_with(&[]);
+    assert!(vault.question_backlinks("nope").is_err());
 }
 
 // ---------------------------------------------------------------------

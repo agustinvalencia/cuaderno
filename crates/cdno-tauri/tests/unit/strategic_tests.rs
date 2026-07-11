@@ -102,9 +102,12 @@ fn bundle_composes_every_strategic_source() {
     assert_eq!(bundle.parked.len(), 1);
     assert_eq!(bundle.parked[0].slug, "beta");
 
-    // The active research question is carried with its domain for the grid.
+    // The active research question is carried with its domain (on the
+    // summary) and its backlinks bucket for the grid (#354).
     assert_eq!(bundle.questions.len(), 1);
-    assert_eq!(bundle.questions[0].domain.as_str(), "research");
+    assert_eq!(bundle.questions[0].summary.domain.as_str(), "research");
+    // No note in this fixture links the question, so every bucket is empty.
+    assert!(bundle.questions[0].backlinks.projects.is_empty());
 
     // The portfolio-health row rides through with its evidence count.
     let surrogate = bundle

@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Backlink chips on the Strategic questions grid** (#354) — each question card now shows chips for
+  the notes that reference it: projects that wikilink the question (routing to the project detail
+  page) and evidence/other backlinks (opening in the reader), alongside the existing
+  slug-correlated portfolio chips. Backed by a new `question_backlinks` domain method (the
+  question-side mirror of `project_backlinks`), surfaced on the strategic bundle's question rows.
+  (Frontmatter links like a project's `core_question:` aren't indexed, so only body-level references
+  appear.)
+
 ## [0.20.1] - 2026-07-11
 
 ### Added

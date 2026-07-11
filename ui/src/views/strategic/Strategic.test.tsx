@@ -17,18 +17,27 @@ const BUNDLE: StrategicBundle = {
   today: "2026-07-08",
   questions: [
     {
-      slug: "surrogate-fidelity",
-      domain: "research",
-      status: "active",
-      question_text: "How faithful is the surrogate?",
-      updated: "2026-06-15",
+      summary: {
+        slug: "surrogate-fidelity",
+        domain: "research",
+        status: "active",
+        question_text: "How faithful is the surrogate?",
+        updated: "2026-06-15",
+      },
+      // A project references this question in its body → a routed chip.
+      // Use a slug that doesn't collide with the allocator's alpha/beta
+      // slots, so `getByText` in unrelated tests stays unambiguous.
+      backlinks: { projects: ["projects/delta.md"], portfolios: [], evidence: [], other: [] },
     },
     {
-      slug: "balance",
-      domain: "life",
-      status: "active",
-      question_text: "What does a sustainable week look like?",
-      updated: "2026-06-10",
+      summary: {
+        slug: "balance",
+        domain: "life",
+        status: "active",
+        question_text: "What does a sustainable week look like?",
+        updated: "2026-06-10",
+      },
+      backlinks: { projects: [], portfolios: [], evidence: [], other: [] },
     },
   ],
   portfolios: [
@@ -144,6 +153,14 @@ test("a question without a matching portfolio shows no chip", async () => {
   // links out from it.
   await screen.findByText("What does a sustainable week look like?");
   expect(screen.queryByRole("link", { name: "balance" })).toBeNull();
+});
+
+test("a question backlinked by a project shows a chip routing to that project (#354)", async () => {
+  renderStrategic(BUNDLE);
+  // The "surrogate-fidelity" question is referenced by projects/delta.md,
+  // so its card carries a project chip linking to that project's route.
+  const chip = await screen.findByRole("link", { name: "delta" });
+  expect(chip.getAttribute("href")).toBe("/projects/delta");
 });
 
 test("the allocator draws filled slots and dashed open slots from the cap", async () => {
