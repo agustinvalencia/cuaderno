@@ -2,7 +2,7 @@
 // note, a note-less day/week/month shows the calm empty state, and the
 // quick-nav fires the right backend read with the backend-stamped date.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -101,6 +101,30 @@ test("opens on today's note in the embedded panel", async () => {
   // The panel title is the full date — the weekday + a comma (locale
   // orders day/month differently, so match the stable parts only).
   expect(screen.getByRole("heading", { name: /Wednesday,.*2026/ })).toBeDefined();
+});
+
+test("the month grid is a hideable picker, collapsing once a day is chosen", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  // The note leads: the grid isn't shown until summoned (day 15 is the
+  // one note-bearing cell in the fixture, so its marker stands in for the
+  // grid's presence).
+  await screen.findByRole("heading", { name: "Wednesday" });
+  const pick = screen.getByRole("button", { name: "Pick a date" });
+  expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
+
+  // "Pick a date" reveals the month grid.
+  fireEvent.click(pick);
+  const day = await screen.findByRole("button", { name: /15, has a note/ });
+
+  // Choosing a day reads it and re-collapses the picker.
+  fireEvent.click(day);
+  expect(screen.getByRole("button", { name: "Pick a date" })).toBeDefined();
+  expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
+  const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
+  expect(reads).toContain("2026-07-15");
 });
 
 test("a note-less day shows the calm empty state, not an error", async () => {

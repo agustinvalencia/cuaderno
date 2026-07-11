@@ -16,6 +16,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   log lines a scannable "when + what" hierarchy (a fixed-width time/date column beside the text);
   it replaces the flat bullet list under a project's "Recently in your logs" (#401). Both are pure
   view changes — no domain or wire-format change.
+- **The desktop calendar presents a day's note in sections, not as a raw blob** (desktop UI) — the
+  embedded note panel now parses the note (frontend-side; the domain still hands back one markdown
+  blob, the source of truth) and lays it out with hierarchy: the frontmatter as a separated
+  `MetaPanel` (it previously rendered as a stray rule-and-text run), each `##` section under a clear
+  title, and the append-only `## Logs` history as a scrollable stack of timestamped `LogCard`s
+  instead of an undifferentiated wall. The month grid, which used to occupy a fixed column and
+  crowd the note, is now a hideable **Pick a date** picker (collapsed by default, auto-collapsing
+  once a day is chosen) so the note leads; day-to-day movement stays on the panel's prev/next.
+  Weekly and monthly notes get the same sectioned treatment. A pure view change — no domain or
+  wire-format change. (#402)
 
 ## [0.22.0] - 2026-07-12
 

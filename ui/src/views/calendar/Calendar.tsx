@@ -6,10 +6,10 @@
 // (prev_date / next_date / week_of / month), so the frontend never
 // computes a domain date for a read (plan §3.7). A day, week, or month
 // with no note shows a calm empty state — never an error.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import Markdown from "../../components/markdown/Markdown";
+import NoteContent from "./NoteContent";
 import type { DailyView } from "../../api/bindings/DailyView";
 import type { MonthlyView } from "../../api/bindings/MonthlyView";
 import type { WeeklyView } from "../../api/bindings/WeeklyView";
@@ -98,6 +98,14 @@ function CalendarBody({ today }: { today: string }) {
   const [selectedDate, setSelectedDate] = useState<string>(today);
   const [mode, setMode] = useState<PanelMode>("daily");
 
+  // The month grid is a secondary picker, collapsed by default so the
+  // note leads. Summoned via "Pick a date"; auto-hidden once a day is
+  // chosen. The toggle is always mounted (the picker toggles via `hidden`,
+  // keeping its `aria-controls` target valid), so focus can return to it
+  // when a selection collapses the grid — never lost to `document.body`.
+  const [showPicker, setShowPicker] = useState(false);
+  const pickToggleRef = useRef<HTMLButtonElement>(null);
+
   // The days in the shown month that have a note, for the grid marks.
   const monthDays = useQuery({
     queryKey: ["list_daily_dates", viewYear, viewMonth],
@@ -164,6 +172,10 @@ function CalendarBody({ today }: { today: string }) {
   function selectDay(iso: string) {
     setSelectedDate(iso);
     setMode("daily");
+    // Return focus to the (always-mounted) toggle before the grid hides,
+    // so a keyboard user's place isn't lost to document.body.
+    pickToggleRef.current?.focus();
+    setShowPicker(false);
   }
 
   // Jump to a neighbour day the backend stamped (never computed here).
@@ -189,59 +201,81 @@ function CalendarBody({ today }: { today: string }) {
   );
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <h1 className="text-xl font-semibold text-ink">Calendar</h1>
-
-      <div className="mt-6 grid grid-cols-1 gap-8 md:grid-cols-[20rem_1fr]">
-        {/* Left: the month grid with its prev/next-month paging. */}
-        <section aria-label="Month" className="min-w-0">
-          <div className="mb-3 flex items-center justify-between">
-            <button
-              type="button"
-              onClick={() => pageMonth(-1)}
-              aria-label="Previous month"
-              className="rounded border border-line px-2 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              ‹
-            </button>
-            <span className="text-sm font-medium text-ink">
-              {monthLabel(`${viewYear}-${viewMonth < 10 ? `0${viewMonth}` : viewMonth}`)}
-            </span>
-            <button
-              type="button"
-              onClick={() => pageMonth(1)}
-              aria-label="Next month"
-              className="rounded border border-line px-2 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              ›
-            </button>
-          </div>
-          <MonthGrid
-            year={viewYear}
-            month={viewMonth}
-            noteDays={noteDays}
-            selectedDay={selectedDayInView}
-            onSelectDay={selectDay}
-          />
-        </section>
-
-        {/* Right: the embedded note panel. */}
-        <section aria-label="Note" className="min-w-0">
-          <Panel
-            mode={mode}
-            setMode={setMode}
-            daily={daily.data}
-            dailyPending={daily.isPending}
-            weekly={weekly.data}
-            weeklyPending={weekly.isPending && weekly.fetchStatus !== "idle"}
-            monthly={monthly.data}
-            monthlyPending={monthly.isPending && monthly.fetchStatus !== "idle"}
-            selectedDate={selectedDate}
-            onGoToDay={goToDay}
-            onWikilink={openTarget}
-          />
-        </section>
+    <div className="mx-auto max-w-3xl p-8">
+      {/* The note is the hero; the month grid is a secondary, hideable
+          date picker (UI request 2026-07-12) — day-to-day movement uses
+          the panel's prev/next, and the grid is only summoned for a
+          farther jump. */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-ink">Calendar</h1>
+        <button
+          type="button"
+          ref={pickToggleRef}
+          onClick={() => setShowPicker((open) => !open)}
+          aria-expanded={showPicker}
+          aria-controls="calendar-date-picker"
+          className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink"
+        >
+          {showPicker ? "Hide calendar" : "Pick a date"}
+        </button>
       </div>
+
+      {/* Kept mounted and toggled via `hidden` (not conditionally
+          rendered) so the toggle's `aria-controls` always resolves; a
+          `hidden` region also drops out of the a11y tree when collapsed. */}
+      <section
+        id="calendar-date-picker"
+        aria-label="Month"
+        hidden={!showPicker}
+        className="mt-4 rounded-lg border border-line bg-bg-surface p-4"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => pageMonth(-1)}
+            aria-label="Previous month"
+            className="rounded border border-line px-2 py-1 text-sm text-ink-muted hover:text-ink"
+          >
+            ‹
+          </button>
+          <span className="text-sm font-medium text-ink">
+            {monthLabel(
+              `${viewYear}-${viewMonth < 10 ? `0${viewMonth}` : viewMonth}`,
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => pageMonth(1)}
+            aria-label="Next month"
+            className="rounded border border-line px-2 py-1 text-sm text-ink-muted hover:text-ink"
+          >
+            ›
+          </button>
+        </div>
+        <MonthGrid
+          year={viewYear}
+          month={viewMonth}
+          noteDays={noteDays}
+          selectedDay={selectedDayInView}
+          onSelectDay={selectDay}
+        />
+      </section>
+
+      <section aria-label="Note" className="mt-6 min-w-0">
+        <Panel
+          mode={mode}
+          setMode={setMode}
+          daily={daily.data}
+          dailyPending={daily.isPending}
+          weekly={weekly.data}
+          weeklyPending={weekly.isPending && weekly.fetchStatus !== "idle"}
+          monthly={monthly.data}
+          monthlyPending={monthly.isPending && monthly.fetchStatus !== "idle"}
+          selectedDate={selectedDate}
+          onGoToDay={goToDay}
+          onWikilink={openTarget}
+        />
+      </section>
     </div>
   );
 }
@@ -300,7 +334,9 @@ function Panel({
   return (
     <div className="rounded-lg border border-line bg-bg-surface">
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">{title}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+          {title}
+        </h2>
         {path && (
           <button
             type="button"
@@ -315,7 +351,10 @@ function Panel({
       {/* Quick-nav: prev/next day step through the backend-stamped
           neighbours; the day/week/month toggles switch which note the
           panel shows for the selected day. */}
-      <nav aria-label="Note navigation" className="flex flex-wrap items-center gap-1 px-4 py-2">
+      <nav
+        aria-label="Note navigation"
+        className="flex flex-wrap items-center gap-1 px-4 py-2"
+      >
         <button
           type="button"
           disabled={!canJump}
@@ -362,12 +401,14 @@ function Panel({
       </nav>
 
       <div className="px-4 py-3">
-        {active.pending || (!active.view && mode === "daily" && dailyPending) ? (
+        {active.pending ||
+        (!active.view && mode === "daily" && dailyPending) ? (
           <p className="text-sm text-ink-muted">Reading…</p>
         ) : active.view && active.view.exists ? (
-          <div className="max-w-none">
-            <Markdown body={active.view.markdown} onWikilink={onWikilink} />
-          </div>
+          <NoteContent
+            markdown={active.view.markdown}
+            onWikilink={onWikilink}
+          />
         ) : (
           <EmptyState kind={mode} path={path} />
         )}
@@ -378,8 +419,15 @@ function Panel({
 
 /** The calm empty state for a day/week/month with no note yet — an
  * invitation, not an error, carrying the path to open in an editor. */
-function EmptyState({ kind, path }: { kind: PanelMode; path: string | undefined }) {
-  const noun = kind === "weekly" ? "week" : kind === "monthly" ? "month" : "day";
+function EmptyState({
+  kind,
+  path,
+}: {
+  kind: PanelMode;
+  path: string | undefined;
+}) {
+  const noun =
+    kind === "weekly" ? "week" : kind === "monthly" ? "month" : "day";
   return (
     <div className="rounded border border-line bg-bg-base p-6">
       <p className="text-sm text-ink-muted">No note for this {noun} yet.</p>
