@@ -201,6 +201,32 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
     links
 }
 
+/// Extract every `[[wikilink]]` from the string values of a note's parsed
+/// frontmatter (recursing into arrays and nested maps), in traversal order
+/// (#395).
+///
+/// Domain-agnostic by design: cdno-core knows nothing about which fields
+/// carry links, so it simply scans every scalar string. A link-bearing
+/// field — a project's `core_question:`, a portfolio's `project:`, an
+/// evidence note's `origin:` — holds a wikilink string this catches without
+/// naming the field, while non-link fields (`status:`, `created:`, `energy:`)
+/// contain no `[[...]]` and contribute nothing. Fed alongside the body links
+/// during reconciliation so `find_backlinks` sees frontmatter references,
+/// not just body ones.
+pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<WikilinkRaw> {
+    fn walk(value: &serde_json::Value, out: &mut Vec<WikilinkRaw>) {
+        match value {
+            serde_json::Value::String(s) => out.extend(extract_wikilinks(s)),
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            serde_json::Value::Object(map) => map.values().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(frontmatter, &mut out);
+    out
+}
+
 /// Resolve a list of [`WikilinkRaw`]s against the vault's known paths.
 ///
 /// Resolution policy, in order:

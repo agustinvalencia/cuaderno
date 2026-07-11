@@ -350,11 +350,19 @@ fn reconcile_one(
     tag_set.extend(inline_tags);
     let tags: Vec<String> = tag_set.into_iter().collect();
 
-    // Body-scanned wikilinks resolved against the current vault path
-    // set. Resolution staleness is bounded by the next reconcile pass
-    // (every Vault::new) — see `extractors::resolve_wikilinks` for
-    // the exact-then-basename policy.
-    let raw_links = crate::extractors::extract_wikilinks(body);
+    // Body-scanned wikilinks, merged with frontmatter wikilinks (a
+    // project's `core_question:`, a portfolio's `project:`, an evidence
+    // note's `origin:`, …) so backlinks see frontmatter references too
+    // (#395). Deduped by (target, label) so a link present in both the body
+    // and frontmatter yields one edge, not two. Resolution staleness is
+    // bounded by the next reconcile pass (every Vault::new) — see
+    // `extractors::resolve_wikilinks` for the exact-then-basename policy.
+    let mut raw_links = crate::extractors::extract_wikilinks(body);
+    raw_links.extend(crate::extractors::extract_frontmatter_wikilinks(
+        &frontmatter.as_json(),
+    ));
+    let mut seen = std::collections::HashSet::new();
+    raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
     let links = crate::extractors::resolve_wikilinks(raw_links, vault_paths);
 
     // Project-type notes contribute deadlines and milestones via

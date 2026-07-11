@@ -351,9 +351,8 @@ fn project_backlinks_returns_empty_when_no_links() {
 
 #[test]
 fn question_backlinks_groups_body_wikilinks_by_source_note_type() {
-    // Only body-level wikilinks are indexed (see the method doc); a
-    // project's `core_question:` frontmatter link is not. A project that
-    // references the question in its body lands in the `projects` bucket.
+    // A project that references the question in its body lands in the
+    // `projects` bucket.
     let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# q?\n";
     let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n\n## Current State\nExploring [[questions/research/q]].\n\n## Next Actions\n";
     let (vault, _store) = vault_with(&[
@@ -365,6 +364,26 @@ fn question_backlinks_groups_body_wikilinks_by_source_note_type() {
     assert!(bl.portfolios.is_empty());
     assert!(bl.evidence.is_empty());
     assert!(bl.other.is_empty());
+}
+
+#[test]
+fn question_backlinks_includes_a_projects_core_question_frontmatter_link() {
+    // A project's `core_question:` is a FRONTMATTER wikilink; since #395
+    // frontmatter links are indexed too, so the project backlinks the
+    // question it answers — the common case that makes the Strategic grid's
+    // project chips (#354) actually populate.
+    let question = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# q?\n";
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\ncore_question: \"[[questions/research/q]]\"\n---\n\n# Surrogate\n\n## Current State\nGoing.\n\n## Next Actions\n";
+    let (vault, _store) = vault_with(&[
+        ("questions/research/q.md", question),
+        ("projects/surrogate.md", project),
+    ]);
+    let bl = vault.question_backlinks("q").unwrap();
+    assert_eq!(
+        bl.projects.len(),
+        1,
+        "core_question should backlink: {bl:?}"
+    );
 }
 
 #[test]
