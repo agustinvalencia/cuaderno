@@ -43,7 +43,9 @@ test("renders frontmatter as a separated Properties strip", () => {
 test("renders each section under a clear title", () => {
   render(<NoteContent markdown={DAILY} onWikilink={() => {}} />);
   // The preamble h1 from the body still renders.
-  expect(screen.getByRole("heading", { name: "Tuesday 12 July" })).toBeDefined();
+  expect(
+    screen.getByRole("heading", { name: "Tuesday 12 July" }),
+  ).toBeDefined();
   expect(screen.getByRole("heading", { name: "Standup" })).toBeDefined();
   expect(screen.getByText("Plan the watcher work.")).toBeDefined();
 });
@@ -58,6 +60,18 @@ test("renders the Logs section as timestamped cards", () => {
   expect(screen.getByText("wired the watcher")).toBeDefined();
 });
 
+test("a wikilink inside a log entry stays a clickable link, not raw text", () => {
+  const md =
+    "## Logs\n\n- **14:32**: shipped [[projects/cuaderno]] milestone\n";
+  const calls: string[] = [];
+  render(<NoteContent markdown={md} onWikilink={(t) => calls.push(t)} />);
+  // Rendered as a wikilink anchor (not literal `[[…]]` text).
+  const link = screen.getByRole("link", { name: "projects/cuaderno" });
+  expect(screen.queryByText(/\[\[projects\/cuaderno\]\]/)).toBeNull();
+  link.click();
+  expect(calls).toEqual(["projects/cuaderno"]);
+});
+
 test("a Logs section that doesn't parse falls back to plain markdown", () => {
   const md = "## Logs\n\nJust prose, no timestamped bullets.\n";
   render(<NoteContent markdown={md} onWikilink={() => {}} />);
@@ -66,6 +80,8 @@ test("a Logs section that doesn't parse falls back to plain markdown", () => {
 });
 
 test("is axe-clean", async () => {
-  const { container } = render(<NoteContent markdown={DAILY} onWikilink={() => {}} />);
+  const { container } = render(
+    <NoteContent markdown={DAILY} onWikilink={() => {}} />,
+  );
   expect(await axe(container)).toHaveNoViolations();
 });

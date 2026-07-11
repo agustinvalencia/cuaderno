@@ -45,18 +45,27 @@ test("parseNote strips frontmatter into a flat scalar record", () => {
 
 test("parseNote splits the body on level-2 headings, preamble first", () => {
   const { sections } = parseNote(DAILY);
-  expect(sections.map((s) => s.heading)).toEqual([null, "Standup", "Logs", "Notes"]);
+  expect(sections.map((s) => s.heading)).toEqual([
+    null,
+    "Standup",
+    "Logs",
+    "Notes",
+  ]);
   expect(sections[0].body).toContain("# Tuesday 12 July");
   expect(sections[1].body).toBe("Plan the watcher work.");
 });
 
 test("parseNote drops empty sections (unfilled scaffold headings)", () => {
-  const { sections } = parseNote("# Title\n\n## Empty\n\n## Full\n\nhas content\n");
+  const { sections } = parseNote(
+    "# Title\n\n## Empty\n\n## Full\n\nhas content\n",
+  );
   expect(sections.map((s) => s.heading)).toEqual([null, "Full"]);
 });
 
 test("parseNote treats a note with no frontmatter as all body", () => {
-  const { frontmatter, sections } = parseNote("# Just a title\n\n## One\n\nx\n");
+  const { frontmatter, sections } = parseNote(
+    "# Just a title\n\n## One\n\nx\n",
+  );
   expect(frontmatter).toEqual({});
   expect(sections.map((s) => s.heading)).toEqual([null, "One"]);
 });
@@ -73,6 +82,28 @@ test("parseNote strips surrounding quotes from a frontmatter value", () => {
   expect(frontmatter.title).toBe("Quoted value");
 });
 
+test("parseNote drops an inline-flow container frontmatter value", () => {
+  const { frontmatter } = parseNote(
+    "---\ntype: daily\ntags: [a, b]\n---\nbody\n",
+  );
+  expect(frontmatter).toEqual({ type: "daily" });
+});
+
+test("parseNote reads CRLF frontmatter", () => {
+  const { frontmatter } = parseNote("---\r\ntype: daily\r\n---\r\nbody\r\n");
+  expect(frontmatter).toEqual({ type: "daily" });
+});
+
+test("splitSections ignores a `## ` line inside a fenced code block", () => {
+  const md = "## Notes\n\nExample:\n\n```md\n## Section A\nbody\n```\n\ndone\n";
+  const { sections } = parseNote(md);
+  // The fenced `## Section A` must not open a new section — everything
+  // stays under Notes, fence intact.
+  expect(sections.map((s) => s.heading)).toEqual(["Notes"]);
+  expect(sections[0].body).toContain("## Section A");
+  expect(sections[0].body).toContain("done");
+});
+
 test("parseLogEntries reads timestamped entries and folds continuations", () => {
   const { sections } = parseNote(DAILY);
   const logs = sections.find((s) => isLogsSection(s.heading));
@@ -87,6 +118,13 @@ test("parseLogEntries reads timestamped entries and folds continuations", () => 
 
 test("parseLogEntries returns [] for a section with no log lines", () => {
   expect(parseLogEntries("just prose, no bullets")).toEqual([]);
+});
+
+test("parseLogEntries ignores an indented line before any entry", () => {
+  // A stray continuation with no entry to attach to is dropped, not crashed.
+  expect(
+    parseLogEntries("  orphan continuation\n- **09:00**: real entry"),
+  ).toEqual([{ time: "09:00", text: "real entry" }]);
 });
 
 test("isLogsSection matches case-insensitively and rejects null", () => {

@@ -58,7 +58,10 @@ function parseScalarFrontmatter(block: string): Record<string, string> {
     const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
     if (!m) continue;
     const value = stripQuotes(m[2].trim());
-    if (value.length === 0) continue; // a container key (e.g. a list) — skip
+    if (value.length === 0) continue; // a block container key (e.g. a list) — skip
+    // Skip inline flow containers (`[a, b]`, `{x: 1}`) too — the strip
+    // shows at-a-glance scalars, not structure.
+    if (value.startsWith("[") || value.startsWith("{")) continue;
     out[m[1]] = value;
   }
   return out;
@@ -83,12 +86,21 @@ function splitSections(body: string): NoteSection[] {
   const sections: NoteSection[] = [];
   let heading: string | null = null;
   let buf: string[] = [];
+  let inFence = false;
   const flush = () => {
     const content = buf.join("\n").trim();
     if (content.length > 0) sections.push({ heading, body: content });
   };
   for (const line of body.split("\n")) {
-    const m = /^##\s+(.+?)\s*$/.exec(line);
+    // Track fenced code blocks (``` or ~~~) so a `## ` line *inside* a
+    // fence — a note quoting markdown/shell — isn't mistaken for a
+    // section heading and doesn't split the fence apart.
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      buf.push(line);
+      continue;
+    }
+    const m = inFence ? null : /^##\s+(.+?)\s*$/.exec(line);
     if (m) {
       flush();
       heading = m[1];

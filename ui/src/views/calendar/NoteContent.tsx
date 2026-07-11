@@ -8,7 +8,12 @@
 import Markdown from "../../components/markdown/Markdown";
 import { MetaPanel } from "../../components/markdown/MetaPanel";
 import { LogCard } from "../../components/ui/log-card";
-import { isLogsSection, parseLogEntries, parseNote, type NoteSection } from "../../lib/noteContent";
+import {
+  isLogsSection,
+  parseLogEntries,
+  parseNote,
+  type NoteSection,
+} from "../../lib/noteContent";
 
 export default function NoteContent({
   markdown,
@@ -59,10 +64,22 @@ function SectionBlock({
       return (
         <section aria-label={section.heading}>
           <SectionTitle>{section.heading}</SectionTitle>
-          <div className="mt-2 max-h-96 space-y-1.5 overflow-y-auto pr-1">
+          {/* Focusable so a keyboard user can arrow-scroll a long day of
+              entries (axe scrollable-region-focusable). */}
+          <div
+            tabIndex={0}
+            aria-label={`${section.heading} entries`}
+            className="mt-2 max-h-96 space-y-1.5 overflow-y-auto pr-1"
+          >
             {entries.map((entry, index) => (
               <LogCard key={`${entry.time}-${index}`} time={entry.time}>
-                {entry.text}
+                {/* Through Markdown so a log line's `[[wikilinks]]` (e.g. a
+                    project state-change `state on [[slug]]`) stay clickable,
+                    as they were when the whole blob rendered as markdown.
+                    Margins zeroed so a one-line entry stays compact. */}
+                <div className="[&>p]:my-0">
+                  <Markdown body={entry.text} onWikilink={onWikilink} />
+                </div>
               </LogCard>
             ))}
           </div>
@@ -85,7 +102,9 @@ function SectionBlock({
  * structure), distinct from the tiny faint uppercase labels used for
  * metadata affordances. An `h2`: it follows the body's `# Title` (h1) and
  * precedes any `###` a section body renders, so heading order never skips
- * a level. */
+ * a level. `text-base` matches Markdown's own `h2`, seating a section
+ * title visibly above body prose and any `###` subheading (both `text-sm`)
+ * — the "meaningful visual hierarchy" the sections are for. */
 function SectionTitle({ children }: { children: string }) {
-  return <h2 className="text-sm font-semibold text-ink">{children}</h2>;
+  return <h2 className="text-base font-semibold text-ink">{children}</h2>;
 }
