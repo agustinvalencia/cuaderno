@@ -27,8 +27,8 @@ use cdno_domain::error::DomainError;
 
 use crate::commands::config::rebuild_and_swap;
 use crate::events::{
-    self, CONFIG_STATUS, ConfigStatus, Origin, VAULT_CHANGED, VaultArea, VaultChanged,
-    WATCHER_STATUS, WatcherStatus,
+    self, CONFIG_STATUS, ConfigHealth, ConfigStatus, Origin, VAULT_CHANGED, VaultArea,
+    VaultChanged, WATCHER_STATUS, WatcherStatus,
 };
 use crate::state::{AppState, WriteJournal};
 
@@ -237,8 +237,10 @@ pub fn is_invalid_config_error(err: &DomainError) -> bool {
 ///   hiccup): the config itself may be fine. Retry once after a short
 ///   backoff — the lock-holder has almost always finished by then.
 /// - **Still blocked after the retry**: keep the last good config *without*
-///   a false "invalid" banner, refresh the batch's non-config edits, and
-///   let the change apply on the next config edit's reconcile.
+///   a false "invalid" banner. Emit a distinct `Deferred` `config:status`
+///   so the UI shows a calm "vault was busy — the change will apply on the
+///   next edit" note (#384), refresh the batch's non-config edits, and let
+///   the change apply on the next config edit's reconcile.
 fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
     match rebuild_and_swap(app) {
         Ok(()) => emit_config_reloaded(app, paths),
@@ -256,16 +258,7 @@ fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Ve
                 }
                 Err(e2) => {
                     tracing::warn!(error = %e2, "config reload still blocked; keeping the last good config, will apply on the next config edit");
-                    // Never a false "invalid" banner for contention; still
-                    // refresh the batch's non-config edits.
-                    let _ = app.emit(
-                        VAULT_CHANGED,
-                        VaultChanged {
-                            origin: Origin::External,
-                            areas,
-                            paths,
-                        },
-                    );
+                    emit_config_deferred(app, areas, paths)
                 }
             }
         }
@@ -286,7 +279,7 @@ fn emit_config_reloaded(app: &AppHandle, paths: Vec<String>) {
     let _ = app.emit(
         CONFIG_STATUS,
         ConfigStatus {
-            valid: true,
+            health: ConfigHealth::Valid,
             message: None,
         },
     );
@@ -301,13 +294,38 @@ fn emit_config_invalid(
     paths: Vec<String>,
 ) {
     tracing::warn!(error = %err, "external config edit is invalid; keeping the last good config");
-    let _ = app.emit(
-        CONFIG_STATUS,
-        ConfigStatus {
-            valid: false,
-            message: Some(err.to_string()),
-        },
+    // The open error is actionable ("expected `=`", a rejected type/schema),
+    // so surface it as the banner's detail line.
+    emit_config_status_with_edits(
+        app,
+        ConfigHealth::Invalid,
+        Some(err.to_string()),
+        areas,
+        paths,
     );
+}
+
+/// Signal a transiently-deferred reload (#384): the config may be fine but a
+/// busy vault kept it from applying. A calm, distinct banner rather than the
+/// "invalid config" one; the batch's non-config edits still refresh.
+fn emit_config_deferred(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
+    // No detail line: the transient error is a raw, non-actionable string
+    // (a lock timeout / index message) that would undercut the calm "vault
+    // was busy" framing. The lead sentence says all the user needs (#384).
+    emit_config_status_with_edits(app, ConfigHealth::Deferred, None, areas, paths);
+}
+
+/// Emit a non-`Valid` `config:status` (with an optional detail message), then
+/// a `vault:changed` for the batch's non-config edits — the shared shape of
+/// the invalid and deferred paths.
+fn emit_config_status_with_edits(
+    app: &AppHandle,
+    health: ConfigHealth,
+    message: Option<String>,
+    areas: Vec<VaultArea>,
+    paths: Vec<String>,
+) {
+    let _ = app.emit(CONFIG_STATUS, ConfigStatus { health, message });
     let _ = app.emit(
         VAULT_CHANGED,
         VaultChanged {

@@ -37,7 +37,9 @@ use tauri::{Emitter, Manager};
 
 use crate::commands::actions::record_and_emit;
 use crate::error::CmdError;
-use crate::events::{Origin, VAULT_CHANGED, VaultArea, VaultChanged};
+use crate::events::{
+    CONFIG_STATUS, ConfigHealth, ConfigStatus, Origin, VAULT_CHANGED, VaultArea, VaultChanged,
+};
 use crate::state::AppState;
 use crate::watcher::all_areas;
 use crate::with_vault::with_vault;
@@ -464,6 +466,19 @@ pub async fn reload_vault_config<R: tauri::Runtime>(
         },
     ) {
         tracing::warn!(error = %err, "failed to emit vault:changed after a config reload");
+    }
+    // A successful in-app reload also clears any lingering config banner
+    // (#384): the watcher only emits `config:status: valid` for an external
+    // config.toml edit, so without this an invalid/deferred banner would
+    // stick after the user fixes the config and re-saves in the app.
+    if let Err(err) = app.emit(
+        CONFIG_STATUS,
+        ConfigStatus {
+            health: ConfigHealth::Valid,
+            message: None,
+        },
+    ) {
+        tracing::warn!(error = %err, "failed to emit config:status after a config reload");
     }
     Ok(())
 }

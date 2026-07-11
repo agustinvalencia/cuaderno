@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A "busy, will apply later" note for a deferred config reload** (#384) — when an external
+  `config.toml` edit couldn't be applied because the vault was momentarily busy (the #372 case),
+  the app had kept the last good config *silently*, so a valid edit could appear to do nothing. The
+  desktop app now shows a distinct, calm banner ("the vault was busy, so this config change hasn't
+  applied yet — it'll be re-applied on the next change to config.toml") separate from the
+  invalid-config banner, so the deferral is visible rather than silent. A successful in-app config
+  save (or any successful reload) clears the banner, so it never lingers after the config is fixed.
+  Backed by a new `deferred` state on the `config:status` event.
+
 ## [0.20.0] - 2026-07-10
 
 Token-cap safety pass over the MCP context tools, with one breaking payload-shape change.

@@ -33,7 +33,7 @@ afterEach(() => {
   handlers.clear();
   // The config-status module store is a singleton; reset it so a
   // failure written by one test never leaks into the next.
-  setConfigStatus({ valid: true, message: null });
+  setConfigStatus({ health: "valid", message: null });
 });
 
 test("clock:day-changed invalidates the date-dependent queries", async () => {
@@ -79,13 +79,18 @@ test("config:status writes the payload to the module store the banner reads", as
   await attachEventBridge(client);
 
   // An invalid external config edit: the banner should light up with the
-  // open error, normalising a missing message to null.
-  emit("config:status", { valid: false, message: "expected `=`" });
-  expect(getConfigStatus()).toEqual({ valid: false, message: "expected `=`" });
+  // open error.
+  emit("config:status", { health: "invalid", message: "expected `=`" });
+  expect(getConfigStatus()).toEqual({ health: "invalid", message: "expected `=`" });
 
-  // A later valid edit clears the notice.
-  emit("config:status", { valid: true, message: null });
-  expect(getConfigStatus()).toEqual({ valid: true, message: null });
+  // A deferred reload (busy vault) is carried through distinctly, and the
+  // backend sends no detail for it (#384).
+  emit("config:status", { health: "deferred", message: null });
+  expect(getConfigStatus()).toEqual({ health: "deferred", message: null });
+
+  // A later valid edit clears the notice, normalising a missing message to null.
+  emit("config:status", { health: "valid", message: null });
+  expect(getConfigStatus()).toEqual({ health: "valid", message: null });
 });
 
 test("attaching ends with one global invalidation to seal the startup race", async () => {
