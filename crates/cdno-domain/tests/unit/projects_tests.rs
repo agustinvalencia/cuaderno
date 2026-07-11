@@ -207,6 +207,43 @@ fn create_project_indexes_the_new_note_so_active_projects_picks_it_up() {
 }
 
 #[test]
+fn create_two_same_title_projects_get_distinct_stems() {
+    // #225: a second note with the same title gets a `-2` stem, so a later
+    // relocation (park to `_parked/`) can't lose its backlinks to a stem
+    // collision — the last-segment wikilink fallback stays unambiguous.
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+    let first = vault
+        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .expect("first create");
+    let second = vault
+        .create_project(day(2026, 4, 29), "ICML paper", Context::Work, None)
+        .expect("second create");
+    assert_eq!(first, vp("projects/icml-paper.md"));
+    assert_eq!(
+        second,
+        vp("projects/icml-paper-2.md"),
+        "the second same-title project gets a -2 stem"
+    );
+}
+
+#[test]
+fn create_project_walks_past_a_taken_2_suffix_to_the_next_free() {
+    // #225: with `foo` and `foo-2` already present (one active, one parked),
+    // a third same-title project walks to `foo-3` — exercises the
+    // disambiguation loop past the first suffix.
+    let a = project_body("work", "active", "2026-01-10", "Foo");
+    let b = project_body("work", "parked", "2026-01-11", "Foo");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/foo.md", &a), ("projects/_parked/foo-2.md", &b)],
+        VaultConfig::default(),
+    );
+    let path = vault
+        .create_project(day(2026, 4, 28), "Foo", Context::Work, None)
+        .expect("third same-title create");
+    assert_eq!(path, vp("projects/foo-3.md"));
+}
+
+#[test]
 fn create_project_seeds_parked_when_active_count_at_cap() {
     // Cap of 2 with 2 projects already active — the third still
     // succeeds, but is seeded as parked so the cap (on actives) is
@@ -234,24 +271,21 @@ fn create_project_seeds_parked_when_active_count_at_cap() {
 }
 
 #[test]
-fn create_project_errors_when_slug_collides_with_parked_project() {
-    // Slug uniqueness spans both projects/ and projects/_parked/ —
-    // creating an active project whose slug already exists as parked
-    // would make the activate/park flow ambiguous.
+fn create_project_suffixes_when_slug_collides_with_a_parked_project() {
+    // #225: exactly the case the global-uniqueness fix targets — a new
+    // project whose title matches a PARKED project gets a `-2` stem, so the
+    // parked project's `[[projects/same-title]]` backlinks stay resolvable
+    // (its stem is no longer shared).
     let parked = project_body("work", "parked", "2026-01-10", "Same Title");
     let (vault, _store) = vault_with_seeded_store(
         &[("projects/_parked/same-title.md", &parked)],
         VaultConfig::default(),
     );
 
-    let err = vault
+    let path = vault
         .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
-        .unwrap_err();
-
-    assert!(
-        matches!(err, DomainError::Store(_)),
-        "expected Store(AlreadyExists), got {err:?}"
-    );
+        .expect("colliding-with-parked create now suffixes");
+    assert_eq!(path, vp("projects/same-title-2.md"));
 }
 
 #[test]
@@ -274,21 +308,19 @@ fn create_project_does_not_count_parked_or_completed_against_cap() {
 }
 
 #[test]
-fn create_project_errors_when_filename_already_exists() {
+fn create_project_suffixes_when_filename_already_exists() {
+    // #225: a second same-title active project suffixes to `-2` rather than
+    // erroring on the existing filename.
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
         .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
         .expect("first create succeeds");
 
-    let err = vault
+    let path = vault
         .create_project(day(2026, 4, 29), "Same Title", Context::Personal, None)
-        .unwrap_err();
-
-    assert!(
-        matches!(err, DomainError::Store(_)),
-        "expected Store(AlreadyExists), got {err:?}"
-    );
+        .expect("second same-title create now suffixes");
+    assert_eq!(path, vp("projects/same-title-2.md"));
 }
 
 #[test]

@@ -339,11 +339,13 @@ fn create_commitment_logs_creation_to_daily_note() {
 }
 
 #[test]
-fn create_commitment_errors_when_slug_collides() {
+fn create_commitment_suffixes_when_slug_collides() {
+    // #225: a second same-title commitment suffixes to `-2` (so a later move
+    // to `_done/` keeps its backlinks resolvable) rather than erroring.
     let existing = "---\ntype: commitment\nstatus: active\ndue: 2026-06-30\ncreated: 2026-05-01\ncompleted: null\ncontext: personal\nproject: null\nstewardship: null\n---\n\n# Renew passport\n";
     let (vault, _store) = vault_with_seeded_store(&[("commitments/renew-passport.md", existing)]);
 
-    let err = vault
+    let path = vault
         .create_commitment(
             dt(2026, 5, 2, 9, 0),
             "Renew passport",
@@ -352,14 +354,8 @@ fn create_commitment_errors_when_slug_collides() {
             None,
             None,
         )
-        .unwrap_err();
-    assert!(
-        matches!(
-            err,
-            DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
-        ),
-        "got {err:?}"
-    );
+        .expect("colliding commitment now suffixes");
+    assert_eq!(path, vp("commitments/renew-passport-2.md"));
 }
 
 // ---------------------------------------------------------------------

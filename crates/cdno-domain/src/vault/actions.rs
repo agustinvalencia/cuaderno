@@ -59,7 +59,9 @@ impl Vault {
         prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
         let title = title.trim();
-        let slug = slugify(title);
+        // Globally-unique stem (#225) so a later archive to `_done/` keeps
+        // the note's `[[actions/<slug>]]` backlinks resolvable.
+        let slug = self.unique_slug(&slugify(title))?;
         let path = Self::active_action_path(&slug)?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

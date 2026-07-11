@@ -124,6 +124,14 @@ impl Vault {
         if question.is_empty() {
             return Err(DomainError::EmptyField { field: "question" });
         }
+        // A portfolio deliberately reuses the question's raw slug (not a
+        // #225-unique one): the slug is how a portfolio correlates back to
+        // its question (`find_question_path(&slug)`, and the Strategic grid's
+        // chip match, #354). Caveat: if the *question* was itself suffixed
+        // (`foo` → `foo-2` because another note held `foo`), a portfolio
+        // created from the same text computes `foo` and won't correlate to
+        // `foo-2`. Rare, and a net improvement over the pre-#225 state where
+        // that same pair was an actual resolver ambiguity.
         let slug = slugify(question);
         let path = VaultPath::new(format!("{}/{slug}/_index.md", cdno_core::paths::PORTFOLIOS))?;
         if self.store.exists(&path)? {

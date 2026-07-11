@@ -86,7 +86,8 @@ impl Vault {
         if text.is_empty() {
             return Err(DomainError::EmptyField { field: "question" });
         }
-        let slug = slugify(text);
+        // Globally-unique stem (#225) so backlinks stay resolvable.
+        let slug = self.unique_slug(&slugify(text))?;
 
         // Cross-domain collision check: even though we'll write under
         // `<domain>/`, the slug must be globally unique so

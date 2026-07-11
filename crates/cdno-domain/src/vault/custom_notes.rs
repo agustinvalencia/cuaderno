@@ -100,7 +100,8 @@ impl Vault {
             }
         }
 
-        let slug = slugify(title);
+        // Globally-unique stem (#225) so backlinks stay resolvable.
+        let slug = self.unique_slug(&slugify(title))?;
         let path = VaultPath::new(format!("{}/{slug}.md", def.folder))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(

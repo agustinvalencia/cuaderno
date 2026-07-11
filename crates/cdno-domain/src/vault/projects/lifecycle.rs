@@ -113,7 +113,9 @@ impl Vault {
             ProjectStatus::Active
         };
 
-        let slug = slugify(title);
+        // Globally-unique stem (#225) so a later park to `_parked/` keeps
+        // the project's backlinks resolvable.
+        let slug = self.unique_slug(&slugify(title))?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
