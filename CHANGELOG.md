@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-12
+
 ### Changed
 
 - **Note metadata now reads as metadata, and log lines as cards** (desktop UI) — two
