@@ -66,15 +66,35 @@ pub struct WatcherStatus {
     pub state: &'static str,
 }
 
-/// Payload for [`CONFIG_STATUS`]. `valid:false` carries the open error's
-/// `message` (the app kept the last good config); `valid:true` clears any
-/// prior notice and carries no message. Exported to TS because the UI
-/// surfaces the notice as a non-red banner (GH #365 PR4).
+/// The health of the on-disk config after an external-edit reload
+/// (GH #365 PR4, #384). Three outcomes the UI renders distinctly.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigHealth {
+    /// The config opened cleanly; clears any prior notice.
+    Valid,
+    /// The config content is invalid (bad TOML/glob/note-type/schema); the
+    /// app kept the last good config.
+    Invalid,
+    /// The reload was transiently blocked (the vault write lock was held,
+    /// or an IO/index hiccup) — the config itself may be fine. The app kept
+    /// the last good config and applies the change on the next config edit.
+    /// Distinct from `Invalid` so the banner never cries "broken config" for
+    /// mere contention (#384).
+    Deferred,
+}
+
+/// Payload for [`CONFIG_STATUS`]. `message` carries the open/transient error
+/// detail for `Invalid` / `Deferred`; `Valid` clears any prior notice and
+/// carries no message. Exported to TS because the UI surfaces the notice as
+/// a non-red banner (GH #365 PR4, #384).
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ConfigStatus {
-    pub valid: bool,
+    pub health: ConfigHealth,
     pub message: Option<String>,
 }
 
