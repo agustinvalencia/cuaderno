@@ -14,8 +14,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   into a distinct, labelled `MetaPanel` — a sunken, bordered "Properties" block of key/value
   pairs clearly separated from the prose below. And a new reusable `LogCard` gives timestamped
   log lines a scannable "when + what" hierarchy (a fixed-width time/date column beside the text);
-  it replaces the flat bullet list under a project's "Recently in your logs". Both are pure view
-  changes — no domain or wire-format change.
+  it replaces the flat bullet list under a project's "Recently in your logs" (#401). Both are pure
+  view changes — no domain or wire-format change.
+
+## [0.22.0] - 2026-07-12
 
 ### Changed
 

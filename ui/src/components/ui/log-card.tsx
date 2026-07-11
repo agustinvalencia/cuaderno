@@ -1,9 +1,11 @@
 // A single log entry as a card (plan §3.10 calm surfaces): a fixed-width
 // time/date column beside the entry text, giving the "when + what"
-// hierarchy a bare list line lacks. Shared by the daily-note Logs section
-// and the project "recently in your logs" list — anywhere timestamped log
-// lines are surfaced. Tabular, monospace times so a column of entries
-// reads as a scannable ledger, not prose.
+// hierarchy a bare list line lacks. Used by the project "recently in your
+// logs" list; slated for the daily-note Logs section too — anywhere
+// timestamped log lines are surfaced. Tabular, monospace times so a column
+// of entries reads as a scannable ledger, not prose. Stamp and text
+// top-align so the time sits on the entry's first line even when the text
+// wraps to several lines.
 import type { ReactNode } from "react";
 
 export function LogCard({
@@ -26,14 +28,14 @@ export function LogCard({
       className={`flex gap-3 rounded-md border border-line bg-bg-surface px-3 py-2 ${className}`}
     >
       {hasStamp && (
-        <div className="flex w-12 shrink-0 flex-col items-start leading-tight">
+        <div className="flex w-14 shrink-0 flex-col items-start leading-tight whitespace-nowrap">
           {date && <span className="text-xs text-ink-faint">{date}</span>}
           {time && (
             <span className="font-mono text-xs tabular-nums text-ink-muted">{time}</span>
           )}
         </div>
       )}
-      <div className="min-w-0 flex-1 self-center text-sm text-ink">{children}</div>
+      <div className="min-w-0 flex-1 text-sm text-ink">{children}</div>
     </div>
   );
 }

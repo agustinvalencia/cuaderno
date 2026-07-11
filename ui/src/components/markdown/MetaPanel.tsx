@@ -34,14 +34,14 @@ export function MetaPanel({
   if (pairs.length === 0) return null;
   return (
     <div className={`rounded-md border border-line bg-bg-sunken px-3 py-2.5 ${className}`}>
-      <p className="mb-1.5 text-[0.65rem] font-medium uppercase tracking-wider text-ink-faint">
+      <p className="mb-1.5 text-xs font-medium uppercase tracking-wider text-ink-faint">
         Properties
       </p>
       <dl className="flex flex-wrap gap-x-4 gap-y-1">
         {pairs.map(([key, value]) => (
           <div key={key} className="flex items-baseline gap-1.5">
-            <dt className="text-xs text-ink-faint">{key}</dt>
-            <dd className="text-xs text-ink-muted">{value}</dd>
+            <dt className="text-xs text-ink-muted">{key}</dt>
+            <dd className="text-xs text-ink">{value}</dd>
           </div>
         ))}
       </dl>
