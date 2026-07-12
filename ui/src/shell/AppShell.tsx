@@ -9,6 +9,7 @@ import InboxDrawer from "./InboxDrawer";
 import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
 import { ReaderProvider, useReader } from "./reader";
+import { useHistoryNavigation } from "./useHistoryNavigation";
 
 // The note reader pulls react-markdown + remark-gfm; the palette pulls
 // cmdk. Neither is on the shell's first paint, so both load lazily —
@@ -68,6 +69,10 @@ export default function AppShell() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const inboxButtonRef = useRef<HTMLButtonElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Back/forward via the mouse side buttons, Cmd/Ctrl+[ / ], and the
+  // native macOS bridge — history navigation, as in a browser.
+  useHistoryNavigation();
 
   // Global Cmd/Ctrl+K toggles the command palette (plan §1.0). Bound on
   // window so it fires from any focused view; the palette itself owns
