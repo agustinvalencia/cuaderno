@@ -7,6 +7,7 @@ import { useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
 import { errorMessage, saveWeeklySection } from "../../api/commands";
+import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
 
 // A few log lines are enough to jog memory; the whole week's log would
@@ -49,12 +50,46 @@ export default function WinsStep({
     },
   });
 
+  const completed = bundle.completed_actions;
+
   return (
     <div>
       <h2 className="font-medium text-ink">Wins</h2>
       <p className="mt-1 text-sm text-ink-muted">
         Celebration first — what went well this week?
       </p>
+
+      {/* The week's completions as celebration cards — a scannable "look
+          what you did" before you write it up. Calm, never a tally. */}
+      {completed.length > 0 && (
+        <section aria-labelledby="wins-completed" className="mt-4">
+          <h3
+            id="wins-completed"
+            className="text-xs font-medium uppercase tracking-wider text-ink-faint"
+          >
+            Completed this week
+          </h3>
+          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {completed.map((action, index) => (
+              <li
+                key={`${action.slug}-${action.title}-${index}`}
+                className="flex items-start gap-2 rounded-md border border-line bg-bg-surface px-3 py-2"
+              >
+                <span aria-hidden className="mt-0.5 shrink-0 text-accent-interactive">
+                  ✓
+                </span>
+                <div className="min-w-0">
+                  <p className="text-sm text-ink">{action.title}</p>
+                  <p className="text-xs text-ink-faint">
+                    {action.project} · {shortDate(action.completed)}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <form
         className="mt-3"
         onSubmit={(event) => {

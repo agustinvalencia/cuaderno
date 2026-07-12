@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Weekly review shows your wins as cards, and log cards can flip order** (desktop UI) — two
+  presentation tweaks from testing. The Weekly review's Wins step now surfaces the week's completed
+  actions as a grid of celebration cards above the composer — a scannable "look what you did" before
+  you write it up (never a tally). And every log-card surface — the daily `## Logs` stack in the
+  calendar and reader, and a project's *Recently in your logs* — gains a small **Oldest / Newest
+  first** toggle; the choice is a remembered, app-wide preference, so flipping it in one place flips
+  it everywhere. (#412)
+
 ## [0.25.1] - 2026-07-12
 
 ### Fixed

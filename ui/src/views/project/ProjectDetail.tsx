@@ -34,6 +34,8 @@ import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
+import { orderLogs, useLogOrder } from "../../lib/logOrder";
+import { LogOrderToggle } from "../../components/ui/log-order-toggle";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
@@ -85,6 +87,7 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
   const navigate = useNavigate();
   const { openReader } = useReader();
   const showMetrics = useMetrics();
+  const logOrder = useLogOrder();
   const parked = data.status === "parked";
   const key = ["get_project", slug];
 
@@ -511,14 +514,15 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
         </section>
       )}
 
-      {/* Recently in your logs. */}
+      {/* Recently in your logs. Shares the app-wide log-card order. */}
       {data.log_mentions.length > 0 && (
         <section aria-label="Recent log mentions" className="mt-8">
-          <SectionHeading>
-            Recently in your logs
-          </SectionHeading>
+          <div className="flex items-baseline justify-between gap-2">
+            <SectionHeading>Recently in your logs</SectionHeading>
+            <LogOrderToggle />
+          </div>
           <div className="mt-2 space-y-1.5">
-            {data.log_mentions.map((mention, index) => (
+            {orderLogs(data.log_mentions, logOrder).map((mention, index) => (
               <LogCard
                 key={`${mention.date}-${mention.time}-${index}`}
                 date={shortDate(mention.date)}

@@ -14,6 +14,8 @@ import {
   parseLogEntries,
   type NoteSection,
 } from "../../lib/noteContent";
+import { orderLogs, useLogOrder, type LogOrder } from "../../lib/logOrder";
+import { LogOrderToggle } from "../ui/log-order-toggle";
 
 export default function SectionedBody({
   sections,
@@ -29,6 +31,7 @@ export default function SectionedBody({
    * natural height (no nested/trapped inner scroller). Default off. */
   capLogsHeight?: boolean;
 }) {
+  const logOrder = useLogOrder();
   return (
     <div className="space-y-6">
       {sections.map((section, index) => (
@@ -37,6 +40,7 @@ export default function SectionedBody({
           section={section}
           onWikilink={onWikilink}
           capLogsHeight={capLogsHeight}
+          logOrder={logOrder}
         />
       ))}
     </div>
@@ -47,10 +51,12 @@ function SectionBlock({
   section,
   onWikilink,
   capLogsHeight,
+  logOrder,
 }: {
   section: NoteSection;
   onWikilink: (target: string) => void;
   capLogsHeight: boolean;
+  logOrder: LogOrder;
 }) {
   // The preamble (the `# Title` and anything before the first `##`)
   // renders plainly — it isn't a section of its own.
@@ -68,7 +74,7 @@ function SectionBlock({
   if (isLogsSection(section.heading)) {
     const entries = parseLogEntries(section.body);
     if (entries.length > 0) {
-      const cards = entries.map((entry, index) => (
+      const cards = orderLogs(entries, logOrder).map((entry, index) => (
         <LogCard key={`${entry.time}-${index}`} time={entry.time}>
           {/* Through Markdown so a log line's `[[wikilinks]]` (e.g. a
               project state-change `state on [[slug]]`) stay clickable, as
@@ -81,7 +87,10 @@ function SectionBlock({
       ));
       return (
         <section aria-label={section.heading}>
-          <SectionTitle>{section.heading}</SectionTitle>
+          <div className="flex items-baseline justify-between gap-2">
+            <SectionTitle>{section.heading}</SectionTitle>
+            <LogOrderToggle />
+          </div>
           {capLogsHeight ? (
             // Capped: a fixed-height inner scroll, focusable so a keyboard
             // user can arrow-scroll it (axe scrollable-region-focusable).
