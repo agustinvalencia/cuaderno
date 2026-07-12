@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.25.1] - 2026-07-12
+
 ### Fixed
 
 - **Mouse side buttons now actually navigate on macOS** (desktop UI) — the v0.25.0 native bridge
