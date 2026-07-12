@@ -3,9 +3,8 @@ import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { getOrientation, listInbox } from "../api/commands";
 import { contextDotClass } from "../lib/contexts";
-import { toggleMetrics, useMetrics } from "../lib/metrics";
-import { cycleTheme } from "../lib/theme";
 import InboxDrawer from "./InboxDrawer";
+import SettingsDialog from "./SettingsDialog";
 import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
 import { ReaderProvider, useReader } from "./reader";
@@ -61,7 +60,6 @@ export default function AppShell() {
   // The sidebar's project list rides on the same query the Home view
   // uses — one cache entry, no extra invoke.
   const orientation = useQuery({ queryKey: ["get_orientation"], queryFn: getOrientation });
-  const showMetrics = useMetrics();
   // The inbox count rides on the same query the drawer uses — one cache
   // entry, invalidated by the `inbox` area (invalidation.ts).
   const inbox = useQuery({ queryKey: ["list_inbox"], queryFn: listInbox });
@@ -69,19 +67,24 @@ export default function AppShell() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const inboxButtonRef = useRef<HTMLButtonElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Back/forward via the mouse side buttons, Cmd/Ctrl+[ / ], and the
   // native macOS bridge — history navigation, as in a browser.
   useHistoryNavigation();
 
-  // Global Cmd/Ctrl+K toggles the command palette (plan §1.0). Bound on
-  // window so it fires from any focused view; the palette itself owns
-  // Esc-to-close (Radix dialog).
+  // Global Cmd/Ctrl+K toggles the command palette (plan §1.0); Cmd/Ctrl+,
+  // opens Settings (the macOS Preferences convention). Bound on window so
+  // they fire from any focused view; each dialog owns Esc-to-close (Radix).
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "k") {
         event.preventDefault();
         setPaletteOpen((prev) => !prev);
+      } else if (event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -177,25 +180,15 @@ export default function AppShell() {
 
         <WatcherPill />
 
-        <div className="mt-2 flex items-center justify-between px-2 pt-4">
+        <div className="mt-2 px-2 pt-4">
           <button
             type="button"
-            aria-label="Cycle colour theme (system, light, dark)"
-            onClick={() => cycleTheme()}
-            className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
+            aria-label="Open settings"
+            onClick={() => setSettingsOpen(true)}
+            className="flex w-full items-center justify-between rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
           >
-            theme
-          </button>
-          <button
-            type="button"
-            aria-pressed={showMetrics}
-            aria-label="Show progress metrics (hidden by default)"
-            onClick={() => toggleMetrics()}
-            className={`rounded px-2 py-1 text-xs ${
-              showMetrics ? "bg-bg-surface text-ink" : "text-ink-muted hover:text-ink"
-            }`}
-          >
-            metrics
+            <span>Settings</span>
+            <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-ink-faint">⌘,</span>
           </button>
         </div>
       </aside>
@@ -216,6 +209,7 @@ export default function AppShell() {
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
         </Suspense>
       )}
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       <ReaderHost />
     </div>
     </ReaderProvider>

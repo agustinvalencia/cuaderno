@@ -5,8 +5,15 @@ const STORAGE_KEY = "cuaderno-theme";
 export type Theme = "light" | "dark" | "system";
 
 export function storedTheme(): Theme {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw === "light" || raw === "dark" ? raw : "system";
+  // Defensive, like the metrics store: a broken/absent localStorage
+  // (private mode, exotic webview, tests) means "follow the system",
+  // never a crash — this is a preference, not data.
+  try {
+    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    return raw === "light" || raw === "dark" ? raw : "system";
+  } catch {
+    return "system";
+  }
 }
 
 export function applyTheme(theme: Theme): void {

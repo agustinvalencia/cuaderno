@@ -81,4 +81,5 @@ on disk. See [Editing the config in the app](config-editor.md) for the full walk
 global capture window from any app (Enter files to the inbox, `⌘Enter` appends to today's log),
 and the menu-bar tray keeps Quick capture / Open / Quit reachable even with every window closed.
 `⌘[` and `⌘]` (or the mouse's back and forward side buttons) step backward and forward through
-your view history, just like a browser.
+your view history, just like a browser. `⌘,` opens **Settings** — a calm panel for the app-level
+preferences (theme, whether to show progress metrics) and a jump to the vault's config editor.
