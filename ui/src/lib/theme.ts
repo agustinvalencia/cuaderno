@@ -19,24 +19,24 @@ export function storedTheme(): Theme {
 export function applyTheme(theme: Theme): void {
   const dark =
     theme === "dark" ||
-    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    (theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);
 }
 
 export function setTheme(theme: Theme): void {
-  if (theme === "system") {
-    localStorage.removeItem(STORAGE_KEY);
-  } else {
-    localStorage.setItem(STORAGE_KEY, theme);
+  // Best-effort persistence, like the metrics store: a broken/absent
+  // localStorage still applies the theme to <html>, just doesn't remember it.
+  try {
+    if (theme === "system") {
+      globalThis.localStorage?.removeItem(STORAGE_KEY);
+    } else {
+      globalThis.localStorage?.setItem(STORAGE_KEY, theme);
+    }
+  } catch {
+    // Preference persistence is best-effort.
   }
   applyTheme(theme);
-}
-
-export function cycleTheme(): Theme {
-  const next: Theme =
-    storedTheme() === "system" ? "light" : storedTheme() === "light" ? "dark" : "system";
-  setTheme(next);
-  return next;
 }
 
 /** Call once at startup: apply and track OS changes in system mode. */

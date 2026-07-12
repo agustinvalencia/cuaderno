@@ -14,8 +14,8 @@ declare module "vitest" {
   interface AsymmetricMatchersContaining extends AxeMatchers {}
 }
 
-// jsdom here lacks a working localStorage, plus the layout/media APIs Radix
-// Dialog and the theme helper reach — provide all three.
+// Give the theme/metrics stores a deterministic, isolated localStorage, plus
+// the layout/media APIs Radix Dialog and the theme helper reach.
 beforeAll(() => {
   const store = new Map<string, string>();
   const local: Storage = {
@@ -70,8 +70,8 @@ function renderDialog(onOpenChange = () => {}) {
 test("renders the preference controls", () => {
   renderDialog();
   expect(screen.getByRole("heading", { name: "Settings" })).toBeDefined();
-  expect(screen.getByRole("radio", { name: "System" })).toBeDefined();
-  expect(screen.getByRole("radio", { name: "Dark" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "System" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "Dark" })).toBeDefined();
   expect(
     screen.getByRole("switch", { name: "Show progress metrics" }),
   ).toBeDefined();
@@ -80,13 +80,14 @@ test("renders the preference controls", () => {
 
 test("choosing a theme marks it selected and persists", () => {
   renderDialog();
+  // The theme options are a segmented toggle group (aria-pressed), not radios.
   // Default is System (no stored override).
   expect(
-    screen.getByRole("radio", { name: "System" }).getAttribute("aria-checked"),
+    screen.getByRole("button", { name: "System" }).getAttribute("aria-pressed"),
   ).toBe("true");
-  fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
+  fireEvent.click(screen.getByRole("button", { name: "Dark" }));
   expect(
-    screen.getByRole("radio", { name: "Dark" }).getAttribute("aria-checked"),
+    screen.getByRole("button", { name: "Dark" }).getAttribute("aria-pressed"),
   ).toBe("true");
   expect(localStorage.getItem("cuaderno-theme")).toBe("dark");
 });
@@ -106,6 +107,13 @@ test("Edit… closes the dialog and routes to the config editor", () => {
   fireEvent.click(screen.getByRole("button", { name: "Edit…" }));
   expect(onOpenChange).toHaveBeenCalledWith(false);
   expect(screen.getByTestId("path").textContent).toBe("/config");
+});
+
+test("Done closes the dialog", () => {
+  const onOpenChange = vi.fn();
+  renderDialog(onOpenChange);
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(onOpenChange).toHaveBeenCalledWith(false);
 });
 
 test("is axe-clean", async () => {

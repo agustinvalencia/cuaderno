@@ -33,8 +33,9 @@ export default function SettingsDialog({
   const navigate = useNavigate();
   const showMetrics = useMetrics();
   // Theme has no reactive store (it just stamps <html>); seed local state
-  // from the stored choice, and this dialog is the only control that sets it.
-  const [theme, setThemeState] = useState<Theme>(storedTheme());
+  // once from the stored choice (lazy initializer — no read per render), and
+  // this dialog is the only control that sets it.
+  const [theme, setThemeState] = useState(() => storedTheme());
 
   function chooseTheme(next: Theme) {
     setTheme(next);
@@ -50,8 +51,12 @@ export default function SettingsDialog({
 
         <div className="mt-5 space-y-5">
           <Row label="Theme" hint="Follows the system unless overridden.">
+            {/* A segmented toggle group, not a form radio set: each option
+                applies immediately on click, so `aria-pressed` buttons are
+                honest about the interaction — no roving-tabindex/arrow-key
+                contract a `radiogroup` would imply but not deliver. */}
             <div
-              role="radiogroup"
+              role="group"
               aria-label="Theme"
               className="flex gap-0.5 rounded-md bg-bg-sunken p-0.5"
             >
@@ -59,8 +64,7 @@ export default function SettingsDialog({
                 <button
                   key={option.value}
                   type="button"
-                  role="radio"
-                  aria-checked={theme === option.value}
+                  aria-pressed={theme === option.value}
                   onClick={() => chooseTheme(option.value)}
                   className={`rounded px-2.5 py-1 text-xs ${
                     theme === option.value

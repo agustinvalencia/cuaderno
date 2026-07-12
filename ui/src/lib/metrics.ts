@@ -32,10 +32,6 @@ export function setShowMetrics(on: boolean): void {
   listeners.forEach((notify) => notify());
 }
 
-export function toggleMetrics(): void {
-  setShowMetrics(!read());
-}
-
 /** Reactive read of the preference. */
 export function useMetrics(): boolean {
   return useSyncExternalStore(
