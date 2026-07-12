@@ -20,6 +20,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { shortDate } from "../../lib/dates";
 import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
 
 /** Which mark a series draws with. A `"line"` traces a continuous
@@ -50,14 +51,6 @@ export const SERIES_COLORS = [
   "var(--color-ctx-household)",
   "var(--color-ctx-legal)",
 ];
-
-/** `8 Jul` / `Jul 8` per locale, at local midnight (no timezone slip). */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 /** Reactive read of the reduced-motion preference — chart animation is
  * disabled when set (plan §3.10). Defaults to "no preference" where

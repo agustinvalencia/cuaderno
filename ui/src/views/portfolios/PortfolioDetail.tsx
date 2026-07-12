@@ -19,15 +19,9 @@ import {
   resolveWikilink,
 } from "../../api/commands";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
+import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
-
-/** `8 Jul` / `Jul 8` per locale, at local midnight (no timezone slip). */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 /** The last path segment of a wikilink target, the slug a typed route
  * expects (`projects/surrogate-model` → `surrogate-model`). */
@@ -101,9 +95,9 @@ function PortfolioDetailBody({ slug, data }: { slug: string; data: PortfolioDeta
         {/* Left: the evidence timeline + quick-add composer. */}
         <main className="min-w-0">
           <section aria-label="Evidence">
-            <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+            <SectionHeading>
               Evidence
-            </h2>
+            </SectionHeading>
             {data.evidence.length === 0 ? (
               <p className="mt-3 rounded border border-line bg-bg-surface p-6 text-sm text-ink-muted">
                 No evidence filed yet — this portfolio is waiting for its first artefact.
@@ -146,9 +140,9 @@ function PortfolioDetailBody({ slug, data }: { slug: string; data: PortfolioDeta
             portfolio hangs off. */}
         <aside aria-label="Links" className="space-y-6">
           <div>
-            <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+            <SectionHeading>
               Project
-            </h2>
+            </SectionHeading>
             {data.project ? (
               <button
                 type="button"
@@ -163,9 +157,9 @@ function PortfolioDetailBody({ slug, data }: { slug: string; data: PortfolioDeta
           </div>
 
           <div>
-            <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+            <SectionHeading>
               Questions
-            </h2>
+            </SectionHeading>
             {data.questions.length === 0 ? (
               <p className="mt-2 text-sm text-ink-faint">No linked questions.</p>
             ) : (
@@ -247,9 +241,9 @@ function QuickAdd({ slug }: { slug: string }) {
 
   return (
     <section aria-label="File evidence" className="mt-10 border-t border-line pt-6">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+      <SectionHeading>
         File evidence
-      </h2>
+      </SectionHeading>
       <form
         className="mt-3 space-y-3"
         onSubmit={(event) => {

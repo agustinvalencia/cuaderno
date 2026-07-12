@@ -19,16 +19,8 @@ import AmbiguityPicker from "../ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../ambiguity/useAmbiguityResolver";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
-
-/** `8 Jul` / `Jul 8` per locale. Parsed at local midnight so the day
- * never slips a timezone. Mirrors Home's helper. */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 /** A stable identity for an entry, for optimistic removal and React
  * keys — the tuple has no id, so compose one from its fields. */

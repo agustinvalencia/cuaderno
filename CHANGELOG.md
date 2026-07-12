@@ -15,6 +15,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `MetaPanel`, so any note reads identically wherever it opens: titled `##` sections and the
   append-only `## Logs` history as a scrollable stack of timestamped cards (wikilinks intact). A
   pure view change — no domain or wire-format change. (#404)
+- **Consolidated two open-coded UI idioms into shared primitives** (desktop UI, internal) — the
+  `shortDate` formatter was copied verbatim into seven views and the uppercase section-label
+  heading into ~20; both now have one home (`lib/dates`, `components/ui/SectionHeading`), so a
+  format or style tweak is a single edit instead of a grep-and-replace. No behaviour or rendering
+  change — the primitives emit byte-identical output. (#405)
 
 ## [0.23.0] - 2026-07-12
 

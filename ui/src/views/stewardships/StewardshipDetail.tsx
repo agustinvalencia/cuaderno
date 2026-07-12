@@ -27,6 +27,8 @@ import {
 import Markdown from "../../components/markdown/Markdown";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
+import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 /** The stewardship's on-disk note path for open-in-editor: expanded
@@ -42,14 +44,6 @@ function stewardshipSlugFromPath(path: string): string {
   const rest = path.replace(/^stewardships\//, "");
   if (rest.endsWith("/_index.md")) return rest.slice(0, -"/_index.md".length);
   return rest.replace(/\.md$/i, "");
-}
-
-/** `8 Jul` / `Jul 8` per locale, at local midnight (no timezone slip). */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
 }
 
 /** Debounce a fast-changing value — used so the template-field fetch
@@ -145,7 +139,7 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
           tracking to draw. Status visualisations, not goal trackers. */}
       {showCharts && (
         <section aria-label="Trends" className="mt-10 border-t border-line pt-6">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Trends</h2>
+          <SectionHeading>Trends</SectionHeading>
           <div className="mt-3 space-y-6">
             {data.series.map((series, index) => (
               // Count/volume series (all-integer values — reps, laps,
@@ -166,9 +160,9 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
       {/* Recent tracking — last few entries, opening the note reader. */}
       {data.recent.length > 0 && (
         <section aria-label="Recent tracking" className="mt-10 border-t border-line pt-6">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <SectionHeading>
             Recent tracking
-          </h2>
+          </SectionHeading>
           <ul className="mt-3 space-y-1">
             {data.recent.map((entry) => (
               <li key={entry.path}>
@@ -300,7 +294,7 @@ function LogEntry({
 
   return (
     <section aria-label="Log a tracking entry" className="mt-10 border-t border-line pt-6">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Log entry</h2>
+      <SectionHeading>Log entry</SectionHeading>
       <form
         className="mt-3 space-y-3"
         onSubmit={(event) => {
