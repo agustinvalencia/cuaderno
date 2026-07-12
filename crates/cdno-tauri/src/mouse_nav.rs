@@ -44,7 +44,11 @@ pub fn install(app: AppHandle) {
         // SAFETY: AppKit passes a live NSEvent for the duration of the call.
         let ev = unsafe { event.as_ref() };
         let nav = match ev.r#type() {
-            // A side-button/trackpad swipe: direction is in deltaX.
+            // A discrete "swipe between pages" gesture: the mapped mouse side
+            // button, or a trackpad page-swipe. This is NOT two-finger
+            // scrolling (that's NSEventTypeScrollWheel, not in the mask), so
+            // panning a wide table/code block doesn't navigate. Direction is
+            // in deltaX.
             NSEventType::Swipe => {
                 let dx = ev.deltaX();
                 if dx > SWIPE_THRESHOLD {
