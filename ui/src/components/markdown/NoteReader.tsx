@@ -1,16 +1,24 @@
 // The slide-in note reader (plan §1.0, §3.8): a 380px Radix-backed
-// panel showing any vault note rendered — title, flat frontmatter
-// chips, the markdown body, and an "Open in editor" footer for the deep
+// panel showing any vault note rendered — title, a separated `MetaPanel`
+// metadata strip, the sectioned body (shared `SectionedBody`, the same
+// rendering the calendar panel uses — titled `##` sections and `## Logs`
+// as timestamped cards), and an "Open in editor" footer for the deep
 // edits the app deliberately doesn't do. Wikilink clicks resolve to
 // typed navigation (project / stewardship views) or replace the reader
 // with the linked note.
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { errorMessage, openInEditor, readNote, resolveWikilink } from "../../api/commands";
+import {
+  errorMessage,
+  openInEditor,
+  readNote,
+  resolveWikilink,
+} from "../../api/commands";
 import { useToast } from "../../shell/Toasts";
 import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
-import Markdown from "./Markdown";
 import { MetaPanel } from "./MetaPanel";
+import SectionedBody from "./SectionedBody";
+import { splitBodySections } from "../../lib/noteContent";
 
 /** The file stem of a vault path — `projects/foo.md` → `foo` — for
  * deriving a route slug from a resolved note path. */
@@ -68,7 +76,10 @@ export default function NoteReader({
 
   return (
     <Sheet open onOpenChange={(open) => !open && onClose()}>
-      <SheetContent className="w-[380px] max-w-[90vw]" aria-describedby={undefined}>
+      <SheetContent
+        className="w-[380px] max-w-[90vw]"
+        aria-describedby={undefined}
+      >
         <div className="flex items-start justify-between border-b border-line px-5 py-4">
           <SheetTitle className="min-w-0 flex-1 truncate pr-2 text-sm font-semibold text-ink">
             {data?.title ?? path}
@@ -87,11 +98,16 @@ export default function NoteReader({
           {isPending ? (
             <p className="text-sm text-ink-muted">Reading the note…</p>
           ) : isError || !data ? (
-            <p className="text-sm text-ink-muted">This note could not be read.</p>
+            <p className="text-sm text-ink-muted">
+              This note could not be read.
+            </p>
           ) : (
             <>
               <MetaPanel frontmatter={data.frontmatter} className="mb-5" />
-              <Markdown body={data.body} onWikilink={onWikilink} />
+              <SectionedBody
+                sections={splitBodySections(data.body)}
+                onWikilink={onWikilink}
+              />
             </>
           )}
         </div>

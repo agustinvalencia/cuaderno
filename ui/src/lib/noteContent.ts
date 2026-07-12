@@ -42,7 +42,7 @@ export function parseNote(markdown: string): ParsedNote {
     frontmatter = parseScalarFrontmatter(fm[1]);
     rest = markdown.slice(fm[0].length);
   }
-  return { frontmatter, sections: splitSections(rest) };
+  return { frontmatter, sections: splitBodySections(rest) };
 }
 
 /** Parse the frontmatter block's `key: value` lines into a flat record.
@@ -81,8 +81,12 @@ function stripQuotes(value: string): string {
 /** Split a note body (frontmatter already removed) on its level-2 (`## `)
  * headings. `###`+ headings stay inside their section's body. Sections
  * with an empty body are dropped — an unfilled scaffold heading is
- * "what's missing", which the calendar deliberately doesn't lead with. */
-function splitSections(body: string): NoteSection[] {
+ * "what's missing", which the calendar deliberately doesn't lead with.
+ *
+ * Exported so the note reader — which gets a frontmatter-free `body` from
+ * `read_note` — can section it the same way the calendar sections a raw
+ * blob via [`parseNote`], for one shared presentation. */
+export function splitBodySections(body: string): NoteSection[] {
   const sections: NoteSection[] = [];
   let heading: string | null = null;
   let buf: string[] = [];
