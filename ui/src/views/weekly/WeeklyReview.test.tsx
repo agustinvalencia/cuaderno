@@ -90,6 +90,9 @@ test("opens on step 1 with wins seeded from completed actions", async () => {
   const wins = (await screen.findByLabelText("This week's wins")) as HTMLTextAreaElement;
   // Seed composed from the week's completed action.
   expect(wins.value).toContain("- Completed: Wire the reader (alpha)");
+  // …and surfaced as a celebration card above the composer.
+  expect(screen.getByRole("heading", { name: "Completed this week" })).toBeDefined();
+  expect(screen.getByText("Wire the reader")).toBeDefined();
 });
 
 test("dots navigate non-linearly — jump straight from Wins to Focus", async () => {

@@ -1,11 +1,11 @@
 // NoteContent (UI request 2026-07-12): a daily note blob is presented as
 // a separated metadata strip, titled sections, and the `## Logs` history
 // as timestamped log cards — not a raw markdown wall.
-import { afterEach, expect, test } from "vitest";
+import { afterEach, beforeAll, expect, test } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import NoteContent from "./NoteContent";
 
 expect.extend(matchers);
@@ -14,7 +14,28 @@ declare module "vitest" {
   interface AsymmetricMatchersContaining extends AxeMatchers {}
 }
 
-afterEach(cleanup);
+// The log-order toggle persists via localStorage; jsdom's here doesn't work.
+beforeAll(() => {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+    },
+    configurable: true,
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  localStorage.clear();
+});
 
 const DAILY = `---
 type: daily
@@ -79,6 +100,16 @@ test("a wikilink inside a log entry stays a clickable link, not raw text", () =>
   expect(screen.queryByText(/\[\[projects\/cuaderno\]\]/)).toBeNull();
   link.click();
   expect(calls).toEqual(["projects/cuaderno"]);
+});
+
+test("the Logs sort toggle flips the entry order", () => {
+  render(<NoteContent markdown={DAILY} onWikilink={() => {}} />);
+  // Default is oldest-first: 09:05 before 14:32.
+  const times = () =>
+    screen.getAllByText(/^\d{2}:\d{2}$/).map((el) => el.textContent);
+  expect(times()).toEqual(["09:05", "14:32"]);
+  fireEvent.click(screen.getByRole("button", { name: /reverse log order/ }));
+  expect(times()).toEqual(["14:32", "09:05"]);
 });
 
 test("a Logs section that doesn't parse falls back to plain markdown", () => {
