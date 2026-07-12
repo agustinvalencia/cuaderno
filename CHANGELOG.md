@@ -8,6 +8,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Settings panel (`⌘,`)** (desktop UI) — the macOS Preferences convention: `⌘,` opens a calm
+  centred modal for the app-level preferences that had been scattered as blind text toggles in the
+  sidebar footer. Theme is now a segmented control that shows the current choice (System / Light /
+  Dark) instead of a cycle button, the metrics preference is a labelled switch, and there's a jump
+  to the vault's config editor. A modal (not a second window) so it floats over the current view
+  without disturbing it or the back/forward history. The footer's two toggles collapse into a single
+  **Settings** entry. `storedTheme()` is now defensive against a broken/absent `localStorage`,
+  matching the metrics store. (#408)
 - **Back/forward navigation from the mouse side buttons and the keyboard** (desktop UI) — `⌘[` /
   `⌘]` (Ctrl elsewhere) and the mouse's back/forward side buttons (X1/X2) now step through your
   view history, as in a browser, bound globally so they work from any view. macOS WKWebView doesn't
