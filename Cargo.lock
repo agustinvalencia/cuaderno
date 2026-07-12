@@ -659,7 +659,6 @@ dependencies = [
  "cdno-core",
  "cdno-domain",
  "chrono",
- "objc2",
  "objc2-app-kit",
  "serde",
  "serde_json",

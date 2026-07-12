@@ -12,7 +12,7 @@
 //  - Tauri `nav://back` / `nav://forward` events — emitted by the native
 //    macOS NSEvent monitor (crates/cdno-tauri/src/mouse_nav.rs) so the
 //    physical side buttons work on macOS too.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { listen } from "@tauri-apps/api/event";
 
@@ -32,7 +32,17 @@ function isEditable(target: EventTarget | null): boolean {
 
 export function useHistoryNavigation() {
   const navigate = useNavigate();
+  // `useNavigate`'s identity changes on every navigation under BrowserRouter,
+  // so read it through a ref and attach the listeners once (`[]` deps, like
+  // the ⌘K handler) — re-running the effect per route change would needlessly
+  // re-register the native bridge and briefly detach it.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+
   useEffect(() => {
+    const back = () => navigateRef.current(-1);
+    const forward = () => navigateRef.current(1);
+
     // Swallow the side buttons' mousedown so a webview that DOES handle
     // them natively can't also run its own step (a double navigation).
     function suppressMouse(event: MouseEvent) {
@@ -43,20 +53,20 @@ export function useHistoryNavigation() {
     function onMouseUp(event: MouseEvent) {
       if (event.button === BACK_BUTTON) {
         event.preventDefault();
-        navigate(-1);
+        back();
       } else if (event.button === FORWARD_BUTTON) {
         event.preventDefault();
-        navigate(1);
+        forward();
       }
     }
     function onKeyDown(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || isEditable(event.target)) return;
       if (event.key === "[") {
         event.preventDefault();
-        navigate(-1);
+        back();
       } else if (event.key === "]") {
         event.preventDefault();
-        navigate(1);
+        forward();
       }
     }
     window.addEventListener("mousedown", suppressMouse);
@@ -69,10 +79,10 @@ export function useHistoryNavigation() {
     let cancelled = false;
     let unlistenBack: (() => void) | undefined;
     let unlistenForward: (() => void) | undefined;
-    void listen("nav://back", () => navigate(-1))
+    void listen("nav://back", back)
       .then((fn) => (cancelled ? fn() : (unlistenBack = fn)))
       .catch(() => {});
-    void listen("nav://forward", () => navigate(1))
+    void listen("nav://forward", forward)
       .then((fn) => (cancelled ? fn() : (unlistenForward = fn)))
       .catch(() => {});
 
@@ -84,5 +94,5 @@ export function useHistoryNavigation() {
       unlistenBack?.();
       unlistenForward?.();
     };
-  }, [navigate]);
+  }, []);
 }

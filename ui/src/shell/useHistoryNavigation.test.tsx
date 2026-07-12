@@ -71,16 +71,38 @@ test("Cmd+[ goes back and Cmd+] goes forward", () => {
   expect(path()).toBe("/b");
 });
 
-test("the side buttons' mousedown is preventDefault'd; a normal button isn't", () => {
+test("Ctrl+[ / Ctrl+] navigate too (non-Mac modifier)", () => {
   renderAt(["/a", "/b"], 1);
-  const back = new MouseEvent("mousedown", {
-    button: 3,
-    bubbles: true,
-    cancelable: true,
-  });
-  act(() => window.dispatchEvent(back));
-  expect(back.defaultPrevented).toBe(true);
+  act(() =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "[",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  expect(path()).toBe("/a");
+});
 
+test("a modifier with some other key does not navigate", () => {
+  renderAt(["/a", "/b"], 1);
+  key("p"); // Cmd+P
+  expect(path()).toBe("/b");
+});
+
+test("both side buttons' mousedown is preventDefault'd; a normal button isn't", () => {
+  renderAt(["/a", "/b"], 1);
+  for (const button of [3, 4]) {
+    const event = new MouseEvent("mousedown", {
+      button,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => window.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+  }
   const left = new MouseEvent("mousedown", {
     button: 0,
     bubbles: true,
