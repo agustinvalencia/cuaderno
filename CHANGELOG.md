@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Mouse back/forward buttons navigate view history** (desktop UI) — the mouse's side buttons
+  (X1/X2, `MouseEvent.button` 3 and 4) now step backward and forward through your navigation
+  history, exactly as they do in a browser. Bound globally in the app shell, so they work from any
+  view. (#407)
+
 ## [0.24.0] - 2026-07-12
 
 ### Changed
