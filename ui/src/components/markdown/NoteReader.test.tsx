@@ -118,6 +118,9 @@ test("sections a daily-shaped note body and renders its Logs as cards", async ()
   expect(screen.getByText("09:05")).toBeDefined();
   expect(screen.getByText("started")).toBeDefined();
   expect(screen.getByText("shipped it")).toBeDefined();
+  // The reader omits the Logs height cap: its own panel is the single
+  // scroll, so there's no nested fixed-height scroll region.
+  expect(screen.queryByLabelText("Logs entries")).toBeNull();
 });
 
 test("a project wikilink navigates and closes the reader", async () => {

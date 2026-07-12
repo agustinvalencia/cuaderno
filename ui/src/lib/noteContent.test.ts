@@ -94,7 +94,7 @@ test("parseNote reads CRLF frontmatter", () => {
   expect(frontmatter).toEqual({ type: "daily" });
 });
 
-test("splitSections ignores a `## ` line inside a fenced code block", () => {
+test("splitBodySections ignores a `## ` line inside a fenced code block", () => {
   const md = "## Notes\n\nExample:\n\n```md\n## Section A\nbody\n```\n\ndone\n";
   const { sections } = parseNote(md);
   // The fenced `## Section A` must not open a new section — everything

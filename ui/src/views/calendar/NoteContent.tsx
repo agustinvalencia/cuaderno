@@ -20,7 +20,14 @@ export default function NoteContent({
   return (
     <div className="space-y-6">
       <MetaPanel frontmatter={frontmatter} />
-      <SectionedBody sections={sections} onWikilink={onWikilink} />
+      {/* Cap the Logs scroll here — the calendar is a wide, page-scrolled
+          column where a long day would otherwise shove other sections
+          down. The reader omits the cap (its panel is the single scroll). */}
+      <SectionedBody
+        sections={sections}
+        onWikilink={onWikilink}
+        capLogsHeight
+      />
     </div>
   );
 }

@@ -81,7 +81,9 @@ function stripQuotes(value: string): string {
 /** Split a note body (frontmatter already removed) on its level-2 (`## `)
  * headings. `###`+ headings stay inside their section's body. Sections
  * with an empty body are dropped — an unfilled scaffold heading is
- * "what's missing", which the calendar deliberately doesn't lead with.
+ * "what's missing", which the sectioned view (calendar and reader alike)
+ * deliberately doesn't lead with; the full note is a keystroke away in the
+ * editor.
  *
  * Exported so the note reader — which gets a frontmatter-free `body` from
  * `read_note` — can section it the same way the calendar sections a raw
