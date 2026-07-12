@@ -147,6 +147,16 @@ export function readNote(path: string): Promise<NoteView> {
   return call("read_note", { path });
 }
 
+/** Read a note's RAW markdown (frontmatter and all) for the editor. */
+export function readNoteRaw(path: string): Promise<string> {
+  return call("read_note_raw", { path });
+}
+
+/** Overwrite a note with `content` (free editing) and reindex. */
+export function writeNote(path: string, content: string): Promise<void> {
+  return call("write_note", { path, content });
+}
+
 /** Resolve a clicked wikilink `target` to its note (path + note_type)
  * for typed navigation. `null` when the target matches no note or is
  * ambiguous — the caller renders that as a muted, un-clickable span. */

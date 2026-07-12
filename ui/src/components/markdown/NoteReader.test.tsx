@@ -18,6 +18,24 @@ import type { ResolvedLink } from "../../api/bindings/ResolvedLink";
 import { ToastProvider } from "../../shell/Toasts";
 import NoteReader from "./NoteReader";
 
+// CodeMirror needs layout APIs jsdom lacks; stub the editor with a textarea
+// that mirrors its seed-once + onChange contract, so the edit flow is testable.
+vi.mock("./MarkdownEditor", () => ({
+  default: ({
+    initialDoc,
+    onChange,
+  }: {
+    initialDoc: string;
+    onChange: (value: string) => void;
+  }) => (
+    <textarea
+      aria-label="editor"
+      defaultValue={initialDoc}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
+}));
+
 // jsdom lacks the layout APIs Radix Dialog reaches for.
 if (!Element.prototype.scrollIntoView)
   Element.prototype.scrollIntoView = () => {};
@@ -34,6 +52,52 @@ const NOTE: NoteView = {
   frontmatter: { type: "zettel", context: "work", tags: ["a", "b"] },
   body: "Body with a [[garden]] link and a [[some-note|plain one]].",
 };
+
+test("Edit loads the raw note into the editor, and Save writes the change", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "read_note") return NOTE;
+    if (cmd === "read_note_raw")
+      return "---\ntype: zettel\n---\n\n# Example note\n\nold body\n";
+    if (cmd === "write_note") return null;
+    return undefined;
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter>
+          <NoteReader
+            path={NOTE.path}
+            onClose={() => {}}
+            onNavigate={() => {}}
+          />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+
+  // Enter edit mode → the raw markdown loads into the editor.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const editor = (await screen.findByLabelText(
+    "editor",
+  )) as HTMLTextAreaElement;
+  expect(editor.value).toContain("old body");
+
+  // Edit and save → write_note is invoked with the new content.
+  fireEvent.change(editor, { target: { value: "brand new body" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => {
+    const write = calls.find((c) => c.cmd === "write_note");
+    expect(write?.args).toMatchObject({
+      path: NOTE.path,
+      content: "brand new body",
+    });
+  });
+});
 
 function renderReader(
   onClose: () => void,

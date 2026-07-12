@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Edit a note in the app (spike): a CodeMirror editor in the reader** (desktop UI) — the note
+  reader gains an **Edit** button that swaps the read view for a CodeMirror 6 markdown editor over
+  the note's raw source, widening the panel for comfortable typing; **Save** writes the file and
+  reindexes, **Cancel** discards. This is the "posture B" model — free editing with `cdno lint` /
+  reconcile as the guardrail rather than a schema gate: a new `write_note_raw` domain primitive
+  writes exactly what it's given (a frontmatter-less or otherwise-invalid note is written, not
+  refused) and reconciles so backlinks and search follow the new bytes. CodeMirror (the engine
+  Obsidian uses) edits the source directly — no lossy WYSIWYG round-trip — so a note stays byte-clean
+  across nvim, git, and the app. Backed by `read_note_raw` / `write_note` commands. An exploratory
+  first step toward in-app editing; the full-width reader route is the intended long-term home. (#413)
+
 - **Weekly review shows your wins as cards, and log cards can flip order** (desktop UI) — two
   presentation tweaks from testing. The Weekly review's Wins step now surfaces the week's completed
   actions as a grid of celebration cards above the composer — a scannable "look what you did" before
