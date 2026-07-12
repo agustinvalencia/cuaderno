@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-12
+
 ### Added
 
 - **Settings panel (`⌘,`)** (desktop UI) — the macOS Preferences convention: `⌘,` opens a calm
