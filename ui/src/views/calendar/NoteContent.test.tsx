@@ -60,6 +60,15 @@ test("renders the Logs section as timestamped cards", () => {
   expect(screen.getByText("wired the watcher")).toBeDefined();
 });
 
+test("caps the Logs stack in a focusable scroll region (calendar context)", () => {
+  render(<NoteContent markdown={DAILY} onWikilink={() => {}} />);
+  // The calendar page is wide and page-scrolled, so Logs get a capped,
+  // keyboard-focusable inner scroll.
+  const region = screen.getByLabelText("Logs entries");
+  expect(region.getAttribute("tabindex")).toBe("0");
+  expect(region.className).toContain("overflow-y-auto");
+});
+
 test("a wikilink inside a log entry stays a clickable link, not raw text", () => {
   const md =
     "## Logs\n\n- **14:32**: shipped [[projects/cuaderno]] milestone\n";

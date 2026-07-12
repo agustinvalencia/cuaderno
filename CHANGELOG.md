@@ -6,6 +6,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The note reader and the calendar now render a note the same way** (desktop UI) — the shell
+  note reader (the slide-in you get from a wikilink or backlink) used to render a note's body as
+  one flat markdown blob, so opening a daily note there looked nothing like opening it in the
+  calendar's sectioned panel. Both now compose the same shared `SectionedBody` renderer over a
+  `MetaPanel`, so any note reads identically wherever it opens: titled `##` sections and the
+  append-only `## Logs` history as a scrollable stack of timestamped cards (wikilinks intact). A
+  pure view change — no domain or wire-format change. (#404)
+
 ## [0.23.0] - 2026-07-12
 
 ### Changed

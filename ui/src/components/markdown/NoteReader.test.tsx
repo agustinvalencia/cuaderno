@@ -3,7 +3,13 @@
 // a plain note replaces the reader in place, and an unresolved target
 // is a silent no-op.
 import { afterEach, expect, test, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -13,7 +19,8 @@ import { ToastProvider } from "../../shell/Toasts";
 import NoteReader from "./NoteReader";
 
 // jsdom lacks the layout APIs Radix Dialog reaches for.
-if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+if (!Element.prototype.scrollIntoView)
+  Element.prototype.scrollIntoView = () => {};
 globalThis.ResizeObserver ||= class {
   observe() {}
   unobserve() {}
@@ -35,15 +42,22 @@ function renderReader(
 ) {
   mockIPC((cmd, args) => {
     if (cmd === "read_note") return NOTE;
-    if (cmd === "resolve_wikilink") return resolve((args as { target: string }).target);
+    if (cmd === "resolve_wikilink")
+      return resolve((args as { target: string }).target);
     return undefined;
   });
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <MemoryRouter>
-          <NoteReader path={NOTE.path} onClose={onClose} onNavigate={onNavigate} />
+          <NoteReader
+            path={NOTE.path}
+            onClose={onClose}
+            onNavigate={onNavigate}
+          />
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
@@ -70,11 +84,52 @@ test("renders the note title, a separated frontmatter panel, and body", async ()
   expect(screen.queryByText(/tags/)).toBeNull();
 });
 
+test("sections a daily-shaped note body and renders its Logs as cards", async () => {
+  // The reader now shares the calendar's sectioned rendering: a body with
+  // `## ` sections gets titled blocks, and a `## Logs` history becomes a
+  // stack of timestamped cards — not one flat markdown blob.
+  const daily: NoteView = {
+    path: "journal/2026/daily/2026-07-12.md",
+    note_type: "daily",
+    title: "Saturday 12 July",
+    frontmatter: { type: "daily" },
+    body: "## Standup\n\nPlan the day.\n\n## Logs\n\n- **09:05**: started\n- **14:32**: shipped it\n",
+  };
+  mockIPC((cmd) => (cmd === "read_note" ? daily : undefined));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter>
+          <NoteReader
+            path={daily.path}
+            onClose={() => {}}
+            onNavigate={() => {}}
+          />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+
+  expect(await screen.findByRole("heading", { name: "Logs" })).toBeDefined();
+  expect(screen.getByRole("heading", { name: "Standup" })).toBeDefined();
+  expect(screen.getByText("09:05")).toBeDefined();
+  expect(screen.getByText("started")).toBeDefined();
+  expect(screen.getByText("shipped it")).toBeDefined();
+  // The reader omits the Logs height cap: its own panel is the single
+  // scroll, so there's no nested fixed-height scroll region.
+  expect(screen.queryByLabelText("Logs entries")).toBeNull();
+});
+
 test("a project wikilink navigates and closes the reader", async () => {
   const onClose = vi.fn();
   const onNavigate = vi.fn();
   renderReader(onClose, onNavigate, (target) =>
-    target === "garden" ? { path: "projects/garden.md", note_type: "project" } : null,
+    target === "garden"
+      ? { path: "projects/garden.md", note_type: "project" }
+      : null,
   );
   fireEvent.click(await screen.findByText("garden"));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -84,9 +139,14 @@ test("a project wikilink navigates and closes the reader", async () => {
 test("a plain-note wikilink replaces the reader in place", async () => {
   const onClose = vi.fn();
   const onNavigate = vi.fn();
-  renderReader(onClose, onNavigate, () => ({ path: "zettels/other.md", note_type: "zettel" }));
+  renderReader(onClose, onNavigate, () => ({
+    path: "zettels/other.md",
+    note_type: "zettel",
+  }));
   fireEvent.click(await screen.findByText("plain one"));
-  await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("zettels/other.md"));
+  await waitFor(() =>
+    expect(onNavigate).toHaveBeenCalledWith("zettels/other.md"),
+  );
   expect(onClose).not.toHaveBeenCalled();
 });
 
