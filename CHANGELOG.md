@@ -8,10 +8,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **Mouse back/forward buttons navigate view history** (desktop UI) — the mouse's side buttons
-  (X1/X2, `MouseEvent.button` 3 and 4) now step backward and forward through your navigation
-  history, exactly as they do in a browser. Bound globally in the app shell, so they work from any
-  view. (#407)
+- **Back/forward navigation from the mouse side buttons and the keyboard** (desktop UI) — `⌘[` /
+  `⌘]` (Ctrl elsewhere) and the mouse's back/forward side buttons (X1/X2) now step through your
+  view history, as in a browser, bound globally so they work from any view. macOS WKWebView doesn't
+  deliver those mouse buttons to the web layer (tauri#10936), so a small native `NSEvent` monitor
+  catches them and bridges them to the app via `nav://back` / `nav://forward` events; the keyboard
+  path works on every platform. The keyboard shortcut is ignored while typing in a field. (#407)
 
 ## [0.24.0] - 2026-07-12
 

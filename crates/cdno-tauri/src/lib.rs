@@ -17,6 +17,8 @@ pub mod watcher;
 pub mod with_vault;
 
 mod clock;
+#[cfg(target_os = "macos")]
+mod mouse_nav;
 mod tray;
 
 use std::path::PathBuf;
@@ -298,6 +300,14 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            // macOS: bridge the mouse back/forward side buttons to the
+            // webview (they don't reach it as DOM events). Independent of
+            // the vault, and installed here on the main thread — the picker
+            // path runs `init_with_vault` off-thread, where an NSEvent
+            // monitor can't be installed.
+            #[cfg(target_os = "macos")]
+            mouse_nav::install(app.handle().clone());
+
             // Vault resolution: explicit env override, then a persisted
             // setting, then a native picker (GH #331). The persisted
             // path is validated with the same `.cuaderno/` marker check

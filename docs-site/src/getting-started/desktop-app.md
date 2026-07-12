@@ -80,5 +80,5 @@ on disk. See [Editing the config in the app](config-editor.md) for the full walk
 `⌘K` opens search-and-jump, `⌘⇧C` summons the
 global capture window from any app (Enter files to the inbox, `⌘Enter` appends to today's log),
 and the menu-bar tray keeps Quick capture / Open / Quit reachable even with every window closed.
-The mouse's back and forward side buttons (X1/X2) step through your view history, just like a
-browser.
+`⌘[` and `⌘]` (or the mouse's back and forward side buttons) step backward and forward through
+your view history, just like a browser.
