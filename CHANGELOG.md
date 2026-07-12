@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mouse side buttons now actually navigate on macOS** (desktop UI) — the v0.25.0 native bridge
+  only handled the side buttons when they arrived as `otherMouseUp` with `buttonNumber` 3/4, but
+  many macOS mice fire the side buttons as horizontal **swipe gestures** (`NSEventTypeSwipe`)
+  instead, so the buttons did nothing. The `NSEvent` monitor now also handles swipe events, mapping
+  `deltaX` direction to back/forward (verified against a real mouse), while keeping the
+  buttonNumber-3/4 path for mice that use real buttons. As a bonus, a trackpad page-swipe (where the
+  OS "swipe between pages" gesture is configured as a swipe) navigates history too — ordinary
+  two-finger scrolling is a different event, so panning a wide table doesn't navigate. (#410)
+
 ## [0.25.0] - 2026-07-12
 
 ### Added
