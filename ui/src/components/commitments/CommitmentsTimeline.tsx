@@ -18,6 +18,7 @@ import { completeCommitment, completeMilestone, errorMessage } from "../../api/c
 import AmbiguityPicker from "../ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../ambiguity/useAmbiguityResolver";
 import { contextDotClass } from "../../lib/contexts";
+import { SectionHeading } from "../ui/section-heading";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
@@ -175,7 +176,7 @@ export default function CommitmentsTimeline({
   today,
   filter,
   readOnly = false,
-  monthHeading: MonthHeading = "h3",
+  monthHeading = "h3",
 }: {
   entries: CommitmentEntry[];
   today: string;
@@ -240,9 +241,7 @@ export default function CommitmentsTimeline({
 
       {months.map((month) => (
         <section key={month.label} aria-label={month.label}>
-          <MonthHeading className="text-xs font-medium uppercase tracking-wider text-ink-faint">
-            {month.label}
-          </MonthHeading>
+          <SectionHeading as={monthHeading}>{month.label}</SectionHeading>
           <ul className="mt-2 space-y-2">
             {month.entries.map((entry) => (
               <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />

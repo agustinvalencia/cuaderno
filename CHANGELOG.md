@@ -16,8 +16,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   append-only `## Logs` history as a scrollable stack of timestamped cards (wikilinks intact). A
   pure view change — no domain or wire-format change. (#404)
 - **Consolidated two open-coded UI idioms into shared primitives** (desktop UI, internal) — the
-  `shortDate` formatter was copied verbatim into seven views and the uppercase section-label
-  heading into ~20; both now have one home (`lib/dates`, `components/ui/SectionHeading`), so a
+  `shortDate` formatter was copied verbatim into seven call sites and the uppercase section-label
+  heading into ~20; both now have one home (`lib/dates`, `components/ui/section-heading`), so a
   format or style tweak is a single edit instead of a grep-and-replace. No behaviour or rendering
   change — the primitives emit byte-identical output. (#405)
 
