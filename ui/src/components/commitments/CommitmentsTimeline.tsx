@@ -18,17 +18,10 @@ import { completeCommitment, completeMilestone, errorMessage } from "../../api/c
 import AmbiguityPicker from "../ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../ambiguity/useAmbiguityResolver";
 import { contextDotClass } from "../../lib/contexts";
+import { SectionHeading } from "../ui/section-heading";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
-
-/** `8 Jul` / `Jul 8` per locale. Parsed at local midnight so the day
- * never slips a timezone. Mirrors Home's helper. */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 /** A stable identity for an entry, for optimistic removal and React
  * keys — the tuple has no id, so compose one from its fields. */
@@ -183,7 +176,7 @@ export default function CommitmentsTimeline({
   today,
   filter,
   readOnly = false,
-  monthHeading: MonthHeading = "h3",
+  monthHeading = "h3",
 }: {
   entries: CommitmentEntry[];
   today: string;
@@ -248,9 +241,7 @@ export default function CommitmentsTimeline({
 
       {months.map((month) => (
         <section key={month.label} aria-label={month.label}>
-          <MonthHeading className="text-xs font-medium uppercase tracking-wider text-ink-faint">
-            {month.label}
-          </MonthHeading>
+          <SectionHeading as={monthHeading}>{month.label}</SectionHeading>
           <ul className="mt-2 space-y-2">
             {month.entries.map((entry) => (
               <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />

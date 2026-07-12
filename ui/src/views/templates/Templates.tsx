@@ -26,6 +26,7 @@ import {
   readTemplate,
   saveTemplate,
 } from "../../api/commands";
+import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 /** The distinct `{{placeholder}}` names referenced in `content`, in
@@ -332,9 +333,9 @@ function PlaceholderPanel({ placeholders }: { placeholders: TemplatePlaceholder[
 
   return (
     <section aria-label="Available placeholders" className="mt-6 border-t border-line pt-4">
-      <h3 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+      <SectionHeading as="h3">
         Available placeholders
-      </h3>
+      </SectionHeading>
       <div className="mt-3 space-y-4">
         {SOURCE_GROUPS.map(({ kind, heading, note }) => {
           const group = placeholders.filter((p) => p.source.kind === kind);

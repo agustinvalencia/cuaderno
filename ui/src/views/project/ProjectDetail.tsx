@@ -33,6 +33,8 @@ import { LogCard } from "../../components/ui/log-card";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
+import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
@@ -53,15 +55,6 @@ function extractSection(body: string, heading: string): string {
   const rest = lines.slice(start + 1);
   const end = rest.findIndex((l) => /^##\s/.test(l));
   return (end < 0 ? rest : rest.slice(0, end)).join("\n").trim();
-}
-
-/** `8 Jul` / `Jul 8` per locale, at local midnight (no timezone slip).
- * Mirrors the timeline helper. */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
 }
 
 export default function ProjectDetail() {
@@ -268,9 +261,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
       {/* Current State — inline editor (active projects only). */}
       <section aria-label="Current state" className="mt-8">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+        <SectionHeading>
           Current state
-        </h2>
+        </SectionHeading>
         {parked ? (
           <p className="mt-2 text-sm text-ink-muted">
             This project is parked. Activate it to edit its state.
@@ -322,9 +315,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
       {/* Next Actions — tick + quick-add (active only). */}
       <section aria-label="Next actions" className="mt-8">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+        <SectionHeading>
           Next actions
-        </h2>
+        </SectionHeading>
         {data.actions.length === 0 ? (
           <p className="mt-2 text-sm text-ink-muted">
             {parked ? "Parked — actions resume on activation." : "No open actions."}
@@ -398,9 +391,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           the bundle; the map body below shows the current items). */}
       {!parked && (
         <section aria-label="Waiting on" className="mt-8">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <SectionHeading>
             Waiting on
-          </h2>
+          </SectionHeading>
           <form
             className="mt-2 flex items-center gap-2"
             onSubmit={(event) => {
@@ -453,9 +446,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
       {/* Milestones — tick to complete. */}
       {data.open_milestones.length > 0 && (
         <section aria-label="Milestones" className="mt-8">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <SectionHeading>
             Milestones
-          </h2>
+          </SectionHeading>
           <ul className="mt-2 space-y-1">
             {data.open_milestones.map((milestone) => (
               <li
@@ -492,9 +485,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
       {/* Backlinks — quiet, clickable rows opening the note reader. */}
       {hasBacklinks && (
         <section aria-label="Backlinks" className="mt-8">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <SectionHeading>
             Linked from
-          </h2>
+          </SectionHeading>
           {backlinkGroups.map(([group, paths]) =>
             paths.length === 0 ? null : (
               <div key={group} className="mt-2">
@@ -521,9 +514,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
       {/* Recently in your logs. */}
       {data.log_mentions.length > 0 && (
         <section aria-label="Recent log mentions" className="mt-8">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          <SectionHeading>
             Recently in your logs
-          </h2>
+          </SectionHeading>
           <div className="mt-2 space-y-1.5">
             {data.log_mentions.map((mention, index) => (
               <LogCard
@@ -545,9 +538,9 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
       {/* The map as written — the full body, so nothing is hidden. */}
       <section aria-label="The map as written" className="mt-10 border-t border-line pt-6">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+        <SectionHeading>
           The map as written
-        </h2>
+        </SectionHeading>
         <div className="mt-2">
           <Markdown body={data.body_markdown} onWikilink={onWikilink} />
         </div>

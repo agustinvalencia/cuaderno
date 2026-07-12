@@ -38,6 +38,8 @@ import type { Context } from "../../lib/contexts";
 import { contextDotClass } from "../../lib/contexts";
 import { stalenessAgo, stalenessTone } from "../../lib/staleness";
 import { useReader } from "../../shell/reader";
+import { shortDate } from "../../lib/dates";
+import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 // The commitments timeline takes a context filter; the Strategic six-week
@@ -53,14 +55,6 @@ const QUESTION_DOMAINS: QuestionSummary["domain"][] = ["research", "life"];
 // the stewardship's OWN context hue rather than cycling.
 function contextStroke(context: Context): string {
   return `var(--color-ctx-${context})`;
-}
-
-/** `8 Jul` / `Jul 8` per locale, at local midnight (no timezone slip). */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
 }
 
 /** Spelt cardinal for the cap copy ("Room for five…"); falls back to the
@@ -177,7 +171,7 @@ function QuestionsGrid({
 
   return (
     <section aria-label="Questions">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Questions</h2>
+      <SectionHeading>Questions</SectionHeading>
       {questions.length === 0 ? (
         <p className="mt-3 text-sm text-ink-muted">No active questions.</p>
       ) : (
@@ -313,7 +307,7 @@ function ProjectSlots({
 
   return (
     <section aria-label="Project slots">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Projects</h2>
+      <SectionHeading>Projects</SectionHeading>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {active.map((slot) => (
@@ -447,9 +441,9 @@ function CapModal({
 function PortfolioHealth({ portfolios }: { portfolios: PortfolioSummary[] }) {
   return (
     <section aria-label="Portfolio health">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+      <SectionHeading>
         Portfolio health
-      </h2>
+      </SectionHeading>
       {portfolios.length === 0 ? (
         <p className="mt-3 text-sm text-ink-muted">No portfolios yet.</p>
       ) : (
@@ -493,7 +487,7 @@ function StewardshipsOverview({ rows }: { rows: StewardshipStrategicRow[] }) {
 
   return (
     <section aria-label="Stewardships">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Stewardships</h2>
+      <SectionHeading>Stewardships</SectionHeading>
       {rows.length === 0 ? (
         <p className="mt-3 text-sm text-ink-muted">No stewardships yet.</p>
       ) : (
@@ -537,9 +531,9 @@ function NextSixWeeks({
 }) {
   return (
     <section aria-label="Next six weeks">
-      <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+      <SectionHeading>
         Next six weeks
-      </h2>
+      </SectionHeading>
       {commitments.length === 0 ? (
         <p className="mt-3 text-sm text-ink-muted">Nothing promised in this window.</p>
       ) : (

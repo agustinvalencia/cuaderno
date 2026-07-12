@@ -3,19 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import { getOrientation } from "../../api/commands";
 import { contextDotClass } from "../../lib/contexts";
+import { shortDate } from "../../lib/dates";
+import { SectionHeading } from "../../components/ui/section-heading";
 import ProjectCard from "./ProjectCard";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
-
-/** `8 Jul` / `Jul 8` per locale — the friendly short date for the
- * commitments strip. Parsed at local midnight so the day never slips a
- * timezone. */
-function shortDate(date: string): string {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-  });
-}
 
 export default function Home() {
   const { data, isPending, isError, error } = useQuery({
@@ -106,7 +98,7 @@ export default function Home() {
 
       {data.commitments.length > 0 && (
         <section aria-label="Due soon" className="mt-6">
-          <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">Due soon</h2>
+          <SectionHeading>Due soon</SectionHeading>
           <ul className="mt-2 flex flex-wrap gap-2">
             {data.commitments.map((commitment) => (
               <li
@@ -130,9 +122,9 @@ export default function Home() {
       )}
 
       <section aria-label="Your projects" className="mt-8">
-        <h2 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+        <SectionHeading>
           Your projects
-        </h2>
+        </SectionHeading>
         {data.projects.length === 0 ? (
           <p className="mt-3 rounded border border-line bg-bg-surface p-6 text-ink-muted">
             Nothing active. Your CLI or Claude can start one when you're ready.
