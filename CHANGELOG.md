@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-12
+
 ### Changed
 
 - **The note reader and the calendar now render a note the same way** (desktop UI) — the shell
