@@ -8,6 +8,7 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { InboxItem } from "../api/bindings/InboxItem";
 import { discardInboxItem, errorMessage, listInbox, openInEditor } from "../api/commands";
+import { useReader } from "./reader";
 import { useToast } from "./Toasts";
 
 /** The `inbox/<slug>.md` note path for open-in-editor. */
@@ -36,6 +37,7 @@ export default function InboxDrawer({
 }) {
   const client = useQueryClient();
   const { toast } = useToast();
+  const { openReader } = useReader();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -120,6 +122,16 @@ export default function InboxDrawer({
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-xs text-ink-faint">{capturedDate(item.slug)}</span>
                   <div className="flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        openReader(notePath(item.slug));
+                        onClose();
+                      }}
+                      className="rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
+                    >
+                      open
+                    </button>
                     <button
                       type="button"
                       onClick={() => open.mutate(item.slug)}

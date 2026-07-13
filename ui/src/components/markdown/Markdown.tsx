@@ -1,12 +1,114 @@
 // Rendered markdown for the note reader (plan §3.8). react-markdown +
-// remark-gfm (tables, task lists, strikethrough) + the wikilink plugin,
-// with component overrides styled from the semantic tokens so notes
-// read as part of the app, not a raw dump.
-import type { ComponentPropsWithoutRef } from "react";
+// remark-gfm (tables, task lists, strikethrough) + remark-math/rehype-katex
+// (LaTeX maths, the load-bearing case for research notes) + the wikilink
+// plugin, with component overrides styled from the semantic tokens so notes
+// read as part of the app, not a raw dump. KaTeX's stylesheet and fonts are
+// vendored (imported below), never a CDN — the app CSP blocks external
+// hosts.
+import { createContext, useContext } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import { readNoteAsset } from "../../api/commands";
 import { remarkWikilinks } from "./remarkWikilinks";
+
+// The path of the note whose body is being rendered, so an embedded image
+// (`![alt](assets/fig.png)`, whose src is relative to the note) can be
+// resolved to vault bytes. Provided by the note surfaces that know their
+// path (the centred note page, the calendar panel); absent elsewhere, in
+// which case a relative image degrades to its caption rather than breaking.
+const NotePathContext = createContext<string | null>(null);
+
+export function NotePathProvider({
+  path,
+  children,
+}: {
+  path: string;
+  children: ReactNode;
+}) {
+  return <NotePathContext.Provider value={path}>{children}</NotePathContext.Provider>;
+}
+
+type ImgProps = ComponentPropsWithoutRef<"img"> & { node?: unknown };
+
+/** An embedded image. A `data:` src renders directly; an external URL
+ * can't load (the webview has no outbound access), so it degrades to its
+ * alt caption; a vault-relative src (with a note path in scope) is fetched
+ * as bytes by the child `VaultImage`. Rendered with spans (not `<figure>`)
+ * since react-markdown nests the image inside a `<p>`, where block elements
+ * are invalid. */
+function NoteImage({ src, alt, node: _node, ...props }: ImgProps) {
+  const notePath = useContext(NotePathContext);
+  if (typeof src === "string" && /^data:/i.test(src)) {
+    return (
+      <img
+        src={src}
+        alt={alt ?? ""}
+        className="my-3 block max-w-full rounded border border-line"
+        {...props}
+      />
+    );
+  }
+  const relative = typeof src === "string" && src !== "" && !/^https?:/i.test(src);
+  // No fetch — and so no `useQuery`/QueryClient requirement — unless there
+  // is genuinely a vault image to resolve.
+  if (!relative || notePath === null) {
+    return <span className="text-xs text-ink-faint italic">{alt || "image"}</span>;
+  }
+  return <VaultImage notePath={notePath} src={src} alt={alt} />;
+}
+
+/** Fetch a vault-relative image's bytes (as a `data:` URI) and render it
+ * with its caption. Split out of `NoteImage` so the `useQuery` call — and
+ * its QueryClient requirement — only exists when there is actually an
+ * in-vault image to resolve. */
+function VaultImage({
+  notePath,
+  src,
+  alt,
+}: {
+  notePath: string;
+  src: string;
+  alt?: string;
+}) {
+  const asset = useQuery({
+    queryKey: ["read_note_asset", notePath, src],
+    queryFn: () => readNoteAsset(notePath, src),
+    staleTime: Infinity,
+  });
+  if (asset.isPending) {
+    return <span className="text-xs text-ink-faint">Loading image…</span>;
+  }
+  if (asset.isError || !asset.data) {
+    return (
+      <span className="text-xs text-ink-faint italic">
+        [image unavailable{alt ? `: ${alt}` : ""}]
+      </span>
+    );
+  }
+  return (
+    <span className="my-4 block">
+      <img src={asset.data} alt={alt ?? ""} className="max-w-full rounded border border-line" />
+      {alt && <span className="mt-1 block text-xs text-ink-muted">{alt}</span>}
+    </span>
+  );
+}
+
+// KaTeX options: never throw on a malformed expression — render the raw
+// `$…$` source instead, in a calm desaturated tone (the vault's amber
+// accent), so a typo degrades to legible source, not a red error box (the
+// no-red design law). `strict: false` tolerates the LaTeX-isms real notes
+// carry (e.g. `\ell`, stray `\,`) rather than warning on them.
+const KATEX_OPTIONS = {
+  throwOnError: false,
+  errorColor: "var(--color-attention)",
+  strict: false,
+} as const;
 
 /** An anchor carrying our wikilink marker calls back into the app;
  * every other anchor is an external URL we deliberately cannot open.
@@ -61,6 +163,7 @@ function markdownComponents(onWikilink: (target: string) => void): Components {
   // React's "unknown prop" warning and leak the parse tree into markup.
   return {
     a: anchorComponent(onWikilink),
+    img: NoteImage,
     h1: ({ node: _node, ...props }) => (
       <h1 className="mt-4 mb-2 text-lg font-semibold text-ink" {...props} />
     ),
@@ -127,8 +230,10 @@ export default function Markdown({
   return (
     <ReactMarkdown
       // Wikilinks first so `[[…]]` is claimed before gfm autolinks the
-      // surrounding text.
-      remarkPlugins={[remarkWikilinks, remarkGfm]}
+      // surrounding text; remark-math parses `$…$` / `$$…$$` into math
+      // nodes that rehype-katex then renders.
+      remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath]}
+      rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
       components={markdownComponents(onWikilink)}
     >
       {body}

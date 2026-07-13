@@ -47,13 +47,13 @@ function renderDetail(fixture: ProjectDetailData, onCall?: (cmd: string, args: u
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter initialEntries={["/projects/alpha"]}>
+        <MemoryRouter initialEntries={["/projects/alpha"]}>
+          <ReaderProvider>
             <Routes>
               <Route path="/projects/:slug" element={<ProjectDetail />} />
             </Routes>
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -110,13 +110,13 @@ test("an ambiguous complete opens the picker; choosing re-invokes with the exact
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter initialEntries={["/projects/alpha"]}>
+        <MemoryRouter initialEntries={["/projects/alpha"]}>
+          <ReaderProvider>
             <Routes>
               <Route path="/projects/:slug" element={<ProjectDetail />} />
             </Routes>
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );

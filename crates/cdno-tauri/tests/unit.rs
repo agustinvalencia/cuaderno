@@ -7,6 +7,7 @@ mod unit {
     mod events_tests;
     mod ipc_tests;
     mod journal_tests;
+    mod notes_asset_tests;
     mod orientation_tests;
     mod portfolios_tests;
     mod projects_tests;

@@ -78,6 +78,15 @@ impl Vault {
         Ok(self.store.read_file(path)?)
     }
 
+    /// Read the raw bytes of an in-vault asset — an image embedded in a
+    /// note, chiefly — so the reader can render it (the app serves the
+    /// bytes to the webview as a `data:` URI). `path` is confined by the
+    /// `VaultPath` newtype, so this cannot read outside the vault; errors
+    /// with `Store(NotFound)` when no file exists there.
+    pub fn read_asset_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, DomainError> {
+        Ok(self.store.read_bytes(path)?)
+    }
+
     /// Overwrite the note at `path` with arbitrary `content`, then
     /// reindex — the free-editing ("posture B") write primitive.
     ///

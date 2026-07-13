@@ -39,6 +39,10 @@ const Templates = lazy(() => import("./views/templates/Templates"));
 // Config inspector (#365): the read-only config.toml viewer + dry-run
 // validate. Splits onto navigation like the other secondary surfaces.
 const Config = lazy(() => import("./views/config/Config"));
+// The centred note page (UI request 2026-07-13): the full-page reader/editor
+// that replaced the slide-in drawer. Pulls react-markdown + KaTeX + (on Edit)
+// CodeMirror, so it splits onto navigation like the other secondary surfaces.
+const NotePage = lazy(() => import("./views/note/NotePage"));
 
 /** Calm placeholder while a lazily-loaded view chunk downloads. */
 function ViewFallback() {
@@ -136,6 +140,14 @@ export default function App() {
           element={
             <Suspense fallback={<ViewFallback />}>
               <Config />
+            </Suspense>
+          }
+        />
+        <Route
+          path="note/*"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <NotePage />
             </Suspense>
           }
         />

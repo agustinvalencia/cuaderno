@@ -27,6 +27,15 @@ fn write_then_read_roundtrip() {
 }
 
 #[test]
+fn read_bytes_returns_content_bytes_and_not_found() {
+    let store = MemoryVaultStore::new();
+    store.write_file(&vp("assets/fig.png"), "PNGDATA").unwrap();
+    assert_eq!(store.read_bytes(&vp("assets/fig.png")).unwrap(), b"PNGDATA");
+    let err = store.read_bytes(&vp("assets/missing.png")).unwrap_err();
+    assert!(matches!(err, StoreError::NotFound(_)));
+}
+
+#[test]
 fn write_overwrites_existing_content() {
     let store = MemoryVaultStore::new();
     store.write_file(&vp("note.md"), "first").unwrap();

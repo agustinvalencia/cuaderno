@@ -323,6 +323,9 @@ impl VaultStore for FailingStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
         self.inner.read_file(path)
     }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
         if self.tick() {
             return Err(StoreError::PermissionDenied(path.to_string()));

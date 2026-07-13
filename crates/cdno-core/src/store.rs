@@ -79,6 +79,13 @@ pub trait VaultStore: Send + Sync {
     /// path escapes confinement — see the trait docs).
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError>;
 
+    /// Read a file's raw bytes — the binary escape hatch to `read_file`,
+    /// for the non-text attachments the vault also holds (images embedded
+    /// in a note, chiefly). Same confinement and `NotFound` semantics as
+    /// [`read_file`](Self::read_file); the caller owns content-type and
+    /// size decisions.
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError>;
+
     /// Overwrite a file with the given text content, creating parent
     /// directories as needed. Filesystem implementations write
     /// atomically (temp file + rename) so a reader never sees a
@@ -185,6 +192,16 @@ impl VaultStore for MemoryVaultStore {
         files
             .get(path)
             .map(|f| f.content.clone())
+            .ok_or_else(|| StoreError::NotFound(path.to_string()))
+    }
+
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        // The in-memory store keeps text content; hand back its bytes so
+        // the plumbing is exercisable without real binary fixtures.
+        let files = self.files.lock().expect("poisoned mutex");
+        files
+            .get(path)
+            .map(|f| f.content.clone().into_bytes())
             .ok_or_else(|| StoreError::NotFound(path.to_string()))
     }
 
@@ -560,6 +577,10 @@ fn io_to_store_error(err: io::Error, path: &VaultPath) -> StoreError {
 impl VaultStore for FsVaultStore {
     fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
         fs::read_to_string(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))
+    }
+
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        fs::read(self.resolve(path)?).map_err(|e| io_to_store_error(e, path))
     }
 
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {

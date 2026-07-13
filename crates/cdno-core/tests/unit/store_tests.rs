@@ -18,6 +18,10 @@ impl VaultStore for StubStore {
         unimplemented!()
     }
 
+    fn read_bytes(&self, _path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        unimplemented!()
+    }
+
     fn write_file(&self, _path: &VaultPath, _content: &str) -> Result<(), StoreError> {
         unimplemented!()
     }

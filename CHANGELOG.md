@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **A comfortable full-page note reader — centred, with maths and inline images** (desktop UI) —
+  the right-anchored slide-in reader is replaced by a real page at `/note/<path>`: a centred ~72ch
+  reading column (wider while editing) in the content area, sidebar in place, history back/forward
+  between notes, and a Read/Edit toggle. Every surface that used to summon the drawer (portfolio
+  evidence, actions, palette, backlinks, timeline chips, wikilinks) now navigates here. LaTeX maths
+  renders via KaTeX (`$…$` / `$$…$$`), with its stylesheet and fonts vendored (no CDN — the CSP
+  blocks external hosts) and malformed expressions degrading to calm source, not a red error box.
+  Note-embedded images (`![alt](assets/fig.png)`) render inline: a new `read_note_asset` command
+  resolves the src relative to the note's folder (`VaultPath`-confined), reads the bytes (new
+  `VaultStore::read_bytes`), and serves them as a `data:` URI; external/unresolvable images degrade
+  to their caption. The note page's actions sit in a sticky header (reachable on a long note), the
+  `MetaPanel` "Properties" block is collapsible with an aligned key/value grid, and the inbox drawer
+  and calendar day panel gain an in-app "open" alongside "Open in editor". (#415)
+
 - **Edit a note in the app (spike): a CodeMirror editor in the reader** (desktop UI) — the note
   reader gains an **Edit** button that swaps the read view for a CodeMirror 6 markdown editor over
   the note's raw source, widening the panel for comfortable typing; **Save** writes the file and
