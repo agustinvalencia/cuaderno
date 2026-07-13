@@ -312,8 +312,11 @@ impl<'a> TypeRegistry<'a> {
     ///
     /// Note: [`SchemaExtension::declared_fields`](cdno_core::config::SchemaExtension::declared_fields)
     /// folds a schema's legacy `extra_required` names in as untyped `string`
-    /// fields, so a built-in's `extra_required` entries appear in both
-    /// `required` and `fields` — intentional and informative.
+    /// fields. For a **built-in** (whose `required` reads `extra_required`),
+    /// those names therefore appear in both `required` and `fields` —
+    /// intentional. For a **custom** type (whose `required` is its declared
+    /// `required` list), a `[schemas.<custom>].extra_required` name lands only
+    /// in `fields`.
     pub fn describe(&self, note_type: &str) -> Option<NoteTypeInfo> {
         let descriptor = self.resolve(note_type)?;
         // `[schemas.<name>]` can key any type, so this overlay serves built-ins
@@ -355,7 +358,13 @@ impl<'a> TypeRegistry<'a> {
             template: custom.and_then(|def| def.template.clone()),
             title_field: custom.and_then(|def| def.title_field.clone()),
             date_field: custom.and_then(|def| def.date_field.clone()),
-            append_only: descriptor.append_only(),
+            // `NoteTypeDescriptor::append_only` is built-in-blind (always
+            // false); read the real per-variant rule for built-ins, and the
+            // explicit flag for custom types.
+            append_only: match descriptor {
+                NoteTypeDescriptor::Builtin(nt) => nt.is_append_only(),
+                NoteTypeDescriptor::Custom { def, .. } => def.append_only,
+            },
             supplied_placeholders: descriptor.supplied_placeholders(),
         })
     }

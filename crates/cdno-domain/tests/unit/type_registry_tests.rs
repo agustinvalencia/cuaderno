@@ -378,3 +378,65 @@ fn describe_returns_none_for_an_unknown_type() {
     let config = VaultConfig::default();
     assert!(TypeRegistry::new(&config).describe("not-a-type").is_none());
 }
+
+#[test]
+fn describe_reports_append_only_for_the_append_only_builtins() {
+    // The business rule: daily, weekly, evidence, tracking are append-only.
+    let config = VaultConfig::default();
+    let reg = TypeRegistry::new(&config);
+    for name in ["daily", "weekly", "evidence", "tracking"] {
+        assert!(
+            reg.describe(name).unwrap().append_only,
+            "{name} is append-only"
+        );
+    }
+    for name in ["project", "action", "question", "portfolio"] {
+        assert!(
+            !reg.describe(name).unwrap().append_only,
+            "{name} is not append-only"
+        );
+    }
+}
+
+#[test]
+fn describe_renders_a_bool_default_and_preserves_allowed_values() {
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "shipped".to_owned(),
+        FieldSpec {
+            ty: FieldType::Bool,
+            default: Some(toml::Value::Boolean(false)),
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    schema.fields.insert(
+        "stage".to_owned(),
+        FieldSpec {
+            ty: FieldType::String,
+            default: None,
+            required: false,
+            values: Some(vec!["draft".to_owned(), "final".to_owned()]),
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    config.schemas.insert("project".to_owned(), schema);
+    let reg = TypeRegistry::new(&config);
+    let project = reg.describe("project").unwrap();
+
+    let shipped = project.fields.iter().find(|f| f.name == "shipped").unwrap();
+    assert_eq!(shipped.ty, FieldType::Bool);
+    assert_eq!(shipped.default.as_deref(), Some("false"));
+
+    let stage = project.fields.iter().find(|f| f.name == "stage").unwrap();
+    assert_eq!(
+        stage.values,
+        Some(vec!["draft".to_owned(), "final".to_owned()])
+    );
+}

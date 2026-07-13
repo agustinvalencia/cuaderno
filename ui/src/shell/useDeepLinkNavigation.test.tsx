@@ -15,9 +15,17 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
+// The mount-time `take_pending_deeplink` drain — `pending` is the buffered
+// cold-start path (null for the warm/event tests).
+let pending: string | null = null;
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(async (cmd: string) => (cmd === "take_pending_deeplink" ? pending : null)),
+}));
+
 afterEach(() => {
   cleanup();
   handler = undefined;
+  pending = null;
 });
 
 function Probe() {
@@ -35,6 +43,20 @@ test("a deeplink:open-note event navigates the reader to /note/<path>", async ()
   act(() => handler!({ payload: "portfolios/x/2026-07-13-note.md" }));
   expect(screen.getByTestId("path").textContent).toBe(
     "/note/portfolios/x/2026-07-13-note.md",
+  );
+});
+
+test("a buffered cold-start deep link opens on mount (drained via take_pending_deeplink)", async () => {
+  pending = "journal/2026/daily/2026-07-13.md";
+  render(
+    <MemoryRouter initialEntries={["/"]}>
+      <Probe />
+    </MemoryRouter>,
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId("path").textContent).toBe(
+      "/note/journal/2026/daily/2026-07-13.md",
+    ),
   );
 });
 

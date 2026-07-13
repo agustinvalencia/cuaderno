@@ -316,7 +316,10 @@ pub fn run() {
 
             // Handle `cuaderno://note/<path>` deep links: open that note in
             // the reader (catches both the launch URL and links opened while
-            // running). Independent of the vault, so wired here in setup.
+            // running). Independent of the vault, so wired here in setup. The
+            // pending-link buffer must be managed before the handler installs,
+            // so a cold-start URL is captured for the frontend's mount drain.
+            app.manage(deeplink::PendingDeepLink::default());
             deeplink::install(app.handle());
 
             // Vault resolution: explicit env override, then a persisted
@@ -372,6 +375,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            deeplink::take_pending_deeplink,
             commands::orientation::get_orientation,
             commands::orientation::get_today,
             commands::actions::start_action,

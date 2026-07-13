@@ -7,6 +7,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
 export function useDeepLinkNavigation() {
   const navigate = useNavigate();
@@ -17,6 +18,16 @@ export function useDeepLinkNavigation() {
   navigateRef.current = navigate;
 
   useEffect(() => {
+    // Cold start: the app was launched *by* a deep link, so the Rust handler
+    // fired before this listener existed and buffered the path — drain it once
+    // on mount. (A warm link, arriving while the app runs, rides the event
+    // below instead; the buffer it also sets is never re-read.)
+    void invoke<string | null>("take_pending_deeplink")
+      .then((path) => {
+        if (path) navigateRef.current(`/note/${path}`);
+      })
+      .catch(() => {});
+
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listen<string>("deeplink:open-note", (event) => {

@@ -14,6 +14,7 @@ anything. Inputs marked optional may be omitted.
 | `get_active_questions` | `domain?` (`research`\|`life`) | Active question notes, optionally filtered by domain. |
 | `get_commitments` | `lookahead_weeks?` (default 2) | The aggregated commitments view; overdue always included. |
 | `list_projects` | — | All projects (active + parked) with summaries. |
+| `list_note_types` | — | Every note type — the built-ins plus any config-defined `[note_types.*]` custom type — with its folder, required/optional fields, typed `[schemas.*]` field specs, template, and supplied placeholders. Call before `create_custom_note` to discover a vault's custom types. |
 | `read_daily_note` | `date?` (default today) | The daily log for a date. |
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
 | `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |

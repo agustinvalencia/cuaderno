@@ -9,10 +9,30 @@
 //! `cuaderno://note/../../etc/passwd` link cannot read outside the vault —
 //! exactly like any other reader navigation.
 
-use tauri::{AppHandle, Emitter, Runtime};
+use std::sync::Mutex;
+
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 
 use crate::events::OPEN_NOTE_DEEPLINK;
+
+/// Buffers a deep-link note path that arrived before the frontend could
+/// receive it — the cold-start case, where the OS launches the app *by* the
+/// `cuaderno://note/...` URL, so `on_open_url` fires at the start of the run
+/// loop, hundreds of ms before React mounts a listener. Tauri doesn't queue
+/// webview events for listeners that aren't registered yet, so a plain emit
+/// would be dropped. The frontend drains this once on mount via
+/// [`take_pending_deeplink`]; links opened while the app is already running
+/// (a listener is mounted) ride the emitted event instead.
+#[derive(Default)]
+pub struct PendingDeepLink(Mutex<Option<String>>);
+
+/// Return and clear any note path buffered before the frontend mounted.
+/// Called once when the reader's deep-link hook first runs.
+#[tauri::command]
+pub fn take_pending_deeplink(pending: State<'_, PendingDeepLink>) -> Option<String> {
+    pending.0.lock().ok().and_then(|mut slot| slot.take())
+}
 
 /// Extract the vault path from a `cuaderno://note/<path>` deep link, or `None`
 /// for any other URL (wrong scheme/host, or an empty path). Vault paths are
@@ -39,6 +59,16 @@ pub(crate) fn install<R: Runtime>(app: &AppHandle<R>) {
             let Some(path) = note_path_from_deeplink(url.as_str()) else {
                 continue;
             };
+            // Buffer for a not-yet-ready frontend (cold start) AND emit for a
+            // ready one (warm). On cold start the emit lands with no listener
+            // and is dropped, so the frontend's mount-time drain is what opens
+            // the note; on a warm link the buffer is set but never re-read
+            // (the drain runs once), and the event does the work.
+            if let Some(pending) = handle.try_state::<PendingDeepLink>()
+                && let Ok(mut slot) = pending.0.lock()
+            {
+                *slot = Some(path.clone());
+            }
             surface_and_open(&handle, path);
         }
     });

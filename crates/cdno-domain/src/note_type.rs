@@ -56,6 +56,16 @@ impl NoteType {
         }
     }
 
+    /// Whether this built-in type is append-only — grown, never overwritten
+    /// (daily, weekly, evidence, tracking). The business rule the write tools
+    /// enforce; surfaced by the note-type discovery payload.
+    pub fn is_append_only(self) -> bool {
+        matches!(
+            self,
+            NoteType::Daily | NoteType::Weekly | NoteType::Evidence | NoteType::Tracking
+        )
+    }
+
     /// The canonical *built-in* frontmatter key order for this note type,
     /// with `type` first. This mirrors the field order each type's
     /// creation produces — the file templates in
