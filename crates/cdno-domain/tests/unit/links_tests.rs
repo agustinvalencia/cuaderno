@@ -31,6 +31,8 @@ fn vault_with(notes: &[(&str, &str)]) -> Vault {
 const ALPHA: &str =
     "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n";
 const INBOX_DUP: &str = "---\ntype: inbox\ncreated: 2026-04-01\n---\n\n# Dup\n";
+const PORTFOLIO_INDEX: &str =
+    "---\ntype: portfolio\nquestion: \"Q?\"\ncreated: 2026-04-01\n---\n\n# Topology\n";
 const PROJECT_DUP: &str =
     "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Dup\n";
 
@@ -60,6 +62,23 @@ fn resolves_by_bare_slug_stem() {
 
     assert_eq!(resolved.path, vp("projects/alpha.md"));
     assert_eq!(resolved.note_type.as_deref(), Some("project"));
+}
+
+#[test]
+fn resolves_a_folder_target_to_its_index_note() {
+    // A `[[portfolios/topology]]` link names the portfolio *folder*; it
+    // resolves to that folder's `_index.md` and carries its note type, so
+    // the UI can route it (here: open the portfolio index in the reader)
+    // instead of silently muting a live link.
+    let vault = vault_with(&[("portfolios/topology/_index.md", PORTFOLIO_INDEX)]);
+
+    let resolved = vault
+        .resolve_wikilink("portfolios/topology")
+        .unwrap()
+        .expect("a folder target resolves to its _index.md");
+
+    assert_eq!(resolved.path, vp("portfolios/topology/_index.md"));
+    assert_eq!(resolved.note_type.as_deref(), Some("portfolio"));
 }
 
 #[test]

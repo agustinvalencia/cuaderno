@@ -358,6 +358,67 @@ fn resolve_prefers_exact_path_over_last_segment_fallback() {
 }
 
 #[test]
+fn resolve_folder_target_to_its_index_note() {
+    // A `[[portfolios/<slug>]]` link (the form the daily-log writer and
+    // `file_to_portfolio` emit) names a folder, not a flat note — it must
+    // resolve to that folder's `_index.md`. Without this rule the link is
+    // dead: no `<target>.md` exists and the folder segment never matches
+    // the `_index` stem.
+    let vault = paths(&[
+        "portfolios/topology/_index.md",
+        "portfolios/topology/2026-07-13-study.md",
+    ]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "portfolios/topology".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("portfolios/topology/_index.md"))
+    );
+}
+
+#[test]
+fn resolve_prefers_flat_note_over_folder_index() {
+    // A flat `<target>.md` (rule 1) wins over a same-named folder index —
+    // the exact path match is the more specific target.
+    let vault = paths(&["notes/topology.md", "notes/topology/_index.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "notes/topology".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("notes/topology.md"))
+    );
+}
+
+#[test]
+fn resolve_prefers_folder_index_over_last_segment_fallback() {
+    // The folder-index rule is ordered before the fuzzy stem match: a
+    // `[[portfolios/foo]]` folder link resolves to its index note, never to
+    // an unrelated `elsewhere/foo.md` that merely shares the last segment.
+    let vault = paths(&["portfolios/foo/_index.md", "elsewhere/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "portfolios/foo".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("portfolios/foo/_index.md"))
+    );
+}
+
+#[test]
 fn resolve_preserves_label_through_resolution() {
     let vault = paths(&["notes/foo.md"]);
     let got = resolve_wikilinks(

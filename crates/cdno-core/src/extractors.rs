@@ -269,6 +269,22 @@ fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPa
         return Some(vp);
     }
 
+    // 1b. Folder-index match: a target naming a folder resolves to that
+    // folder's `_index.md`. A portfolio (and any expanded folder note) is
+    // a directory whose canonical note is `_index.md`, so the
+    // `[[portfolios/<slug>]]` form the daily-log writer and
+    // `file_to_portfolio` emit has no flat `<target>.md` to satisfy rule 1,
+    // and its final segment (`<slug>`) never equals the index file's stem
+    // (`_index`) for rule 2 — leaving every portfolio link dead. Resolve it
+    // explicitly to the index note. Exact and unambiguous like rule 1, and
+    // ordered before the fuzzy stem match so a folder link can never be
+    // hijacked by an unrelated note that happens to share the last segment.
+    if let Ok(vp) = VaultPath::new(format!("{target}/_index.md"))
+        && vault_paths.contains(&vp)
+    {
+        return Some(vp);
+    }
+
     // 2. Last-segment match: resolve by the note's filename stem
     // against the target's final path segment. For a bare target
     // (`[[foo]]`) the segment is the whole thing; for a qualified one
