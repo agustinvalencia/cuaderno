@@ -307,6 +307,9 @@ function Panel({
   onGoToDay: (iso: string) => void;
   onWikilink: (target: string) => void;
 }) {
+  // The embedded panel is read-only; "open" jumps to the full centred note
+  // page, where the day note can also be edited in-app.
+  const { openReader } = useReader();
   // The active note (content + path), and whether it exists, per mode.
   // The daily always loads first (the week/month jumps read their target
   // dates off it), so a null daily means the panel is still warming up.
@@ -338,13 +341,22 @@ function Panel({
           {title}
         </h2>
         {path && (
-          <button
-            type="button"
-            onClick={() => void openInEditor(path)}
-            className="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink hover:bg-bg-sunken"
-          >
-            Open in editor
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => openReader(path)}
+              className="shrink-0 rounded border border-line px-2 py-1 text-xs text-ink hover:bg-bg-sunken"
+            >
+              Open
+            </button>
+            <button
+              type="button"
+              onClick={() => void openInEditor(path)}
+              className="shrink-0 rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
+            >
+              Open in editor
+            </button>
+          </>
         )}
       </header>
 

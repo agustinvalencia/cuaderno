@@ -121,19 +121,69 @@ export default function NotePage() {
     // like a document. Edit: a wider centred column so source lines and
     // line numbers have room.
     <div
-      className={`mx-auto w-full px-6 py-8 ${editing ? "max-w-5xl" : "max-w-[72ch]"}`}
+      className={`mx-auto w-full px-6 pb-16 ${editing ? "max-w-5xl" : "max-w-[72ch]"}`}
     >
-      <div className="mb-6 flex items-start justify-between gap-4">
+      {/* Sticky header: title plus the note's actions, pinned to the top of
+          the scroll so Edit / Save stay reachable on a long note (they used
+          to sit only at the very bottom). */}
+      <div className="sticky top-0 z-10 mb-6 flex items-start justify-between gap-4 border-b border-line bg-bg-base pt-8 pb-3">
         <h1 className="min-w-0 flex-1 text-xl font-semibold text-ink">
           {data?.title ?? pathStem(path)}
         </h1>
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="shrink-0 rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
-        >
-          ← back
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  // Empty-content floor: never clobber a note to empty — a
+                  // whole-note clear is almost always a slip, not intent.
+                  if (!draft.current?.trim()) {
+                    toast("Nothing to save — the note is empty.", "attention");
+                    return;
+                  }
+                  save.mutate();
+                }}
+                disabled={save.isPending || raw.data === undefined}
+                className="rounded border border-line bg-bg-sunken px-3 py-1 text-sm text-ink hover:bg-bg-base"
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={stopEditing}
+                className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={startEditing}
+                className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={() => openEditor.mutate()}
+                disabled={openEditor.isPending}
+                className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
+              >
+                Open in editor
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
+            className="rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
+          >
+            ← back
+          </button>
+        </div>
       </div>
 
       {editing ? (
@@ -164,54 +214,6 @@ export default function NotePage() {
           <SectionedBody sections={splitBodySections(data.body)} onWikilink={onWikilink} />
         </NotePathProvider>
       )}
-
-      <div className="mt-8 flex items-center gap-2 border-t border-line pt-4">
-        {editing ? (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                // Empty-content floor: never clobber a note to empty — a
-                // whole-note clear is almost always a slip, not intent.
-                if (!draft.current?.trim()) {
-                  toast("Nothing to save — the note is empty.", "attention");
-                  return;
-                }
-                save.mutate();
-              }}
-              disabled={save.isPending || raw.data === undefined}
-              className="rounded border border-line bg-bg-sunken px-3 py-1 text-sm text-ink hover:bg-bg-base"
-            >
-              Save
-            </button>
-            <button
-              type="button"
-              onClick={stopEditing}
-              className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              Cancel
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={startEditing}
-              className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              onClick={() => openEditor.mutate()}
-              disabled={openEditor.isPending}
-              className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              Open in editor
-            </button>
-          </>
-        )}
-      </div>
     </div>
   );
 }
