@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-13
+
 ### Added
 
 - **A comfortable full-page note reader — centred, with maths and inline images** (desktop UI) —
