@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-13
+
 ### Added
 
 - **Native macOS chrome and a full theming system** (desktop UI) — the app takes on native macOS
