@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Native macOS chrome and a full theming system** (desktop UI) — the app takes on native macOS
+  window chrome: an overlay title bar with inset traffic lights, a translucent vibrancy sidebar,
+  and draggable title strips (the main window gains `core:window:allow-start-dragging`), over a
+  system-font, cool-neutral palette. A reworked Settings panel (`⌘,`) exposes an **Appearance**
+  section — theme mode (system/light/dark), a curated palette (default/warm/cool/high-contrast), an
+  accent colour, sidebar width, and a reduce-transparency toggle — and a **Reading** section that
+  tunes the markdown reader's text size, column width, body font, and line spacing. Headings scale
+  in `em`, so KaTeX maths tracks the text size for free. Every choice is stamped as a `data-*`
+  attribute mapped to a CSS variable, persists per-device in `localStorage`, and previews live; the
+  seven context hues are never touched by the accent axis. For anything the presets don't cover, a
+  hand-editable `.cuaderno/custom.css` — seeded with a documented template — is injected after the
+  bundled styles (reapplied on window focus) and can redefine any design token: accents, fonts,
+  heading sizes, or what "narrow" means. It is editable in-app (a CodeMirror CSS editor that applies
+  on save) or in an external editor, backed by new `read`/`init`/`write`/`open_custom_css` Tauri
+  commands. (#417)
+
 ## [0.26.0] - 2026-07-13
 
 ### Added
