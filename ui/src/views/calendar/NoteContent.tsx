@@ -6,18 +6,23 @@
 // reader also uses: a separated `MetaPanel` metadata strip over the
 // `SectionedBody` renderer.
 import { MetaPanel } from "../../components/markdown/MetaPanel";
+import { NotePathProvider } from "../../components/markdown/Markdown";
 import SectionedBody from "../../components/markdown/SectionedBody";
 import { parseNote } from "../../lib/noteContent";
 
 export default function NoteContent({
   markdown,
   onWikilink,
+  notePath,
 }: {
   markdown: string;
   onWikilink: (target: string) => void;
+  /** The panel's note path, so an embedded relative image resolves to
+   * vault bytes (as it does on the full note page). */
+  notePath?: string;
 }) {
   const { frontmatter, sections } = parseNote(markdown);
-  return (
+  const body = (
     <div className="space-y-6">
       <MetaPanel frontmatter={frontmatter} />
       {/* Cap the Logs scroll here — the calendar is a wide, page-scrolled
@@ -30,4 +35,7 @@ export default function NoteContent({
       />
     </div>
   );
+  // With a path in scope, embedded images resolve; without one they degrade
+  // to their caption (as before).
+  return notePath ? <NotePathProvider path={notePath}>{body}</NotePathProvider> : body;
 }

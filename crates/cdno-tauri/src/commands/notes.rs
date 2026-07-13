@@ -21,7 +21,7 @@ use crate::with_vault::with_vault;
 /// vault-relative — and an absolute/rooted `src` is rejected (`None`). The
 /// returned `PathBuf` is still passed through `VaultPath::new`, whose
 /// newtype guard is the actual confinement boundary.
-fn resolve_asset_path(note_path: &str, src: &str) -> Option<PathBuf> {
+pub fn resolve_asset_path(note_path: &str, src: &str) -> Option<PathBuf> {
     let mut out = Path::new(note_path)
         .parent()
         .unwrap_or_else(|| Path::new(""))
@@ -44,7 +44,7 @@ fn resolve_asset_path(note_path: &str, src: &str) -> Option<PathBuf> {
 /// The `data:` MIME type for an asset, by extension. Unknown extensions
 /// fall back to `application/octet-stream` — the browser then declines to
 /// render it rather than mis-sniffing.
-fn mime_for(path: &Path) -> &'static str {
+pub fn mime_for(path: &Path) -> &'static str {
     match path
         .extension()
         .and_then(|e| e.to_str())

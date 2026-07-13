@@ -141,6 +141,46 @@ test("re-editing after a save starts from the saved content, not the pre-save ca
   expect(editor2.value).toBe("saved version two");
 });
 
+test("navigating to another note resets edit state (no draft bleed across notes)", async () => {
+  // Regression (severe): the route reused one component instance across
+  // notes, so an in-progress draft for note A could be saved onto note B.
+  // Keying the reader by path remounts a fresh instance on navigation, so
+  // editing resets and the stale draft is gone.
+  mockIPC((cmd) => {
+    if (cmd === "read_note") return NOTE;
+    if (cmd === "read_note_raw") return RAW;
+    if (cmd === "write_note_raw") return null;
+    return undefined;
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter
+          initialEntries={["/note/zettels/first.md", `/note/${NOTE.path}`]}
+          initialIndex={1}
+        >
+          <ReaderProvider>
+            <Routes>
+              <Route path="/note/*" element={<NotePage />} />
+            </Routes>
+          </ReaderProvider>
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  await screen.findByLabelText("editor");
+  // Back to the other note — allowed even mid-edit. The fresh instance must
+  // be in read mode with no editor and no Save (the draft can't carry over).
+  fireEvent.click(screen.getByRole("button", { name: "← back" }));
+  expect(await screen.findByRole("button", { name: "Edit" })).toBeDefined();
+  expect(screen.queryByLabelText("editor")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+});
+
 test("a project wikilink navigates to its detail", async () => {
   renderNote(NOTE.path, (target) =>
     target === "garden"

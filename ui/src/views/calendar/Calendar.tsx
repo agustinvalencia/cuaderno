@@ -420,6 +420,7 @@ function Panel({
           <NoteContent
             markdown={active.view.markdown}
             onWikilink={onWikilink}
+            notePath={path}
           />
         ) : (
           <EmptyState kind={mode} path={path} />

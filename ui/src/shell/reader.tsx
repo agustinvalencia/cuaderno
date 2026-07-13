@@ -7,7 +7,7 @@
 // distant surfaces summon the reader without knowing the route.
 import { createContext, useContext, useMemo } from "react";
 import type { ReactNode } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 
 interface ReaderApi {
   /** Open the centred note page on `path` (a vault-relative note path). */
@@ -18,11 +18,20 @@ const ReaderContext = createContext<ReaderApi | null>(null);
 
 export function ReaderProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const api = useMemo<ReaderApi>(
     // The path's slashes pass straight through the `/note/*` splat route,
     // so no encoding is needed (vault paths are slug segments, never spaces).
-    () => ({ openReader: (path) => navigate(`/note/${path}`) }),
-    [navigate],
+    // Skip navigating to the note already open — a wikilink to the current
+    // note would otherwise push a duplicate history entry that back can't
+    // escape in one press.
+    () => ({
+      openReader: (path) => {
+        const target = `/note/${path}`;
+        if (location.pathname !== target) navigate(target);
+      },
+    }),
+    [navigate, location.pathname],
   );
   return <ReaderContext.Provider value={api}>{children}</ReaderContext.Provider>;
 }
