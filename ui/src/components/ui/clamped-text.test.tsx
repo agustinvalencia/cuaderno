@@ -71,3 +71,27 @@ test("overflowing content reveals a more/less toggle that expands in place", () 
   fireEvent.click(screen.getByRole("button", { name: "less" }));
   expect(screen.getByRole("button", { name: "more" })).toBeDefined();
 });
+
+test("changing resetKey re-collapses (a swapped-in item never inherits expansion)", () => {
+  // The project card swaps its surfaced action in place (energy filter,
+  // refetch) without remounting ClampedText; a stale `expanded` would blow
+  // the new action out fully. `resetKey` (the action identity) forces a
+  // collapse on swap.
+  forceOverflow(500, 100);
+  const { rerender } = render(
+    <ClampedText resetKey="action-a">
+      <p>action A — a long wall of text past the cap</p>
+    </ClampedText>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "more" }));
+  expect(screen.getByRole("button", { name: "less" })).toBeDefined();
+
+  // A different action swaps in — same component instance, new resetKey.
+  rerender(
+    <ClampedText resetKey="action-b">
+      <p>action B — also a long wall of text past the cap</p>
+    </ClampedText>,
+  );
+  expect(screen.getByRole("button", { name: "more" })).toBeDefined();
+  expect(screen.queryByRole("button", { name: "less" })).toBeNull();
+});

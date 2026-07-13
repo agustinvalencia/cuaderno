@@ -39,7 +39,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   un-clickable. The resolver now also matches `<target>/_index.md`, ordered after the exact-path
   match and before the fuzzy stem match. Purely additive: the explicit `[[.../_index]]` form still
   resolves. Lint follows the resolver, so a bare folder link to a real `_index.md` no longer flags,
-  while a folder link with no `_index.md` still dangles. (#414)
+  while a folder link with no `_index.md` still dangles. Clicking, lint, and every other live
+  resolution reflect the fix immediately; the index-stored *backlink edges* for links in existing
+  notes (what a portfolio's "what links here" shows) are content-derived and backfill only when each
+  note is next reindexed — run `cdno reindex` to refresh them all at once. (#414)
 
 - **Long next-actions no longer stretch a Home project card** (desktop UI) — a project's surfaced
   next-action had no height cap, so a verbose multi-paragraph bullet blew its card past its

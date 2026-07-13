@@ -19,15 +19,32 @@ export function ClampedText({
   children,
   collapsedClass = "max-h-24",
   className = "",
+  resetKey,
 }: {
   children: ReactNode;
   /** Tailwind max-height utility for the collapsed cap (default ~6rem). */
   collapsedClass?: string;
   className?: string;
+  /** Identity of the content. When it changes, the panel re-collapses —
+   * pass the surfaced item's key (e.g. an action's text) so swapping in a
+   * different, unrelated body starts collapsed rather than inheriting the
+   * previous item's expanded state. */
+  resetKey?: unknown;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
+
+  // Re-collapse when the content identity changes (React's "adjust state
+  // during render" pattern). A card whose surfaced action is swapped by the
+  // energy filter or a refetch must start collapsed, not inherit the
+  // previous action's expansion — and doing it in render (not an effect)
+  // means the new content never flashes fully-expanded before collapsing.
+  const [seenKey, setSeenKey] = useState(resetKey);
+  if (resetKey !== seenKey) {
+    setSeenKey(resetKey);
+    setExpanded(false);
+  }
 
   useLayoutEffect(() => {
     const el = ref.current;

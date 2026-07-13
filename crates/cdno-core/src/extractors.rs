@@ -238,12 +238,17 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 /// Resolution policy, in order:
 /// 1. Exact path match: `[[projects/foo]]` → `projects/foo.md` if
 ///    that path exists in `vault_paths`.
-/// 2. Last-segment match: the target's final path segment against note
+/// 2. Folder-index match: `[[portfolios/foo]]` → `portfolios/foo/_index.md`
+///    if that path exists — a folder-backed note (a portfolio, an expanded
+///    stewardship) is named by its folder, so a bare link to it resolves to
+///    its `_index.md`. Ordered before the fuzzy stem match so a folder link
+///    can't be hijacked by an unrelated note sharing its last segment.
+/// 3. Last-segment match: the target's final path segment against note
 ///    stems — `[[foo]]` or `[[actions/foo]]` → `*/foo.md` if exactly
 ///    one path has the stem `foo`. This resolves a link to a note that
 ///    relocated within its tree (e.g. an action archived to
 ///    `actions/_done/<year>/`); a unique match is required (#215).
-/// 3. Otherwise `resolved_path` is `None` and the link is recorded as
+/// 4. Otherwise `resolved_path` is `None` and the link is recorded as
 ///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,

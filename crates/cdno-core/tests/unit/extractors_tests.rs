@@ -382,6 +382,28 @@ fn resolve_folder_target_to_its_index_note() {
 }
 
 #[test]
+fn resolve_folder_target_generalises_beyond_portfolios() {
+    // The folder-index rule is general, not portfolio-special: an expanded
+    // stewardship also lives at `<slug>/_index.md`, so `[[stewardships/x]]`
+    // resolves to its index note the same way.
+    let vault = paths(&[
+        "stewardships/reading-group/_index.md",
+        "stewardships/reading-group/tracking/2026-07.md",
+    ]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "stewardships/reading-group".to_string(),
+            label: None,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("stewardships/reading-group/_index.md"))
+    );
+}
+
+#[test]
 fn resolve_prefers_flat_note_over_folder_index() {
     // A flat `<target>.md` (rule 1) wins over a same-named folder index —
     // the exact path match is the more specific target.

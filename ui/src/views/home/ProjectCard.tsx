@@ -180,7 +180,7 @@ export default function ProjectCard({
           {/* A surfaced action can be a long, multi-paragraph bullet — cap
               it so one verbose project never blows the card's height out
               past its siblings; "more" expands it in place. */}
-          <ClampedText>
+          <ClampedText resetKey={action.text}>
             <p className="text-sm text-ink">
               <span aria-hidden className="text-ink-faint">
                 →{" "}
