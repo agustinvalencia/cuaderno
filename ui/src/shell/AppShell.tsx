@@ -1,6 +1,22 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Calendar,
+  CalendarRange,
+  Compass,
+  Briefcase,
+  Handshake,
+  Inbox as InboxIcon,
+  LayoutTemplate,
+  ListChecks,
+  Search,
+  Settings as SettingsIcon,
+  SlidersHorizontal,
+  Sprout,
+  Sun,
+  type LucideIcon,
+} from "lucide-react";
 import { getOrientation, listInbox } from "../api/commands";
 import { contextDotClass } from "../lib/contexts";
 import InboxDrawer from "./InboxDrawer";
@@ -15,20 +31,20 @@ import { useHistoryNavigation } from "./useHistoryNavigation";
 // (The note reader is now its own `/note/*` route, code-split in routes.tsx.)
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
-const NAV = [
-  { to: "/", label: "Today" },
-  { to: "/actions", label: "Actions" },
-  { to: "/calendar", label: "Calendar" },
-  { to: "/commitments", label: "Commitments" },
-  { to: "/weekly", label: "Weekly" },
-  { to: "/strategic", label: "Strategic" },
+const NAV: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/", label: "Today", icon: Sun },
+  { to: "/actions", label: "Actions", icon: ListChecks },
+  { to: "/calendar", label: "Calendar", icon: Calendar },
+  { to: "/commitments", label: "Commitments", icon: Handshake },
+  { to: "/weekly", label: "Weekly", icon: CalendarRange },
+  { to: "/strategic", label: "Strategic", icon: Compass },
 ];
 
-const BROWSE = [
-  { to: "/portfolios", label: "Portfolios" },
-  { to: "/stewardships", label: "Stewardships" },
-  { to: "/templates", label: "Templates" },
-  { to: "/config", label: "Config" },
+const BROWSE: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/portfolios", label: "Portfolios", icon: Briefcase },
+  { to: "/stewardships", label: "Stewardships", icon: Sprout },
+  { to: "/templates", label: "Templates", icon: LayoutTemplate },
+  { to: "/config", label: "Config", icon: SlidersHorizontal },
 ];
 
 export default function AppShell() {
@@ -70,33 +86,37 @@ export default function AppShell() {
     <ReaderProvider>
     <div className="flex h-screen">
       {/* `app-sidebar` is the translucent frosted surface (globals.css) the
-          macOS `sidebar` vibrancy material blurs through. The top padding
-          clears the inset traffic lights of the overlay title bar. */}
-      <aside className="app-sidebar flex w-56 shrink-0 flex-col border-r border-line px-3 pb-4 pt-8">
-        {/* The brand strip doubles as the window drag handle — the overlay
-            title bar has no bar of its own to grab (Tauri's
-            data-tauri-drag-region; nav/buttons below are separate targets,
-            so they still click through). */}
+          macOS `sidebar` vibrancy material blurs through. */}
+      <aside className="app-sidebar flex w-[var(--sidebar-width)] shrink-0 flex-col border-r border-line px-3 pb-4">
+        {/* Full-width draggable title strip: restores native window
+            dragging under the overlay title bar — the whole top edge, not
+            just the brand text (the earlier regression) — and clears the
+            inset traffic lights. Height is `--titlebar-height` (globals),
+            the same var the content-pane gutter uses, so the whole top
+            edge is one grab target. `-mx-3` spans the sidebar's padding;
+            nav and buttons below are separate targets, so they still
+            click. */}
         <div
           data-tauri-drag-region
-          className="mb-6 px-2 text-sm font-semibold tracking-wide text-ink"
+          className="-mx-3 mb-2 flex h-[var(--titlebar-height)] items-end px-5 pb-1.5 text-sm font-semibold tracking-wide text-ink"
         >
           cuaderno
         </div>
 
-        <nav aria-label="Views" className="flex flex-col gap-1">
-          {NAV.map(({ to, label }) => (
+        <nav aria-label="Views" className="flex flex-col gap-0.5">
+          {NAV.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               end={to === "/"}
               className={({ isActive }) =>
-                `rounded px-2 py-1 text-sm ${
+                `flex items-center gap-2.5 rounded px-2 py-1 text-sm ${
                   isActive ? "bg-bg-surface font-medium text-ink" : "text-ink-muted hover:text-ink"
                 }`
               }
             >
-              {label}
+              <Icon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -104,16 +124,18 @@ export default function AppShell() {
         <div className="mt-6 px-2 text-xs font-medium uppercase tracking-wider text-ink-faint">
           Projects
         </div>
-        <nav aria-label="Active projects" className="mt-1 flex flex-col gap-1">
+        <nav aria-label="Active projects" className="mt-1 flex flex-col gap-0.5">
           {(orientation.data?.projects ?? []).map((project) => (
             <NavLink
               key={project.slug}
               to={`/projects/${project.slug}`}
-              className="flex items-center gap-2 rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
+              className="flex items-center gap-2.5 rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
             >
+              {/* The context dot is this row's "icon" — its colour carries
+                  the project's life context. */}
               <span
                 aria-hidden
-                className={`h-2 w-2 shrink-0 rounded-full ${contextDotClass(project.context)}`}
+                className={`ml-0.5 h-2 w-2 shrink-0 rounded-full ${contextDotClass(project.context)}`}
               />
               <span className="truncate">{project.slug}</span>
             </NavLink>
@@ -123,14 +145,15 @@ export default function AppShell() {
         <div className="mt-6 px-2 text-xs font-medium uppercase tracking-wider text-ink-faint">
           Browse
         </div>
-        <nav aria-label="Browse" className="mt-1 flex flex-col gap-1">
-          {BROWSE.map(({ to, label }) => (
+        <nav aria-label="Browse" className="mt-1 flex flex-col gap-0.5">
+          {BROWSE.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
-              className="rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
+              className="flex items-center gap-2.5 rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
             >
-              {label}
+              <Icon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+              <span>{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -145,7 +168,10 @@ export default function AppShell() {
             inboxOpen ? "bg-bg-surface text-ink" : "text-ink-muted hover:text-ink"
           }`}
         >
-          <span>Inbox</span>
+          <span className="flex items-center gap-2.5">
+            <InboxIcon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+            Inbox
+          </span>
           {inboxCount > 0 && (
             // Grey, never red — the badge is a count, not an alarm (§1.0).
             <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-xs text-ink-faint">
@@ -160,21 +186,27 @@ export default function AppShell() {
           aria-label="Open command palette"
           className="mt-4 flex items-center justify-between rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
         >
-          <span>Search &amp; jump</span>
+          <span className="flex items-center gap-2.5">
+            <Search className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+            Search &amp; jump
+          </span>
           {/* Glyphs, not emoji — the ⌘K hint (plan §5). */}
           <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-ink-faint">⌘K</span>
         </button>
 
         <WatcherPill />
 
-        <div className="mt-2 px-2 pt-4">
+        <div className="mt-2 pt-4">
           <button
             type="button"
             aria-label="Open settings"
             onClick={() => setSettingsOpen(true)}
             className="flex w-full items-center justify-between rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
           >
-            <span>Settings</span>
+            <span className="flex items-center gap-2.5">
+              <SettingsIcon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+              Settings
+            </span>
             <span className="rounded bg-bg-sunken px-1.5 py-0.5 text-ink-faint">⌘,</span>
           </button>
         </div>
@@ -182,10 +214,15 @@ export default function AppShell() {
 
       {/* The opaque content pane: carries the base background (moved off
           `body`, which is now transparent for the sidebar vibrancy) so the
-          material shows only behind the frosted sidebar. */}
-      <main className="min-w-0 flex-1 overflow-y-auto bg-bg-base">
-        <ConfigStatusBanner />
-        <Outlet />
+          material shows only behind the frosted sidebar. A slim draggable
+          gutter at the top lets the window move from the content side too,
+          matching the sidebar's title strip. */}
+      <main className="flex min-w-0 flex-1 flex-col bg-bg-base">
+        <div data-tauri-drag-region className="h-[var(--titlebar-height)] shrink-0" />
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ConfigStatusBanner />
+          <Outlet />
+        </div>
       </main>
 
       {inboxOpen && (

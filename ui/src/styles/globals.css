@@ -12,22 +12,27 @@
  * (family, household, legal), personal (personal, side-project).
  */
 @theme {
-  --color-bg-base: oklch(0.985 0.004 95);
+  /* Clean, cool neutrals — the macOS "System Settings" light: pure-white
+   * content on a faint cool-grey base, near-black cool ink, hair-line
+   * cool separators. Deliberately hue ~264 at near-zero chroma so nothing
+   * reads warm; the earlier hue-95 tint is what looked "cream". (A warm
+   * paper look is still available on demand via the Warm palette.) */
+  --color-bg-base: oklch(0.98 0.002 264);
   --color-bg-surface: oklch(1 0 0);
-  --color-bg-sunken: oklch(0.955 0.005 95);
-  --color-ink: oklch(0.3 0.02 260);
-  --color-ink-muted: oklch(0.55 0.015 260);
-  --color-ink-faint: oklch(0.72 0.01 260);
-  --color-line: oklch(0.9 0.006 95);
+  --color-bg-sunken: oklch(0.965 0.003 264);
+  --color-ink: oklch(0.27 0.012 264);
+  --color-ink-muted: oklch(0.52 0.012 264);
+  --color-ink-faint: oklch(0.68 0.01 264);
+  --color-line: oklch(0.922 0.003 264);
 
   --color-attention: oklch(0.75 0.09 75);
-  --color-focus-ring: oklch(0.6 0.12 250);
+  --color-focus-ring: oklch(0.62 0.15 256);
 
   /* The one calm blue for interactive affordances (wikilinks, the
    * "edit" text button) — deliberately outside the seven context hues
    * so "this is clickable" never reads as a context signal. Shares the
    * focus-ring's blue family for a single coherent interaction colour. */
-  --color-accent-interactive: oklch(0.55 0.11 250);
+  --color-accent-interactive: oklch(0.56 0.14 256);
 
   --color-ctx-work: oklch(0.62 0.1 245);
   --color-ctx-university: oklch(0.62 0.09 210);
@@ -61,13 +66,56 @@
   --color-line: oklch(0.34 0.012 260);
   /* Slightly lighter on dark so the accent keeps its lift against the
    * sunken surfaces. */
-  --color-accent-interactive: oklch(0.68 0.11 250);
+  --color-accent-interactive: oklch(0.72 0.13 256);
 }
 
 :root {
   /* Follows the .dark class, not the OS — a manual light override
    * must also get light scrollbars and form controls. */
   color-scheme: light;
+
+  /* Layout constants — centralised so they're tuned in one place instead
+   * of sprinkled through the shell as magic numbers. `--titlebar-height`
+   * is the draggable strip under the overlay title bar (sidebar top +
+   * content-pane gutter); `--sidebar-vibrancy` is the frosted sidebar's
+   * opacity over the macOS material. */
+  --titlebar-height: 3.75rem;
+  --sidebar-width: 15rem;
+  --sidebar-vibrancy: 72%;
+
+  /* The accent palette, defined once here as the single source of truth
+   * for BOTH the [data-accent] token blocks below and the Settings
+   * swatches — the swatches previously duplicated these oklch values.
+   * Light values; the darker-surface lifts are applied inline in the
+   * .dark blocks. */
+  --accent-blue: oklch(0.56 0.14 256);
+  --accent-teal: oklch(0.55 0.09 195);
+  --accent-violet: oklch(0.55 0.12 300);
+  --accent-green: oklch(0.55 0.1 150);
+  --accent-graphite: oklch(0.45 0.012 260);
+  --accent-rose: oklch(0.55 0.12 350);
+
+  /* Reading / typography — the markdown reader and the editor consume
+   * these; the defaults reproduce the previous fixed look (body ≈ 14px,
+   * relaxed leading, sans, ~72ch measure). The data-* blocks below shift
+   * them for the Text size / Reading width / Reading font / Line spacing
+   * settings. Headings scale in `em`, so they track the base size, and
+   * KaTeX (sized in em) tracks it too — maths needs no separate control. */
+  --reader-font-size: 0.875rem;
+  --reader-line-height: 1.65;
+  --reader-font-family: var(--font-sans);
+  --reader-measure: 72ch;
+  --editor-font-size: 0.85rem;
+
+  /* Heading sizes, relative to the reader body size (em) so they track the
+   * Text size setting — and exposed as variables so custom.css can retune
+   * the heading scale. */
+  --reader-heading-1: 1.3em;
+  --reader-heading-2: 1.15em;
+  --reader-heading-3: 1em;
+
+  --font-serif: ui-serif, "New York", Georgia, Cambria, "Times New Roman",
+    serif;
 }
 
 .dark {
@@ -151,44 +199,98 @@
   --color-line: oklch(0.45 0.012 260);
 }
 
-/* Accents — each sets the interactive colour and its focus ring, in a
- * light value and a slightly lighter dark value (mirroring how the base
- * accent lifts on dark surfaces). `rose` sits at magenta-leaning hue 350,
- * not orange-red, so it stays clear of the forbidden alarm red. */
+/* Accents — each maps the interactive colour and its focus ring to the
+ * single-source `--accent-*` var, then lifts the value on dark surfaces
+ * inline (mirroring how the base accent lifts). `rose` sits at
+ * magenta-leaning hue 350, not orange-red, so it stays clear of the
+ * forbidden alarm red. */
 :root[data-accent="teal"] {
-  --color-accent-interactive: oklch(0.55 0.09 195);
-  --color-focus-ring: oklch(0.6 0.1 195);
+  --color-accent-interactive: var(--accent-teal);
+  --color-focus-ring: var(--accent-teal);
 }
 :root[data-accent="teal"].dark {
   --color-accent-interactive: oklch(0.7 0.09 195);
 }
 :root[data-accent="violet"] {
-  --color-accent-interactive: oklch(0.55 0.12 300);
-  --color-focus-ring: oklch(0.6 0.13 300);
+  --color-accent-interactive: var(--accent-violet);
+  --color-focus-ring: var(--accent-violet);
 }
 :root[data-accent="violet"].dark {
   --color-accent-interactive: oklch(0.7 0.12 300);
 }
 :root[data-accent="green"] {
-  --color-accent-interactive: oklch(0.55 0.1 150);
-  --color-focus-ring: oklch(0.6 0.11 150);
+  --color-accent-interactive: var(--accent-green);
+  --color-focus-ring: var(--accent-green);
 }
 :root[data-accent="green"].dark {
   --color-accent-interactive: oklch(0.7 0.1 150);
 }
 :root[data-accent="graphite"] {
-  --color-accent-interactive: oklch(0.45 0.012 260);
-  --color-focus-ring: oklch(0.55 0.02 260);
+  --color-accent-interactive: var(--accent-graphite);
+  --color-focus-ring: var(--accent-graphite);
 }
 :root[data-accent="graphite"].dark {
   --color-accent-interactive: oklch(0.75 0.012 260);
 }
 :root[data-accent="rose"] {
-  --color-accent-interactive: oklch(0.55 0.12 350);
-  --color-focus-ring: oklch(0.6 0.13 350);
+  --color-accent-interactive: var(--accent-rose);
+  --color-focus-ring: var(--accent-rose);
 }
 :root[data-accent="rose"].dark {
   --color-accent-interactive: oklch(0.72 0.12 350);
+}
+
+/* Layout / typography settings — each stamps a `data-*` attribute
+ * (lib/theme.ts) that shifts one centralised variable. The default value
+ * of each axis carries no attribute, so these blocks are pure overrides. */
+
+/* Text size — reader body + editor together; `medium` is the default. */
+:root[data-text-size="small"] {
+  --reader-font-size: 0.8125rem;
+  --editor-font-size: 0.8rem;
+}
+:root[data-text-size="large"] {
+  --reader-font-size: 1rem;
+  --editor-font-size: 0.95rem;
+}
+
+/* Reading width — the reader column measure; `comfortable` (72ch) default. */
+:root[data-reading-width="narrow"] {
+  --reader-measure: 58ch;
+}
+:root[data-reading-width="wide"] {
+  --reader-measure: 90ch;
+}
+
+/* Reading font — the reader body face; `system` (sans) is the default. */
+:root[data-reading-font="serif"] {
+  --reader-font-family: var(--font-serif);
+}
+:root[data-reading-font="mono"] {
+  --reader-font-family: var(--font-mono);
+}
+
+/* Line spacing — the reader line-height; `normal` (1.65) is the default. */
+:root[data-line-spacing="compact"] {
+  --reader-line-height: 1.45;
+}
+:root[data-line-spacing="relaxed"] {
+  --reader-line-height: 1.9;
+}
+
+/* Sidebar width — the shell rail; `default` (15rem) needs no block. */
+:root[data-sidebar-width="narrow"] {
+  --sidebar-width: 13rem;
+}
+:root[data-sidebar-width="wide"] {
+  --sidebar-width: 17.5rem;
+}
+
+/* Reduce transparency — the macOS accessibility option: make the sidebar
+ * fully opaque so no vibrancy shows through (the content pane is already
+ * opaque, so the window then reads as a solid, non-translucent surface). */
+:root[data-reduce-transparency] {
+  --sidebar-vibrancy: 100%;
 }
 
 /* Native macOS chrome (2026-07-13). The main window is transparent with
@@ -210,7 +312,7 @@
 .app-sidebar {
   background-color: color-mix(
     in oklch,
-    var(--color-bg-sunken) 72%,
+    var(--color-bg-sunken) var(--sidebar-vibrancy),
     transparent
   );
 }

@@ -139,6 +139,29 @@ export function openInEditor(path: string): Promise<void> {
   return call("open_in_editor", { path });
 }
 
+/** Read `.cuaderno/custom.css` (the user override stylesheet) — its text,
+ * or an empty string when the file doesn't exist yet. */
+export function readCustomCss(): Promise<string> {
+  return call("read_custom_css");
+}
+
+/** Ensure `.cuaderno/custom.css` exists (seeding a documented template the
+ * first time) and open it in the user's default editor. */
+export function openCustomCss(): Promise<void> {
+  return call("open_custom_css");
+}
+
+/** Ensure `.cuaderno/custom.css` exists (seeding the template the first
+ * time) and return its contents — the in-app editor's loader. */
+export function initCustomCss(): Promise<string> {
+  return call("init_custom_css");
+}
+
+/** Overwrite `.cuaderno/custom.css` with `content` — the in-app editor's save. */
+export function writeCustomCss(content: string): Promise<void> {
+  return call("write_custom_css", { content });
+}
+
 // --- M5: note reader, project detail, actions list, command palette ---
 
 /** Read any vault note for the slide-in reader: parsed frontmatter,

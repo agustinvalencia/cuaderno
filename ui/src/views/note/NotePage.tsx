@@ -144,7 +144,7 @@ function NoteView({ path }: { path: string }) {
     // line numbers have room.
     <div
       ref={rootRef}
-      className={`mx-auto w-full px-6 pb-16 ${editing ? "max-w-5xl" : "max-w-[72ch]"}`}
+      className={`mx-auto w-full px-6 pb-16 ${editing ? "max-w-5xl" : "max-w-[var(--reader-measure)]"}`}
     >
       {/* Sticky header: title plus the note's actions, pinned to the top of
           the scroll so Edit / Save stay reachable on a long note (they used

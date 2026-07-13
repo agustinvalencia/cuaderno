@@ -417,6 +417,10 @@ pub fn run() {
             commands::config::config_remove_note_type,
             commands::config::config_set_schema_field,
             commands::config::config_remove_schema_field,
+            commands::custom_css::read_custom_css,
+            commands::custom_css::open_custom_css,
+            commands::custom_css::init_custom_css,
+            commands::custom_css::write_custom_css,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the cuaderno app");

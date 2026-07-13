@@ -9,6 +9,8 @@ import {
   applyAppearance,
   setAccent,
   setPalette,
+  setReduceTransparency,
+  setTextSize,
   setTheme,
   storedAccent,
   storedPalette,
@@ -83,6 +85,30 @@ test("accent: a named accent sets the attribute; blue removes it", () => {
   expect(document.documentElement.hasAttribute("data-accent")).toBe(false);
   expect(localStorage.getItem("cuaderno-accent")).toBeNull();
   expect(storedAccent()).toBe("blue");
+});
+
+test("an enum axis (text size) sets the attribute; the default removes it", () => {
+  setTextSize("large");
+  expect(document.documentElement.getAttribute("data-text-size")).toBe("large");
+  expect(localStorage.getItem("cuaderno-text-size")).toBe("large");
+
+  setTextSize("medium"); // the default
+  expect(document.documentElement.hasAttribute("data-text-size")).toBe(false);
+  expect(localStorage.getItem("cuaderno-text-size")).toBeNull();
+});
+
+test("a boolean axis (reduce transparency) toggles a marker attribute", () => {
+  setReduceTransparency(true);
+  expect(document.documentElement.hasAttribute("data-reduce-transparency")).toBe(
+    true,
+  );
+  expect(localStorage.getItem("cuaderno-reduce-transparency")).toBe("true");
+
+  setReduceTransparency(false);
+  expect(document.documentElement.hasAttribute("data-reduce-transparency")).toBe(
+    false,
+  );
+  expect(localStorage.getItem("cuaderno-reduce-transparency")).toBeNull();
 });
 
 test("a bogus stored value falls back to the default", () => {

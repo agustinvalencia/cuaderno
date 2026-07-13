@@ -92,6 +92,25 @@ test("choosing a theme marks it selected and persists", () => {
   expect(localStorage.getItem("cuaderno-theme")).toBe("dark");
 });
 
+test("choosing a reading setting marks it selected and persists", () => {
+  renderDialog();
+  // A Reading-section segmented control (aria-pressed), like the theme group.
+  fireEvent.click(screen.getByRole("button", { name: "Large" }));
+  expect(
+    screen.getByRole("button", { name: "Large" }).getAttribute("aria-pressed"),
+  ).toBe("true");
+  expect(localStorage.getItem("cuaderno-text-size")).toBe("large");
+});
+
+test("reduce transparency flips the switch and persists", () => {
+  renderDialog();
+  const toggle = screen.getByRole("switch", { name: "Reduce transparency" });
+  expect(toggle.getAttribute("aria-checked")).toBe("false");
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  expect(localStorage.getItem("cuaderno-reduce-transparency")).toBe("true");
+});
+
 test("toggling metrics flips the switch and persists", () => {
   renderDialog();
   const toggle = screen.getByRole("switch", { name: "Show progress metrics" });

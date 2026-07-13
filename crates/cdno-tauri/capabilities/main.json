@@ -3,5 +3,8 @@
   "identifier": "main-window",
   "description": "Main shell: core IPC and events only. No fs scope — every file access goes through domain-backed commands.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging"
+  ]
 }

@@ -8,6 +8,7 @@ pub mod calendar;
 pub mod capture;
 pub mod commitments;
 pub mod config;
+pub mod custom_css;
 pub mod notes;
 pub mod orientation;
 pub mod portfolios;

@@ -164,36 +164,46 @@ function markdownComponents(onWikilink: (target: string) => void): Components {
   return {
     a: anchorComponent(onWikilink),
     img: NoteImage,
+    // Sizes are `em`-relative (not fixed `text-sm`/`text-lg`) so the whole
+    // body scales with the reader's `--reader-font-size` wrapper below —
+    // the Text size setting — while keeping the same visual proportions.
     h1: ({ node: _node, ...props }) => (
-      <h1 className="mt-4 mb-2 text-lg font-semibold text-ink" {...props} />
+      <h1
+        className="mt-4 mb-2 text-[length:var(--reader-heading-1)] font-semibold text-ink"
+        {...props}
+      />
     ),
     h2: ({ node: _node, ...props }) => (
-      <h2 className="mt-4 mb-2 text-base font-semibold text-ink" {...props} />
+      <h2
+        className="mt-4 mb-2 text-[length:var(--reader-heading-2)] font-semibold text-ink"
+        {...props}
+      />
     ),
     h3: ({ node: _node, ...props }) => (
-      <h3 className="mt-3 mb-1 text-sm font-semibold text-ink" {...props} />
+      <h3
+        className="mt-3 mb-1 text-[length:var(--reader-heading-3)] font-semibold text-ink"
+        {...props}
+      />
     ),
-    p: ({ node: _node, ...props }) => (
-      <p className="my-2 text-sm leading-relaxed text-ink" {...props} />
-    ),
+    p: ({ node: _node, ...props }) => <p className="my-2 text-ink" {...props} />,
     ul: ({ node: _node, ...props }) => (
-      <ul className="my-2 list-disc pl-5 text-sm text-ink" {...props} />
+      <ul className="my-2 list-disc pl-5 text-ink" {...props} />
     ),
     ol: ({ node: _node, ...props }) => (
-      <ol className="my-2 list-decimal pl-5 text-sm text-ink" {...props} />
+      <ol className="my-2 list-decimal pl-5 text-ink" {...props} />
     ),
     li: ({ node: _node, ...props }) => <li className="my-0.5" {...props} />,
     blockquote: ({ node: _node, ...props }) => (
-      <blockquote className="my-2 border-l-2 border-line pl-3 text-sm text-ink-muted" {...props} />
+      <blockquote className="my-2 border-l-2 border-line pl-3 text-ink-muted" {...props} />
     ),
     em: ({ node: _node, ...props }) => <em className="italic" {...props} />,
     strong: ({ node: _node, ...props }) => <strong className="font-semibold" {...props} />,
     code: ({ node: _node, ...props }) => (
-      <code className="rounded bg-bg-sunken px-1 py-0.5 font-mono text-xs text-ink" {...props} />
+      <code className="rounded bg-bg-sunken px-1 py-0.5 font-mono text-[0.85em] text-ink" {...props} />
     ),
     pre: ({ node: _node, ...props }) => (
       <pre
-        className="my-2 overflow-x-auto rounded border border-line bg-bg-sunken p-3 font-mono text-xs text-ink"
+        className="my-2 overflow-x-auto rounded border border-line bg-bg-sunken p-3 font-mono text-[0.85em] text-ink"
         {...props}
       />
     ),
@@ -201,7 +211,7 @@ function markdownComponents(onWikilink: (target: string) => void): Components {
     // the reader body never scrolls sideways.
     table: ({ node: _node, ...props }) => (
       <div className="my-3 overflow-x-auto">
-        <table className="w-full border-collapse text-sm text-ink" {...props} />
+        <table className="w-full border-collapse text-[0.95em] text-ink" {...props} />
       </div>
     ),
     th: ({ node: _node, ...props }) => (
@@ -228,15 +238,31 @@ export default function Markdown({
   onWikilink: (target: string) => void;
 }) {
   return (
-    <ReactMarkdown
-      // Wikilinks first so `[[…]]` is claimed before gfm autolinks the
-      // surrounding text; remark-math parses `$…$` / `$$…$$` into math
-      // nodes that rehype-katex then renders.
-      remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath]}
-      rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
-      components={markdownComponents(onWikilink)}
+    // The reading-typography wrapper: base size / line-height / face come
+    // from the `--reader-*` variables (globals.css), driven by the Text
+    // size / Line spacing / Reading font settings. Every markdown surface
+    // (reader, calendar, project & stewardship maps) inherits it, so notes
+    // render consistently and respond to the settings everywhere. `code`
+    // and `pre` re-assert `font-mono`, so they stay monospace regardless
+    // of the chosen reading font.
+    <div
+      className="text-ink"
+      style={{
+        fontSize: "var(--reader-font-size)",
+        lineHeight: "var(--reader-line-height)",
+        fontFamily: "var(--reader-font-family)",
+      }}
     >
-      {body}
-    </ReactMarkdown>
+      <ReactMarkdown
+        // Wikilinks first so `[[…]]` is claimed before gfm autolinks the
+        // surrounding text; remark-math parses `$…$` / `$$…$$` into math
+        // nodes that rehype-katex then renders.
+        remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
+        components={markdownComponents(onWikilink)}
+      >
+        {body}
+      </ReactMarkdown>
+    </div>
   );
 }
