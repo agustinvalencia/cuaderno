@@ -224,8 +224,8 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        45,
-        "expected the full catalogue: 44 prior + the generic set_frontmatter setter (#301), got {}",
+        46,
+        "expected the full catalogue: 45 prior + the list_note_types discovery read, got {}",
         tools.len()
     );
 }

@@ -18,7 +18,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -66,6 +66,15 @@ fn server_with_notes(notes: &[(&str, &str)]) -> CuadernoServer {
             .unwrap();
     }
     let (vault, _r) = Vault::new(store, index, VaultConfig::default()).unwrap();
+    CuadernoServer::new(Arc::new(vault))
+}
+
+/// Build a server from a custom `VaultConfig` — for tests exercising
+/// config-defined note types and `[schemas.*]` field declarations.
+fn server_with_config(config: VaultConfig) -> CuadernoServer {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(store, index, config).unwrap();
     CuadernoServer::new(Arc::new(vault))
 }
 
@@ -1367,4 +1376,72 @@ async fn triage_inbox_lists_pending_captures() {
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["text"].as_str().unwrap(), "buy milk");
     assert!(arr[0]["slug"].as_str().unwrap().starts_with("2026-04-26-"));
+}
+
+#[tokio::test]
+async fn list_note_types_reports_builtins_and_custom_with_schemas() {
+    // A custom `person` type + a typed field overlaid onto the built-in
+    // `project` via `[schemas.project.fields.priority]`.
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "person".to_owned(),
+        CustomNoteType {
+            folder: "people".to_owned(),
+            required: vec!["name".to_owned()],
+            optional: vec!["role".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "priority".to_owned(),
+        FieldSpec {
+            ty: FieldType::Int,
+            default: Some(toml::Value::Integer(1)),
+            required: true,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    config.schemas.insert("project".to_owned(), schema);
+
+    let server = server_with_config(config);
+    let result = server
+        .list_note_types(Parameters(EmptyInput {}))
+        .await
+        .expect("list_note_types");
+    let json = decode_json(&result);
+    let types = json["note_types"].as_array().expect("note_types array");
+
+    // The custom type appears with its kind/folder/required fields.
+    let person = types
+        .iter()
+        .find(|t| t["name"] == "person")
+        .expect("person type present");
+    assert_eq!(person["kind"], "custom");
+    assert_eq!(person["folder"], "people");
+    assert_eq!(person["required"][0], "name");
+    assert_eq!(person["optional"][0], "role");
+
+    // The typed field overlays onto the built-in project, with the lowercase
+    // `type` spelling and the toml default rendered as a JSON string.
+    let project = types
+        .iter()
+        .find(|t| t["name"] == "project")
+        .expect("built-in project present");
+    assert_eq!(project["kind"], "builtin");
+    let priority = project["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "priority")
+        .expect("overlaid typed field present");
+    assert_eq!(priority["type"], "int");
+    assert_eq!(priority["required"], true);
+    assert_eq!(priority["default"], "1");
 }

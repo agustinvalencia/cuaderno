@@ -17,8 +17,8 @@ use crate::dto::{
     CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
     MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS, PROJECT_MENTIONS_MAX,
     PortfolioDetailDto, ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto,
-    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
-    WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
+    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, VaultSchemaDto, WEEKLY_LOGS_MAX,
+    WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
 
 use crate::input::*;
@@ -170,6 +170,26 @@ impl CuadernoServer {
             active: active.into_iter().map(project_list_entry).collect(),
             parked: parked.into_iter().map(project_list_entry).collect(),
             slots,
+        })
+    }
+
+    #[tool(
+        description = "Discover the vault's note types and their schemas: every built-in type plus any user-defined `[note_types.*]` custom type, each with its folder, required/optional fields, typed field specs (name, type, default, allowed values), template, title/date fields, append-only flag, and the `{{placeholders}}` its create path supplies. Call this before `create_custom_note` so you supply the right `fields` -- the create tool's schema can't enumerate a vault's custom types, this can."
+    )]
+    pub async fn list_note_types(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // `describe_all` is infallible; the `Ok` keeps the `with_vault`
+        // closure's `Result<_, DomainError>` shape. The registry borrow stays
+        // inside the closure — the owned `Vec<NoteTypeInfo>` crosses the
+        // spawn_blocking boundary.
+        let infos = self
+            .with_vault(move |vault| Ok::<_, DomainError>(vault.type_registry().describe_all()))
+            .await?
+            .map_err(into_mcp_error)?;
+        json_result(VaultSchemaDto {
+            note_types: infos.into_iter().map(Into::into).collect(),
         })
     }
 

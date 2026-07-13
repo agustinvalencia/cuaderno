@@ -4,7 +4,7 @@
 
 use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_domain::note_type::NoteType;
-use cdno_domain::{NoteTypeDescriptor, TypeRegistry};
+use cdno_domain::{NoteTypeDescriptor, NoteTypeKind, TypeRegistry};
 
 /// A minimal `string` field spec (no default/values) for the reserved-field
 /// tests — enough to place a declared field under a built-in type's schema.
@@ -13,6 +13,19 @@ fn string_field() -> FieldSpec {
         ty: FieldType::String,
         default: None,
         required: false,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+/// An `int` field with a declared default, for the describe-payload tests.
+fn int_field(default: i64) -> FieldSpec {
+    FieldSpec {
+        ty: FieldType::Int,
+        default: Some(toml::Value::Integer(default)),
+        required: true,
         values: None,
         list: None,
         settable: None,
@@ -317,4 +330,51 @@ fn supplied_placeholders_for_a_fieldless_custom_type_is_just_the_builtins() {
         reg.resolve("bookmark").unwrap().supplied_placeholders(),
         vec!["title", "slug", "created", "date"]
     );
+}
+
+#[test]
+fn describe_all_lists_builtins_then_custom_with_schema_overlay() {
+    // A custom `person` type plus a typed field overlaid onto the built-in
+    // `project` via `[schemas.project.fields.priority]`.
+    let mut config = config_with_person();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert("priority".to_owned(), int_field(1));
+    config.schemas.insert("project".to_owned(), schema);
+    let reg = TypeRegistry::new(&config);
+
+    let all = reg.describe_all();
+    // The 12 built-ins (in `NoteType::ALL` order) then the one custom type.
+    assert_eq!(all.len(), NoteType::ALL.len() + 1);
+    for (info, nt) in all.iter().zip(NoteType::ALL.iter()) {
+        assert_eq!(info.name, nt.as_str());
+        assert_eq!(info.kind, NoteTypeKind::Builtin);
+    }
+
+    let person = all.last().unwrap();
+    assert_eq!(person.name, "person");
+    assert_eq!(person.kind, NoteTypeKind::Custom);
+    assert_eq!(person.folder.as_deref(), Some("people"));
+    assert_eq!(person.required, vec!["name".to_owned()]);
+    assert_eq!(person.optional, vec!["role".to_owned()]);
+    assert!(person.supplied_placeholders.contains(&"name".to_owned()));
+    assert!(person.fields.is_empty());
+
+    // The typed field overlays onto the built-in `project`.
+    let project = all.iter().find(|i| i.name == "project").unwrap();
+    assert_eq!(project.kind, NoteTypeKind::Builtin);
+    let priority = project
+        .fields
+        .iter()
+        .find(|f| f.name == "priority")
+        .expect("the overlaid typed field is present on the built-in");
+    assert_eq!(priority.ty, FieldType::Int);
+    assert!(priority.required);
+    // The toml default is rendered to its scalar string, never a `toml::Value`.
+    assert_eq!(priority.default.as_deref(), Some("1"));
+}
+
+#[test]
+fn describe_returns_none_for_an_unknown_type() {
+    let config = VaultConfig::default();
+    assert!(TypeRegistry::new(&config).describe("not-a-type").is_none());
 }

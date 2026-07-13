@@ -17,7 +17,7 @@
 
 use std::str::FromStr;
 
-use cdno_core::config::{CustomNoteType, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldType, VaultConfig};
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -134,6 +134,53 @@ impl<'a> NoteTypeDescriptor<'a> {
             }
         }
     }
+}
+
+/// Whether a described note type is built-in or config-defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoteTypeKind {
+    Builtin,
+    Custom,
+}
+
+/// A typed frontmatter field declared under `[schemas.<type>.fields]`, in the
+/// owned form the discovery surfaces (the MCP `list_note_types` tool, a future
+/// CLI lister) hand out. `default` is pre-rendered to its scalar string here so
+/// consumers never touch `toml::Value` (which carries no JSON Schema).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldInfo {
+    pub name: String,
+    pub ty: FieldType,
+    pub required: bool,
+    pub values: Option<Vec<String>>,
+    pub default: Option<String>,
+}
+
+/// A note type with its full schema, assembled into one owned payload — the
+/// built-in/custom asymmetry and the `[schemas.<name>]` typed-field overlay
+/// collapsed into a single shape, so a caller (e.g. the MCP layer) needn't
+/// re-thread `&VaultConfig` to expand a borrowing [`NoteTypeDescriptor`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteTypeInfo {
+    pub name: String,
+    pub kind: NoteTypeKind,
+    /// The vault-relative folder (custom types only; `None` for built-ins).
+    pub folder: Option<String>,
+    /// Fields that must be present and non-null: a custom type's `required`, or
+    /// a built-in's `[schemas.<type>].extra_required` additions. (A built-in's
+    /// *intrinsic* required fields are enforced by its typed parse, not listed.)
+    pub required: Vec<String>,
+    /// A custom type's optional fields (empty for built-ins).
+    pub optional: Vec<String>,
+    /// Typed field declarations from `[schemas.<name>.fields]`, sorted by name —
+    /// present for whichever types the vault gives a schema, built-in or custom.
+    pub fields: Vec<FieldInfo>,
+    pub template: Option<String>,
+    pub title_field: Option<String>,
+    pub date_field: Option<String>,
+    pub append_only: bool,
+    /// The `{{placeholders}}` this type's create path supplies to a template.
+    pub supplied_placeholders: Vec<String>,
 }
 
 /// A borrowing view over the vault's note-type declarations. Built-in types
@@ -256,6 +303,71 @@ impl<'a> TypeRegistry<'a> {
         custom.sort_unstable();
         names.extend(custom);
         names
+    }
+
+    /// Assemble a single type's full schema into an owned [`NoteTypeInfo`], or
+    /// `None` if the name is unknown. Overlays the `[schemas.<name>]` typed
+    /// fields — which the vault may attach to a built-in as well as a custom
+    /// type — and pre-renders each field default to its scalar string.
+    ///
+    /// Note: [`SchemaExtension::declared_fields`](cdno_core::config::SchemaExtension::declared_fields)
+    /// folds a schema's legacy `extra_required` names in as untyped `string`
+    /// fields, so a built-in's `extra_required` entries appear in both
+    /// `required` and `fields` — intentional and informative.
+    pub fn describe(&self, note_type: &str) -> Option<NoteTypeInfo> {
+        let descriptor = self.resolve(note_type)?;
+        // `[schemas.<name>]` can key any type, so this overlay serves built-ins
+        // (extra typed fields on a project, say) and custom types alike.
+        let mut fields: Vec<FieldInfo> = self
+            .config
+            .schemas
+            .get(note_type)
+            .map(|schema| {
+                schema
+                    .declared_fields()
+                    .into_iter()
+                    .map(|(name, spec)| FieldInfo {
+                        // Render the toml default before moving the spec's
+                        // other fields, so the DTO never sees a `toml::Value`.
+                        default: spec.default_template_value(),
+                        name,
+                        ty: spec.ty,
+                        required: spec.required,
+                        values: spec.values,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The source is a `HashMap`; sort for a stable, scannable order.
+        fields.sort_by(|a, b| a.name.cmp(&b.name));
+        let custom = descriptor.as_custom();
+        Some(NoteTypeInfo {
+            name: note_type.to_owned(),
+            kind: if descriptor.is_custom() {
+                NoteTypeKind::Custom
+            } else {
+                NoteTypeKind::Builtin
+            },
+            folder: descriptor.folder().map(str::to_owned),
+            required: descriptor.required_fields(self.config).to_vec(),
+            optional: custom.map(|def| def.optional.clone()).unwrap_or_default(),
+            fields,
+            template: custom.and_then(|def| def.template.clone()),
+            title_field: custom.and_then(|def| def.title_field.clone()),
+            date_field: custom.and_then(|def| def.date_field.clone()),
+            append_only: descriptor.append_only(),
+            supplied_placeholders: descriptor.supplied_placeholders(),
+        })
+    }
+
+    /// Every known type — the 12 built-ins (in [`NoteType::ALL`] order) then
+    /// config types sorted alphabetically — each as a full [`NoteTypeInfo`].
+    /// The discovery payload behind the MCP `list_note_types` tool.
+    pub fn describe_all(&self) -> Vec<NoteTypeInfo> {
+        self.all_names()
+            .into_iter()
+            .filter_map(|name| self.describe(name))
+            .collect()
     }
 }
 

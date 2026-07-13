@@ -19,7 +19,7 @@ pub use bootstrap::{BootstrapError, OpenedVault, open_vault};
 pub use cdno_core::template::TemplateSource;
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
-pub use type_registry::{NoteTypeDescriptor, TypeRegistry};
+pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
