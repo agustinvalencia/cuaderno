@@ -111,11 +111,10 @@ export default function CustomCssEditor({
   const draft = useRef("");
   const [saving, setSaving] = useState(false);
 
+  // This component is mounted only while open (SettingsDialog gates it on
+  // `cssEditorOpen`), so it loads once on mount; close is an unmount. The
+  // `alive` guard drops a late resolve (and StrictMode's double-mount).
   useEffect(() => {
-    if (!open) {
-      setInitial(null);
-      return;
-    }
     let alive = true;
     initCustomCss()
       .then((content) => {
@@ -131,9 +130,9 @@ export default function CustomCssEditor({
     return () => {
       alive = false;
     };
-    // Load once per open; toast/onOpenChange are stable enough for this.
+    // Load once on mount; toast/onOpenChange are stable enough for this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, []);
 
   async function save() {
     setSaving(true);

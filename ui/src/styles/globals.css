@@ -204,12 +204,17 @@
  * inline (mirroring how the base accent lifts). `rose` sits at
  * magenta-leaning hue 350, not orange-red, so it stays clear of the
  * forbidden alarm red. */
+/* The dark blocks lift BOTH the interactive colour and the focus ring to
+ * the same on-dark value: a dark accent's light-value ring (notably
+ * graphite's L~0.45 grey) would otherwise fall below the 3:1 focus-
+ * indicator contrast floor on the dark surfaces. */
 :root[data-accent="teal"] {
   --color-accent-interactive: var(--accent-teal);
   --color-focus-ring: var(--accent-teal);
 }
 :root[data-accent="teal"].dark {
   --color-accent-interactive: oklch(0.7 0.09 195);
+  --color-focus-ring: oklch(0.7 0.09 195);
 }
 :root[data-accent="violet"] {
   --color-accent-interactive: var(--accent-violet);
@@ -217,6 +222,7 @@
 }
 :root[data-accent="violet"].dark {
   --color-accent-interactive: oklch(0.7 0.12 300);
+  --color-focus-ring: oklch(0.7 0.12 300);
 }
 :root[data-accent="green"] {
   --color-accent-interactive: var(--accent-green);
@@ -224,6 +230,7 @@
 }
 :root[data-accent="green"].dark {
   --color-accent-interactive: oklch(0.7 0.1 150);
+  --color-focus-ring: oklch(0.7 0.1 150);
 }
 :root[data-accent="graphite"] {
   --color-accent-interactive: var(--accent-graphite);
@@ -231,6 +238,7 @@
 }
 :root[data-accent="graphite"].dark {
   --color-accent-interactive: oklch(0.75 0.012 260);
+  --color-focus-ring: oklch(0.75 0.012 260);
 }
 :root[data-accent="rose"] {
   --color-accent-interactive: var(--accent-rose);
@@ -238,6 +246,7 @@
 }
 :root[data-accent="rose"].dark {
   --color-accent-interactive: oklch(0.72 0.12 350);
+  --color-focus-ring: oklch(0.72 0.12 350);
 }
 
 /* Layout / typography settings — each stamps a `data-*` attribute

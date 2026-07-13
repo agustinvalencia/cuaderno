@@ -75,6 +75,9 @@ pub fn open_custom_css<R: tauri::Runtime>(
 ) -> Result<(), CmdError> {
     let path = custom_css_path(&state.root);
     ensure_seeded(&path)?;
+    // No confinement dance (unlike open_in_editor): this path is built
+    // entirely from state.root plus the CUADERNO_DIR/custom.css constants,
+    // with zero frontend input, so there is no traversal vector to guard.
     app.opener()
         .open_path(path.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|err| {
