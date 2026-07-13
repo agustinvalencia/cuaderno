@@ -94,8 +94,20 @@ export default function AppShell() {
   return (
     <ReaderProvider>
     <div className="flex h-screen">
-      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-bg-sunken px-3 py-4">
-        <div className="mb-6 px-2 text-sm font-semibold tracking-wide text-ink">cuaderno</div>
+      {/* `app-sidebar` is the translucent frosted surface (globals.css) the
+          macOS `sidebar` vibrancy material blurs through. The top padding
+          clears the inset traffic lights of the overlay title bar. */}
+      <aside className="app-sidebar flex w-56 shrink-0 flex-col border-r border-line px-3 pb-4 pt-8">
+        {/* The brand strip doubles as the window drag handle — the overlay
+            title bar has no bar of its own to grab (Tauri's
+            data-tauri-drag-region; nav/buttons below are separate targets,
+            so they still click through). */}
+        <div
+          data-tauri-drag-region
+          className="mb-6 px-2 text-sm font-semibold tracking-wide text-ink"
+        >
+          cuaderno
+        </div>
 
         <nav aria-label="Views" className="flex flex-col gap-1">
           {NAV.map(({ to, label }) => (
@@ -193,7 +205,10 @@ export default function AppShell() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-y-auto">
+      {/* The opaque content pane: carries the base background (moved off
+          `body`, which is now transparent for the sidebar vibrancy) so the
+          material shows only behind the frosted sidebar. */}
+      <main className="min-w-0 flex-1 overflow-y-auto bg-bg-base">
         <ConfigStatusBanner />
         <Outlet />
       </main>
