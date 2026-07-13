@@ -1,12 +1,20 @@
 // Markdown renders LaTeX maths via remark-math + rehype-katex: inline
 // `$…$` and display `$$…$$` become KaTeX output (a `.katex` element), the
 // raw `$` source never leaks to the reader, and a malformed expression
-// degrades to legible source rather than throwing (no red error box).
+// degrades to legible source rather than throwing (no red error box). It
+// also resolves a note-relative embedded image to vault bytes (a `data:`
+// URI) when a note-path context is present, and degrades to the caption
+// when it isn't.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, render } from "@testing-library/react";
-import Markdown from "./Markdown";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import Markdown, { NotePathProvider } from "./Markdown";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  clearMocks();
+});
 
 test("renders inline maths as KaTeX, not raw source", () => {
   const { container } = render(
@@ -34,4 +42,43 @@ test("a malformed expression degrades to source instead of throwing", () => {
   );
   expect(container.textContent).toContain("broken");
   expect(container.textContent).toContain("maths");
+});
+
+test("a note-relative image renders as a data URI via read_note_asset", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "read_note_asset") return "data:image/png;base64,AAAA";
+    return undefined;
+  });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <NotePathProvider path="portfolios/x/note.md">
+        <Markdown body={"![a figure](assets/fig.png)"} onWikilink={() => {}} />
+      </NotePathProvider>
+    </QueryClientProvider>,
+  );
+  const img = await waitFor(() => {
+    const el = container.querySelector("img");
+    if (!el) throw new Error("image not resolved yet");
+    return el;
+  });
+  expect(img.getAttribute("src")).toBe("data:image/png;base64,AAAA");
+  expect(img.getAttribute("alt")).toBe("a figure");
+  // The command was asked for the src relative to the note path.
+  const asset = calls.find((c) => c.cmd === "read_note_asset");
+  expect(asset?.args).toMatchObject({ notePath: "portfolios/x/note.md", src: "assets/fig.png" });
+});
+
+test("a relative image with no note context degrades to its caption", () => {
+  const { container } = render(
+    <Markdown body={"![the caption](assets/fig.png)"} onWikilink={() => {}} />,
+  );
+  // No note path in scope → nothing to fetch; show the caption, not a
+  // broken <img>.
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByText("the caption")).toBeDefined();
 });

@@ -21,6 +21,7 @@ import { useToast } from "../../shell/Toasts";
 import { useReader } from "../../shell/reader";
 import { MetaPanel } from "../../components/markdown/MetaPanel";
 import MarkdownEditor from "../../components/markdown/MarkdownEditor";
+import { NotePathProvider } from "../../components/markdown/Markdown";
 import SectionedBody from "../../components/markdown/SectionedBody";
 import { splitBodySections } from "../../lib/noteContent";
 
@@ -158,10 +159,10 @@ export default function NotePage() {
       ) : isError || !data ? (
         <p className="text-sm text-ink-muted">This note could not be read.</p>
       ) : (
-        <>
+        <NotePathProvider path={path}>
           <MetaPanel frontmatter={data.frontmatter} className="mb-6" />
           <SectionedBody sections={splitBodySections(data.body)} onWikilink={onWikilink} />
-        </>
+        </NotePathProvider>
       )}
 
       <div className="mt-8 flex items-center gap-2 border-t border-line pt-4">

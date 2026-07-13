@@ -27,6 +27,7 @@ serde_json.workspace = true
 # domain validation stays the save gate's job.
 toml.workspace = true
 chrono.workspace = true
+base64.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
