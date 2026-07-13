@@ -30,6 +30,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   first** toggle; the choice is a remembered, app-wide preference, so flipping it in one place flips
   it everywhere. (#412)
 
+### Fixed
+
+- **Bare folder wikilinks now resolve** — a folder-backed note (a portfolio, an expanded
+  stewardship) lives at `<folder>/_index.md`, so a bare `[[portfolios/<slug>]]` link — the form
+  authors and the daily-log writer emit in free text — matched neither the flat-file nor the
+  filename-stem resolution rule and silently dangled, leaving every portfolio link in every log
+  un-clickable. The resolver now also matches `<target>/_index.md`, ordered after the exact-path
+  match and before the fuzzy stem match. Purely additive: the explicit `[[.../_index]]` form still
+  resolves. Lint follows the resolver, so a bare folder link to a real `_index.md` no longer flags,
+  while a folder link with no `_index.md` still dangles. Clicking, lint, and every other live
+  resolution reflect the fix immediately; the index-stored *backlink edges* for links in existing
+  notes (what a portfolio's "what links here" shows) are content-derived and backfill only when each
+  note is next reindexed — run `cdno reindex` to refresh them all at once. (#414)
+
+- **Long next-actions no longer stretch a Home project card** (desktop UI) — a project's surfaced
+  next-action had no height cap, so a verbose multi-paragraph bullet blew its card past its
+  siblings. The action now caps at a fixed height with a soft bottom fade and a **more / less**
+  toggle that appears only when the text actually overflows. (#414)
+
 ## [0.25.1] - 2026-07-12
 
 ### Fixed

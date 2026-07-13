@@ -49,13 +49,15 @@ impl Vault {
     /// as a muted, un-clickable span. The resolution rules are exactly
     /// the batch resolver's (see
     /// [`cdno_core::extractors::resolve_wikilinks`]): an exact
-    /// `<target>.md` path match wins first, then a unique file-stem
-    /// (last path segment) match. **Ambiguity resolves to `None`**: when
-    /// two or more notes share the stem the target names, the link is
-    /// left unresolved rather than guessing — resolution stays *sound*
-    /// (a stem collision never navigates to the wrong note). This
-    /// mirrors the batch resolver's behaviour byte-for-byte because it
-    /// *is* the batch resolver, called with a one-element input.
+    /// `<target>.md` path match wins first, then a folder-index match
+    /// (`<target>/_index.md`, for a folder-backed note like a portfolio or
+    /// expanded stewardship), then a unique file-stem (last path segment)
+    /// match. **Ambiguity resolves to `None`**: when two or more notes
+    /// share the stem the target names, the link is left unresolved rather
+    /// than guessing — resolution stays *sound* (a stem collision never
+    /// navigates to the wrong note). This mirrors the batch resolver's
+    /// behaviour byte-for-byte because it *is* the batch resolver, called
+    /// with a one-element input.
     ///
     /// A blank target short-circuits to `Ok(None)` without touching the
     /// index.

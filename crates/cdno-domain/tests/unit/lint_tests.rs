@@ -731,38 +731,49 @@ fn lint_passes_a_resolvable_wikilink() {
 }
 
 #[test]
-fn lint_flags_a_folder_note_link_missing_its_index_stem() {
-    // The #200 regression in miniature: a portfolio note lives at
-    // `portfolios/<slug>/_index.md`, so `[[portfolios/<slug>]]` dangles
-    // while `[[portfolios/<slug>/_index]]` resolves.
+fn lint_resolves_a_folder_note_link_to_its_index() {
+    // A portfolio note lives at `portfolios/<slug>/_index.md`. Both the
+    // bare folder form `[[portfolios/<slug>]]` — what authors and the
+    // daily-log writer naturally emit — and the explicit
+    // `[[portfolios/<slug>/_index]]` resolve to the folder's `_index.md`
+    // via the resolver's folder-index rule; neither dangles. (Supersedes
+    // the #200-era convention that required the explicit `/_index` stem:
+    // bare-is-canonical, since that is what the vault's own tooling writes.)
     let portfolio =
         "---\ntype: portfolio\nquestion: \"Q\"\ncreated: 2026-04-01\nproject: null\n---\n# Q\n";
-    let dangling = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo]]");
-    let resolving = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo/_index]]");
+    let bare = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo]]");
+    let explicit = DAILY_LINKING.replace("{{link}}", "[[portfolios/demo/_index]]");
 
-    let vault_bad = vault_with_notes(
-        &[
-            ("journal/2026/daily/2026-05-01.md", &dangling),
-            ("portfolios/demo/_index.md", portfolio),
-        ],
+    for daily in [bare.as_str(), explicit.as_str()] {
+        let vault = vault_with_notes(
+            &[
+                ("journal/2026/daily/2026-05-01.md", daily),
+                ("portfolios/demo/_index.md", portfolio),
+            ],
+            VaultConfig::default(),
+        );
+        assert!(
+            broken_link_issues(&vault.lint_all_notes().unwrap()).is_empty(),
+            "a folder-note link (bare or explicit) resolves to its _index.md"
+        );
+    }
+}
+
+#[test]
+fn lint_flags_a_folder_link_with_no_index_note() {
+    // The folder-index rule only resolves when the folder actually holds an
+    // `_index.md`. A `[[portfolios/ghost]]` naming no such note still
+    // dangles — resolution stays sound and lint keeps catching genuinely
+    // broken links.
+    let dangling = DAILY_LINKING.replace("{{link}}", "[[portfolios/ghost]]");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-05-01.md", &dangling)],
         VaultConfig::default(),
     );
     assert_eq!(
-        broken_link_issues(&vault_bad.lint_all_notes().unwrap()).len(),
+        broken_link_issues(&vault.lint_all_notes().unwrap()).len(),
         1,
-        "bare folder link should dangle"
-    );
-
-    let vault_good = vault_with_notes(
-        &[
-            ("journal/2026/daily/2026-05-01.md", &resolving),
-            ("portfolios/demo/_index.md", portfolio),
-        ],
-        VaultConfig::default(),
-    );
-    assert!(
-        broken_link_issues(&vault_good.lint_all_notes().unwrap()).is_empty(),
-        "the /_index form should resolve"
+        "a folder link with no _index.md still dangles"
     );
 }
 

@@ -7,6 +7,7 @@ import type { OrientationProject } from "../../api/bindings/OrientationProject";
 import type { OrientationView } from "../../api/bindings/OrientationView";
 import { completeAction, errorMessage, startAction, updateProjectState } from "../../api/commands";
 import { actionLabel } from "../../lib/actionLabel";
+import { ClampedText } from "../../components/ui/clamped-text";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useToast } from "../../shell/Toasts";
@@ -176,15 +177,20 @@ export default function ProjectCard({
               no {energy} action here — smallest step:
             </p>
           )}
-          <p className="text-sm text-ink">
-            <span aria-hidden className="text-ink-faint">
-              →{" "}
-            </span>
-            {actionLabel(action.text)}
-            {action.energy && (
-              <span className="ml-1 text-xs text-ink-faint">({action.energy})</span>
-            )}
-          </p>
+          {/* A surfaced action can be a long, multi-paragraph bullet — cap
+              it so one verbose project never blows the card's height out
+              past its siblings; "more" expands it in place. */}
+          <ClampedText resetKey={action.text}>
+            <p className="text-sm text-ink">
+              <span aria-hidden className="text-ink-faint">
+                →{" "}
+              </span>
+              {actionLabel(action.text)}
+              {action.energy && (
+                <span className="ml-1 text-xs text-ink-faint">({action.energy})</span>
+              )}
+            </p>
+          </ClampedText>
           <div className="mt-3 flex items-center gap-2">
             {started ? (
               <span className="text-xs text-ink-muted">in today's log</span>
