@@ -4,12 +4,20 @@ import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { attachEventBridge } from "./api/events";
 import { initTheme } from "./lib/theme";
+import { loadCustomCss } from "./lib/customCss";
 import { setWatcherState } from "./lib/watcherStatus";
 import { ToastProvider } from "./shell/Toasts";
 import App from "./App";
 import "./styles/globals.css";
 
 initTheme();
+
+// Apply the user's `.cuaderno/custom.css` (the override escape hatch), then
+// re-apply on window focus — the same signal the query cache uses — so an
+// edit to the file takes effect when the user Cmd-Tabs back from their
+// editor, no relaunch needed.
+void loadCustomCss();
+window.addEventListener("focus", () => void loadCustomCss());
 
 // Cache posture (plan §2.5): events are the primary invalidation
 // source; staleness never expires on its own. refetchOnWindowFocus

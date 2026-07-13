@@ -28,11 +28,13 @@ const theme = EditorView.theme({
   "&": {
     color: "var(--color-ink)",
     backgroundColor: "var(--color-bg-surface)",
-    fontSize: "0.85rem",
+    // Tokenised so the Text size setting scales the editor with the reader.
+    fontSize: "var(--editor-font-size)",
     height: "100%",
   },
   ".cm-scroller": {
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
+    // The shared mono token, so the editor tracks the app's mono face.
+    fontFamily: "var(--font-mono)",
     lineHeight: "1.55",
   },
   ".cm-content": {

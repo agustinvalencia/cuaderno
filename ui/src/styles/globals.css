@@ -12,22 +12,27 @@
  * (family, household, legal), personal (personal, side-project).
  */
 @theme {
-  --color-bg-base: oklch(0.985 0.004 95);
+  /* Clean, cool neutrals — the macOS "System Settings" light: pure-white
+   * content on a faint cool-grey base, near-black cool ink, hair-line
+   * cool separators. Deliberately hue ~264 at near-zero chroma so nothing
+   * reads warm; the earlier hue-95 tint is what looked "cream". (A warm
+   * paper look is still available on demand via the Warm palette.) */
+  --color-bg-base: oklch(0.98 0.002 264);
   --color-bg-surface: oklch(1 0 0);
-  --color-bg-sunken: oklch(0.955 0.005 95);
-  --color-ink: oklch(0.3 0.02 260);
-  --color-ink-muted: oklch(0.55 0.015 260);
-  --color-ink-faint: oklch(0.72 0.01 260);
-  --color-line: oklch(0.9 0.006 95);
+  --color-bg-sunken: oklch(0.965 0.003 264);
+  --color-ink: oklch(0.27 0.012 264);
+  --color-ink-muted: oklch(0.52 0.012 264);
+  --color-ink-faint: oklch(0.68 0.01 264);
+  --color-line: oklch(0.922 0.003 264);
 
   --color-attention: oklch(0.75 0.09 75);
-  --color-focus-ring: oklch(0.6 0.12 250);
+  --color-focus-ring: oklch(0.62 0.15 256);
 
   /* The one calm blue for interactive affordances (wikilinks, the
    * "edit" text button) — deliberately outside the seven context hues
    * so "this is clickable" never reads as a context signal. Shares the
    * focus-ring's blue family for a single coherent interaction colour. */
-  --color-accent-interactive: oklch(0.55 0.11 250);
+  --color-accent-interactive: oklch(0.56 0.14 256);
 
   --color-ctx-work: oklch(0.62 0.1 245);
   --color-ctx-university: oklch(0.62 0.09 210);
@@ -36,6 +41,17 @@
   --color-ctx-family: oklch(0.65 0.11 145);
   --color-ctx-household: oklch(0.65 0.1 110);
   --color-ctx-legal: oklch(0.6 0.06 170);
+
+  /* Native system font stacks — the SF families the OS renders for its
+   * own apps, so cuaderno's type matches the platform rather than the
+   * webview default. `--font-sans` also feeds Tailwind v4's
+   * `--default-font-family`, so it becomes the app's base face. Mono is
+   * the token the CodeMirror editor will reference once its theming is
+   * unified (currently it inlines the same stack). */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas,
+    monospace;
 }
 
 /* Dark theme: class strategy on <html>; default follows the OS via
@@ -50,25 +66,264 @@
   --color-line: oklch(0.34 0.012 260);
   /* Slightly lighter on dark so the accent keeps its lift against the
    * sunken surfaces. */
-  --color-accent-interactive: oklch(0.68 0.11 250);
+  --color-accent-interactive: oklch(0.72 0.13 256);
 }
 
 :root {
   /* Follows the .dark class, not the OS — a manual light override
    * must also get light scrollbars and form controls. */
   color-scheme: light;
+
+  /* Layout constants — centralised so they're tuned in one place instead
+   * of sprinkled through the shell as magic numbers. `--titlebar-height`
+   * is the draggable strip under the overlay title bar (sidebar top +
+   * content-pane gutter); `--sidebar-vibrancy` is the frosted sidebar's
+   * opacity over the macOS material. */
+  --titlebar-height: 3.75rem;
+  --sidebar-width: 15rem;
+  --sidebar-vibrancy: 72%;
+
+  /* The accent palette, defined once here as the single source of truth
+   * for BOTH the [data-accent] token blocks below and the Settings
+   * swatches — the swatches previously duplicated these oklch values.
+   * Light values; the darker-surface lifts are applied inline in the
+   * .dark blocks. */
+  --accent-blue: oklch(0.56 0.14 256);
+  --accent-teal: oklch(0.55 0.09 195);
+  --accent-violet: oklch(0.55 0.12 300);
+  --accent-green: oklch(0.55 0.1 150);
+  --accent-graphite: oklch(0.45 0.012 260);
+  --accent-rose: oklch(0.55 0.12 350);
+
+  /* Reading / typography — the markdown reader and the editor consume
+   * these; the defaults reproduce the previous fixed look (body ≈ 14px,
+   * relaxed leading, sans, ~72ch measure). The data-* blocks below shift
+   * them for the Text size / Reading width / Reading font / Line spacing
+   * settings. Headings scale in `em`, so they track the base size, and
+   * KaTeX (sized in em) tracks it too — maths needs no separate control. */
+  --reader-font-size: 0.875rem;
+  --reader-line-height: 1.65;
+  --reader-font-family: var(--font-sans);
+  --reader-measure: 72ch;
+  --editor-font-size: 0.85rem;
+
+  /* Heading sizes, relative to the reader body size (em) so they track the
+   * Text size setting — and exposed as variables so custom.css can retune
+   * the heading scale. */
+  --reader-heading-1: 1.3em;
+  --reader-heading-2: 1.15em;
+  --reader-heading-3: 1em;
+
+  --font-serif: ui-serif, "New York", Georgia, Cambria, "Times New Roman",
+    serif;
 }
 
 .dark {
   color-scheme: dark;
 }
 
-/* In @layer base so utilities can override it — the capture window's
- * transparent body depends on bg-transparent winning. */
+/*
+ * User theming (2026-07-13). Two curated axes stamped on <html> by
+ * lib/theme.ts, both composing over the base @theme + `.dark` blocks:
+ *
+ *   • data-palette — surface/ink/line only, authored for BOTH light and
+ *     dark (the `.dark` variant re-declares under the same attribute).
+ *     The `default` palette needs no block; it IS the base @theme.
+ *   • data-accent  — the two interaction colours (interactive + focus
+ *     ring) only. The seven context hues are never touched, so "this is
+ *     clickable" can never be mistaken for a context signal. `blue` is
+ *     the base, so it needs no block.
+ *
+ * Palettes and accents are deliberately calm and desaturated — no alarm
+ * colours, the vault's standing design law.
+ */
+
+/* Warm — paper / sepia neutrals, ink drifted off pure grey toward brown. */
+:root[data-palette="warm"] {
+  --color-bg-base: oklch(0.975 0.012 85);
+  --color-bg-surface: oklch(0.995 0.008 85);
+  --color-bg-sunken: oklch(0.945 0.016 82);
+  --color-ink: oklch(0.32 0.02 60);
+  --color-ink-muted: oklch(0.55 0.02 65);
+  --color-ink-faint: oklch(0.72 0.015 70);
+  --color-line: oklch(0.89 0.02 80);
+}
+:root[data-palette="warm"].dark {
+  --color-bg-base: oklch(0.23 0.015 70);
+  --color-bg-surface: oklch(0.27 0.015 68);
+  --color-bg-sunken: oklch(0.2 0.015 70);
+  --color-ink: oklch(0.92 0.01 85);
+  --color-ink-muted: oklch(0.72 0.012 80);
+  --color-ink-faint: oklch(0.54 0.012 75);
+  --color-line: oklch(0.35 0.015 70);
+}
+
+/* Cool — slate / blue-leaning neutrals. */
+:root[data-palette="cool"] {
+  --color-bg-base: oklch(0.98 0.006 250);
+  --color-bg-surface: oklch(1 0 0);
+  --color-bg-sunken: oklch(0.95 0.01 250);
+  --color-ink: oklch(0.3 0.025 255);
+  --color-ink-muted: oklch(0.54 0.02 255);
+  --color-ink-faint: oklch(0.72 0.015 255);
+  --color-line: oklch(0.89 0.012 250);
+}
+:root[data-palette="cool"].dark {
+  --color-bg-base: oklch(0.21 0.018 255);
+  --color-bg-surface: oklch(0.25 0.018 255);
+  --color-bg-sunken: oklch(0.18 0.018 255);
+  --color-ink: oklch(0.92 0.01 250);
+  --color-ink-muted: oklch(0.7 0.014 250);
+  --color-ink-faint: oklch(0.52 0.014 250);
+  --color-line: oklch(0.33 0.018 255);
+}
+
+/* High-contrast — stronger ink, firmer lines, purer surfaces. An
+ * accessibility-leaning preset, not a garish one. */
+:root[data-palette="high-contrast"] {
+  --color-bg-base: oklch(1 0 0);
+  --color-bg-surface: oklch(1 0 0);
+  --color-bg-sunken: oklch(0.94 0.004 95);
+  --color-ink: oklch(0.18 0.02 260);
+  --color-ink-muted: oklch(0.4 0.02 260);
+  --color-ink-faint: oklch(0.55 0.015 260);
+  --color-line: oklch(0.78 0.008 95);
+}
+:root[data-palette="high-contrast"].dark {
+  --color-bg-base: oklch(0.16 0.01 260);
+  --color-bg-surface: oklch(0.2 0.01 260);
+  --color-bg-sunken: oklch(0.12 0.01 260);
+  --color-ink: oklch(0.98 0.004 95);
+  --color-ink-muted: oklch(0.82 0.008 95);
+  --color-ink-faint: oklch(0.62 0.01 95);
+  --color-line: oklch(0.45 0.012 260);
+}
+
+/* Accents — each maps the interactive colour and its focus ring to the
+ * single-source `--accent-*` var, then lifts the value on dark surfaces
+ * inline (mirroring how the base accent lifts). `rose` sits at
+ * magenta-leaning hue 350, not orange-red, so it stays clear of the
+ * forbidden alarm red. */
+/* The dark blocks lift BOTH the interactive colour and the focus ring to
+ * the same on-dark value: a dark accent's light-value ring (notably
+ * graphite's L~0.45 grey) would otherwise fall below the 3:1 focus-
+ * indicator contrast floor on the dark surfaces. */
+:root[data-accent="teal"] {
+  --color-accent-interactive: var(--accent-teal);
+  --color-focus-ring: var(--accent-teal);
+}
+:root[data-accent="teal"].dark {
+  --color-accent-interactive: oklch(0.7 0.09 195);
+  --color-focus-ring: oklch(0.7 0.09 195);
+}
+:root[data-accent="violet"] {
+  --color-accent-interactive: var(--accent-violet);
+  --color-focus-ring: var(--accent-violet);
+}
+:root[data-accent="violet"].dark {
+  --color-accent-interactive: oklch(0.7 0.12 300);
+  --color-focus-ring: oklch(0.7 0.12 300);
+}
+:root[data-accent="green"] {
+  --color-accent-interactive: var(--accent-green);
+  --color-focus-ring: var(--accent-green);
+}
+:root[data-accent="green"].dark {
+  --color-accent-interactive: oklch(0.7 0.1 150);
+  --color-focus-ring: oklch(0.7 0.1 150);
+}
+:root[data-accent="graphite"] {
+  --color-accent-interactive: var(--accent-graphite);
+  --color-focus-ring: var(--accent-graphite);
+}
+:root[data-accent="graphite"].dark {
+  --color-accent-interactive: oklch(0.75 0.012 260);
+  --color-focus-ring: oklch(0.75 0.012 260);
+}
+:root[data-accent="rose"] {
+  --color-accent-interactive: var(--accent-rose);
+  --color-focus-ring: var(--accent-rose);
+}
+:root[data-accent="rose"].dark {
+  --color-accent-interactive: oklch(0.72 0.12 350);
+  --color-focus-ring: oklch(0.72 0.12 350);
+}
+
+/* Layout / typography settings — each stamps a `data-*` attribute
+ * (lib/theme.ts) that shifts one centralised variable. The default value
+ * of each axis carries no attribute, so these blocks are pure overrides. */
+
+/* Text size — reader body + editor together; `medium` is the default. */
+:root[data-text-size="small"] {
+  --reader-font-size: 0.8125rem;
+  --editor-font-size: 0.8rem;
+}
+:root[data-text-size="large"] {
+  --reader-font-size: 1rem;
+  --editor-font-size: 0.95rem;
+}
+
+/* Reading width — the reader column measure; `comfortable` (72ch) default. */
+:root[data-reading-width="narrow"] {
+  --reader-measure: 58ch;
+}
+:root[data-reading-width="wide"] {
+  --reader-measure: 90ch;
+}
+
+/* Reading font — the reader body face; `system` (sans) is the default. */
+:root[data-reading-font="serif"] {
+  --reader-font-family: var(--font-serif);
+}
+:root[data-reading-font="mono"] {
+  --reader-font-family: var(--font-mono);
+}
+
+/* Line spacing — the reader line-height; `normal` (1.65) is the default. */
+:root[data-line-spacing="compact"] {
+  --reader-line-height: 1.45;
+}
+:root[data-line-spacing="relaxed"] {
+  --reader-line-height: 1.9;
+}
+
+/* Sidebar width — the shell rail; `default` (15rem) needs no block. */
+:root[data-sidebar-width="narrow"] {
+  --sidebar-width: 13rem;
+}
+:root[data-sidebar-width="wide"] {
+  --sidebar-width: 17.5rem;
+}
+
+/* Reduce transparency — the macOS accessibility option: make the sidebar
+ * fully opaque so no vibrancy shows through (the content pane is already
+ * opaque, so the window then reads as a solid, non-translucent surface). */
+:root[data-reduce-transparency] {
+  --sidebar-vibrancy: 100%;
+}
+
+/* Native macOS chrome (2026-07-13). The main window is transparent with
+ * a `sidebar` vibrancy material behind it (tauri.conf.json), so the body
+ * must NOT paint an opaque base — the content pane and sidebar paint
+ * their own backgrounds, and only the translucent sidebar reveals the
+ * material. mac-first: on platforms without window vibrancy the
+ * transparent region simply falls back to the window background.
+ * `bg-bg-base` moved from `body` to the content pane (AppShell `<main>`). */
 @layer base {
   body {
-    @apply bg-bg-base text-ink antialiased;
+    @apply text-ink antialiased;
+    background: transparent;
   }
+}
+
+/* The frosted source-list sidebar: a translucent sunken surface so the
+ * vibrancy material blurs through it, in both light and dark. */
+.app-sidebar {
+  background-color: color-mix(
+    in oklch,
+    var(--color-bg-sunken) var(--sidebar-vibrancy),
+    transparent
+  );
 }
 
 /* Keyboard-first: the focus ring is always visible on keyboard

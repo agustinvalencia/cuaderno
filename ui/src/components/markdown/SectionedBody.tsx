@@ -80,7 +80,7 @@ function SectionBlock({
               project state-change `state on [[slug]]`) stay clickable, as
               they were when the whole blob rendered as markdown. Margins
               zeroed so a one-line entry stays compact. */}
-          <div className="[&>p]:my-0">
+          <div className="[&_p]:my-0">
             <Markdown body={entry.text} onWikilink={onWikilink} />
           </div>
         </LogCard>
