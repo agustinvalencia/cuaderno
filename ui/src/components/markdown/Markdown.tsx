@@ -1,12 +1,29 @@
 // Rendered markdown for the note reader (plan §3.8). react-markdown +
-// remark-gfm (tables, task lists, strikethrough) + the wikilink plugin,
-// with component overrides styled from the semantic tokens so notes
-// read as part of the app, not a raw dump.
+// remark-gfm (tables, task lists, strikethrough) + remark-math/rehype-katex
+// (LaTeX maths, the load-bearing case for research notes) + the wikilink
+// plugin, with component overrides styled from the semantic tokens so notes
+// read as part of the app, not a raw dump. KaTeX's stylesheet and fonts are
+// vendored (imported below), never a CDN — the app CSP blocks external
+// hosts.
 import type { ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { remarkWikilinks } from "./remarkWikilinks";
+
+// KaTeX options: never throw on a malformed expression — render the raw
+// `$…$` source instead, in a calm desaturated tone (the vault's amber
+// accent), so a typo degrades to legible source, not a red error box (the
+// no-red design law). `strict: false` tolerates the LaTeX-isms real notes
+// carry (e.g. `\ell`, stray `\,`) rather than warning on them.
+const KATEX_OPTIONS = {
+  throwOnError: false,
+  errorColor: "var(--color-attention)",
+  strict: false,
+} as const;
 
 /** An anchor carrying our wikilink marker calls back into the app;
  * every other anchor is an external URL we deliberately cannot open.
@@ -127,8 +144,10 @@ export default function Markdown({
   return (
     <ReactMarkdown
       // Wikilinks first so `[[…]]` is claimed before gfm autolinks the
-      // surrounding text.
-      remarkPlugins={[remarkWikilinks, remarkGfm]}
+      // surrounding text; remark-math parses `$…$` / `$$…$$` into math
+      // nodes that rehype-katex then renders.
+      remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath]}
+      rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
       components={markdownComponents(onWikilink)}
     >
       {body}
