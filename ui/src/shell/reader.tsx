@@ -1,31 +1,28 @@
-// Note-reader hosting (plan §6). One reader panel lives in the shell;
-// anything inside it — the commitments timeline's origin chips, the
-// command palette's search results, Project Detail's backlinks — opens
-// a note by calling `useReader().openReader(path)`. Keeping the open
-// path in context (rather than threading callbacks through every view)
-// lets those distant surfaces summon the reader without prop drilling.
-import { createContext, useContext, useMemo, useState } from "react";
+// Note-reading entry point (UI request 2026-07-13). Anything inside the app
+// — the commitments timeline's origin chips, the command palette's search
+// results, Project Detail's backlinks, an evidence row — opens a note by
+// calling `useReader().openReader(path)`. It navigates to the centred note
+// page (`/note/<path>`); keeping the route behind this hook (rather than
+// threading `useNavigate` and the path shape through every view) lets those
+// distant surfaces summon the reader without knowing the route.
+import { createContext, useContext, useMemo } from "react";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router";
 
 interface ReaderApi {
-  /** The vault-relative note path the reader is showing, or null. */
-  openPath: string | null;
-  /** Open (or replace, when already open) the reader on `path`. */
+  /** Open the centred note page on `path` (a vault-relative note path). */
   openReader: (path: string) => void;
-  closeReader: () => void;
 }
 
 const ReaderContext = createContext<ReaderApi | null>(null);
 
 export function ReaderProvider({ children }: { children: ReactNode }) {
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const navigate = useNavigate();
   const api = useMemo<ReaderApi>(
-    () => ({
-      openPath,
-      openReader: (path) => setOpenPath(path),
-      closeReader: () => setOpenPath(null),
-    }),
-    [openPath],
+    // The path's slashes pass straight through the `/note/*` splat route,
+    // so no encoding is needed (vault paths are slug segments, never spaces).
+    () => ({ openReader: (path) => navigate(`/note/${path}`) }),
+    [navigate],
   );
   return <ReaderContext.Provider value={api}>{children}</ReaderContext.Provider>;
 }

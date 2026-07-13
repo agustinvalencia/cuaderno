@@ -7,38 +7,13 @@ import InboxDrawer from "./InboxDrawer";
 import SettingsDialog from "./SettingsDialog";
 import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
-import { ReaderProvider, useReader } from "./reader";
+import { ReaderProvider } from "./reader";
 import { useHistoryNavigation } from "./useHistoryNavigation";
 
-// The note reader pulls react-markdown + remark-gfm; the palette pulls
-// cmdk. Neither is on the shell's first paint, so both load lazily —
-// the reader only when a note is opened, the palette only on first ⌘K —
-// keeping those deps out of the main chunk.
-const NoteReader = lazy(() => import("../components/markdown/NoteReader"));
+// The command palette pulls cmdk, which isn't on the shell's first paint,
+// so it loads lazily on first ⌘K — keeping that dep out of the main chunk.
+// (The note reader is now its own `/note/*` route, code-split in routes.tsx.)
 const CommandPalette = lazy(() => import("./CommandPalette"));
-
-/** The single note-reader panel for the whole app (plan §6): distant
- * surfaces (timeline chips, palette results, backlinks) open it via
- * `useReader`; it renders here, once. A wikilink to a plain note
- * replaces the panel in place; project/stewardship links route away and
- * `NoteReader` closes it. */
-function ReaderHost() {
-  const { openPath, openReader, closeReader } = useReader();
-  if (!openPath) return null;
-  // `key={openPath}` remounts the reader on note-to-note navigation so
-  // scroll position and internal state reset instead of bleeding from
-  // the previous note into the next.
-  return (
-    <Suspense fallback={null}>
-      <NoteReader
-        key={openPath}
-        path={openPath}
-        onClose={closeReader}
-        onNavigate={openReader}
-      />
-    </Suspense>
-  );
-}
 
 const NAV = [
   { to: "/", label: "Today" },
@@ -210,7 +185,6 @@ export default function AppShell() {
         </Suspense>
       )}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <ReaderHost />
     </div>
     </ReaderProvider>
   );

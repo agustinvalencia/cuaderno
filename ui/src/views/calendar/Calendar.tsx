@@ -1,6 +1,6 @@
 // Calendar view (#340) — a month grid that loads daily notes into an
-// EMBEDDED panel (not the shared NoteReader overlay, which has no
-// navigation chrome). The panel renders the note's markdown read-only
+// EMBEDDED panel (not the shared centred note page at `/note/*`, which is
+// a full standalone reading surface). The panel renders the note's markdown read-only
 // and carries quick jumps: prev day, next day, the day's week, and its
 // month. Every jump target is a date the backend stamped on `read_daily`
 // (prev_date / next_date / week_of / month), so the frontend never

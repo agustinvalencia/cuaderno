@@ -123,11 +123,11 @@ function renderStrategic(bundle: StrategicBundle, handler?: Handler) {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter initialEntries={["/strategic"]}>
+        <MemoryRouter initialEntries={["/strategic"]}>
+          <ReaderProvider>
             <Strategic />
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );

@@ -149,11 +149,11 @@ function renderView(view: React.ReactElement) {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter>
+        <MemoryRouter>
+          <ReaderProvider>
             <main>{view}</main>
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
