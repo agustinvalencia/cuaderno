@@ -17,6 +17,7 @@ pub mod watcher;
 pub mod with_vault;
 
 mod clock;
+pub mod deeplink;
 #[cfg(target_os = "macos")]
 mod mouse_nav;
 mod tray;
@@ -293,6 +294,11 @@ pub fn run() {
             // will replace the shell once the picker returns.
             surface_window(app, "main");
         }))
+        // Deep links (`cuaderno://note/<path>`). Registered after
+        // single-instance (per the plugins' interaction) so a link opened
+        // while the app runs routes to the one instance; the handler is wired
+        // in `setup` via `deeplink::install`.
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         // Native folder picker + message dialogs for first-launch vault
         // discovery (GH #331). Invoked only from Rust, so — like the
@@ -307,6 +313,11 @@ pub fn run() {
             // monitor can't be installed.
             #[cfg(target_os = "macos")]
             mouse_nav::install(app.handle().clone());
+
+            // Handle `cuaderno://note/<path>` deep links: open that note in
+            // the reader (catches both the launch URL and links opened while
+            // running). Independent of the vault, so wired here in setup.
+            deeplink::install(app.handle());
 
             // Vault resolution: explicit env override, then a persisted
             // setting, then a native picker (GH #331). The persisted

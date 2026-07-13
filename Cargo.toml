@@ -169,6 +169,11 @@ tauri-plugin-global-shortcut = "2"
 # main window instead of spawning a duplicate app.
 tauri-plugin-single-instance = "2"
 
+# `cuaderno://note/<path>` deep links: open a note in the centred reader
+# from outside the app (e.g. a link an agent hands the user). Integrates
+# with single-instance so a link routes to the running app.
+tauri-plugin-deep-link = "2"
+
 # Open a note in the user's default editor (M3 "open in editor"). The
 # only file access that bypasses the domain layer — guarded by a
 # VaultPath check before the vault-root join so it can't escape.
