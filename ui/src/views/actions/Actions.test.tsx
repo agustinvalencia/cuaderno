@@ -38,11 +38,11 @@ function renderActions(onCall?: (cmd: string, args: unknown) => void) {
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter>
+        <MemoryRouter>
+          <ReaderProvider>
             <Actions />
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );

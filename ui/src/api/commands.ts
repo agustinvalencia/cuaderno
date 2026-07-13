@@ -157,6 +157,12 @@ export function writeNoteRaw(path: string, content: string): Promise<void> {
   return call("write_note_raw", { path, content });
 }
 
+/** Read an image embedded in a note (`src` relative to `notePath`) as a
+ * `data:` URI the reader can render inline. */
+export function readNoteAsset(notePath: string, src: string): Promise<string> {
+  return call("read_note_asset", { notePath, src });
+}
+
 /** Resolve a clicked wikilink `target` to its note (path + note_type)
  * for typed navigation. `null` when the target matches no note or is
  * ambiguous — the caller renders that as a muted, un-clickable span. */

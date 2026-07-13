@@ -238,12 +238,17 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 /// Resolution policy, in order:
 /// 1. Exact path match: `[[projects/foo]]` → `projects/foo.md` if
 ///    that path exists in `vault_paths`.
-/// 2. Last-segment match: the target's final path segment against note
+/// 2. Folder-index match: `[[portfolios/foo]]` → `portfolios/foo/_index.md`
+///    if that path exists — a folder-backed note (a portfolio, an expanded
+///    stewardship) is named by its folder, so a bare link to it resolves to
+///    its `_index.md`. Ordered before the fuzzy stem match so a folder link
+///    can't be hijacked by an unrelated note sharing its last segment.
+/// 3. Last-segment match: the target's final path segment against note
 ///    stems — `[[foo]]` or `[[actions/foo]]` → `*/foo.md` if exactly
 ///    one path has the stem `foo`. This resolves a link to a note that
 ///    relocated within its tree (e.g. an action archived to
 ///    `actions/_done/<year>/`); a unique match is required (#215).
-/// 3. Otherwise `resolved_path` is `None` and the link is recorded as
+/// 4. Otherwise `resolved_path` is `None` and the link is recorded as
 ///    broken — `cdno lint` surfaces it as a warning.
 pub fn resolve_wikilinks(
     raws: Vec<WikilinkRaw>,
@@ -264,6 +269,22 @@ pub fn resolve_wikilinks(
 fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
     // 1. Exact path match.
     if let Ok(vp) = VaultPath::new(format!("{target}.md"))
+        && vault_paths.contains(&vp)
+    {
+        return Some(vp);
+    }
+
+    // 1b. Folder-index match: a target naming a folder resolves to that
+    // folder's `_index.md`. A portfolio (and any expanded folder note) is
+    // a directory whose canonical note is `_index.md`, so the
+    // `[[portfolios/<slug>]]` form the daily-log writer and
+    // `file_to_portfolio` emit has no flat `<target>.md` to satisfy rule 1,
+    // and its final segment (`<slug>`) never equals the index file's stem
+    // (`_index`) for rule 2 — leaving every portfolio link dead. Resolve it
+    // explicitly to the index note. Exact and unambiguous like rule 1, and
+    // ordered before the fuzzy stem match so a folder link can never be
+    // hijacked by an unrelated note that happens to share the last segment.
+    if let Ok(vp) = VaultPath::new(format!("{target}/_index.md"))
         && vault_paths.contains(&vp)
     {
         return Some(vp);

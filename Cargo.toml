@@ -28,6 +28,10 @@ toml_edit = "0.22"
 # Error handling
 thiserror = "2"
 
+# Base64-encode in-vault image bytes into a `data:` URI for the desktop
+# note reader (the CSP already allows `data:`, so no custom protocol).
+base64 = "0.22"
+
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 

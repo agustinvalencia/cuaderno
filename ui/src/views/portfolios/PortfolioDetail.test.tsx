@@ -3,11 +3,11 @@
 // args; and an unresolvable origin surfaces its message inline.
 import { afterEach, expect, test } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { PortfolioDetail as PortfolioDetailData } from "../../api/bindings/PortfolioDetail";
-import { ReaderProvider, useReader } from "../../shell/reader";
+import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
 import PortfolioDetail from "./PortfolioDetail";
 
@@ -36,10 +36,11 @@ const EMPTY: PortfolioDetailData = {
   evidence: [],
 };
 
-// Surfaces the reader's open path so a test can assert a click opened it.
-function ReaderProbe() {
-  const { openPath } = useReader();
-  return <div data-testid="reader-path">{openPath ?? ""}</div>;
+// The note page opening on `path` is now a navigation to `/note/<path>`;
+// this stand-in route surfaces the navigated path so a test can assert a
+// click opened the right note.
+function NotePathProbe() {
+  return <div data-testid="reader-path">{useParams()["*"] ?? ""}</div>;
 }
 
 function renderDetail(
@@ -60,14 +61,16 @@ function renderDetail(
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <ReaderProbe />
-          <MemoryRouter initialEntries={[`/portfolios/${fixture.slug}`]}>
+        <MemoryRouter initialEntries={[`/portfolios/${fixture.slug}`]}>
+          {/* ReaderProvider needs a Router above it (it navigates); the
+              `/note/*` stand-in route surfaces the opened path. */}
+          <ReaderProvider>
             <Routes>
               <Route path="/portfolios/:slug" element={<PortfolioDetail />} />
+              <Route path="/note/*" element={<NotePathProbe />} />
             </Routes>
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -96,10 +99,10 @@ test("the empty state invites the first artefact", async () => {
   expect(screen.getByText(/waiting for its first artefact/)).toBeDefined();
 });
 
-test("an evidence row opens the note reader at its path", async () => {
+test("an evidence row opens the note page at its path", async () => {
   renderDetail(DETAIL);
   fireEvent.click(await screen.findByText("Smith 2024"));
-  expect(screen.getByTestId("reader-path").textContent).toBe(
+  expect((await screen.findByTestId("reader-path")).textContent).toBe(
     "portfolios/surrogate/2026-07-01-smith-2024.md",
   );
 });

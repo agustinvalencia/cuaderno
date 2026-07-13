@@ -843,6 +843,9 @@ impl VaultStore for CountingStore {
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.inner.read_file(path)
     }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
     fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
         self.inner.write_file(path, content)
     }

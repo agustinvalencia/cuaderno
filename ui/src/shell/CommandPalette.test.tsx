@@ -68,11 +68,11 @@ function renderPalette(onCall?: (cmd: string, args: unknown) => void) {
   return render(
     <QueryClientProvider client={client()}>
       <ToastProvider>
-        <ReaderProvider>
-          <MemoryRouter>
+        <MemoryRouter>
+          <ReaderProvider>
             <CommandPalette open onOpenChange={() => {}} />
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );

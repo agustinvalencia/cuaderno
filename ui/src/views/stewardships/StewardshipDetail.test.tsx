@@ -3,11 +3,11 @@
 // reader; the log form submits with the template-derived vars.
 import { afterEach, expect, test } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
-import { ReaderProvider, useReader } from "../../shell/reader";
+import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
 import StewardshipDetail from "./StewardshipDetail";
 
@@ -79,10 +79,11 @@ const FLAT: StewardshipDetailData = {
   tracking_count: 0,
 };
 
-// Surfaces the reader's open path so a test can assert a click opened it.
-function ReaderProbe() {
-  const { openPath } = useReader();
-  return <div data-testid="reader-path">{openPath ?? ""}</div>;
+// The note page opening on `path` is now a navigation to `/note/<path>`;
+// this stand-in route surfaces the navigated path so a test can assert a
+// click opened the right note.
+function NotePathProbe() {
+  return <div data-testid="reader-path">{useParams()["*"] ?? ""}</div>;
 }
 
 function renderDetail(
@@ -100,14 +101,16 @@ function renderDetail(
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ReaderProvider>
-          <ReaderProbe />
-          <MemoryRouter initialEntries={[`/stewardships/${fixture.slug}`]}>
+        <MemoryRouter initialEntries={[`/stewardships/${fixture.slug}`]}>
+          {/* ReaderProvider needs a Router above it (it navigates); the
+              `/note/*` stand-in route surfaces the opened path. */}
+          <ReaderProvider>
             <Routes>
               <Route path="/stewardships/:slug" element={<StewardshipDetail />} />
+              <Route path="/note/*" element={<NotePathProbe />} />
             </Routes>
-          </MemoryRouter>
-        </ReaderProvider>
+          </ReaderProvider>
+        </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -147,10 +150,10 @@ test("a flat stewardship has no charts pane", async () => {
   expect(screen.queryByRole("button", { name: "Log entry" })).toBeNull();
 });
 
-test("a recent entry opens the note reader at its path", async () => {
+test("a recent entry opens the note page at its path", async () => {
   renderDetail(EXPANDED);
   fireEvent.click(await screen.findByText("Felt strong"));
-  expect(screen.getByTestId("reader-path").textContent).toBe(
+  expect((await screen.findByTestId("reader-path")).textContent).toBe(
     "stewardships/health/tracking/2026-07-05-gym.md",
   );
 });
