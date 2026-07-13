@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-13
+
 ### Added
 
 - **Agents can discover a vault's note types, and open a note in the app from a link** — a new
