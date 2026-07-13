@@ -8,6 +8,7 @@
 use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
+use cdno_core::reconcile::reconcile;
 
 use crate::error::DomainError;
 
@@ -65,5 +66,33 @@ impl Vault {
             frontmatter,
             body,
         })
+    }
+
+    /// Read a note's raw markdown — frontmatter block and all — for
+    /// editing. Unlike [`read_note`](Self::read_note), which splits the
+    /// note for display, an editor needs the exact bytes so a round-trip
+    /// through the app never reformats what the author wrote.
+    ///
+    /// Errors with `Store(NotFound)` when no file exists at `path`.
+    pub fn read_note_raw(&self, path: &VaultPath) -> Result<String, DomainError> {
+        Ok(self.store.read_file(path)?)
+    }
+
+    /// Overwrite the note at `path` with arbitrary `content`, then
+    /// reindex — the free-editing ("posture B") write primitive.
+    ///
+    /// Unlike the structured create/update operations, this writes exactly
+    /// what it is handed: no schema gate, no append-only guard. After the
+    /// write it reconciles, so the index (note type, frontmatter, wikilink
+    /// edges, backlinks) follows the new bytes. The guardrail against a
+    /// note the edit made invalid is [`lint`](Self::lint_all_notes),
+    /// surfaced separately — not the write refusing it. `path` is confined
+    /// by the `VaultPath` newtype (no absolute paths, no `..`), and the
+    /// store writes atomically (temp + rename).
+    pub fn write_note_raw(&self, path: &VaultPath, content: &str) -> Result<(), DomainError> {
+        self.store.write_file(path, content)?;
+        let ignore = self.config.ignore_set()?;
+        reconcile(&self.store, &self.index, &ignore)?;
+        Ok(())
     }
 }

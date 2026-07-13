@@ -6,7 +6,9 @@
 use cdno_core::path::VaultPath;
 use cdno_domain::vault::{NoteView, ResolvedLink};
 
+use crate::commands::actions::record_and_emit;
 use crate::error::CmdError;
+use crate::events::classify;
 use crate::state::AppState;
 use crate::with_vault::with_vault;
 
@@ -30,6 +32,48 @@ pub async fn read_note(
     // `.await??`: the outer `?` unwraps `with_vault`'s own error, the
     // inner converts the `DomainError` into `CmdError` via `From`.
     Ok(with_vault(&state.vault(), move |vault| vault.read_note(&vault_path)).await??)
+}
+
+/// Read a note's RAW markdown (frontmatter block and all) for the
+/// in-app editor — the exact bytes, so an edit round-trip never reformats
+/// what the author wrote. Pure read. Missing file → `NotFound`;
+/// `..`/absolute → `Invalid`.
+#[tauri::command]
+pub async fn read_note_raw(
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<String, CmdError> {
+    let vault_path = parse_vault_path(path)?;
+    Ok(with_vault(&state.vault(), move |vault| {
+        vault.read_note_raw(&vault_path)
+    })
+    .await??)
+}
+
+/// Overwrite a note with `content` (free "posture B" editing) and reindex.
+/// Journals the write (so the watcher suppresses its own echo) and emits a
+/// change for the edited note's area, so backlinks and other surfaces
+/// refetch. The domain reconciles after the write, so the index follows
+/// the new bytes; `cdno lint` is the separate guardrail for a note the
+/// edit made invalid.
+#[tauri::command]
+pub async fn write_note_raw<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    path: String,
+    content: String,
+) -> Result<(), CmdError> {
+    let vault_path = parse_vault_path(path)?;
+    let journalled = vault_path.clone();
+    with_vault(&state.vault(), move |vault| {
+        vault.write_note_raw(&vault_path, &content)
+    })
+    .await??;
+    // Best-effort area from the path's first segment; the reader
+    // invalidates its own read on save, so this is for sibling surfaces.
+    let areas = classify(&journalled).into_iter().collect();
+    record_and_emit(&app, &state, vec![journalled], areas);
+    Ok(())
 }
 
 /// Resolve a single clicked wikilink `target` to its note (path +
