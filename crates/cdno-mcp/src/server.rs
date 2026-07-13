@@ -150,6 +150,8 @@ impl ServerHandler for CuadernoServer {
                 "Cuaderno MCP server. Tools are grouped into context-gathering reads \
                 (get_orientation, get_*_context, queries) and write operations \
                 (append_to_log, update_project_state, the create/complete pairs). \
+                Call list_note_types to discover the vault's note types and their \
+                schemas, including user-defined custom types, before creating notes. \
                 See docs/design.md §11 for the full surface.",
             )
             // ServerInfo::default already enables an empty capability

@@ -25,6 +25,7 @@ import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
 import { ReaderProvider } from "./reader";
 import { useHistoryNavigation } from "./useHistoryNavigation";
+import { useDeepLinkNavigation } from "./useDeepLinkNavigation";
 
 // The command palette pulls cmdk, which isn't on the shell's first paint,
 // so it loads lazily on first ⌘K — keeping that dep out of the main chunk.
@@ -63,6 +64,8 @@ export default function AppShell() {
   // Back/forward via the mouse side buttons, Cmd/Ctrl+[ / ], and the
   // native macOS bridge — history navigation, as in a browser.
   useHistoryNavigation();
+  // Open a note when a `cuaderno://note/<path>` deep link fires.
+  useDeepLinkNavigation();
 
   // Global Cmd/Ctrl+K toggles the command palette (plan §1.0); Cmd/Ctrl+,
   // opens Settings (the macOS Preferences convention). Bound on window so

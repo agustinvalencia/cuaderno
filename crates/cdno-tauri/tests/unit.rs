@@ -3,6 +3,7 @@ mod unit {
     mod calendar_tests;
     mod commitments_tests;
     mod config_tests;
+    mod deeplink_tests;
     mod error_tests;
     mod events_tests;
     mod ipc_tests;

@@ -628,6 +628,81 @@ pub struct ProjectListDto {
     pub slots: ProjectSlotsDto,
 }
 
+/// A typed frontmatter field (`[schemas.<type>.fields.<name>]`), for the
+/// `list_note_types` discovery tool. Mirror of [`cdno_domain::FieldInfo`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FieldSpecDto {
+    pub name: String,
+    /// The declared type: `"bool"`, `"int"`, `"string"`, or `"date"`.
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub required: bool,
+    /// The allowed values, when the field declares a fixed set.
+    pub values: Option<Vec<String>>,
+    /// The declared default rendered as its scalar string (`false`, `1`, …), or
+    /// `None` when undeclared.
+    pub default: Option<String>,
+}
+
+impl From<cdno_domain::FieldInfo> for FieldSpecDto {
+    fn from(field: cdno_domain::FieldInfo) -> Self {
+        FieldSpecDto {
+            name: field.name,
+            ty: field.ty.as_str().to_owned(),
+            required: field.required,
+            values: field.values,
+            default: field.default,
+        }
+    }
+}
+
+/// A note type and its full schema, for the `list_note_types` tool. Mirror of
+/// [`cdno_domain::NoteTypeInfo`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct NoteTypeInfoDto {
+    pub name: String,
+    /// `"builtin"` or `"custom"` (config-defined under `[note_types.<name>]`).
+    pub kind: String,
+    pub folder: Option<String>,
+    pub required: Vec<String>,
+    pub optional: Vec<String>,
+    pub fields: Vec<FieldSpecDto>,
+    pub template: Option<String>,
+    pub title_field: Option<String>,
+    pub date_field: Option<String>,
+    pub append_only: bool,
+    pub supplied_placeholders: Vec<String>,
+}
+
+impl From<cdno_domain::NoteTypeInfo> for NoteTypeInfoDto {
+    fn from(info: cdno_domain::NoteTypeInfo) -> Self {
+        NoteTypeInfoDto {
+            name: info.name,
+            kind: match info.kind {
+                cdno_domain::NoteTypeKind::Builtin => "builtin",
+                cdno_domain::NoteTypeKind::Custom => "custom",
+            }
+            .to_owned(),
+            folder: info.folder,
+            required: info.required,
+            optional: info.optional,
+            fields: info.fields.into_iter().map(Into::into).collect(),
+            template: info.template,
+            title_field: info.title_field,
+            date_field: info.date_field,
+            append_only: info.append_only,
+            supplied_placeholders: info.supplied_placeholders,
+        }
+    }
+}
+
+/// The vault's note-type schemas — the payload of `list_note_types`. Wrapped in
+/// an object rather than a bare array to leave room for vault-level metadata.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct VaultSchemaDto {
+    pub note_types: Vec<NoteTypeInfoDto>,
+}
+
 /// Wire-format mirror of a single [`cdno_domain::LintIssue`].
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LintIssueDto {

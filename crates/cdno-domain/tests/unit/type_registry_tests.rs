@@ -4,7 +4,7 @@
 
 use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_domain::note_type::NoteType;
-use cdno_domain::{NoteTypeDescriptor, TypeRegistry};
+use cdno_domain::{NoteTypeDescriptor, NoteTypeKind, TypeRegistry};
 
 /// A minimal `string` field spec (no default/values) for the reserved-field
 /// tests — enough to place a declared field under a built-in type's schema.
@@ -13,6 +13,19 @@ fn string_field() -> FieldSpec {
         ty: FieldType::String,
         default: None,
         required: false,
+        values: None,
+        list: None,
+        settable: None,
+        log_on_change: None,
+    }
+}
+
+/// An `int` field with a declared default, for the describe-payload tests.
+fn int_field(default: i64) -> FieldSpec {
+    FieldSpec {
+        ty: FieldType::Int,
+        default: Some(toml::Value::Integer(default)),
+        required: true,
         values: None,
         list: None,
         settable: None,
@@ -316,5 +329,114 @@ fn supplied_placeholders_for_a_fieldless_custom_type_is_just_the_builtins() {
     assert_eq!(
         reg.resolve("bookmark").unwrap().supplied_placeholders(),
         vec!["title", "slug", "created", "date"]
+    );
+}
+
+#[test]
+fn describe_all_lists_builtins_then_custom_with_schema_overlay() {
+    // A custom `person` type plus a typed field overlaid onto the built-in
+    // `project` via `[schemas.project.fields.priority]`.
+    let mut config = config_with_person();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert("priority".to_owned(), int_field(1));
+    config.schemas.insert("project".to_owned(), schema);
+    let reg = TypeRegistry::new(&config);
+
+    let all = reg.describe_all();
+    // The 12 built-ins (in `NoteType::ALL` order) then the one custom type.
+    assert_eq!(all.len(), NoteType::ALL.len() + 1);
+    for (info, nt) in all.iter().zip(NoteType::ALL.iter()) {
+        assert_eq!(info.name, nt.as_str());
+        assert_eq!(info.kind, NoteTypeKind::Builtin);
+    }
+
+    let person = all.last().unwrap();
+    assert_eq!(person.name, "person");
+    assert_eq!(person.kind, NoteTypeKind::Custom);
+    assert_eq!(person.folder.as_deref(), Some("people"));
+    assert_eq!(person.required, vec!["name".to_owned()]);
+    assert_eq!(person.optional, vec!["role".to_owned()]);
+    assert!(person.supplied_placeholders.contains(&"name".to_owned()));
+    assert!(person.fields.is_empty());
+
+    // The typed field overlays onto the built-in `project`.
+    let project = all.iter().find(|i| i.name == "project").unwrap();
+    assert_eq!(project.kind, NoteTypeKind::Builtin);
+    let priority = project
+        .fields
+        .iter()
+        .find(|f| f.name == "priority")
+        .expect("the overlaid typed field is present on the built-in");
+    assert_eq!(priority.ty, FieldType::Int);
+    assert!(priority.required);
+    // The toml default is rendered to its scalar string, never a `toml::Value`.
+    assert_eq!(priority.default.as_deref(), Some("1"));
+}
+
+#[test]
+fn describe_returns_none_for_an_unknown_type() {
+    let config = VaultConfig::default();
+    assert!(TypeRegistry::new(&config).describe("not-a-type").is_none());
+}
+
+#[test]
+fn describe_reports_append_only_for_the_append_only_builtins() {
+    // The business rule: daily, weekly, evidence, tracking are append-only.
+    let config = VaultConfig::default();
+    let reg = TypeRegistry::new(&config);
+    for name in ["daily", "weekly", "evidence", "tracking"] {
+        assert!(
+            reg.describe(name).unwrap().append_only,
+            "{name} is append-only"
+        );
+    }
+    for name in ["project", "action", "question", "portfolio"] {
+        assert!(
+            !reg.describe(name).unwrap().append_only,
+            "{name} is not append-only"
+        );
+    }
+}
+
+#[test]
+fn describe_renders_a_bool_default_and_preserves_allowed_values() {
+    let mut config = VaultConfig::default();
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "shipped".to_owned(),
+        FieldSpec {
+            ty: FieldType::Bool,
+            default: Some(toml::Value::Boolean(false)),
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    schema.fields.insert(
+        "stage".to_owned(),
+        FieldSpec {
+            ty: FieldType::String,
+            default: None,
+            required: false,
+            values: Some(vec!["draft".to_owned(), "final".to_owned()]),
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    config.schemas.insert("project".to_owned(), schema);
+    let reg = TypeRegistry::new(&config);
+    let project = reg.describe("project").unwrap();
+
+    let shipped = project.fields.iter().find(|f| f.name == "shipped").unwrap();
+    assert_eq!(shipped.ty, FieldType::Bool);
+    assert_eq!(shipped.default.as_deref(), Some("false"));
+
+    let stage = project.fields.iter().find(|f| f.name == "stage").unwrap();
+    assert_eq!(
+        stage.values,
+        Some(vec!["draft".to_owned(), "final".to_owned()])
     );
 }

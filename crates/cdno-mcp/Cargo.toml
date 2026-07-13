@@ -82,6 +82,9 @@ anyhow = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 chrono = { workspace = true }
+# `list_note_types` round-trip test builds a `[schemas.*]` FieldSpec, whose
+# `default` is a `toml::Value`.
+toml = { workspace = true }
 # cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
 # via `cdno init` before launching cdno-mcp against it.
 cdno-cli = { path = "../cdno-cli" }

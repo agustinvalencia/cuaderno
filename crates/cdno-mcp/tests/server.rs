@@ -49,7 +49,7 @@ fn advertised_catalogue_matches_expected_surface() {
     // the two daily-note tools (GH #158), the two weekly-note tools, and
     // the two monthly-note tools (GH #228).
     let mut expected = vec![
-        // Context (15)
+        // Context (16)
         "get_orientation",
         "get_weekly_context",
         "get_monthly_context",
@@ -62,6 +62,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "read_monthly_note",
         "search_notes",
         "list_projects",
+        "list_note_types",
         "get_commitments",
         "lint",
         "triage_inbox",
@@ -101,7 +102,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 45);
+    assert_eq!(tools.len(), 46);
 }
 
 #[test]

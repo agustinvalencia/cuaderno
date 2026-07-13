@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Agents can discover a vault's note types, and open a note in the app from a link** — a new
+  read-only `list_note_types` MCP tool reports every note type (the 12 built-ins plus any
+  config-defined `[note_types.*]` custom type) with its folder, required/optional fields, typed
+  `[schemas.*]` field specs (name, type, default, allowed values), template, and supplied
+  placeholders, so an agent can learn a vault's custom types before `create_custom_note` rather than
+  reading `config.toml` or guessing (the create tool's schema can't enumerate them). And a new
+  `cuaderno://note/<path>` deep link opens that note in the desktop reader — an agent can now hand
+  the user a clickable "open in the reader" link built from any note path a tool returns; the path is
+  confined by the reader's existing `VaultPath` guard, so it can't read outside the vault. (#419)
+
 ## [0.27.0] - 2026-07-13
 
 ### Added

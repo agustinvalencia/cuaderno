@@ -19,6 +19,10 @@ pub const CLOCK_DAY_CHANGED: &str = "clock:day-changed";
 /// The global shortcut summoned the capture window (M3).
 pub const CAPTURE_SHOW: &str = "capture:show";
 
+/// A `cuaderno://note/<path>` deep link was opened; payload is the vault
+/// path, which the frontend navigates the reader to.
+pub const OPEN_NOTE_DEEPLINK: &str = "deeplink:open-note";
+
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
