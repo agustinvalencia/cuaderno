@@ -153,8 +153,8 @@ export function readNoteRaw(path: string): Promise<string> {
 }
 
 /** Overwrite a note with `content` (free editing) and reindex. */
-export function writeNote(path: string, content: string): Promise<void> {
-  return call("write_note", { path, content });
+export function writeNoteRaw(path: string, content: string): Promise<void> {
+  return call("write_note_raw", { path, content });
 }
 
 /** Resolve a clicked wikilink `target` to its note (path + note_type)

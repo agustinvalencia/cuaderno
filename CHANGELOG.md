@@ -16,8 +16,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   writes exactly what it's given (a frontmatter-less or otherwise-invalid note is written, not
   refused) and reconciles so backlinks and search follow the new bytes. CodeMirror (the engine
   Obsidian uses) edits the source directly — no lossy WYSIWYG round-trip — so a note stays byte-clean
-  across nvim, git, and the app. Backed by `read_note_raw` / `write_note` commands. An exploratory
-  first step toward in-app editing; the full-width reader route is the intended long-term home. (#413)
+  across nvim, git, and the app. Backed by `read_note_raw` / `write_note_raw` commands. Editing
+  blocks Esc / click-outside so a draft isn't lost by reflex, and refuses to save an empty note.
+  Caveat, being a spike: free editing can overwrite an append-only note's history (git is the
+  backstop) and lint isn't yet surfaced after a save. An exploratory first step toward in-app
+  editing; the full-width reader route is the intended long-term home. (#413)
 
 - **Weekly review shows your wins as cards, and log cards can flip order** (desktop UI) — two
   presentation tweaks from testing. The Weekly review's Wins step now surfaces the week's completed

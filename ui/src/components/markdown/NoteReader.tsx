@@ -6,7 +6,7 @@
 // edits the app deliberately doesn't do. Wikilink clicks resolve to
 // typed navigation (project / stewardship views) or replace the reader
 // with the linked note.
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -15,7 +15,7 @@ import {
   readNote,
   readNoteRaw,
   resolveWikilink,
-  writeNote,
+  writeNoteRaw,
 } from "../../api/commands";
 import { useToast } from "../../shell/Toasts";
 import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
@@ -57,28 +57,44 @@ export default function NoteReader({
 
   // In-app edit mode (spike, posture B): swap the read view for a
   // CodeMirror editor over the note's raw markdown. The draft lives in a
-  // ref so keystrokes don't re-render; Save writes the file and reindexes.
+  // ref so keystrokes don't re-render; `null` = "not yet seeded this edit
+  // session", so a background raw-refetch can't clobber in-progress edits.
   const [editing, setEditing] = useState(false);
-  const draft = useRef("");
+  const draft = useRef<string | null>(null);
   const raw = useQuery({
     queryKey: ["read_note_raw", path],
     queryFn: () => readNoteRaw(path),
     enabled: editing,
   });
-  useEffect(() => {
-    if (editing && raw.data !== undefined) draft.current = raw.data;
-  }, [editing, raw.data]);
+  // Seed the draft the FIRST time this edit session has the raw content —
+  // once per session (guarded by the null), never on later raw.data changes.
+  if (editing && draft.current === null && raw.data !== undefined) {
+    draft.current = raw.data;
+  }
+
+  function startEditing() {
+    draft.current = null;
+    setEditing(true);
+  }
+  function stopEditing() {
+    draft.current = null;
+    setEditing(false);
+  }
 
   const save = useMutation({
-    mutationFn: () => writeNote(path, draft.current),
+    mutationFn: () => writeNoteRaw(path, draft.current ?? ""),
     onError: (error) => toast(errorMessage(error), "attention"),
     onSuccess: () => {
       toast("Saved.");
-      setEditing(false);
-      // The read view + any surface the reconcile touched (backlinks, etc.).
+      // Prime the raw cache with exactly what we wrote, so a re-edit starts
+      // from the saved text rather than a stale pre-save entry.
+      client.setQueryData(["read_note_raw", path], draft.current);
+      stopEditing();
+      // Refresh this note's display read. Sibling surfaces the reconcile
+      // touched (backlinks, search) refresh off the `write_note_raw`
+      // command's emitted `vault:changed` event — the app's usual path — so
+      // we don't global-invalidate here (which would clobber the raw prime).
       void client.invalidateQueries({ queryKey: ["read_note", path] });
-      void client.invalidateQueries({ queryKey: ["read_note_raw", path] });
-      void client.invalidateQueries();
     },
   });
 
@@ -113,6 +129,10 @@ export default function NoteReader({
           editing ? "w-[760px] max-w-[95vw]" : "w-[380px] max-w-[90vw]"
         }
         aria-describedby={undefined}
+        // While editing, Esc / click-outside must not silently discard the
+        // draft — require an explicit Save or Cancel.
+        onEscapeKeyDown={editing ? (event) => event.preventDefault() : undefined}
+        onInteractOutside={editing ? (event) => event.preventDefault() : undefined}
       >
         <div className="flex items-start justify-between border-b border-line px-5 py-4">
           <SheetTitle className="min-w-0 flex-1 truncate pr-2 text-sm font-semibold text-ink">
@@ -173,7 +193,15 @@ export default function NoteReader({
             <>
               <button
                 type="button"
-                onClick={() => save.mutate()}
+                onClick={() => {
+                  // Empty-content floor: never clobber a note to empty — a
+                  // whole-note clear is almost always a slip, not intent.
+                  if (!draft.current?.trim()) {
+                    toast("Nothing to save — the note is empty.", "attention");
+                    return;
+                  }
+                  save.mutate();
+                }}
                 disabled={save.isPending || raw.data === undefined}
                 className="rounded border border-line bg-bg-sunken px-3 py-1 text-sm text-ink hover:bg-bg-base"
               >
@@ -181,7 +209,7 @@ export default function NoteReader({
               </button>
               <button
                 type="button"
-                onClick={() => setEditing(false)}
+                onClick={stopEditing}
                 className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
               >
                 Cancel
@@ -191,7 +219,7 @@ export default function NoteReader({
             <>
               <button
                 type="button"
-                onClick={() => setEditing(true)}
+                onClick={startEditing}
                 className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
               >
                 Edit
@@ -202,7 +230,7 @@ export default function NoteReader({
                 disabled={openEditor.isPending}
                 className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
               >
-                Open in nvim
+                Open in editor
               </button>
             </>
           )}

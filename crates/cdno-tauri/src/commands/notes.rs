@@ -57,7 +57,7 @@ pub async fn read_note_raw(
 /// the new bytes; `cdno lint` is the separate guardrail for a note the
 /// edit made invalid.
 #[tauri::command]
-pub async fn write_note<R: tauri::Runtime>(
+pub async fn write_note_raw<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: tauri::State<'_, AppState>,
     path: String,

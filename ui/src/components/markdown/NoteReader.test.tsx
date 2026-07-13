@@ -53,50 +53,74 @@ const NOTE: NoteView = {
   body: "Body with a [[garden]] link and a [[some-note|plain one]].",
 };
 
-test("Edit loads the raw note into the editor, and Save writes the change", async () => {
+const RAW = "---\ntype: zettel\n---\n\n# Example note\n\nold body\n";
+
+/** Render the reader with the raw-read + write commands stubbed, capturing
+ * every IPC call. `staleTime: Infinity` mirrors the app (main.tsx) so the
+ * save-primed cache isn't discarded on a re-edit. */
+function renderEditable() {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
     if (cmd === "read_note") return NOTE;
-    if (cmd === "read_note_raw")
-      return "---\ntype: zettel\n---\n\n# Example note\n\nold body\n";
-    if (cmd === "write_note") return null;
+    if (cmd === "read_note_raw") return RAW;
+    if (cmd === "write_note_raw") return null;
     return undefined;
   });
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
   render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <MemoryRouter>
-          <NoteReader
-            path={NOTE.path}
-            onClose={() => {}}
-            onNavigate={() => {}}
-          />
+          <NoteReader path={NOTE.path} onClose={() => {}} onNavigate={() => {}} />
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return calls;
+}
 
-  // Enter edit mode → the raw markdown loads into the editor.
+test("Edit loads the raw note into the editor, and Save writes the change", async () => {
+  const calls = renderEditable();
   fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
-  const editor = (await screen.findByLabelText(
-    "editor",
-  )) as HTMLTextAreaElement;
+  const editor = (await screen.findByLabelText("editor")) as HTMLTextAreaElement;
   expect(editor.value).toContain("old body");
 
-  // Edit and save → write_note is invoked with the new content.
   fireEvent.change(editor, { target: { value: "brand new body" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => {
-    const write = calls.find((c) => c.cmd === "write_note");
-    expect(write?.args).toMatchObject({
-      path: NOTE.path,
-      content: "brand new body",
-    });
+    const write = calls.find((c) => c.cmd === "write_note_raw");
+    expect(write?.args).toMatchObject({ path: NOTE.path, content: "brand new body" });
   });
+});
+
+test("Save with no keystroke writes the original raw content (draft seeded)", async () => {
+  const calls = renderEditable();
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  await screen.findByLabelText("editor"); // raw loaded → draft seeded
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => {
+    const write = calls.find((c) => c.cmd === "write_note_raw");
+    expect(write?.args).toMatchObject({ path: NOTE.path, content: RAW });
+  });
+});
+
+test("re-editing after a save starts from the saved content, not the pre-save cache", async () => {
+  renderEditable();
+  // Edit → change → Save.
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const editor = (await screen.findByLabelText("editor")) as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: "saved version two" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByRole("button", { name: "Edit" }); // back in read mode
+
+  // Re-edit: the editor must seed from the just-saved content (cache primed
+  // on save), not the stale pre-save "old body".
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  const editor2 = (await screen.findByLabelText("editor")) as HTMLTextAreaElement;
+  expect(editor2.value).toBe("saved version two");
 });
 
 function renderReader(

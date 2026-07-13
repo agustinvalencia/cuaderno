@@ -376,7 +376,7 @@ pub fn run() {
             commands::projects::activate_project,
             commands::notes::read_note,
             commands::notes::read_note_raw,
-            commands::notes::write_note,
+            commands::notes::write_note_raw,
             commands::notes::resolve_wikilink,
             commands::search::search_vault,
             commands::commitments::get_commitments,
