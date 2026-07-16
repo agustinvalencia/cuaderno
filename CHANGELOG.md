@@ -11,9 +11,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **The Config form now edits a schema field's setter behaviour** (desktop UI) — each schema field's
   row gains two toggles: **Settable** (whether `set_frontmatter` may change the field) and **Log
   changes to daily** (auto-log each change to the daily note). `Log changes to daily` is enabled only
-  once the field is settable, and clears when it is turned off, so an inert flag never lingers on a
-  locked field. These previously had to be hand-written in Raw; `list` stays Raw-only while it is
-  unimplemented. (#422)
+  once the field is settable, and toggling `Settable` off drops the now-inert log flag with it. These
+  previously had to be hand-written in Raw; `list` stays Raw-only while it is unimplemented. (#422)
 
 ### Changed
 

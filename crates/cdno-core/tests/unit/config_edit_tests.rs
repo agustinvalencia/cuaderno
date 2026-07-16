@@ -234,6 +234,35 @@ log_on_change = true
 }
 
 #[test]
+fn set_schema_field_removes_an_explicit_false_setter_flag() {
+    // `Some(false)` is "off", the same as absent — the writer normalises it to
+    // a removed key rather than writing `= false`. The form only ever sends
+    // `true`/`None`, but a Raw-authored `settable = false` can reach the writer
+    // via a lift, so the `Some(false)` arm must behave.
+    let spec = FieldSpec {
+        settable: Some(false),
+        log_on_change: Some(false),
+        ..field_spec(FieldType::String)
+    };
+    let existing = "\
+[schemas.project.fields.stage]
+type = \"string\"
+settable = true
+log_on_change = true
+";
+    let out = set_schema_field(existing, "project", "stage", &spec).expect("edit stage");
+
+    assert!(
+        !out.contains("settable"),
+        "an explicit-false settable is removed, not written: {out}"
+    );
+    assert!(
+        !out.contains("log_on_change"),
+        "an explicit-false log_on_change is removed, not written: {out}"
+    );
+}
+
+#[test]
 fn set_schema_field_leaves_list_untouched_and_keeps_siblings() {
     // `list` stays reserved and unimplemented, so the writer never touches it:
     // a hand-authored `list` survives even when the spec doesn't carry it. The

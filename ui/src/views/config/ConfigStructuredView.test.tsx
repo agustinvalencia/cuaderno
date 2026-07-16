@@ -388,6 +388,22 @@ test("toggling Settable on preserves an existing log_on_change and leaves list u
   });
 });
 
+test("editing an unrelated key preserves a set settable flag in the args", async () => {
+  // The persistence design hinges on the form re-sending lifted flags: an edit
+  // to a settable field's TYPE must carry settable:true through, so the writer
+  // re-emits it rather than the flag vanishing on the next reparse.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ settable: true }));
+  renderView(draftStub());
+
+  fireEvent.change(await screen.findByLabelText("Type for stage"), { target: { value: "int" } });
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({ field: "stage", spec: { type: "int", settable: true } });
+  });
+});
+
 test("adding a note type fires config_set_note_type with a minimal type", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);
