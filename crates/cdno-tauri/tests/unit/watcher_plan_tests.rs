@@ -9,7 +9,9 @@ use cdno_core::watcher::FileEvent;
 use cdno_domain::error::DomainError;
 use cdno_tauri::events::VaultArea;
 use cdno_tauri::state::{ECHO_WINDOW, WriteJournal};
-use cdno_tauri::watcher::{BatchPlan, is_invalid_config_error, plan_batch};
+use cdno_tauri::watcher::{
+    BatchPlan, RebuildAttempt, classify_rebuild, is_invalid_config_error, plan_batch,
+};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -232,4 +234,48 @@ fn transient_reload_failures_are_not_classified_invalid() {
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
         },
     )));
+}
+
+// -------------------------------------------------------------------
+// classify_rebuild / RebuildAttempt::needs_standalone_reconcile — the #371
+// decision. Only an APPLIED rebuild reconciled the batch itself (via
+// `Vault::new`, against the new ignore set); every FAILURE outcome keeps the
+// old vault live, so the watcher must still run its standalone reconcile to
+// fold the batch's note edits into the index. `classify_rebuild` splits a
+// rebuild result three ways; `needs_standalone_reconcile` pins which of them
+// still reconcile.
+// -------------------------------------------------------------------
+
+#[test]
+fn classify_rebuild_maps_a_successful_rebuild_to_applied() {
+    assert_eq!(classify_rebuild(&Ok(())), RebuildAttempt::Applied);
+}
+
+#[test]
+fn classify_rebuild_maps_an_invalid_config_to_invalid() {
+    // A bad ignore glob is a Config error — invalid content, not contention.
+    let result = Err(DomainError::Config(ConfigError::InvalidGlob(
+        "**[".to_owned(),
+    )));
+    assert_eq!(classify_rebuild(&result), RebuildAttempt::Invalid);
+}
+
+#[test]
+fn classify_rebuild_maps_a_transient_failure_to_transient() {
+    // A write-lock timeout during the rebuild's reconcile is wrapped as
+    // IndexError::Update — a transient outcome worth one retry, not invalid.
+    let result = Err(DomainError::Index(IndexError::Update(
+        "acquiring write lock during reconcile: timed out".to_owned(),
+    )));
+    assert_eq!(classify_rebuild(&result), RebuildAttempt::Transient);
+}
+
+#[test]
+fn only_an_applied_rebuild_skips_the_standalone_reconcile() {
+    // The load-bearing #371 invariant: applied => no standalone reconcile (the
+    // rebuild's own pass already folded the batch); every failure => standalone
+    // reconcile (the old vault stayed live, note edits still need folding).
+    assert!(!RebuildAttempt::Applied.needs_standalone_reconcile());
+    assert!(RebuildAttempt::Invalid.needs_standalone_reconcile());
+    assert!(RebuildAttempt::Transient.needs_standalone_reconcile());
 }
