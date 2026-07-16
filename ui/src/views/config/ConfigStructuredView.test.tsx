@@ -13,6 +13,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
+import type { FieldSpec } from "../../api/bindings/FieldSpec";
 import { ToastProvider } from "../../shell/Toasts";
 import ConfigStructuredView from "./ConfigStructuredView";
 import type { ConfigDraft } from "./useConfigDraft";
@@ -62,6 +63,29 @@ const MODEL: ConfigModel = {
     },
   ],
 };
+
+/** MODEL with the `stage` field's spec overridden — for the reserved-key
+ * toggles (#375), which the seeded MODEL leaves unset. */
+function modelWithStage(spec: Partial<FieldSpec>): ConfigModel {
+  const base: FieldSpec = {
+    type: "string",
+    default: "idea",
+    required: false,
+    values: ["idea", "done"],
+    list: null,
+    settable: null,
+    log_on_change: null,
+  };
+  return {
+    ...MODEL,
+    schemas: [
+      {
+        name: "proj-a",
+        schema: { extra_required: [], fields: { stage: { ...base, ...spec } } },
+      },
+    ],
+  };
+}
 
 const DRAFT = "[note_types.reading]\nfolder = \"reading\"\n";
 /** What every surgical command returns in these tests — the new draft the
@@ -265,6 +289,71 @@ test("removing a schema field fires config_remove_schema_field", async () => {
   await waitFor(() => {
     const call = calls.find((c) => c.cmd === "config_remove_schema_field");
     expect(call?.args).toMatchObject({ content: DRAFT, noteType: "proj-a", field: "stage" });
+  });
+});
+
+test("toggling Settable on fires config_set_schema_field with settable true", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls); // seeded stage.settable = null → unchecked
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByLabelText("Settable"));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({
+      content: DRAFT,
+      noteType: "proj-a",
+      field: "stage",
+      spec: { settable: true },
+    });
+  });
+});
+
+test("Log changes to daily is disabled for a non-settable field", async () => {
+  installMock([]); // seeded stage.settable = null
+  renderView(draftStub());
+
+  const log = (await screen.findByLabelText("Log changes to daily")) as HTMLInputElement;
+  expect(log.disabled).toBe(true);
+});
+
+test("Log changes to daily is enabled once the field is settable", async () => {
+  installMock([], modelWithStage({ settable: true }));
+  renderView(draftStub());
+
+  const log = (await screen.findByLabelText("Log changes to daily")) as HTMLInputElement;
+  expect(log.disabled).toBe(false);
+});
+
+test("toggling Log changes to daily on writes log_on_change true", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ settable: true }));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByLabelText("Log changes to daily"));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({ field: "stage", spec: { log_on_change: true } });
+  });
+});
+
+test("turning Settable off clears log_on_change", async () => {
+  // `log_on_change` only fires on a settable field, so dropping settable must
+  // clear it — the config never keeps an inert log_on_change on a locked field.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ settable: true, log_on_change: true }));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByLabelText("Settable")); // currently on → turn off
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({
+      field: "stage",
+      spec: { settable: null, log_on_change: null },
+    });
   });
 });
 

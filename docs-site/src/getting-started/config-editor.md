@@ -19,7 +19,10 @@ Config opens on a **Raw / Form** toggle:
   it is the escape hatch for anything the Form doesn't cover.
 - **Form** is a structured view of the two parts that have a fixed shape: **note types** and their
   **schema extensions**. You add, rename, and remove custom note types and required frontmatter
-  fields with inputs and toggles instead of hand-writing TOML.
+  fields with inputs and toggles instead of hand-writing TOML. Each schema field's row also exposes
+  its setter behaviour: **Settable** (whether [`set_frontmatter`](../reference/mcp/writes.md) may
+  change the field) and **Log changes to daily** (auto-log each change to the daily note — available
+  once the field is settable).
 
 Switch freely between them; both edit the same file. What the Form can't represent stays in Raw
 (see [What the Form doesn't edit](#what-the-form-doesnt-edit) below).
