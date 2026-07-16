@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The file watcher no longer reconciles the index twice on an external `config.toml` edit** —
+  a successful live rebuild reconciles inside `Vault::new` (against the new ignore set), so the
+  watcher's standalone reconcile up-front was redundant work on every config hand-edit. It now runs
+  only where the rebuild fails and the old vault stays live (folding in any note edits from the same
+  batch); index-health reporting still fires exactly once per batch. Internal — no user-visible
+  change to the emitted events or the index's end-state. (#421)
+
 ## [0.28.0] - 2026-07-13
 
 ### Added

@@ -398,6 +398,40 @@ fn field_spec_serialises_absent_and_integer_defaults() {
     );
 }
 
+/// A rebuild's internal reconcile is a full, path-agnostic repair: a note
+/// already in the vault but not yet in the index is folded in by the SAME
+/// `Vault::new` pass that applies the config. This is the premise that lets
+/// the watcher's config-edit path drop its now-redundant standalone reconcile
+/// on the success path (#371) — the rebuild already covers any note edit
+/// riding in the same debounce batch as the config edit.
+#[test]
+fn load_vault_and_ignore_reconciles_a_pending_note_into_the_index() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_config_at(tmp.path(), "[note_types.person]\nfolder = \"people\"\n");
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+
+    // A note present in the vault but not yet indexed — the shape of a note
+    // edit that lands in the same batch as a config edit.
+    let note = vp("projects/alpha.md");
+    store
+        .write_file(&note, "---\ntype: project\n---\n# Alpha\n")
+        .unwrap();
+    assert!(
+        index.find_by_path(&note).unwrap().is_none(),
+        "precondition: the note is not indexed before the rebuild"
+    );
+
+    let (_vault, _ignore) =
+        load_vault_and_ignore(store, index.clone(), tmp.path()).expect("a valid config must build");
+
+    assert!(
+        index.find_by_path(&note).unwrap().is_some(),
+        "the rebuild's reconcile must fold the pending note into the index"
+    );
+}
+
 /// A syntactically broken config surfaces an error — nothing to swap, so
 /// the never-brick guarantee holds (the caller keeps the old vault live).
 #[test]

@@ -6,7 +6,9 @@
 //! process lifetime. Per batch: filter to note-relevant paths, check
 //! the `WriteJournal` for self-echoes, run a full `reconcile()`
 //! (path-agnostic repair — correctness never depends on event
-//! fidelity), classify the surviving paths into areas, and emit.
+//! fidelity; a successful `config.toml` rebuild reconciles inside
+//! `Vault::new` instead, so the standalone pass is skipped there — #371),
+//! classify the surviving paths into areas, and emit.
 
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
@@ -134,47 +136,67 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
     let state = app.state::<AppState>();
     let plan = plan_batch(&state.journal, batch);
 
-    // Reconcile ALWAYS runs (even for pure self-echo batches — cheap
-    // insurance), and its health is ALWAYS reported: once write
-    // commands land, self-echo is the common batch shape, and a
-    // degraded index must not stay invisible until the next external
-    // edit.
-    let ok = run_reconcile(deps);
+    // Index health is reported on EVERY batch — the degraded pill is the
+    // frontend's poll-fallback trigger, so a reconcile failure must never stay
+    // invisible (once write commands land, self-echo is the common batch
+    // shape). WHERE that reconcile runs depends on the plan:
+    //
+    // - A config rebuild reconciles inside `rebuild_and_swap` (against the NEW
+    //   ignore set) on its way to success, and that pass is path-agnostic: it
+    //   already folds any note edits riding in the same batch. Running the
+    //   standalone reconcile here as well would be a wasted second pass (#371),
+    //   so that branch owns its own reconcile + health emit — and only needs
+    //   the standalone reconcile where the rebuild FAILS and the old vault
+    //   stays live (see `handle_external_config_edit`).
+    // - Every other plan (including a pure self-echo) runs the standalone
+    //   `run_reconcile` — path-agnostic repair, correctness never depends on
+    //   event fidelity — and reports its health here.
+    match plan {
+        BatchPlan::External {
+            areas,
+            paths,
+            config_changed: true,
+        } => handle_external_config_edit(app, deps, areas, paths),
+        other => {
+            emit_watcher_status(app, run_reconcile(deps));
+            match other {
+                BatchPlan::Quiet => {}
+                BatchPlan::Rescan => {
+                    let _ = app.emit(
+                        VAULT_CHANGED,
+                        VaultChanged {
+                            origin: Origin::External,
+                            areas: all_areas(),
+                            paths: Vec::new(),
+                        },
+                    );
+                }
+                // Only `config_changed: false` reaches here; the `true` case is
+                // handled above.
+                BatchPlan::External { areas, paths, .. } => {
+                    let _ = app.emit(
+                        VAULT_CHANGED,
+                        VaultChanged {
+                            origin: Origin::External,
+                            areas,
+                            paths,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Emit the index-health pill (`ok` / `degraded`) — the frontend's
+/// poll-fallback trigger, reported on every batch (§3.1).
+fn emit_watcher_status(app: &AppHandle, ok: bool) {
     let _ = app.emit(
         WATCHER_STATUS,
         WatcherStatus {
             state: if ok { "ok" } else { "degraded" },
         },
     );
-
-    match plan {
-        BatchPlan::Quiet => {}
-        BatchPlan::Rescan => {
-            let _ = app.emit(
-                VAULT_CHANGED,
-                VaultChanged {
-                    origin: Origin::External,
-                    areas: all_areas(),
-                    paths: Vec::new(),
-                },
-            );
-        }
-        BatchPlan::External {
-            areas,
-            paths,
-            config_changed,
-        } if config_changed => handle_external_config_edit(app, areas, paths),
-        BatchPlan::External { areas, paths, .. } => {
-            let _ = app.emit(
-                VAULT_CHANGED,
-                VaultChanged {
-                    origin: Origin::External,
-                    areas,
-                    paths,
-                },
-            );
-        }
-    }
 }
 
 /// A courtesy yield before the single retry of a transient config reload
@@ -241,27 +263,118 @@ pub fn is_invalid_config_error(err: &DomainError) -> bool {
 ///   so the UI shows a calm "vault was busy — the change will apply on the
 ///   next edit" note (#384), refresh the batch's non-config edits, and let
 ///   the change apply on the next config edit's reconcile.
-fn handle_external_config_edit(app: &AppHandle, areas: Vec<VaultArea>, paths: Vec<String>) {
-    match rebuild_and_swap(app) {
-        Ok(()) => emit_config_reloaded(app, paths),
-        Err(e) if is_invalid_config_error(&e) => emit_config_invalid(app, e, areas, paths),
-        Err(e) => {
-            // Transient: the config may be perfectly valid — we just could
-            // not apply it this instant. A single quick retry catches the
-            // common brief-contention case.
-            tracing::debug!(error = %e, "config reload deferred (vault busy); retrying once");
-            std::thread::sleep(RELOAD_RETRY_BACKOFF);
-            match rebuild_and_swap(app) {
-                Ok(()) => emit_config_reloaded(app, paths),
-                Err(e2) if is_invalid_config_error(&e2) => {
-                    emit_config_invalid(app, e2, areas, paths)
-                }
-                Err(e2) => {
-                    tracing::warn!(error = %e2, "config reload still blocked; keeping the last good config, will apply on the next config edit");
-                    emit_config_deferred(app, areas, paths)
-                }
-            }
+///
+/// This path also owns the batch's index-health emit (#371): the reconcile-vs-not
+/// decision is classified by [`classify_rebuild`] and settled by
+/// [`emit_config_reload_outcome`] — an applied rebuild reports `ok` directly
+/// (its own reconcile covered the batch); every failure runs the standalone
+/// reconcile the success path skips and reports *that* health. Either way
+/// `watcher:status` fires exactly once per batch.
+fn handle_external_config_edit(
+    app: &AppHandle,
+    deps: &WatcherDeps,
+    areas: Vec<VaultArea>,
+    paths: Vec<String>,
+) {
+    let first = rebuild_and_swap(app);
+    if classify_rebuild(&first) != RebuildAttempt::Transient {
+        // Applied or genuinely invalid — settled on the first attempt.
+        emit_config_reload_outcome(app, deps, first, areas, paths);
+        return;
+    }
+    // Transient: the config may be perfectly valid — we just could not apply
+    // it this instant. A single quick retry after a short backoff catches the
+    // common brief-contention case; the retry's outcome (applied, invalid, or
+    // still-blocked → deferred) is authoritative.
+    tracing::debug!(error = ?first.as_ref().err(), "config reload deferred (vault busy); retrying once");
+    std::thread::sleep(RELOAD_RETRY_BACKOFF);
+    emit_config_reload_outcome(app, deps, rebuild_and_swap(app), areas, paths);
+}
+
+/// How a single [`rebuild_and_swap`] attempt landed, classified from its
+/// result — the pure core of the config-reload decision, split out so the
+/// reconcile-vs-not choice (#371) is unit-testable without an `AppHandle`,
+/// exactly as [`plan_batch`] and [`is_invalid_config_error`] are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum RebuildAttempt {
+    /// The rebuild applied. Its own reconcile (against the NEW ignore set) is
+    /// the batch's single reconcile pass and has already folded any note edits
+    /// riding in the same batch.
+    Applied,
+    /// The config is genuinely invalid (bad TOML/glob/schema). The rebuild
+    /// bailed *before* any reconcile ran — a parse fault in `VaultConfig::load`,
+    /// or `ignore_set`/`validate` in `Vault::new` — so the old vault stays live
+    /// and no reconcile touched the index.
+    Invalid,
+    /// A transient failure — the vault write lock was momentarily held, or an
+    /// IO/index hiccup. The config may be fine; the old vault stays live.
+    Transient,
+}
+
+impl RebuildAttempt {
+    /// Whether the watcher must run its standalone reconcile for this outcome
+    /// (#371). Only an applied rebuild reconciled the batch itself (via
+    /// `Vault::new` against the new ignore set); every failure kept the OLD
+    /// vault live with its reconcile un-run or incomplete, so the batch's
+    /// non-config note edits still need folding into the index against the
+    /// still-live old ignore set.
+    #[doc(hidden)]
+    pub fn needs_standalone_reconcile(self) -> bool {
+        !matches!(self, RebuildAttempt::Applied)
+    }
+}
+
+/// Classify a [`rebuild_and_swap`] result: `Ok` applied; an `Err` splits by
+/// [`is_invalid_config_error`] into a genuinely invalid config vs a transient
+/// failure worth one retry (#372).
+#[doc(hidden)]
+pub fn classify_rebuild(result: &Result<(), DomainError>) -> RebuildAttempt {
+    match result {
+        Ok(()) => RebuildAttempt::Applied,
+        Err(e) if is_invalid_config_error(e) => RebuildAttempt::Invalid,
+        Err(_) => RebuildAttempt::Transient,
+    }
+}
+
+/// Emit the terminal events for a settled config-reload attempt: the index
+/// health pill (§3.1), then the matching config banner. Owns the batch's
+/// reconcile-vs-not decision (#371) via
+/// [`RebuildAttempt::needs_standalone_reconcile`] — an applied rebuild
+/// reconciled the batch itself, so it reports `ok` with no standalone pass;
+/// every failure keeps the old vault live and runs the standalone reconcile to
+/// fold the batch's note edits, reporting THAT health. So `watcher:status`
+/// fires exactly once here. `result` must be a *terminal* attempt: a transient
+/// one only ever reaches here post-retry (the "still blocked" → deferred case).
+fn emit_config_reload_outcome(
+    app: &AppHandle,
+    deps: &WatcherDeps,
+    result: Result<(), DomainError>,
+    areas: Vec<VaultArea>,
+    paths: Vec<String>,
+) {
+    let attempt = classify_rebuild(&result);
+    let ok = if attempt.needs_standalone_reconcile() {
+        run_reconcile(deps)
+    } else {
+        true
+    };
+    emit_watcher_status(app, ok);
+    match (attempt, result) {
+        (RebuildAttempt::Applied, _) => emit_config_reloaded(app, paths),
+        (RebuildAttempt::Invalid, Err(e)) => emit_config_invalid(app, e, areas, paths),
+        (RebuildAttempt::Transient, _) => {
+            // Reachable only post-retry: still blocked. Keep the last good
+            // config without a false "invalid" banner — the deferred banner
+            // says "vault was busy; it'll apply on the next edit" (#384).
+            tracing::warn!(
+                "config reload still blocked; keeping the last good config, will apply on the next config edit"
+            );
+            emit_config_deferred(app, areas, paths);
         }
+        // Unreachable: `Invalid` classifies only an `Err`. Fall back to the
+        // calm deferred banner rather than panic if that invariant ever breaks.
+        (RebuildAttempt::Invalid, Ok(())) => emit_config_deferred(app, areas, paths),
     }
 }
 
