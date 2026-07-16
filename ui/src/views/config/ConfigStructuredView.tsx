@@ -549,6 +549,7 @@ function SchemaFieldRow({
             type="checkbox"
             checked={spec.log_on_change === true}
             disabled={spec.settable !== true}
+            title={spec.settable === true ? undefined : "Available once the field is settable"}
             onChange={(e) => setLogOnChange(e.target.checked)}
           />
           Log changes to daily

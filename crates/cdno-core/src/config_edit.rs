@@ -32,10 +32,11 @@
 //! meaning (`folder` always; `required`/`optional`/`values` only when
 //! non-empty; `template`/`title_field`/`date_field`/`default` only when
 //! `Some`; `append_only`/`required` only when `true`) and *removes* a key
-//! the current model no longer sets. The reserved field-spec keys
-//! (`list`, `settable`, `log_on_change`) are never written and never
-//! touched, so a hand-set reserved key survives a form edit of the same
-//! field.
+//! the current model no longer sets. The still-unimplemented `list` key is
+//! never written or touched, so a hand-set `list` survives a form edit of the
+//! same field; the setter flags `settable`/`log_on_change` are form-controlled
+//! (#375) and written from the spec (the form preserves a hand-set value by
+//! lifting it into the spec and re-sending it).
 
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
@@ -114,6 +115,19 @@ fn set_or_remove_opt_string(table: &mut Table, key: &str, opt: &Option<String>) 
     }
 }
 
+/// Write `key = true` when the spec opts in (`Some(true)`); otherwise remove
+/// it. For the default-deny setter flags (`settable`, `log_on_change`) an
+/// absent key and an explicit `false` mean the same thing — "off" — so both
+/// normalise to omitted rather than a written `= false`, matching the form's
+/// null-on-uncheck and the `required` bool arm above.
+fn set_or_remove_true_flag(table: &mut Table, key: &str, opt: Option<bool>) {
+    if opt == Some(true) {
+        table.insert(key, value(true));
+    } else {
+        table.remove(key);
+    }
+}
+
 /// Map a `toml::Value` default (as parsed from the model) into a
 /// `toml_edit::Item` for surgical insertion. The realistic cases are the
 /// four scalars a field default may hold (`bool`/`int`/`string`, and a
@@ -178,13 +192,20 @@ pub fn remove_note_type(content: &str, name: &str) -> Result<String, ConfigEditE
     Ok(doc.to_string())
 }
 
-/// Insert or replace `[schemas.<note_type>.fields.<field>]`, writing only
-/// the form-controlled keys (`type` always; `default`/`required`/`values`
-/// per the spec) and removing those the model no longer sets. The reserved
-/// keys `list`/`settable`/`log_on_change` are deliberately left untouched,
-/// so a hand-authored reserved key on the same field survives the edit.
-/// Sibling fields, the schema's `extra_required`, and every other table and
-/// comment are preserved. Returns the re-rendered candidate string.
+/// Insert or replace `[schemas.<note_type>.fields.<field>]`, writing the
+/// form-controlled keys — `type` always; `default`/`required`/`values` and
+/// the setter flags `settable`/`log_on_change` per the spec (#375) — and
+/// removing those the model no longer sets. The still-unimplemented `list`
+/// key is deliberately left untouched, so a hand-authored `list` on the same
+/// field survives the edit. Sibling fields, the schema's `extra_required`, and
+/// every other table and comment are preserved. Returns the re-rendered
+/// candidate string.
+///
+/// The form preserves a hand-authored `settable`/`log_on_change` by *lifting*
+/// it into the spec (`parse_config_model`) and re-sending it, so an edit to an
+/// unrelated key round-trips the flag unchanged; an edit that clears the flag
+/// (`None`/`Some(false)`) removes it. This is why the caller, not the writer,
+/// owns preservation of these two keys.
 pub fn set_schema_field(
     content: &str,
     note_type: &str,
@@ -212,6 +233,12 @@ pub fn set_schema_field(
         table.remove("required");
     }
     set_or_remove_string_array(table, "values", spec.values.as_deref().unwrap_or(&[]));
+    // The Config form now edits these two setter flags (#375); write them from
+    // the spec like `required`. `list` is intentionally NOT handled here — it
+    // is still unimplemented, so the form doesn't model it and a hand-set value
+    // must survive untouched.
+    set_or_remove_true_flag(table, "settable", spec.settable);
+    set_or_remove_true_flag(table, "log_on_change", spec.log_on_change);
 
     Ok(doc.to_string())
 }

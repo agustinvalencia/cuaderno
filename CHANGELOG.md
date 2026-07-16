@@ -13,7 +13,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   changes to daily** (auto-log each change to the daily note). `Log changes to daily` is enabled only
   once the field is settable, and clears when it is turned off, so an inert flag never lingers on a
   locked field. These previously had to be hand-written in Raw; `list` stays Raw-only while it is
-  unimplemented. (#375)
+  unimplemented. (#422)
 
 ### Changed
 

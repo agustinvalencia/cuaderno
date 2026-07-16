@@ -357,6 +357,37 @@ test("turning Settable off clears log_on_change", async () => {
   });
 });
 
+test("unchecking Log changes to daily writes log_on_change null", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ settable: true, log_on_change: true }));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByLabelText("Log changes to daily")); // on → off
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({ field: "stage", spec: { log_on_change: null } });
+  });
+});
+
+test("toggling Settable on preserves an existing log_on_change and leaves list untouched", async () => {
+  // A Raw-authored field can carry log_on_change while settable is off; turning
+  // settable on must keep that flag (not reset it) and never touch `list`.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ settable: false, log_on_change: true, list: null }));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByLabelText("Settable")); // off → on
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_schema_field");
+    expect(call?.args).toMatchObject({
+      field: "stage",
+      spec: { settable: true, log_on_change: true, list: null },
+    });
+  });
+});
+
 test("adding a note type fires config_set_note_type with a minimal type", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);

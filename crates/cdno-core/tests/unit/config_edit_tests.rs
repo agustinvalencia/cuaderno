@@ -186,13 +186,62 @@ fn set_schema_field_writes_scalar_defaults_by_type() {
 }
 
 #[test]
-fn set_schema_field_preserves_reserved_keys_and_sibling_fields() {
-    // A field hand-authored with a reserved `settable` key, plus a sibling
-    // field. Editing `stage`'s type must keep `settable` and the sibling.
+fn set_schema_field_writes_the_setter_flags_from_the_spec() {
+    // The Config form edits `settable`/`log_on_change` (#375), so the writer
+    // must EMIT them when the spec opts in. A mocked-IPC frontend test can't
+    // prove this — only the real writer round-trip can, so the toggles are
+    // genuinely persisted rather than silently dropped.
+    let spec = FieldSpec {
+        settable: Some(true),
+        log_on_change: Some(true),
+        ..field_spec(FieldType::String)
+    };
+    let out = set_schema_field("", "project", "stage", &spec).expect("write field");
+
+    assert!(
+        out.contains("settable = true"),
+        "settable must be written: {out}"
+    );
+    assert!(
+        out.contains("log_on_change = true"),
+        "log_on_change must be written: {out}"
+    );
+}
+
+#[test]
+fn set_schema_field_clears_a_setter_flag_the_spec_no_longer_sets() {
+    // Unchecking a toggle sends the flag as absent; the writer must REMOVE the
+    // on-disk key (an absent and a `false` setter flag both mean "off"), or the
+    // toggle would silently revert on the next re-parse. `field_spec` leaves
+    // both flags `None`.
     let existing = "\
 [schemas.project.fields.stage]
 type = \"string\"
 settable = true
+log_on_change = true
+";
+    let out = set_schema_field(existing, "project", "stage", &field_spec(FieldType::String))
+        .expect("edit stage");
+
+    assert!(
+        !out.contains("settable"),
+        "cleared settable must be removed: {out}"
+    );
+    assert!(
+        !out.contains("log_on_change"),
+        "cleared log_on_change must be removed: {out}"
+    );
+}
+
+#[test]
+fn set_schema_field_leaves_list_untouched_and_keeps_siblings() {
+    // `list` stays reserved and unimplemented, so the writer never touches it:
+    // a hand-authored `list` survives even when the spec doesn't carry it. The
+    // sibling field is preserved too.
+    let existing = "\
+[schemas.project.fields.stage]
+type = \"string\"
+list = false
 
 [schemas.project.fields.owner]
 type = \"string\"
@@ -201,12 +250,10 @@ type = \"string\"
         .expect("edit stage");
 
     assert!(out.contains("type = \"date\""));
-    // Reserved key on the edited field survives (the form never touches it).
     assert!(
-        out.contains("settable = true"),
-        "reserved key must survive: {out}"
+        out.contains("list = false"),
+        "the unimplemented `list` key must survive untouched: {out}"
     );
-    // The sibling field is untouched.
     assert!(out.contains("[schemas.project.fields.owner]"));
 }
 
@@ -318,16 +365,18 @@ fn an_inline_table_note_type_is_refused_not_duplicated() {
 fn set_schema_field_edits_a_dotted_key_field_in_place() {
     // A field authored with dotted keys (no `[header]`) is edited in place:
     // the type flips and a hand-set reserved key on the same field survives,
-    // with no duplicate table materialised.
-    let dotted = "[schemas.project.fields]\nstage.type = \"string\"\nstage.settable = true\n";
+    // with no duplicate table materialised. Uses `list` — the reserved key the
+    // writer still leaves untouched (`settable`/`log_on_change` are now
+    // form-controlled, #375).
+    let dotted = "[schemas.project.fields]\nstage.type = \"string\"\nstage.list = false\n";
     let out = set_schema_field(dotted, "project", "stage", &field_spec(FieldType::Date))
         .expect("edit dotted-key field");
 
     assert!(out.contains("\"date\""), "the type flipped to date: {out}");
     assert!(!out.contains("\"string\""), "the old type is gone: {out}");
     assert!(
-        out.contains("settable = true"),
-        "the hand-set reserved key survives: {out}"
+        out.contains("list = false"),
+        "the hand-set reserved `list` key survives: {out}"
     );
     // No second field table was materialised — the whole candidate still
     // parses and carries exactly the one `stage` field.
