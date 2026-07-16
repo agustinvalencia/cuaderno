@@ -462,6 +462,20 @@ function SchemaFieldRow({
     });
   }
 
+  // Reserved keys the Phase-2 setter honours (#375, #301): `settable` opts a
+  // field into `set_frontmatter` (default-deny), and `log_on_change` auto-logs
+  // a change to the daily note. `log_on_change` only fires on a settable field,
+  // so turning `settable` off disables and clears it — the same coupled clear
+  // `changeType` does to `values`. Unchecked maps to `null` so the surgical
+  // writer omits the key entirely rather than writing `= false` (an absent and
+  // an explicit-false `settable` are both "not settable" to the server).
+  function setSettable(on: boolean) {
+    set({ ...spec, settable: on ? true : null, log_on_change: on ? spec.log_on_change : null });
+  }
+  function setLogOnChange(on: boolean) {
+    set({ ...spec, log_on_change: on ? true : null });
+  }
+
   return (
     <div className="rounded border border-line bg-bg-base p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -516,6 +530,31 @@ function SchemaFieldRow({
           />
         </div>
       )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input
+            type="checkbox"
+            checked={spec.settable === true}
+            onChange={(e) => setSettable(e.target.checked)}
+          />
+          Settable
+        </label>
+        <label
+          className={`flex items-center gap-2 text-sm ${
+            spec.settable === true ? "text-ink" : "text-ink-faint"
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={spec.log_on_change === true}
+            disabled={spec.settable !== true}
+            title={spec.settable === true ? undefined : "Available once the field is settable"}
+            onChange={(e) => setLogOnChange(e.target.checked)}
+          />
+          Log changes to daily
+        </label>
+      </div>
     </div>
   );
 }
