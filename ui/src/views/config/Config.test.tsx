@@ -52,7 +52,12 @@ function installMock(
         // The structured panel's read; only hit once the Form toggle is
         // active. `parse_config_model` is the editable form's draft-parse
         // seam (PR5b). A minimal empty model is enough for the toggle test.
-        return { vault: { name: "Test", max_active_projects: 5 }, note_types: [], schemas: [] };
+        return {
+          vault: { name: "Test", max_active_projects: 5 },
+          note_types: [],
+          schemas: [],
+          variables: { static_vars: [], prompt: [] },
+        };
       case "config_set_note_type":
       case "config_remove_note_type":
       case "config_set_schema_field":

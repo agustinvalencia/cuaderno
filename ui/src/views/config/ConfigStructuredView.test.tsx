@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
+import type { NamedValue } from "../../api/bindings/NamedValue";
 import { ToastProvider } from "../../shell/Toasts";
 import ConfigStructuredView from "./ConfigStructuredView";
 import type { ConfigDraft } from "./useConfigDraft";
@@ -62,6 +63,7 @@ const MODEL: ConfigModel = {
       },
     },
   ],
+  variables: { static_vars: [], prompt: [] },
 };
 
 /** MODEL with the `stage` field's spec overridden — for the reserved-key
@@ -85,6 +87,12 @@ function modelWithStage(spec: Partial<FieldSpec>): ConfigModel {
       },
     ],
   };
+}
+
+/** MODEL with the `[variables]` block populated — for the variables editor
+ * (#376), which the seeded MODEL leaves empty. */
+function modelWithVariables(staticVars: NamedValue[], prompt: NamedValue[]): ConfigModel {
+  return { ...MODEL, variables: { static_vars: staticVars, prompt } };
 }
 
 const DRAFT = "[note_types.reading]\nfolder = \"reading\"\n";
@@ -172,6 +180,7 @@ test("a schema declaring only extra_required (no fields) is hidden", async () =>
     vault: { name: "Demo Vault", max_active_projects: 3 },
     note_types: [],
     schemas: [{ name: "proj-a", schema: { extra_required: ["author"], fields: {} } }],
+    variables: { static_vars: [], prompt: [] },
   };
   installMock([], model);
   renderView(draftStub());
@@ -471,6 +480,113 @@ test("an unparseable draft points back to Raw instead of crashing", async () => 
   renderView(draftStub({ draft: "broken = " }));
 
   expect(await screen.findByText(/switch to Raw/i)).toBeDefined();
+});
+
+// --- Template variables editor (#376) ---
+
+test("renders static and prompted variables from the model", async () => {
+  installMock(
+    [],
+    modelWithVariables([{ name: "author", value: "Anon" }], [{ name: "topic", value: "What topic?" }]),
+  );
+  renderView(draftStub());
+
+  const staticVal = (await screen.findByLabelText("Value for author")) as HTMLInputElement;
+  expect(staticVal.value).toBe("Anon");
+  const promptVal = screen.getByLabelText("Prompt for topic") as HTMLInputElement;
+  expect(promptVal.value).toBe("What topic?");
+});
+
+test("adding a static variable fires config_set_variable", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls); // MODEL has an empty variables block
+  renderView(draftStub());
+
+  const form = within(await screen.findByRole("form", { name: "Add a static variable" }));
+  fireEvent.change(form.getByLabelText("Name"), { target: { value: "author" } });
+  fireEvent.change(form.getByLabelText("Value"), { target: { value: "Anon" } });
+  fireEvent.click(form.getByRole("button", { name: "Add variable" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_variable");
+    expect(call?.args).toMatchObject({ content: DRAFT, name: "author", value: "Anon" });
+  });
+});
+
+test("editing a variable's value fires config_set_variable with the new value", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithVariables([{ name: "author", value: "Old" }], []));
+  renderView(draftStub());
+
+  const input = await screen.findByLabelText("Value for author");
+  fireEvent.change(input, { target: { value: "New" } });
+  fireEvent.blur(input);
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_variable");
+    expect(call?.args).toMatchObject({ name: "author", value: "New" });
+  });
+});
+
+test("removing a static variable fires config_remove_variable", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithVariables([{ name: "author", value: "Anon" }], []));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByRole("button", { name: "Remove author" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_remove_variable");
+    expect(call?.args).toMatchObject({ name: "author" });
+  });
+});
+
+test("adding a prompted variable fires config_set_prompt_variable", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView(draftStub());
+
+  const form = within(await screen.findByRole("form", { name: "Add a prompted variable" }));
+  fireEvent.change(form.getByLabelText("Name"), { target: { value: "topic" } });
+  fireEvent.change(form.getByLabelText("Prompt"), { target: { value: "What topic?" } });
+  fireEvent.click(form.getByRole("button", { name: "Add variable" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_set_prompt_variable");
+    expect(call?.args).toMatchObject({ name: "topic", message: "What topic?" });
+  });
+});
+
+test("removing a prompted variable fires config_remove_prompt_variable", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithVariables([], [{ name: "topic", value: "What topic?" }]));
+  renderView(draftStub());
+
+  fireEvent.click(await screen.findByRole("button", { name: "Remove topic" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "config_remove_prompt_variable");
+    expect(call?.args).toMatchObject({ name: "topic" });
+  });
+});
+
+test("the reserved name 'prompt' is blocked in the static add form", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView(draftStub());
+
+  const form = within(await screen.findByRole("form", { name: "Add a static variable" }));
+  fireEvent.change(form.getByLabelText("Name"), { target: { value: "prompt" } });
+  fireEvent.change(form.getByLabelText("Value"), { target: { value: "x" } });
+
+  // The pre-check blocks it and Add is disabled — the command never fires
+  // (the server would reject it too).
+  expect(await form.findByText(/reserved name/i)).toBeDefined();
+  expect((form.getByRole("button", { name: "Add variable" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+  fireEvent.click(form.getByRole("button", { name: "Add variable" }));
+  expect(calls.find((c) => c.cmd === "config_set_variable")).toBeUndefined();
 });
 
 test("has no axe violations", async () => {

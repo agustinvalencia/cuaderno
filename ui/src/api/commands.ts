@@ -499,6 +499,38 @@ export function configRemoveSchemaField(
   return call("config_remove_schema_field", { content, noteType, field });
 }
 
+/** Insert or replace a static template variable (`[variables].<name>`) in
+ * `content`; resolves to the new config string. (#376) */
+export function configSetVariable(
+  content: string,
+  name: string,
+  value: string,
+): Promise<string> {
+  return call("config_set_variable", { content, name, value });
+}
+
+/** Remove a static template variable from `[variables]`; resolves to the new
+ * config string. Idempotent. */
+export function configRemoveVariable(content: string, name: string): Promise<string> {
+  return call("config_remove_variable", { content, name });
+}
+
+/** Insert or replace a prompted variable (`[variables.prompt].<name>`) in
+ * `content`; resolves to the new config string. (#376) */
+export function configSetPromptVariable(
+  content: string,
+  name: string,
+  message: string,
+): Promise<string> {
+  return call("config_set_prompt_variable", { content, name, message });
+}
+
+/** Remove a prompted variable from `[variables.prompt]`; resolves to the new
+ * config string. Idempotent. */
+export function configRemovePromptVariable(content: string, name: string): Promise<string> {
+  return call("config_remove_prompt_variable", { content, name });
+}
+
 /** The outcome of a dry-run config validation: `ok` when the config
  * would open, otherwise the structured backend error (message + optional
  * line/col for a TOML syntax error). */

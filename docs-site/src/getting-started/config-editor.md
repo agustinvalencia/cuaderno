@@ -17,12 +17,14 @@ Config opens on a **Raw / Form** toggle:
 
 - **Raw** is the whole `config.toml` in a text editor. Everything is editable here, byte for byte —
   it is the escape hatch for anything the Form doesn't cover.
-- **Form** is a structured view of the two parts that have a fixed shape: **note types** and their
-  **schema extensions**. You add, rename, and remove custom note types and required frontmatter
-  fields with inputs and toggles instead of hand-writing TOML. Each schema field's row also exposes
-  its setter behaviour: **Settable** (whether [`set_frontmatter`](../reference/mcp/writes.md) may
-  change the field) and **Log changes to daily** (auto-log each change to the daily note — available
-  once the field is settable).
+- **Form** is a structured view of the parts that have a fixed shape: **note types**, their
+  **schema extensions**, and the **template variables** block. You add, rename, and remove custom
+  note types and required frontmatter fields with inputs and toggles instead of hand-writing TOML.
+  Each schema field's row also exposes its setter behaviour: **Settable** (whether
+  [`set_frontmatter`](../reference/mcp/writes.md) may change the field) and **Log changes to daily**
+  (auto-log each change to the daily note — available once the field is settable). The
+  **Template variables** section edits the two variable maps: **Static** (values available in every
+  template) and **Prompted** (asked for interactively when a template uses them).
 
 Switch freely between them; both edit the same file. What the Form can't represent stays in Raw
 (see [What the Form doesn't edit](#what-the-form-doesnt-edit) below).
@@ -65,10 +67,9 @@ the file and the next save reloads cleanly.
 
 ## What the Form doesn't edit
 
-The Form covers note types and schema extensions. A few things stay Raw-only by design:
+The Form covers note types, schema extensions, and template variables. A few things stay Raw-only by
+design:
 
-- **The `[variables]` and `[variables.prompt]` blocks** — static and prompted template variables.
-  Edit them in Raw; the surgical writer preserves them untouched when you save Form changes.
 - **`max_active_projects` under `[vault]`, and the top-level `ignore` globs** — edit these in Raw.
 
 Everything Raw-only is still covered by the never-brick save and live reload; only the structured

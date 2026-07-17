@@ -267,3 +267,79 @@ pub fn remove_schema_field(
     }
     Ok(doc.to_string())
 }
+
+// --- `[variables]` editor (#376): static template variables (`[variables]`'s
+//     direct keys) and prompted variables (`[variables.prompt]`), on the same
+//     surgical, comment-preserving contract as the note-type/schema edits. ---
+
+/// The reserved key under `[variables]` that holds the prompted-variable
+/// sub-table — never a static variable name (serde `flatten` folds every
+/// other key into the static map).
+const PROMPT_SUBTABLE: &str = "prompt";
+
+/// Insert or replace a static template variable — `[variables]`'s
+/// `<name> = "<value>"`. The `[variables.prompt]` sub-table and every sibling
+/// static variable are preserved. `name` must not be `prompt`: that key is the
+/// prompt sub-table, so overwriting it with a string would drop every prompted
+/// variable — the edit refuses it as [`ConfigEditError::NotATable`] (the form
+/// pre-check blocks it first).
+pub fn set_variable(content: &str, name: &str, var_value: &str) -> Result<String, ConfigEditError> {
+    if name == PROMPT_SUBTABLE {
+        return Err(ConfigEditError::NotATable("variables.prompt".to_string()));
+    }
+    let mut doc = parse(content)?;
+    let variables = table_entry(doc.as_table_mut(), "variables", false)?;
+    // A table carrying direct keys must render its own `[variables]` header,
+    // even if a prior prompt-only edit created it implicit.
+    variables.set_implicit(false);
+    variables.insert(name, value(var_value));
+    Ok(doc.to_string())
+}
+
+/// Remove a static template variable from `[variables]`. Idempotent (an absent
+/// variable is a no-op success). Never touches the `prompt` sub-table —
+/// removing "prompt" here would drop every prompted variable, so it is guarded.
+pub fn remove_variable(content: &str, name: &str) -> Result<String, ConfigEditError> {
+    let mut doc = parse(content)?;
+    if name != PROMPT_SUBTABLE
+        && let Some(variables) = doc
+            .as_table_mut()
+            .get_mut("variables")
+            .and_then(Item::as_table_mut)
+    {
+        variables.remove(name);
+    }
+    Ok(doc.to_string())
+}
+
+/// Insert or replace a prompted variable — `[variables.prompt]`'s
+/// `<name> = "<message>"`. Sibling prompts, the static variables in
+/// `[variables]`, and every other table and comment are preserved.
+pub fn set_prompt_variable(
+    content: &str,
+    name: &str,
+    message: &str,
+) -> Result<String, ConfigEditError> {
+    let mut doc = parse(content)?;
+    let variables = table_entry(doc.as_table_mut(), "variables", true)?;
+    let prompt = table_entry(variables, PROMPT_SUBTABLE, false)?;
+    prompt.insert(name, value(message));
+    Ok(doc.to_string())
+}
+
+/// Remove a prompted variable from `[variables.prompt]`. Idempotent — an
+/// absent variable (or a missing `[variables]` / `[variables.prompt]`) is a
+/// no-op success.
+pub fn remove_prompt_variable(content: &str, name: &str) -> Result<String, ConfigEditError> {
+    let mut doc = parse(content)?;
+    let prompt = doc
+        .as_table_mut()
+        .get_mut("variables")
+        .and_then(Item::as_table_mut)
+        .and_then(|variables| variables.get_mut(PROMPT_SUBTABLE))
+        .and_then(Item::as_table_mut);
+    if let Some(prompt) = prompt {
+        prompt.remove(name);
+    }
+    Ok(doc.to_string())
+}
