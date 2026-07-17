@@ -140,6 +140,46 @@ test("a bare autolinked URL is also clickable", async () => {
   });
 });
 
+test("middle-clicking an external link opens it (not a webview navigation)", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"See [docs](https://example.com/guide)."} onWikilink={() => {}} />,
+  );
+
+  // Middle-click fires `auxclick`, not `click` — the handler must catch it so
+  // the real href isn't left to the webview's default navigation. There's no
+  // `fireEvent.auxClick` shortcut, so dispatch the event directly.
+  fireEvent(
+    container.querySelector("a")!,
+    new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }),
+  );
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "https://example.com/guide" });
+  });
+});
+
+test("a mailto link is clickable and opens via open_external_url", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"Email [me](mailto:someone@example.com)."} onWikilink={() => {}} />,
+  );
+
+  fireEvent.click(container.querySelector("a")!);
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "mailto:someone@example.com" });
+  });
+});
+
 test("a link with no openable scheme stays inert (no anchor, no open)", () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   mockIPC((cmd, args) => {

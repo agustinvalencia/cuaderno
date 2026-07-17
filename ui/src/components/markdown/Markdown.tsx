@@ -6,7 +6,7 @@
 // vendored (imported below), never a CDN — the app CSP blocks external
 // hosts.
 import { createContext, useContext } from "react";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -157,16 +157,28 @@ function anchorComponent(onWikilink: (target: string) => void) {
     // there itself, so we intercept the click and hand the URL off. The
     // backend re-validates the scheme before opening.
     if (typeof href === "string" && isOpenableExternalUrl(href)) {
+      // Open the SAME trimmed value the allowlist matched (the backend trims
+      // and re-validates too). `preventDefault` stops the webview from
+      // top-level-navigating to the href; `onAuxClick` covers a middle-click,
+      // which fires `auxclick` (not `click`) and would otherwise fall through
+      // to the webview's default navigation.
+      const target = href.trimStart();
+      const open = (event: MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        void openExternalUrl(target);
+      };
       return (
+        // Spread first, then set href/handlers/class last, so a
+        // markdown-derived prop can never override the ones we control.
         <a
-          href={href}
-          title={href}
-          onClick={(event) => {
-            event.preventDefault();
-            void openExternalUrl(href);
+          {...props}
+          href={target}
+          title={target}
+          onClick={open}
+          onAuxClick={(event) => {
+            if (event.button === 1) open(event);
           }}
           className="text-accent-interactive underline decoration-dotted underline-offset-2 hover:decoration-solid"
-          {...props}
         >
           {children}
         </a>

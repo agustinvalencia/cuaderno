@@ -167,6 +167,11 @@ pub async fn open_external_url<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     url: String,
 ) -> Result<(), CmdError> {
+    // Validate AND open the same trimmed value: leading/trailing whitespace
+    // can't change the scheme the allowlist keys on, but handing an untrimmed
+    // `"  https://x"` to the opener makes it a malformed URL that silently
+    // no-ops. Trim once, then everything downstream sees the clean URL.
+    let url = url.trim().to_owned();
     if !is_openable_external_url(&url) {
         return Err(CmdError::Invalid(
             "only http, https, and mailto links can be opened".to_owned(),
