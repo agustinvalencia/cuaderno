@@ -6,7 +6,7 @@
 // vendored (imported below), never a CDN — the app CSP blocks external
 // hosts.
 import { createContext, useContext } from "react";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import type { ComponentPropsWithoutRef, MouseEvent, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -15,8 +15,16 @@ import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { readNoteAsset } from "../../api/commands";
+import { openExternalUrl, readNoteAsset } from "../../api/commands";
 import { remarkWikilinks } from "./remarkWikilinks";
+
+/** An `http(s)`/`mailto` link the app can hand to the OS opener. Anything
+ * else (a relative path, a bare fragment, an unknown scheme) has nothing safe
+ * to open, so it stays inert. Mirrors the backend `is_openable_external_url`
+ * allowlist — the backend re-validates before opening. */
+function isOpenableExternalUrl(href: string): boolean {
+  return /^(https?:\/\/|mailto:)/i.test(href.trimStart());
+}
 
 // The path of the note whose body is being rendered, so an embedded image
 // (`![alt](assets/fig.png)`, whose src is relative to the note) can be
@@ -144,11 +152,41 @@ function anchorComponent(onWikilink: (target: string) => void) {
         </a>
       );
     }
-    // External links render as muted text with the URL as a title.
-    // The Tauri webview has no shell-open capability wired (no opener
-    // scope for arbitrary URLs, by design — read-mostly, no browser
-    // launching), so an anchor here would be a dead click; showing the
-    // URL on hover keeps the information without the false affordance.
+    // An external http(s)/mailto link opens in the user's default browser
+    // (or mail client) via the backend opener — the webview can't navigate
+    // there itself, so we intercept the click and hand the URL off. The
+    // backend re-validates the scheme before opening.
+    if (typeof href === "string" && isOpenableExternalUrl(href)) {
+      // Open the SAME trimmed value the allowlist matched (the backend trims
+      // and re-validates too). `preventDefault` stops the webview from
+      // top-level-navigating to the href; `onAuxClick` covers a middle-click,
+      // which fires `auxclick` (not `click`) and would otherwise fall through
+      // to the webview's default navigation.
+      const target = href.trimStart();
+      const open = (event: MouseEvent<HTMLAnchorElement>) => {
+        event.preventDefault();
+        void openExternalUrl(target);
+      };
+      return (
+        // Spread first, then set href/handlers/class last, so a
+        // markdown-derived prop can never override the ones we control.
+        <a
+          {...props}
+          href={target}
+          title={target}
+          onClick={open}
+          onAuxClick={(event) => {
+            if (event.button === 1) open(event);
+          }}
+          className="text-accent-interactive underline decoration-dotted underline-offset-2 hover:decoration-solid"
+        >
+          {children}
+        </a>
+      );
+    }
+    // A link with no openable scheme (a relative path, a bare fragment, an
+    // unknown scheme) has nothing safe to open, so it stays inert muted text
+    // with the target on hover — an honest non-affordance, not a dead link.
     return (
       <span title={href} className="text-ink-faint underline decoration-dotted underline-offset-2">
         {children}

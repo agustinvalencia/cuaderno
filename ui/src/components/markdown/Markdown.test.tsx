@@ -6,7 +6,7 @@
 // URI) when a note-path context is present, and degrades to the caption
 // when it isn't.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import Markdown, { NotePathProvider } from "./Markdown";
@@ -98,6 +98,103 @@ test("a single newline renders as a line break (Obsidian-style), not a joined pa
   expect(container.textContent).toContain("Yesterday");
   expect(container.textContent).toContain("Today");
   expect(container.textContent).toContain("Due soon");
+});
+
+test("an external link opens in the browser via open_external_url", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"See the [docs](https://example.com/guide) page."} onWikilink={() => {}} />,
+  );
+
+  // Rendered as a real, clickable anchor — not the old muted dead span.
+  const link = container.querySelector("a");
+  expect(link).not.toBeNull();
+  expect(link?.textContent).toBe("docs");
+
+  fireEvent.click(link!);
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "https://example.com/guide" });
+  });
+});
+
+test("a bare autolinked URL is also clickable", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"Visit https://example.org for more."} onWikilink={() => {}} />,
+  );
+
+  const link = container.querySelector("a");
+  fireEvent.click(link!);
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "https://example.org" });
+  });
+});
+
+test("middle-clicking an external link opens it (not a webview navigation)", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"See [docs](https://example.com/guide)."} onWikilink={() => {}} />,
+  );
+
+  // Middle-click fires `auxclick`, not `click` — the handler must catch it so
+  // the real href isn't left to the webview's default navigation. There's no
+  // `fireEvent.auxClick` shortcut, so dispatch the event directly.
+  fireEvent(
+    container.querySelector("a")!,
+    new MouseEvent("auxclick", { button: 1, bubbles: true, cancelable: true }),
+  );
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "https://example.com/guide" });
+  });
+});
+
+test("a mailto link is clickable and opens via open_external_url", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"Email [me](mailto:someone@example.com)."} onWikilink={() => {}} />,
+  );
+
+  fireEvent.click(container.querySelector("a")!);
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "open_external_url");
+    expect(call?.args).toMatchObject({ url: "mailto:someone@example.com" });
+  });
+});
+
+test("a link with no openable scheme stays inert (no anchor, no open)", () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  const { container } = render(
+    <Markdown body={"A [relative ref](../secret/file.md) here."} onWikilink={() => {}} />,
+  );
+
+  // No clickable anchor — a non-openable target renders as muted text.
+  expect(container.querySelector("a")).toBeNull();
+  expect(screen.getByText("relative ref")).toBeDefined();
+  // And nothing is handed to the opener.
+  expect(calls.find((c) => c.cmd === "open_external_url")).toBeUndefined();
 });
 
 test("remark-breaks leaves code-block newlines alone (no <br> inside <pre>)", () => {

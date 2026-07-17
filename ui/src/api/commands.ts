@@ -139,6 +139,13 @@ export function openInEditor(path: string): Promise<void> {
   return call("open_in_editor", { path });
 }
 
+/** Open an external link from note content in the user's default browser
+ * (or mail client, for `mailto:`). The backend validates the scheme —
+ * only `http`/`https`/`mailto` are opened. */
+export function openExternalUrl(url: string): Promise<void> {
+  return call("open_external_url", { url });
+}
+
 /** Read `.cuaderno/custom.css` (the user override stylesheet) — its text,
  * or an empty string when the file doesn't exist yet. */
 export function readCustomCss(): Promise<string> {
