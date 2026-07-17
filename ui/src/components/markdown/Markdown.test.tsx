@@ -82,3 +82,20 @@ test("a relative image with no note context degrades to its caption", () => {
   expect(container.querySelector("img")).toBeNull();
   expect(screen.getByText("the caption")).toBeDefined();
 });
+
+test("a single newline renders as a line break (Obsidian-style), not a joined paragraph", () => {
+  // A standup's sub-lines (`Yesterday` / `Today` / `Due soon`) are separated
+  // by single newlines; remark-breaks keeps them on their own lines rather
+  // than collapsing them into one flowing paragraph (CommonMark's default).
+  const { container } = render(
+    <Markdown body={"**Yesterday** — did a thing\n**Today** — do another\n**Due soon** — soon"} onWikilink={() => {}} />,
+  );
+  // The three lines live in one paragraph, separated by hard <br>s.
+  const paragraph = container.querySelector("p");
+  expect(paragraph).not.toBeNull();
+  expect(paragraph?.querySelectorAll("br").length).toBe(2);
+  // All three labels survived.
+  expect(container.textContent).toContain("Yesterday");
+  expect(container.textContent).toContain("Today");
+  expect(container.textContent).toContain("Due soon");
+});

@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **A "Today" button in the calendar** (desktop UI) — sits next to "Pick a date" and jumps the panel
+  straight back to today's daily note after you've paged away; disabled while already on today. (#425)
+
 - **The Config form now edits template variables** (desktop UI) — a new **Template variables**
   section edits the `[variables]` block without dropping to Raw: **Static** variables (available in
   every template) and **Prompted** variables (`[variables.prompt]`, asked for interactively when a
@@ -21,6 +24,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   previously had to be hand-written in Raw; `list` stays Raw-only while it is unimplemented. (#422)
 
 ### Changed
+
+- **Note rendering now shows a single newline as a line break** (desktop UI) — matching how Obsidian
+  displays notes, so a daily standup's `Yesterday` / `Today` / `Due soon` lines stay on their own
+  lines instead of collapsing into one flowing paragraph. Applies everywhere notes render (the
+  reader, the calendar panel, project and stewardship maps). (#425)
 
 - **The file watcher no longer reconciles the index twice on an external `config.toml` edit** —
   a successful live rebuild reconciles inside `Vault::new` (against the new ignore set), so the

@@ -103,6 +103,30 @@ test("opens on today's note in the embedded panel", async () => {
   expect(screen.getByRole("heading", { name: /Wednesday,.*2026/ })).toBeDefined();
 });
 
+test("the Today button jumps back to today, and is disabled while already on it", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  // On today's day, the jump is a no-op — the button is disabled.
+  expect((screen.getByRole("button", { name: "Today" }) as HTMLButtonElement).disabled).toBe(true);
+
+  // Step to the next day (a note-less neighbour); now Today is live.
+  fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
+  await screen.findByText("No note for this day yet.");
+  const todayBtn = screen.getByRole("button", { name: "Today" }) as HTMLButtonElement;
+  expect(todayBtn.disabled).toBe(false);
+
+  // Clicking Today reads today's note again and shows it.
+  fireEvent.click(todayBtn);
+  expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+  const reads = calls
+    .filter((c) => c.cmd === "read_daily")
+    .map((c) => (c.args as { date: string }).date);
+  expect(reads).toContain("2026-07-15");
+});
+
 test("the month grid is a hideable picker, collapsing once a day is chosen", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);

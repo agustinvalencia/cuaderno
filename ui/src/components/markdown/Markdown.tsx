@@ -12,6 +12,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { readNoteAsset } from "../../api/commands";
@@ -256,8 +257,12 @@ export default function Markdown({
       <ReactMarkdown
         // Wikilinks first so `[[…]]` is claimed before gfm autolinks the
         // surrounding text; remark-math parses `$…$` / `$$…$$` into math
-        // nodes that rehype-katex then renders.
-        remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath]}
+        // nodes that rehype-katex then renders. remark-breaks renders a
+        // single newline as a line break (a soft break becomes a hard `<br>`),
+        // matching how Obsidian shows notes — so a standup's `Yesterday` /
+        // `Today` / `Due soon` lines stay on their own lines rather than
+        // collapsing into one paragraph.
+        remarkPlugins={[remarkWikilinks, remarkGfm, remarkMath, remarkBreaks]}
         rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
         components={markdownComponents(onWikilink)}
       >

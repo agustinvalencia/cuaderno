@@ -208,16 +208,29 @@ function CalendarBody({ today }: { today: string }) {
           farther jump. */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-ink">Calendar</h1>
-        <button
-          type="button"
-          ref={pickToggleRef}
-          onClick={() => setShowPicker((open) => !open)}
-          aria-expanded={showPicker}
-          aria-controls="calendar-date-picker"
-          className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink"
-        >
-          {showPicker ? "Hide calendar" : "Pick a date"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Jump straight back to today's daily note — the common "I've
+              paged away, take me home" move. Disabled when already showing
+              today's day, so it never fires a no-op. */}
+          <button
+            type="button"
+            onClick={() => goToDay(today)}
+            disabled={mode === "daily" && selectedDate === today}
+            className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink disabled:opacity-50"
+          >
+            Today
+          </button>
+          <button
+            type="button"
+            ref={pickToggleRef}
+            onClick={() => setShowPicker((open) => !open)}
+            aria-expanded={showPicker}
+            aria-controls="calendar-date-picker"
+            className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink"
+          >
+            {showPicker ? "Hide calendar" : "Pick a date"}
+          </button>
+        </div>
       </div>
 
       {/* Kept mounted and toggled via `hidden` (not conditionally
