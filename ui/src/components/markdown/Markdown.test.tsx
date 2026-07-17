@@ -99,3 +99,17 @@ test("a single newline renders as a line break (Obsidian-style), not a joined pa
   expect(container.textContent).toContain("Today");
   expect(container.textContent).toContain("Due soon");
 });
+
+test("remark-breaks leaves code-block newlines alone (no <br> inside <pre>)", () => {
+  // A regression guard for the global soft-break change: newlines INSIDE a
+  // fenced code block are literal content, not soft breaks, so they must never
+  // become <br> — the code's line structure has to survive verbatim.
+  const { container } = render(
+    <Markdown body={"```\nline1\nline2\n```"} onWikilink={() => {}} />,
+  );
+  const pre = container.querySelector("pre");
+  expect(pre).not.toBeNull();
+  expect(pre?.querySelectorAll("br").length).toBe(0);
+  expect(pre?.textContent).toContain("line1");
+  expect(pre?.textContent).toContain("line2");
+});

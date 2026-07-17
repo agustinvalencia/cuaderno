@@ -214,7 +214,13 @@ function CalendarBody({ today }: { today: string }) {
               today's day, so it never fires a no-op. */}
           <button
             type="button"
-            onClick={() => goToDay(today)}
+            onClick={() => {
+              goToDay(today);
+              // The jump lands on today's day, which disables this button —
+              // hand focus to the adjacent picker toggle so a keyboard user
+              // isn't dropped to document.body (matching selectDay's handoff).
+              pickToggleRef.current?.focus();
+            }}
             disabled={mode === "daily" && selectedDate === today}
             className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink disabled:opacity-50"
           >
