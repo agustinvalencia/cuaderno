@@ -785,7 +785,10 @@ function VariableList({
               </div>
               <button
                 type="button"
-                aria-label={`Remove ${v.name}`}
+                // Scope the name by kind: a variable of the same name can exist
+                // in both the static and prompted lists, so a bare
+                // `Remove ${name}` would be an ambiguous accessible name.
+                aria-label={`Remove ${kind} variable ${v.name}`}
                 onClick={() => onRemove(v.name)}
                 className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:bg-bg-sunken hover:text-ink"
               >

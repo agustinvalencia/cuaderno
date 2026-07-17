@@ -608,3 +608,25 @@ reviewer = \"Who reviewed it?\"
     // Idempotent: removing an absent prompt (or from a missing block) is fine.
     assert_eq!(remove_prompt_variable("", "nope").expect("no-op"), "");
 }
+
+#[test]
+fn set_variable_round_trips_an_escaped_value_and_a_quoted_key() {
+    // A value with quotes/newline/backslash and a key that needs quoting must
+    // render as valid TOML and read back byte-identically — the round-trip the
+    // form relies on, pinned rather than left to `toml_edit`'s good behaviour.
+    let tricky = "he said \"hi\"\nand a \\ backslash";
+    let out = set_variable("", "a.b", tricky).expect("set tricky var");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+    // `a.b` is ONE static variable (a quoted key), not a nested `a` → `b` table.
+    assert_eq!(cfg.resolve_variable("a.b"), Some(tricky));
+}
+
+#[test]
+fn set_prompt_variable_round_trips_an_escaped_message() {
+    let msg = "What is the \"topic\"?\nBe specific.";
+    let out = set_prompt_variable("", "topic", msg).expect("set prompt var");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+    assert_eq!(cfg.prompt_for_variable("topic"), Some(msg));
+}

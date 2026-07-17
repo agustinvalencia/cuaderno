@@ -533,7 +533,7 @@ test("removing a static variable fires config_remove_variable", async () => {
   installMock(calls, modelWithVariables([{ name: "author", value: "Anon" }], []));
   renderView(draftStub());
 
-  fireEvent.click(await screen.findByRole("button", { name: "Remove author" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove static variable author" }));
 
   await waitFor(() => {
     const call = calls.find((c) => c.cmd === "config_remove_variable");
@@ -562,7 +562,7 @@ test("removing a prompted variable fires config_remove_prompt_variable", async (
   installMock(calls, modelWithVariables([], [{ name: "topic", value: "What topic?" }]));
   renderView(draftStub());
 
-  fireEvent.click(await screen.findByRole("button", { name: "Remove topic" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Remove prompted variable topic" }));
 
   await waitFor(() => {
     const call = calls.find((c) => c.cmd === "config_remove_prompt_variable");
@@ -593,5 +593,17 @@ test("has no axe violations", async () => {
   installMock([]);
   const { container } = renderView(draftStub());
   await screen.findByText("Demo Vault");
+  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
+test("has no axe violations with populated variables", async () => {
+  // The default MODEL leaves variables empty, so the value-input + Remove-button
+  // row markup is only scanned with a populated block.
+  installMock(
+    [],
+    modelWithVariables([{ name: "author", value: "Anon" }], [{ name: "topic", value: "What topic?" }]),
+  );
+  const { container } = renderView(draftStub());
+  await screen.findByLabelText("Value for author");
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
