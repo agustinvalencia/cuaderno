@@ -82,3 +82,34 @@ test("a relative image with no note context degrades to its caption", () => {
   expect(container.querySelector("img")).toBeNull();
   expect(screen.getByText("the caption")).toBeDefined();
 });
+
+test("a single newline renders as a line break (Obsidian-style), not a joined paragraph", () => {
+  // A standup's sub-lines (`Yesterday` / `Today` / `Due soon`) are separated
+  // by single newlines; remark-breaks keeps them on their own lines rather
+  // than collapsing them into one flowing paragraph (CommonMark's default).
+  const { container } = render(
+    <Markdown body={"**Yesterday** — did a thing\n**Today** — do another\n**Due soon** — soon"} onWikilink={() => {}} />,
+  );
+  // The three lines live in one paragraph, separated by hard <br>s.
+  const paragraph = container.querySelector("p");
+  expect(paragraph).not.toBeNull();
+  expect(paragraph?.querySelectorAll("br").length).toBe(2);
+  // All three labels survived.
+  expect(container.textContent).toContain("Yesterday");
+  expect(container.textContent).toContain("Today");
+  expect(container.textContent).toContain("Due soon");
+});
+
+test("remark-breaks leaves code-block newlines alone (no <br> inside <pre>)", () => {
+  // A regression guard for the global soft-break change: newlines INSIDE a
+  // fenced code block are literal content, not soft breaks, so they must never
+  // become <br> — the code's line structure has to survive verbatim.
+  const { container } = render(
+    <Markdown body={"```\nline1\nline2\n```"} onWikilink={() => {}} />,
+  );
+  const pre = container.querySelector("pre");
+  expect(pre).not.toBeNull();
+  expect(pre?.querySelectorAll("br").length).toBe(0);
+  expect(pre?.textContent).toContain("line1");
+  expect(pre?.textContent).toContain("line2");
+});

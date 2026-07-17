@@ -103,6 +103,47 @@ test("opens on today's note in the embedded panel", async () => {
   expect(screen.getByRole("heading", { name: /Wednesday,.*2026/ })).toBeDefined();
 });
 
+test("the Today button jumps back to today, and is disabled while already on it", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  // On today's day, the jump is a no-op — the button is disabled.
+  expect((screen.getByRole("button", { name: "Today" }) as HTMLButtonElement).disabled).toBe(true);
+
+  // Step to the next day (a note-less neighbour); now Today is live.
+  fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
+  await screen.findByText("No note for this day yet.");
+  const todayBtn = screen.getByRole("button", { name: "Today" }) as HTMLButtonElement;
+  expect(todayBtn.disabled).toBe(false);
+
+  // Clicking Today returns to today's note (the heading flips back from the
+  // neighbour's empty state — the load-bearing proof the jump landed).
+  fireEvent.click(todayBtn);
+  expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+  // Focus is handed to the picker toggle, not dropped to the body, since
+  // Today disabled itself on landing.
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pick a date" }));
+});
+
+test("Today is enabled on today's weekly view and switches back to the day", async () => {
+  installMock([]);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  // Switch to today's WEEKLY note — still today's date, but not the day view.
+  fireEvent.click(screen.getByRole("button", { name: "Week" }));
+  await screen.findByRole("heading", { name: "Week 29" });
+
+  // Today stays enabled here (mode !== "daily"); clicking it returns to the
+  // day view of today.
+  const todayBtn = screen.getByRole("button", { name: "Today" }) as HTMLButtonElement;
+  expect(todayBtn.disabled).toBe(false);
+  fireEvent.click(todayBtn);
+  expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+});
+
 test("the month grid is a hideable picker, collapsing once a day is chosen", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);
