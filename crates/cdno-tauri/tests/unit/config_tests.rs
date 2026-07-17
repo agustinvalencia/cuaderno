@@ -12,9 +12,10 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::vault::{ConfigSaveError, validate_config_str};
 use cdno_tauri::commands::config::{
-    config_remove_note_type, config_remove_schema_field, config_set_note_type,
-    config_set_schema_field, load_vault_and_ignore, parse_config_model_impl, read_config_impl,
-    read_config_model_impl, save_config_impl,
+    config_remove_note_type, config_remove_prompt_variable, config_remove_schema_field,
+    config_remove_variable, config_set_note_type, config_set_prompt_variable,
+    config_set_schema_field, config_set_variable, load_vault_and_ignore, parse_config_model_impl,
+    read_config_impl, read_config_model_impl, save_config_impl,
 };
 use cdno_tauri::error::CmdError;
 
@@ -529,6 +530,93 @@ fn config_remove_schema_field_returns_the_transformed_string() {
     ))
     .expect("remove field");
     assert!(!out.contains("fields.stage"));
+}
+
+// --- [variables] editor commands + projection (#376) ---
+
+#[test]
+fn read_config_model_projects_variables_sorted() {
+    // Static and prompted variables each project into a name-sorted list.
+    let raw = "\
+[variables]
+project_prefix = \"PROJ\"
+author = \"Anon\"
+
+[variables.prompt]
+topic = \"What topic?\"
+";
+    let vault = vault_from_config(raw);
+    let model = read_config_model_impl(&vault).expect("read_config_model_impl");
+
+    let statics: Vec<(&str, &str)> = model
+        .variables
+        .static_vars
+        .iter()
+        .map(|v| (v.name.as_str(), v.value.as_str()))
+        .collect();
+    // Sorted: `author` before `project_prefix`, not the config's write order.
+    assert_eq!(statics, [("author", "Anon"), ("project_prefix", "PROJ")]);
+
+    let prompts: Vec<(&str, &str)> = model
+        .variables
+        .prompt
+        .iter()
+        .map(|v| (v.name.as_str(), v.value.as_str()))
+        .collect();
+    assert_eq!(prompts, [("topic", "What topic?")]);
+}
+
+#[test]
+fn config_set_variable_returns_the_transformed_string() {
+    let out = block(config_set_variable(
+        String::new(),
+        "author".to_string(),
+        "Anon".to_string(),
+    ))
+    .expect("set variable");
+    assert!(out.contains("[variables]"));
+    assert!(out.contains("author = \"Anon\""));
+}
+
+#[test]
+fn config_set_variable_rejects_the_reserved_prompt_name() {
+    // `prompt` is the sub-table key; the command surfaces the refusal as a
+    // user-fixable Invalid, never an Internal.
+    let err = block(config_set_variable(
+        "[variables]\n".to_string(),
+        "prompt".to_string(),
+        "x".to_string(),
+    ))
+    .expect_err("`prompt` is reserved");
+    assert!(matches!(err, CmdError::Invalid(_)));
+}
+
+#[test]
+fn config_remove_variable_returns_the_transformed_string() {
+    let content = "[variables]\nauthor = \"Anon\"\n".to_string();
+    let out =
+        block(config_remove_variable(content, "author".to_string())).expect("remove variable");
+    assert!(!out.contains("author"));
+}
+
+#[test]
+fn config_set_prompt_variable_returns_the_transformed_string() {
+    let out = block(config_set_prompt_variable(
+        String::new(),
+        "topic".to_string(),
+        "What topic?".to_string(),
+    ))
+    .expect("set prompt variable");
+    assert!(out.contains("[variables.prompt]"));
+    assert!(out.contains("topic = \"What topic?\""));
+}
+
+#[test]
+fn config_remove_prompt_variable_returns_the_transformed_string() {
+    let content = "[variables.prompt]\ntopic = \"What topic?\"\n".to_string();
+    let out = block(config_remove_prompt_variable(content, "topic".to_string()))
+        .expect("remove prompt variable");
+    assert!(!out.contains("topic"));
 }
 
 #[test]

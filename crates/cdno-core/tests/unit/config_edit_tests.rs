@@ -6,7 +6,8 @@
 
 use cdno_core::config::{CustomNoteType, FieldSpec, FieldType};
 use cdno_core::config_edit::{
-    remove_note_type, remove_schema_field, set_note_type, set_schema_field,
+    remove_note_type, remove_prompt_variable, remove_schema_field, remove_variable, set_note_type,
+    set_prompt_variable, set_schema_field, set_variable,
 };
 use cdno_core::error::ConfigEditError;
 
@@ -464,15 +465,15 @@ folder = \"gamma\"
 
 #[test]
 fn a_variables_block_survives_a_note_type_edit() {
-    // The `[variables]` block (which the form never edits) must be preserved
-    // byte-for-byte across a note-type edit — it is Raw-only, so a form save
-    // must not disturb it.
+    // A `[variables]` block must be preserved byte-for-byte across an edit to a
+    // DIFFERENT table (a note type) — the variables edits (#376) touch only the
+    // `[variables]` tables, and a note-type edit must not disturb them.
     let with_vars = "\
 [variables]
-author = \"A. Writer\"
+author = \"Anon\"
 
 [variables.prompt]
-collaborators = \"Who worked on this?\"
+topic = \"What topic?\"
 
 [note_types.person]
 folder = \"people\"
@@ -481,6 +482,151 @@ folder = \"people\"
 
     assert!(out.contains("folder = \"folks\""));
     // Every variables line is intact.
-    assert!(out.contains("[variables]\nauthor = \"A. Writer\""));
-    assert!(out.contains("[variables.prompt]\ncollaborators = \"Who worked on this?\""));
+    assert!(out.contains("[variables]\nauthor = \"Anon\""));
+    assert!(out.contains("[variables.prompt]\ntopic = \"What topic?\""));
+}
+
+// --- [variables] editor surgical writers (#376) ---
+
+#[test]
+fn set_variable_adds_a_static_var_and_preserves_context() {
+    let existing = "\
+# hand-annotated
+[note_types.person]
+folder = \"people\"
+";
+    let out = set_variable(existing, "author", "Anon").expect("set static var");
+
+    assert!(out.contains("[variables]"));
+    assert!(out.contains("author = \"Anon\""));
+    // The surrounding comment and unrelated table survive.
+    assert!(out.contains("# hand-annotated"));
+    assert!(out.contains("[note_types.person]"));
+    // It re-parses as a real static variable.
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("parses");
+    assert_eq!(cfg.resolve_variable("author"), Some("Anon"));
+}
+
+#[test]
+fn set_variable_replaces_in_place_and_keeps_the_prompt_subtable() {
+    let existing = "\
+[variables]
+author = \"Old\"
+
+[variables.prompt]
+topic = \"What topic?\"
+";
+    let out = set_variable(existing, "author", "New").expect("replace static var");
+
+    assert!(out.contains("author = \"New\""));
+    assert!(!out.contains("\"Old\""), "the old value is gone: {out}");
+    // The prompt sub-table is untouched.
+    assert!(out.contains("[variables.prompt]\ntopic = \"What topic?\""));
+}
+
+#[test]
+fn set_variable_refuses_the_reserved_prompt_name() {
+    // `prompt` is the prompt sub-table key, not a static variable — writing a
+    // string there would drop every prompted variable, so the edit refuses.
+    let err = set_variable("[variables]\n", "prompt", "x")
+        .expect_err("`prompt` is not a static variable name");
+    assert!(matches!(
+        err,
+        cdno_core::error::ConfigEditError::NotATable(_)
+    ));
+}
+
+#[test]
+fn remove_variable_drops_only_that_var_and_never_the_prompt_subtable() {
+    let existing = "\
+[variables]
+author = \"Anon\"
+project_prefix = \"PROJ\"
+
+[variables.prompt]
+topic = \"What topic?\"
+";
+    let out = remove_variable(existing, "author").expect("remove static var");
+
+    assert!(!out.contains("author"), "removed var is gone: {out}");
+    assert!(
+        out.contains("project_prefix = \"PROJ\""),
+        "sibling survives: {out}"
+    );
+    // The prompt sub-table and its variable survive.
+    assert!(out.contains("topic = \"What topic?\""));
+
+    // Guard: removing "prompt" via the static path must NOT drop the sub-table.
+    let guarded = remove_variable(existing, "prompt").expect("no-op on the reserved name");
+    assert!(
+        guarded.contains("[variables.prompt]"),
+        "prompt sub-table survives: {guarded}"
+    );
+    assert!(guarded.contains("topic = \"What topic?\""));
+}
+
+#[test]
+fn set_prompt_variable_adds_under_the_prompt_subtable() {
+    let out = set_prompt_variable("", "topic", "What topic?").expect("set prompt var");
+
+    assert!(out.contains("[variables.prompt]"));
+    assert!(out.contains("topic = \"What topic?\""));
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("parses");
+    assert_eq!(cfg.prompt_for_variable("topic"), Some("What topic?"));
+    // A prompt-only block must NOT emit a bare, empty `[variables]` header
+    // above it — the implicit parent suppresses its own header.
+    assert!(!out.contains("[variables]\n[variables.prompt]"));
+}
+
+#[test]
+fn set_prompt_then_static_renders_both_blocks() {
+    // Adding a prompt var first (implicit `[variables]`) then a static var must
+    // promote `[variables]` to a real header carrying the static key, with the
+    // prompt sub-table intact — both re-parse.
+    let with_prompt = set_prompt_variable("", "topic", "What topic?").expect("prompt");
+    let out = set_variable(&with_prompt, "author", "Anon").expect("static");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("parses");
+    assert_eq!(cfg.resolve_variable("author"), Some("Anon"));
+    assert_eq!(cfg.prompt_for_variable("topic"), Some("What topic?"));
+}
+
+#[test]
+fn remove_prompt_variable_drops_only_that_prompt() {
+    let existing = "\
+[variables.prompt]
+topic = \"What topic?\"
+reviewer = \"Who reviewed it?\"
+";
+    let out = remove_prompt_variable(existing, "topic").expect("remove prompt var");
+
+    assert!(!out.contains("topic"), "removed prompt is gone: {out}");
+    assert!(
+        out.contains("reviewer = \"Who reviewed it?\""),
+        "sibling prompt survives: {out}"
+    );
+    // Idempotent: removing an absent prompt (or from a missing block) is fine.
+    assert_eq!(remove_prompt_variable("", "nope").expect("no-op"), "");
+}
+
+#[test]
+fn set_variable_round_trips_an_escaped_value_and_a_quoted_key() {
+    // A value with quotes/newline/backslash and a key that needs quoting must
+    // render as valid TOML and read back byte-identically — the round-trip the
+    // form relies on, pinned rather than left to `toml_edit`'s good behaviour.
+    let tricky = "he said \"hi\"\nand a \\ backslash";
+    let out = set_variable("", "a.b", tricky).expect("set tricky var");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+    // `a.b` is ONE static variable (a quoted key), not a nested `a` → `b` table.
+    assert_eq!(cfg.resolve_variable("a.b"), Some(tricky));
+}
+
+#[test]
+fn set_prompt_variable_round_trips_an_escaped_message() {
+    let msg = "What is the \"topic\"?\nBe specific.";
+    let out = set_prompt_variable("", "topic", msg).expect("set prompt var");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+    assert_eq!(cfg.prompt_for_variable("topic"), Some(msg));
 }

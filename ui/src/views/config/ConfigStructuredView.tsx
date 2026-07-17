@@ -22,11 +22,16 @@ import type { CustomNoteType } from "../../api/bindings/CustomNoteType";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
 import type { FieldType } from "../../api/bindings/FieldType";
 import type { NamedSchema } from "../../api/bindings/NamedSchema";
+import type { NamedValue } from "../../api/bindings/NamedValue";
 import {
   configRemoveNoteType,
+  configRemovePromptVariable,
   configRemoveSchemaField,
+  configRemoveVariable,
   configSetNoteType,
+  configSetPromptVariable,
   configSetSchemaField,
+  configSetVariable,
   errorMessage,
   parseConfigModel,
 } from "../../api/commands";
@@ -152,6 +157,7 @@ export default function ConfigStructuredView({ cfg }: { cfg: ConfigDraft }) {
       />
       <NoteTypesEditor model={model.data} applyEdit={applyEdit} />
       <SchemaFieldsEditor model={model.data} applyEdit={applyEdit} />
+      <VariablesEditor model={model.data} applyEdit={applyEdit} />
     </div>
   );
 }
@@ -690,6 +696,191 @@ function AddSchemaFieldForm({ applyEdit }: { applyEdit: ApplyEdit }) {
         className="mt-3 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
       >
         Add field
+      </button>
+    </form>
+  );
+}
+
+// --- Template variables (#376) ---
+
+/** The `[variables]` block: static variables (available in every template)
+ * and prompted variables (asked for interactively). Both are simple
+ * name→string maps, so one `VariableList` renders each. */
+function VariablesEditor({ model, applyEdit }: { model: ConfigModel; applyEdit: ApplyEdit }) {
+  return (
+    <section aria-labelledby="config-variables-heading">
+      <h3 id="config-variables-heading" className="text-sm font-semibold text-ink">
+        Template variables
+      </h3>
+      <VariableList
+        kind="static"
+        heading="Static"
+        describe="Available in every template."
+        valueLabel="Value"
+        vars={model.variables.static_vars}
+        // `prompt` is the sub-table key, never a static variable name.
+        reserved={STATIC_RESERVED_NAMES}
+        onSet={(name, value) => applyEdit((content) => configSetVariable(content, name, value))}
+        onRemove={(name) => applyEdit((content) => configRemoveVariable(content, name))}
+      />
+      <VariableList
+        kind="prompted"
+        heading="Prompted"
+        describe="Asked for when a template uses them; the value is the prompt shown."
+        valueLabel="Prompt"
+        vars={model.variables.prompt}
+        reserved={EMPTY_RESERVED_NAMES}
+        onSet={(name, message) =>
+          applyEdit((content) => configSetPromptVariable(content, name, message))
+        }
+        onRemove={(name) => applyEdit((content) => configRemovePromptVariable(content, name))}
+      />
+    </section>
+  );
+}
+
+const STATIC_RESERVED_NAMES = new Set(["prompt"]);
+const EMPTY_RESERVED_NAMES: Set<string> = new Set();
+
+/** One name→string variable map, rendered as editable rows plus an add form.
+ * The value commits on blur/Enter (via `CommitText`), so a per-keystroke
+ * surgical write never fires. */
+function VariableList({
+  kind,
+  heading,
+  describe,
+  valueLabel,
+  vars,
+  reserved,
+  onSet,
+  onRemove,
+}: {
+  kind: "static" | "prompted";
+  heading: string;
+  describe: string;
+  valueLabel: string;
+  vars: NamedValue[];
+  reserved: Set<string>;
+  onSet: (name: string, value: string) => void;
+  onRemove: (name: string) => void;
+}) {
+  return (
+    <div className="mt-3">
+      <h4 className="text-xs font-medium text-ink-muted">
+        {heading} <span className="font-normal">— {describe}</span>
+      </h4>
+      {vars.length === 0 ? (
+        <p className="mt-1 text-sm text-ink-muted">None.</p>
+      ) : (
+        <ul className="mt-1 flex flex-col gap-2">
+          {vars.map((v) => (
+            <li key={v.name} className="flex items-end gap-2">
+              <div className="flex-1">
+                <CommitText
+                  label={v.name}
+                  ariaLabel={`${valueLabel} for ${v.name}`}
+                  value={v.value}
+                  onCommit={(value) => onSet(v.name, value)}
+                />
+              </div>
+              <button
+                type="button"
+                // Scope the name by kind: a variable of the same name can exist
+                // in both the static and prompted lists, so a bare
+                // `Remove ${name}` would be an ambiguous accessible name.
+                aria-label={`Remove ${kind} variable ${v.name}`}
+                onClick={() => onRemove(v.name)}
+                className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:bg-bg-sunken hover:text-ink"
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <AddVariableForm
+        kind={kind}
+        valueLabel={valueLabel}
+        existing={vars.map((v) => v.name)}
+        reserved={reserved}
+        onAdd={onSet}
+      />
+    </div>
+  );
+}
+
+function AddVariableForm({
+  kind,
+  valueLabel,
+  existing,
+  reserved,
+  onAdd,
+}: {
+  kind: "static" | "prompted";
+  valueLabel: string;
+  existing: string[];
+  reserved: Set<string>;
+  onAdd: (name: string, value: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+
+  const trimmedName = name.trim();
+  const error =
+    trimmedName === ""
+      ? null
+      : reserved.has(trimmedName)
+        ? `"${trimmedName}" is a reserved name.`
+        : existing.includes(trimmedName)
+          ? `"${trimmedName}" already exists.`
+          : null;
+  const canAdd = trimmedName !== "" && error === null;
+
+  function add() {
+    if (!canAdd) return;
+    onAdd(trimmedName, value);
+    setName("");
+    setValue("");
+  }
+
+  return (
+    <form
+      aria-label={`Add a ${kind} variable`}
+      className="mt-2 rounded-lg border border-dashed border-line p-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add();
+      }}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-ink-muted">{valueLabel}</span>
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            className="rounded border border-line bg-bg-base px-2 py-1 text-ink"
+          />
+        </label>
+      </div>
+      {error !== null && (
+        <p role="status" className="mt-2 text-sm text-attention">
+          {error}
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={!canAdd}
+        className="mt-3 rounded border border-line px-3 py-1 text-xs text-ink hover:bg-bg-sunken disabled:opacity-50"
+      >
+        Add variable
       </button>
     </form>
   );

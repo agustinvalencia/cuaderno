@@ -59,17 +59,17 @@ pub async fn read_config(state: tauri::State<'_, AppState>) -> Result<ConfigDocu
 }
 
 /// A serialisable projection of the parsed config for the structured
-/// Config view (#365, PR5a) — the vault meta, the `[note_types.*]`
-/// table, and the `[schemas.*]` table, each named and sorted. Distinct
-/// from [`ConfigDocument`], which carries the raw file text for the raw
-/// editor: this is the typed, form-facing shape the read-only structured
-/// panel renders.
+/// Config view (#365, PR5a) — the vault meta, the `[note_types.*]` table,
+/// the `[schemas.*]` table, and the `[variables]` block (#376), each named
+/// and sorted. Distinct from [`ConfigDocument`], which carries the raw file
+/// text for the raw editor: this is the typed, form-facing shape the
+/// structured panel renders.
 ///
 /// A dedicated view-model rather than serialising `VaultConfig` directly:
 /// `VaultConfig` isn't `Serialize`/`TS` (its `[variables]` block uses
-/// `#[serde(flatten)]`, which ts-rs can't follow), and PR5a renders only
-/// the meta/note-types/schemas slice — variables and `ignore` stay out of
-/// the form for now.
+/// `#[serde(flatten)]`, which ts-rs can't follow), so the projection lifts
+/// the flattened variables into named lists ([`VariablesModel`]). Only the
+/// top-level `ignore` globs stay out of the form for now.
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
@@ -83,6 +83,34 @@ pub struct ConfigModel {
     /// Every `[schemas.<name>]`, sorted by `name` — same stable-order
     /// rationale as `note_types`.
     pub schemas: Vec<NamedSchema>,
+    /// The `[variables]` block — static and prompted template variables,
+    /// each lifted into a sorted, named list (#376).
+    pub variables: VariablesModel,
+}
+
+/// One `[variables]` (static) or `[variables.prompt]` (prompted) entry: the
+/// map key lifted alongside its value. Same no-flatten shape as
+/// [`NamedNoteType`] — the `[variables]` block uses `#[serde(flatten)]`, which
+/// ts-rs can't follow, so the form projects it into named lists instead (#376).
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NamedValue {
+    pub name: String,
+    pub value: String,
+}
+
+/// The `[variables]` block projected for the form (#376): static template
+/// variables (available in every template) and prompted variables (resolved
+/// interactively when a template uses them), each a sorted, named list.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VariablesModel {
+    /// `[variables]` direct keys — `<name> = "<value>"`.
+    pub static_vars: Vec<NamedValue>,
+    /// `[variables.prompt]` keys — `<name> = "<prompt message>"`.
+    pub prompt: Vec<NamedValue>,
 }
 
 /// One `[note_types.<name>]` entry: the map key lifted alongside its
@@ -147,10 +175,34 @@ fn project_config_model(config: &VaultConfig) -> ConfigModel {
         .collect();
     schemas.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let variables = project_variables(config);
+
     ConfigModel {
         vault: config.vault.clone(),
         note_types,
         schemas,
+        variables,
+    }
+}
+
+/// Lift the `[variables]` block into the form's [`VariablesModel`]: the static
+/// and prompted maps each become a `name`-sorted `Vec<NamedValue>` (a `HashMap`
+/// iterates in an unspecified order, so we sort for a stable render and tests).
+fn project_variables(config: &VaultConfig) -> VariablesModel {
+    let sorted = |map: &std::collections::HashMap<String, String>| {
+        let mut out: Vec<NamedValue> = map
+            .iter()
+            .map(|(name, value)| NamedValue {
+                name: name.clone(),
+                value: value.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    };
+    VariablesModel {
+        static_vars: sorted(&config.variables.static_vars),
+        prompt: sorted(&config.variables.prompt),
     }
 }
 
@@ -249,6 +301,46 @@ pub async fn config_remove_schema_field(
     Ok(config_edit::remove_schema_field(
         &content, &note_type, &field,
     )?)
+}
+
+/// Insert or replace a static template variable — `[variables]`'s
+/// `<name> = "<value>"` — in the draft, returning the new config string.
+/// Pure — no write; a later `save_config` persists (#376).
+#[tauri::command]
+pub async fn config_set_variable(
+    content: String,
+    name: String,
+    value: String,
+) -> Result<String, CmdError> {
+    Ok(config_edit::set_variable(&content, &name, &value)?)
+}
+
+/// Remove a static template variable from `[variables]` in the draft.
+/// Idempotent. Pure — no write.
+#[tauri::command]
+pub async fn config_remove_variable(content: String, name: String) -> Result<String, CmdError> {
+    Ok(config_edit::remove_variable(&content, &name)?)
+}
+
+/// Insert or replace a prompted variable — `[variables.prompt]`'s
+/// `<name> = "<message>"` — in the draft. Pure — no write (#376).
+#[tauri::command]
+pub async fn config_set_prompt_variable(
+    content: String,
+    name: String,
+    message: String,
+) -> Result<String, CmdError> {
+    Ok(config_edit::set_prompt_variable(&content, &name, &message)?)
+}
+
+/// Remove a prompted variable from `[variables.prompt]` in the draft.
+/// Idempotent. Pure — no write.
+#[tauri::command]
+pub async fn config_remove_prompt_variable(
+    content: String,
+    name: String,
+) -> Result<String, CmdError> {
+    Ok(config_edit::remove_prompt_variable(&content, &name)?)
 }
 
 /// The validate → compare-and-swap → write core of the config save

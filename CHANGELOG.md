@@ -8,6 +8,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The Config form now edits template variables** (desktop UI) — a new **Template variables**
+  section edits the `[variables]` block without dropping to Raw: **Static** variables (available in
+  every template) and **Prompted** variables (`[variables.prompt]`, asked for interactively when a
+  template uses them, the value being the prompt shown). Each is a name→value row with add, inline
+  edit, and remove; `prompt` is blocked as a static name (it is the prompt sub-table). Edits are
+  surgical — comments, key order, and everything else in the file survive. (#424)
 - **The Config form now edits a schema field's setter behaviour** (desktop UI) — each schema field's
   row gains two toggles: **Settable** (whether `set_frontmatter` may change the field) and **Log
   changes to daily** (auto-log each change to the daily note). `Log changes to daily` is enabled only
