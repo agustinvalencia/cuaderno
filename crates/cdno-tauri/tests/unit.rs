@@ -6,6 +6,7 @@ mod unit {
     mod deeplink_tests;
     mod error_tests;
     mod events_tests;
+    mod external_url_tests;
     mod ipc_tests;
     mod journal_tests;
     mod notes_asset_tests;

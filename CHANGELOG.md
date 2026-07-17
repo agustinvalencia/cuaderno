@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **External links in notes now open in the browser** (desktop UI) — a note's `http(s)` links (and
+  `mailto:`) rendered as inert, muted dead text before, since the webview can't navigate out. They
+  now render as real links and open in the default browser (or mail client) on click, handed off
+  through a scheme-validated backend opener (`http`/`https`/`mailto` only, so a note can't launch a
+  `file://`/`javascript:`/custom-scheme URL). Wikilinks are unaffected; a link with no openable
+  scheme (a relative path, a bare fragment) still shows as inert text. (#427)
+
 ## [0.29.0] - 2026-07-17
 
 ### Added

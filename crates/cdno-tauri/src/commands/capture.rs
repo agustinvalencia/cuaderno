@@ -2,7 +2,8 @@
 //! surface (M3). `capture_quick` and `log_quick` are the two verbs the
 //! floating capture window fires; `list_inbox` / `discard_inbox_item`
 //! back the inbox drawer; `open_in_editor` hands a note off to the
-//! user's default editor.
+//! user's default editor; `open_external_url` opens a note's external
+//! link in the default browser.
 //!
 //! The write commands follow the module's established pattern (see
 //! `actions.rs`): run the domain call on the blocking pool, then
@@ -137,5 +138,43 @@ pub async fn open_in_editor<R: tauri::Runtime>(
             tracing::error!(error = %e, "failed to open note in the default editor");
             CmdError::Internal("could not open the note in an editor".to_owned())
         })?;
+    Ok(())
+}
+
+/// Whether `url` is a scheme the app will hand to the OS opener from a note's
+/// external link: `http`/`https`/`mailto` only. Everything else — `file:`,
+/// `javascript:`, a custom app scheme, a relative path, a bare fragment — is
+/// refused, so a note can never launch an arbitrary URL through the opener.
+/// Pure, so the security-relevant allowlist is unit-tested directly.
+#[doc(hidden)]
+pub fn is_openable_external_url(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+}
+
+/// Open an external link from note content — an `http(s)` page in the default
+/// browser, a `mailto:` in the mail client — via the OS opener. Read-only
+/// intent: it hands the URL to the opener and never touches the vault. Called
+/// from Rust, so (like [`open_in_editor`]) the opener plugin's JS ACL never
+/// applies and no `opener:*` capability is required.
+///
+/// The scheme is validated by [`is_openable_external_url`] first; a URL the
+/// allowlist rejects returns [`CmdError::Invalid`] and is never handed to the
+/// opener, so a note can't smuggle a `file://`/`javascript:`/custom-scheme URL
+/// into a launch.
+#[tauri::command]
+pub async fn open_external_url<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    url: String,
+) -> Result<(), CmdError> {
+    if !is_openable_external_url(&url) {
+        return Err(CmdError::Invalid(
+            "only http, https, and mailto links can be opened".to_owned(),
+        ));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| {
+        tracing::error!(error = %e, "failed to open external URL");
+        CmdError::Internal("could not open the link".to_owned())
+    })?;
     Ok(())
 }

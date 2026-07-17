@@ -405,6 +405,7 @@ pub fn run() {
             commands::capture::list_inbox,
             commands::capture::discard_inbox_item,
             commands::capture::open_in_editor,
+            commands::capture::open_external_url,
             commands::stewardships::list_stewardships,
             commands::stewardships::get_stewardship_detail,
             commands::stewardships::get_tracking_template_fields,
