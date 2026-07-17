@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-17
+
 ### Added
 
 - **A "Today" button in the calendar** (desktop UI) — sits next to "Pick a date" and jumps the panel
