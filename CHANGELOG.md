@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.29.1] - 2026-07-18
+
 ### Fixed
 
 - **External links in notes now open in the browser** (desktop UI) — a note's `http(s)` links (and
