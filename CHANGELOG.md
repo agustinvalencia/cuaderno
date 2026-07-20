@@ -6,6 +6,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The Weekly Wins step and the Inbox drawer now use the app's rich markdown surfaces** (desktop
+  UI) — the Wins composer is the CodeMirror markdown editor (syntax highlighting, line wrapping, the
+  shared theme) rather than a plain textarea, and inbox captures render as formatted markdown
+  (headings, lists, line breaks, and clickable wikilinks that open their target) instead of an inert
+  wall of raw text, clipped to a preview height so a long capture doesn't dominate the drawer.
+  (#431)
+
 ## [0.29.1] - 2026-07-18
 
 ### Fixed

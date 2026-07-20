@@ -6,6 +6,7 @@
 import { useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
+import MarkdownEditor from "../../components/markdown/MarkdownEditor";
 import { errorMessage, saveWeeklySection } from "../../api/commands";
 import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
@@ -38,8 +39,10 @@ export default function WinsStep({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const draft = useRef<HTMLTextAreaElement>(null);
   const { seed, empty } = composeWinsSeed(bundle);
+  // The editor is uncontrolled (seeded once); track its latest value in a ref
+  // so Save reads it without re-rendering the editor on every keystroke.
+  const draft = useRef(seed);
 
   const save = useMutation({
     mutationFn: (content: string) => saveWeeklySection("wins", content, bundle.week_of),
@@ -94,18 +97,29 @@ export default function WinsStep({
         className="mt-3"
         onSubmit={(event) => {
           event.preventDefault();
-          const value = draft.current?.value.trim();
+          const value = draft.current.trim();
           if (value) save.mutate(value);
         }}
       >
-        <textarea
-          ref={draft}
-          defaultValue={seed}
-          rows={8}
-          aria-label="This week's wins"
-          placeholder={empty ? "No completions parsed — what felt like progress anyway?" : undefined}
-          className="w-full rounded border border-line bg-bg-base p-2 text-sm text-ink"
-        />
+        {/* An empty week has no seed to show in the editor, so the calm
+            prompt is a visible hint — reachable by sighted and screen-reader
+            users alike (a CodeMirror placeholder is aria-hidden, and
+            placeholder-as-instruction is a discouraged a11y pattern). */}
+        {empty && (
+          <p className="mb-1 text-sm text-ink-muted">
+            No completions parsed — what felt like progress anyway?
+          </p>
+        )}
+        <div className="h-64">
+          <MarkdownEditor
+            initialDoc={seed}
+            ariaLabel="This week's wins"
+            autoFocus={false}
+            onChange={(value) => {
+              draft.current = value;
+            }}
+          />
+        </div>
         <div className="mt-2">
           <button
             type="submit"

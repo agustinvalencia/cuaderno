@@ -64,10 +64,17 @@ const theme = EditorView.theme({
 export default function MarkdownEditor({
   initialDoc,
   onChange,
+  ariaLabel,
+  autoFocus = true,
 }: {
   /** Seed content — read once at mount; the editor is uncontrolled after. */
   initialDoc: string;
   onChange: (value: string) => void;
+  /** Accessible name for the editing surface (goes on the CM content). */
+  ariaLabel?: string;
+  /** Focus the editor on mount. Right for a dedicated edit surface (the note
+   * reader); off where the editor is one field among others (a review step). */
+  autoFocus?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   // Keep onChange fresh without recreating the editor (which would lose
@@ -78,27 +85,27 @@ export default function MarkdownEditor({
   useEffect(() => {
     const parent = host.current;
     if (!parent) return;
+    const extensions = [
+      lineNumbers(),
+      highlightActiveLine(),
+      history(),
+      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+      markdown(),
+      syntaxHighlighting(defaultHighlightStyle),
+      EditorView.lineWrapping,
+      theme,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+      }),
+    ];
+    if (ariaLabel) {
+      extensions.push(EditorView.contentAttributes.of({ "aria-label": ariaLabel }));
+    }
     const view = new EditorView({
       parent,
-      state: EditorState.create({
-        doc: initialDoc,
-        extensions: [
-          lineNumbers(),
-          highlightActiveLine(),
-          history(),
-          keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-          markdown(),
-          syntaxHighlighting(defaultHighlightStyle),
-          EditorView.lineWrapping,
-          theme,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged)
-              onChangeRef.current(update.state.doc.toString());
-          }),
-        ],
-      }),
+      state: EditorState.create({ doc: initialDoc, extensions }),
     });
-    view.focus();
+    if (autoFocus) view.focus();
     return () => view.destroy();
     // Seed once — later prop changes shouldn't blow away in-progress edits.
     // eslint-disable-next-line react-hooks/exhaustive-deps

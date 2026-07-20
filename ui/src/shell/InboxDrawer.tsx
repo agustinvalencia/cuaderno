@@ -6,14 +6,27 @@
 // open, Escape closes, and focus returns to the toggle button.
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import type { InboxItem } from "../api/bindings/InboxItem";
-import { discardInboxItem, errorMessage, listInbox, openInEditor } from "../api/commands";
+import {
+  discardInboxItem,
+  errorMessage,
+  listInbox,
+  openInEditor,
+  resolveWikilink,
+} from "../api/commands";
+import Markdown from "../components/markdown/Markdown";
 import { useReader } from "./reader";
 import { useToast } from "./Toasts";
 
 /** The `inbox/<slug>.md` note path for open-in-editor. */
 function notePath(slug: string): string {
   return `inbox/${slug}.md`;
+}
+
+/** The last path segment of a wikilink target (`projects/foo` → `foo`). */
+function lastSegment(target: string): string {
+  return target.split("/").pop()?.replace(/\.md$/i, "") ?? target;
 }
 
 /** The leading `YYYY-MM-DD` of an inbox slug, formatted friendly, or
@@ -38,7 +51,27 @@ export default function InboxDrawer({
   const client = useQueryClient();
   const { toast } = useToast();
   const { openReader } = useReader();
+  const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // A wikilink inside a capture: resolve it and open — a project to its detail
+  // page, everything else in the reader — and close the drawer. An
+  // unresolvable target is quietly ignored (mirrors the calendar panel).
+  async function openTarget(target: string) {
+    let resolved;
+    try {
+      resolved = await resolveWikilink(target);
+    } catch {
+      return;
+    }
+    if (!resolved) return;
+    onClose();
+    if (resolved.note_type === "project") {
+      navigate(`/projects/${lastSegment(resolved.path)}`);
+    } else {
+      openReader(resolved.path);
+    }
+  }
 
   const {
     data: items = [],
@@ -118,7 +151,17 @@ export default function InboxDrawer({
           <ul className="flex flex-col gap-2">
             {items.map((item) => (
               <li key={item.slug} className="rounded border border-line bg-bg-base p-3">
-                <p className="text-sm text-ink">{item.text || "(empty capture)"}</p>
+                {item.text ? (
+                  // Render the capture as markdown — headings, lists, line
+                  // breaks, wikilinks — instead of a raw wall of text. Clipped
+                  // to a preview height so a long capture doesn't dominate the
+                  // narrow drawer; the full note is one "open" away.
+                  <div className="max-h-56 overflow-hidden">
+                    <Markdown body={item.text} onWikilink={openTarget} />
+                  </div>
+                ) : (
+                  <p className="text-sm text-ink-muted">(empty capture)</p>
+                )}
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-xs text-ink-faint">{capturedDate(item.slug)}</span>
                   <div className="flex gap-1">

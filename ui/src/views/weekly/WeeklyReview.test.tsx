@@ -4,7 +4,7 @@
 // string, the focus save targeting NEXT week, the muted stuck-project
 // line, the read-only lookahead, and the two-tier stop-anywhere
 // reassurance.
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -13,6 +13,27 @@ import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
 import WeeklyReview from "./WeeklyReview";
+
+// CodeMirror needs layout APIs jsdom lacks; stub the Wins editor with a
+// textarea that mirrors its seed-once + onChange contract and forwards the
+// accessible label, so the seeded-composer assertions still resolve it.
+vi.mock("../../components/markdown/MarkdownEditor", () => ({
+  default: ({
+    initialDoc,
+    ariaLabel,
+    onChange,
+  }: {
+    initialDoc: string;
+    ariaLabel?: string;
+    onChange: (value: string) => void;
+  }) => (
+    <textarea
+      aria-label={ariaLabel}
+      defaultValue={initialDoc}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  ),
+}));
 
 const FIXTURE: WeeklyBundle = {
   week_of: "2026-07-06",
@@ -119,6 +140,22 @@ test("saving wins invokes save_weekly_section with section 'wins'", async () => 
   await screen.findByText("Wins saved.");
   const save = calls.find((c) => c.cmd === "save_weekly_section");
   expect(save?.args).toMatchObject({ section: "wins" });
+});
+
+test("editing the wins draft and saving sends the edited content", async () => {
+  // Pins the editor→onChange→value-ref→save path end to end: a broken
+  // `onChange={(value) => (draft.current = value)}` wiring would otherwise
+  // pass every other test (Save reads `draft.current`, seeded from the note).
+  const calls = mockWithCapture();
+  renderView();
+
+  const wins = (await screen.findByLabelText("This week's wins")) as HTMLTextAreaElement;
+  fireEvent.change(wins, { target: { value: "- Shipped the reader" } });
+  screen.getByRole("button", { name: "Save wins" }).click();
+
+  await screen.findByText("Wins saved.");
+  const save = calls.find((c) => c.cmd === "save_weekly_section");
+  expect(save?.args).toMatchObject({ section: "wins", content: "- Shipped the reader" });
 });
 
 test("a stuck project shows the muted staleness line", async () => {
