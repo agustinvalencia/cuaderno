@@ -2,7 +2,7 @@
 // discard_inbox_item with the item's slug on discard.
 import { createRef } from "react";
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -43,6 +43,33 @@ test("renders inbox items from the fixture", async () => {
 
   expect(await screen.findByText("buy milk")).toBeDefined();
   expect(screen.getByText("call the dentist")).toBeDefined();
+});
+
+test("renders a capture's markdown (heading, bold, wikilink) rather than raw text", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  const md: InboxItem[] = [
+    { slug: "2026-07-08-draft", text: "## Draft\nPing **Sam** about [[weekly-sync]]" },
+  ];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "list_inbox") return md;
+    if (cmd === "resolve_wikilink") {
+      return { path: "commitments/weekly-sync.md", note_type: "commitment" };
+    }
+    return undefined;
+  });
+  const { container } = renderDrawer();
+
+  // The markdown renders as elements — the raw `##`/`**` never leak as text.
+  expect(await screen.findByRole("heading", { name: "Draft" })).toBeDefined();
+  expect(container.querySelector("strong")?.textContent).toBe("Sam");
+  // The wikilink is a real anchor whose click resolves via resolve_wikilink.
+  const link = container.querySelector("a[data-wikilink]");
+  expect(link).not.toBeNull();
+  fireEvent.click(link!);
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "resolve_wikilink")).toBeDefined();
+  });
 });
 
 test("empty inbox renders the calm zero state", async () => {
