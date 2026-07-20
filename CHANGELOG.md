@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-20
+
 ### Added
 
 - **Add a log entry to today by hand from the app** (desktop UI) — a one-line composer on the Today
