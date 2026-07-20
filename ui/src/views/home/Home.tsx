@@ -4,6 +4,7 @@ import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import { getOrientation } from "../../api/commands";
 import { contextDotClass } from "../../lib/contexts";
 import { shortDate } from "../../lib/dates";
+import { QuickLog } from "../../components/ui/quick-log";
 import { SectionHeading } from "../../components/ui/section-heading";
 import ProjectCard from "./ProjectCard";
 
@@ -94,6 +95,13 @@ export default function Home() {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Jot a log line into today's `## Logs` by hand — the same append-only
+          log the capture window and CLI write to. Front and centre on the
+          daily landing so it's always a keystroke away. */}
+      <div className="mt-4">
+        <QuickLog date={data.today} />
       </div>
 
       {data.commitments.length > 0 && (

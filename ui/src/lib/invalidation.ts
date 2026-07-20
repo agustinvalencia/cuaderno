@@ -84,9 +84,12 @@ export function invalidateAreas(client: QueryClient, areas: VaultArea[]): void {
   }
 }
 
-/** Everything date-dependent, for clock:day-changed. */
+/** Everything date-dependent, for clock:day-changed. `get_today` leads so a
+ * view that caches "what day is it" (the calendar, Home) re-reads it when the
+ * day rolls over — otherwise a surface left open across midnight keeps
+ * yesterday's date (e.g. the quick-log composer's today-only gate). */
 export function invalidateDateDependent(client: QueryClient): void {
-  for (const prefix of ["get_orientation", "get_commitments", "get_weekly_bundle"]) {
+  for (const prefix of ["get_today", "get_orientation", "get_commitments", "get_weekly_bundle"]) {
     void client.invalidateQueries({ queryKey: [prefix] });
   }
 }

@@ -23,6 +23,7 @@ import {
   resolveWikilink,
 } from "../../api/commands";
 import { useReader } from "../../shell/reader";
+import { QuickLog } from "../../components/ui/quick-log";
 import MonthGrid from "./MonthGrid";
 
 /** Which note the embedded panel is showing for the selected day. */
@@ -291,6 +292,7 @@ function CalendarBody({ today }: { today: string }) {
           monthly={monthly.data}
           monthlyPending={monthly.isPending && monthly.fetchStatus !== "idle"}
           selectedDate={selectedDate}
+          today={today}
           onGoToDay={goToDay}
           onWikilink={openTarget}
         />
@@ -311,6 +313,7 @@ function Panel({
   monthly,
   monthlyPending,
   selectedDate,
+  today,
   onGoToDay,
   onWikilink,
 }: {
@@ -323,6 +326,7 @@ function Panel({
   monthly: MonthlyView | undefined;
   monthlyPending: boolean;
   selectedDate: string;
+  today: string;
   onGoToDay: (iso: string) => void;
   onWikilink: (target: string) => void;
 }) {
@@ -432,6 +436,14 @@ function Panel({
       </nav>
 
       <div className="px-4 py-3">
+        {/* Add a log to today's `## Logs` inline — only for today's daily
+            note, since `log_quick` always targets today. On submit the daily
+            refetches and the entry appears below as a log card. */}
+        {mode === "daily" && selectedDate === today && (
+          <div className="mb-3">
+            <QuickLog date={today} />
+          </div>
+        )}
         {active.pending ||
         (!active.view && mode === "daily" && dailyPending) ? (
           <p className="text-sm text-ink-muted">Reading…</p>

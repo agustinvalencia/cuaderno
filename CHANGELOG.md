@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Add a log entry to today by hand from the app** (desktop UI) — a one-line composer on the Today
+  landing and at the top of the calendar's daily panel (shown for today) appends to today's `## Logs`,
+  the same append-only log the capture window and CLI write to. In the calendar the new entry appears
+  immediately as a log card. (#433)
+
 ## [0.29.2] - 2026-07-20
 
 ### Changed

@@ -2,11 +2,12 @@
 // note, a note-less day/week/month shows the calm empty state, and the
 // quick-nav fires the right backend read with the backend-stamped date.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { ReaderProvider } from "../../shell/reader";
+import { ToastProvider } from "../../shell/Toasts";
 import Calendar from "./Calendar";
 
 // today = 15 Jul 2026 (a Wednesday). Its backend-stamped neighbours:
@@ -79,9 +80,11 @@ function renderView() {
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <ReaderProvider>
-          <Calendar />
-        </ReaderProvider>
+        <ToastProvider>
+          <ReaderProvider>
+            <Calendar />
+          </ReaderProvider>
+        </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -142,6 +145,60 @@ test("Today is enabled on today's weekly view and switches back to the day", asy
   expect(todayBtn.disabled).toBe(false);
   fireEvent.click(todayBtn);
   expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+});
+
+test("today's daily panel has an add-log input that appends via log_quick", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  const input = screen.getByLabelText("Log entry");
+  fireEvent.change(input, { target: { value: "shipped v0.29.2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add log" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "log_quick");
+    expect(call?.args).toMatchObject({ text: "shipped v0.29.2" });
+  });
+});
+
+test("the add-log input is hidden off-today even when that day has a note", async () => {
+  // The neighbour (16th) HAS a note, so this proves the composer is gated on
+  // `today` — not merely on note-presence (an empty day would hide it anyway).
+  mockIPC((cmd, args) => {
+    if (cmd === "get_today") return "2026-07-15";
+    if (cmd === "list_daily_dates") return ["2026-07-15", "2026-07-16"];
+    if (cmd === "read_daily") {
+      const date = (args as { date: string }).date;
+      const day: Record<string, { title: string; next: string; prev: string }> = {
+        "2026-07-15": { title: "Wednesday", next: "2026-07-16", prev: "2026-07-14" },
+        "2026-07-16": { title: "Thursday", next: "2026-07-17", prev: "2026-07-15" },
+      };
+      const d = day[date] ?? { title: "Day", next: date, prev: date };
+      return {
+        date,
+        exists: true,
+        markdown: `# ${d.title}\n\nContent.`,
+        path: `journal/2026/daily/${date}.md`,
+        prev_date: d.prev,
+        next_date: d.next,
+        week_of: "2026-07-13",
+        month: "2026-07",
+      };
+    }
+    return undefined;
+  });
+  renderView();
+
+  // Today (15th): the composer is present.
+  await screen.findByRole("heading", { name: "Wednesday" });
+  expect(screen.getByLabelText("Log entry")).toBeDefined();
+
+  // Step to the 16th — its note renders, but the composer is gone.
+  fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
+  await screen.findByRole("heading", { name: "Thursday" });
+  expect(screen.queryByLabelText("Log entry")).toBeNull();
 });
 
 test("the month grid is a hideable picker, collapsing once a day is chosen", async () => {
