@@ -2,11 +2,12 @@
 // note, a note-less day/week/month shows the calm empty state, and the
 // quick-nav fires the right backend read with the backend-stamped date.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { ReaderProvider } from "../../shell/reader";
+import { ToastProvider } from "../../shell/Toasts";
 import Calendar from "./Calendar";
 
 // today = 15 Jul 2026 (a Wednesday). Its backend-stamped neighbours:
@@ -79,9 +80,11 @@ function renderView() {
   return render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <ReaderProvider>
-          <Calendar />
-        </ReaderProvider>
+        <ToastProvider>
+          <ReaderProvider>
+            <Calendar />
+          </ReaderProvider>
+        </ToastProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -142,6 +145,36 @@ test("Today is enabled on today's weekly view and switches back to the day", asy
   expect(todayBtn.disabled).toBe(false);
   fireEvent.click(todayBtn);
   expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+});
+
+test("today's daily panel has an add-log input that appends via log_quick", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderView();
+
+  await screen.findByRole("heading", { name: "Wednesday" });
+  const input = screen.getByLabelText("Log entry");
+  fireEvent.change(input, { target: { value: "shipped v0.29.2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add log" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "log_quick");
+    expect(call?.args).toMatchObject({ text: "shipped v0.29.2" });
+  });
+});
+
+test("the add-log input is hidden when the selected day isn't today", async () => {
+  installMock([]);
+  renderView();
+
+  // Today's panel shows the input...
+  await screen.findByRole("heading", { name: "Wednesday" });
+  expect(screen.getByLabelText("Log entry")).toBeDefined();
+
+  // ...stepping to a neighbour day (log_quick can't target it) removes it.
+  fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
+  await screen.findByText("No note for this day yet.");
+  expect(screen.queryByLabelText("Log entry")).toBeNull();
 });
 
 test("the month grid is a hideable picker, collapsing once a day is chosen", async () => {

@@ -3,7 +3,7 @@
 // before committing to the stack) — and for Home's three render
 // states against a fixture shaped like the ts-rs bindings.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -82,6 +82,25 @@ test("renders commitments, project cards, and the lapsed line", async () => {
   expect(screen.getByText("submit-report")).toBeDefined();
   expect(screen.getByText(/Draft methods/)).toBeDefined();
   expect(screen.getByText(/quietly lapsed/)).toBeDefined();
+});
+
+test("the quick-log input appends to today's log via log_quick", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_orientation") return FIXTURE;
+    return undefined; // log_quick resolves to unit
+  });
+  renderHome();
+
+  const input = await screen.findByLabelText("Log entry");
+  fireEvent.change(input, { target: { value: "paired on the parser" } });
+  fireEvent.click(screen.getByRole("button", { name: "Add log" }));
+
+  await waitFor(() => {
+    const call = calls.find((c) => c.cmd === "log_quick");
+    expect(call?.args).toMatchObject({ text: "paired on the parser" });
+  });
 });
 
 test("backend failure renders the calm error state", async () => {
