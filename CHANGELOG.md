@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.29.2] - 2026-07-20
+
 ### Changed
 
 - **The Weekly Wins step and the Inbox drawer now use the app's rich markdown surfaces** (desktop
