@@ -142,6 +142,22 @@ test("saving wins invokes save_weekly_section with section 'wins'", async () => 
   expect(save?.args).toMatchObject({ section: "wins" });
 });
 
+test("editing the wins draft and saving sends the edited content", async () => {
+  // Pins the editor→onChange→value-ref→save path end to end: a broken
+  // `onChange={(value) => (draft.current = value)}` wiring would otherwise
+  // pass every other test (Save reads `draft.current`, seeded from the note).
+  const calls = mockWithCapture();
+  renderView();
+
+  const wins = (await screen.findByLabelText("This week's wins")) as HTMLTextAreaElement;
+  fireEvent.change(wins, { target: { value: "- Shipped the reader" } });
+  screen.getByRole("button", { name: "Save wins" }).click();
+
+  await screen.findByText("Wins saved.");
+  const save = calls.find((c) => c.cmd === "save_weekly_section");
+  expect(save?.args).toMatchObject({ section: "wins", content: "- Shipped the reader" });
+});
+
 test("a stuck project shows the muted staleness line", async () => {
   mockWithCapture();
   renderView();

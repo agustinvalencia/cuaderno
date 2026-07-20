@@ -2,6 +2,9 @@
 // discard_inbox_item with the item's slug on discard.
 import { createRef } from "react";
 import { afterEach, expect, test } from "vitest";
+import * as matchers from "vitest-axe/matchers";
+import { axe } from "vitest-axe";
+import type { AxeMatchers } from "vitest-axe";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,6 +13,14 @@ import { ReaderProvider } from "./reader";
 import { ToastProvider } from "./Toasts";
 import type { InboxItem } from "../api/bindings/InboxItem";
 import InboxDrawer from "./InboxDrawer";
+
+expect.extend(matchers);
+declare module "vitest" {
+  interface Assertion<T = any> extends AxeMatchers {}
+  interface AsymmetricMatchersContaining extends AxeMatchers {}
+}
+
+const AXE_OPTIONS = { rules: { "color-contrast": { enabled: false } } };
 
 const FIXTURE: InboxItem[] = [
   { slug: "2026-07-07-buy-milk", text: "buy milk" },
@@ -77,6 +88,17 @@ test("empty inbox renders the calm zero state", async () => {
   renderDrawer();
 
   expect(await screen.findByText(/Inbox zero/)).toBeDefined();
+});
+
+test("has no axe violations with rendered markdown captures", async () => {
+  const md: InboxItem[] = [
+    { slug: "2026-07-08-draft", text: "## Draft\nPing **Sam** about [[weekly-sync]]" },
+  ];
+  mockIPC((cmd) => (cmd === "list_inbox" ? md : undefined));
+  const { container } = renderDrawer();
+
+  await screen.findByRole("heading", { name: "Draft" });
+  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
 
 test("discard fires discard_inbox_item with the item's slug", async () => {

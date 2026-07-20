@@ -11,7 +11,6 @@ import {
   keymap,
   lineNumbers,
   highlightActiveLine,
-  placeholder as placeholderExtension,
 } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -66,7 +65,6 @@ export default function MarkdownEditor({
   initialDoc,
   onChange,
   ariaLabel,
-  placeholder,
   autoFocus = true,
 }: {
   /** Seed content — read once at mount; the editor is uncontrolled after. */
@@ -74,8 +72,6 @@ export default function MarkdownEditor({
   onChange: (value: string) => void;
   /** Accessible name for the editing surface (goes on the CM content). */
   ariaLabel?: string;
-  /** Calm prompt shown while the editor is empty. */
-  placeholder?: string;
   /** Focus the editor on mount. Right for a dedicated edit surface (the note
    * reader); off where the editor is one field among others (a review step). */
   autoFocus?: boolean;
@@ -104,9 +100,6 @@ export default function MarkdownEditor({
     ];
     if (ariaLabel) {
       extensions.push(EditorView.contentAttributes.of({ "aria-label": ariaLabel }));
-    }
-    if (placeholder) {
-      extensions.push(placeholderExtension(placeholder));
     }
     const view = new EditorView({
       parent,

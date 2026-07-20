@@ -101,14 +101,20 @@ export default function WinsStep({
           if (value) save.mutate(value);
         }}
       >
+        {/* An empty week has no seed to show in the editor, so the calm
+            prompt is a visible hint — reachable by sighted and screen-reader
+            users alike (a CodeMirror placeholder is aria-hidden, and
+            placeholder-as-instruction is a discouraged a11y pattern). */}
+        {empty && (
+          <p className="mb-1 text-sm text-ink-muted">
+            No completions parsed — what felt like progress anyway?
+          </p>
+        )}
         <div className="h-64">
           <MarkdownEditor
             initialDoc={seed}
             ariaLabel="This week's wins"
             autoFocus={false}
-            placeholder={
-              empty ? "No completions parsed — what felt like progress anyway?" : undefined
-            }
             onChange={(value) => {
               draft.current = value;
             }}
