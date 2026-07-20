@@ -163,17 +163,41 @@ test("today's daily panel has an add-log input that appends via log_quick", asyn
   });
 });
 
-test("the add-log input is hidden when the selected day isn't today", async () => {
-  installMock([]);
+test("the add-log input is hidden off-today even when that day has a note", async () => {
+  // The neighbour (16th) HAS a note, so this proves the composer is gated on
+  // `today` — not merely on note-presence (an empty day would hide it anyway).
+  mockIPC((cmd, args) => {
+    if (cmd === "get_today") return "2026-07-15";
+    if (cmd === "list_daily_dates") return ["2026-07-15", "2026-07-16"];
+    if (cmd === "read_daily") {
+      const date = (args as { date: string }).date;
+      const day: Record<string, { title: string; next: string; prev: string }> = {
+        "2026-07-15": { title: "Wednesday", next: "2026-07-16", prev: "2026-07-14" },
+        "2026-07-16": { title: "Thursday", next: "2026-07-17", prev: "2026-07-15" },
+      };
+      const d = day[date] ?? { title: "Day", next: date, prev: date };
+      return {
+        date,
+        exists: true,
+        markdown: `# ${d.title}\n\nContent.`,
+        path: `journal/2026/daily/${date}.md`,
+        prev_date: d.prev,
+        next_date: d.next,
+        week_of: "2026-07-13",
+        month: "2026-07",
+      };
+    }
+    return undefined;
+  });
   renderView();
 
-  // Today's panel shows the input...
+  // Today (15th): the composer is present.
   await screen.findByRole("heading", { name: "Wednesday" });
   expect(screen.getByLabelText("Log entry")).toBeDefined();
 
-  // ...stepping to a neighbour day (log_quick can't target it) removes it.
+  // Step to the 16th — its note renders, but the composer is gone.
   fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
-  await screen.findByText("No note for this day yet.");
+  await screen.findByRole("heading", { name: "Thursday" });
   expect(screen.queryByLabelText("Log entry")).toBeNull();
 });
 

@@ -93,13 +93,36 @@ test("the quick-log input appends to today's log via log_quick", async () => {
   });
   renderHome();
 
-  const input = await screen.findByLabelText("Log entry");
+  const input = (await screen.findByLabelText("Log entry")) as HTMLInputElement;
   fireEvent.change(input, { target: { value: "paired on the parser" } });
   fireEvent.click(screen.getByRole("button", { name: "Add log" }));
 
   await waitFor(() => {
     const call = calls.find((c) => c.cmd === "log_quick");
     expect(call?.args).toMatchObject({ text: "paired on the parser" });
+  });
+  // On success the field clears, ready for the next entry.
+  await waitFor(() => expect(input.value).toBe(""));
+});
+
+test("a rapid double-submit logs only once", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_orientation") return FIXTURE;
+    return undefined;
+  });
+  renderHome();
+
+  fireEvent.change(await screen.findByLabelText("Log entry"), { target: { value: "once" } });
+  const button = screen.getByRole("button", { name: "Add log" });
+  // Two submits before the first write resolves — the in-flight guard must
+  // drop the second so only one line is appended.
+  fireEvent.click(button);
+  fireEvent.click(button);
+
+  await waitFor(() => {
+    expect(calls.filter((c) => c.cmd === "log_quick").length).toBe(1);
   });
 });
 
