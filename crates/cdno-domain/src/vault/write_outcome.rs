@@ -30,12 +30,23 @@ pub struct WriteOutcome {
     /// order. Empty when the operation was a silent no-op — see
     /// [`touched`](Self::touched).
     pub paths: Vec<VaultPath>,
+    /// Non-fatal advisories the operation wants surfaced *alongside* a
+    /// successful write — e.g. a soft length-limit breach under
+    /// `state_overflow = "warn"`. Empty for the vast majority of writes.
+    /// CLI/MCP print them after the result line; the desktop returns
+    /// them for a toast. Never blocks and never affects
+    /// [`touched`](Self::touched).
+    pub warnings: Vec<String>,
 }
 
 impl WriteOutcome {
     /// A real write: `primary` plus the transaction's full touched set.
     pub fn written(primary: VaultPath, paths: Vec<VaultPath>) -> Self {
-        Self { primary, paths }
+        Self {
+            primary,
+            paths,
+            warnings: Vec::new(),
+        }
     }
 
     /// A silent no-op: the operation resolved a path but wrote nothing.
@@ -45,7 +56,16 @@ impl WriteOutcome {
         Self {
             primary,
             paths: Vec::new(),
+            warnings: Vec::new(),
         }
+    }
+
+    /// Attach non-fatal advisories to surface alongside the write.
+    /// Chains onto [`written`](Self::written); a no-op stays warning-free
+    /// (nothing was written to advise about).
+    pub fn with_warnings(mut self, warnings: Vec<String>) -> Self {
+        self.warnings = warnings;
+        self
     }
 
     /// Whether the operation wrote anything. `false` marks a no-op (e.g.

@@ -823,6 +823,21 @@ The vault configuration lives at `.cuaderno/config.toml`:
 [vault]
 name = "My Research Vault"
 
+# Length ceiling on a project's `## Current State` section. Current
+# State is a snapshot, not a log — every update auto-logs the previous
+# body to the daily note, so the long-form history is preserved there
+# regardless. The cap keeps the snapshot terse (agent-driven updates
+# tend to sprawl into running narratives). `max_state_chars` counts
+# Unicode scalars; 0 disables. `state_overflow` picks the enforcement:
+# "reject" (default) blocks the write with an actionable message, "warn"
+# writes but surfaces an advisory, "off" skips the check. Existing
+# over-limit states are grandfathered: a state already over the cap can
+# always be trimmed (any edit that doesn't grow it is accepted, even
+# while still over), so you're never forced under the cap in one edit —
+# only a new overflow, or growing an existing one, is blocked.
+max_state_chars = 500
+state_overflow = "reject"
+
 # Glob patterns for files to exclude from the index — and therefore
 # from reconciliation, search, and lint. Matched against each file's
 # vault-relative path: `*` stays within one path segment, `**` spans

@@ -49,6 +49,21 @@ pub struct VaultConfig {
 pub struct VaultMeta {
     pub name: String,
     pub max_active_projects: u8,
+    /// Maximum length, in Unicode scalar values, of a project's
+    /// `## Current State` section body. `0` disables the check.
+    ///
+    /// Current State is a *snapshot*, not a running narrative: every
+    /// update auto-logs the previous body to the daily note, so the
+    /// long-form history is preserved there regardless. Agent-driven
+    /// updates tend to sprawl past that intent, so the cap keeps the
+    /// field terse. What happens on breach is governed by
+    /// [`state_overflow`](Self::state_overflow).
+    pub max_state_chars: u16,
+    /// What [`update_project_state`] does when a new Current State
+    /// exceeds [`max_state_chars`](Self::max_state_chars).
+    ///
+    /// [`update_project_state`]: ../../cdno_domain/vault/struct.Vault.html
+    pub state_overflow: StateOverflow,
 }
 
 impl Default for VaultMeta {
@@ -56,8 +71,33 @@ impl Default for VaultMeta {
         Self {
             name: String::from("My Vault"),
             max_active_projects: 5,
+            max_state_chars: 500,
+            // Single source of truth for the default policy: the enum's
+            // `#[default]`, so the two can't drift.
+            state_overflow: StateOverflow::default(),
         }
     }
+}
+
+/// How a Current State update that exceeds [`VaultMeta::max_state_chars`]
+/// is handled. Serialised as a lowercase string in `config.toml`
+/// (`state_overflow = "reject"`).
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StateOverflow {
+    /// Reject the write with an actionable error; the caller must
+    /// summarise before retrying. The default — and the only level that
+    /// forces a verbose *agent* to re-condense in its own loop rather
+    /// than leave the noise behind.
+    #[default]
+    Reject,
+    /// Write it anyway, but return a non-fatal advisory the CLI, MCP,
+    /// and desktop surface alongside the success. A nudge, not a wall.
+    Warn,
+    /// No length check at all — equivalent to `max_state_chars = 0`.
+    Off,
 }
 
 /// The scalar type a `[schemas.<type>.fields.<name>]` declares. Deliberately

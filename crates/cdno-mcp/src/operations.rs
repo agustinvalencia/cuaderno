@@ -210,17 +210,22 @@ impl CuadernoServer {
         // The MCP surface reports a single path; take the outcome's
         // primary (the project map). The richer touched-path set is for
         // the desktop echo journal (#315) and is ignored here.
-        let path = self
+        let outcome = self
             .with_vault(move |vault| {
                 vault.update_project_state(at, &input.project, &input.new_state)
             })
             .await?
-            .map_err(into_mcp_error)?
-            .primary;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Updated state on {}", path),
-        ))
+            .map_err(into_mcp_error)?;
+        let path = outcome.primary;
+        // Fold any soft length advisory (state_overflow = "warn") into
+        // the message so the calling agent sees it and can self-correct
+        // on the next write; `reject` mode never reaches here (it errors).
+        let mut message = format!("Updated state on {}", path);
+        for warning in &outcome.warnings {
+            message.push('\n');
+            message.push_str(warning);
+        }
+        json_result(WriteResultDto::new(path.to_string(), message))
     }
 
     #[tool(

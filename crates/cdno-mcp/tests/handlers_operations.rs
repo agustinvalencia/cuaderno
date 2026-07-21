@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{StateOverflow, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -357,6 +357,90 @@ async fn update_project_state_rewrites_section_and_logs() {
     );
     let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
     assert!(body.contains("Sweep B underway, results by Friday."));
+}
+
+#[tokio::test]
+async fn update_project_state_reject_mode_surfaces_an_error_over_the_limit() {
+    // Reject is the default policy; a low cap makes the limit easy to hit.
+    let mut config = VaultConfig::default();
+    config.vault.max_state_chars = 20;
+    let (server, store) = server_with_config(config, |vault, store| {
+        seed_today_daily(&store);
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0).date(),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+
+    let err = server
+        .update_project_state(Parameters(UpdateProjectStateInput {
+            project: "surrogate-model".to_owned(),
+            new_state: "x".repeat(50),
+        }))
+        .await
+        .expect_err("over-limit state is rejected");
+    // The message must carry both the guidance and the numbers — assert
+    // them separately so dropping either fails the test (an `||` over two
+    // substrings the message always contains can't catch a half-break).
+    assert!(
+        err.message.to_lowercase().contains("summarise"),
+        "actionable guidance: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("50") && err.message.contains("20"),
+        "names the count and the limit: {}",
+        err.message
+    );
+
+    // Nothing was written — the create's initial state stands.
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        !body.contains(&"x".repeat(50)),
+        "rejected write must not land"
+    );
+}
+
+#[tokio::test]
+async fn update_project_state_warn_mode_folds_the_advisory_into_the_message() {
+    let mut config = VaultConfig::default();
+    config.vault.max_state_chars = 20;
+    config.vault.state_overflow = StateOverflow::Warn;
+    let (server, _store) = server_with_config(config, |vault, store| {
+        seed_today_daily(&store);
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0).date(),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .update_project_state(Parameters(UpdateProjectStateInput {
+            project: "surrogate-model".to_owned(),
+            new_state: "y".repeat(50),
+        }))
+        .await
+        .expect("warn mode still writes");
+    let value = decode_json(&result);
+    let message = value["message"].as_str().unwrap();
+    // The success line stays, with the advisory appended so the calling
+    // agent sees it and can self-correct on the next write.
+    assert!(
+        message.contains("Updated state on"),
+        "keeps the success line: {message}"
+    );
+    assert!(
+        message.contains("50") && message.contains("20"),
+        "folds in the length advisory: {message}"
+    );
 }
 
 // ---------------------------------------------------------------------

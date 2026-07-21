@@ -42,6 +42,7 @@ fn config_capped_at(max: u8) -> VaultConfig {
         vault: VaultMeta {
             name: "test-vault".to_owned(),
             max_active_projects: max,
+            ..VaultMeta::default()
         },
         ..VaultConfig::default()
     }

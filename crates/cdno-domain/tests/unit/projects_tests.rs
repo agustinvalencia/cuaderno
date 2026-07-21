@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{StateOverflow, VaultConfig};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
@@ -636,6 +636,329 @@ fn update_project_state_reports_touched_paths_on_a_real_write() {
             vp("journal/2026/daily/2026-05-01.md"),
         ]),
         "touched set is the project map plus the daily it logged to",
+    );
+}
+
+// ---------------------------------------------------------------------
+// update_project_state — Current State length ceiling (#436)
+// ---------------------------------------------------------------------
+
+fn config_with_state_limit(max: u16, overflow: StateOverflow) -> VaultConfig {
+    let mut cfg = VaultConfig::default();
+    cfg.vault.max_state_chars = max;
+    cfg.vault.state_overflow = overflow;
+    cfg
+}
+
+#[test]
+fn update_project_state_rejects_state_over_the_char_limit() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(21))
+        .expect_err("over-limit state under reject is an error");
+
+    match err {
+        DomainError::StateTooLong { slug, chars, max } => {
+            assert_eq!(slug, "icml-paper");
+            assert_eq!(chars, 21);
+            assert_eq!(max, 20);
+        }
+        other => panic!("expected StateTooLong, got {other:?}"),
+    }
+
+    // Rejection is total: the project file is untouched and no daily
+    // note was created (the transaction never committed).
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert_eq!(raw, body, "a rejected write must not rewrite the project");
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap(),
+        "a rejected write must not log to the daily"
+    );
+}
+
+#[test]
+fn update_project_state_allows_state_at_the_char_limit() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    // Exactly at the cap is allowed — the check is `> max`, not `>= max`.
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(20))
+        .expect("state exactly at the limit is accepted");
+    assert!(outcome.touched());
+    assert!(outcome.warnings.is_empty());
+}
+
+#[test]
+fn update_project_state_warn_writes_and_returns_an_advisory() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Warn),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"y".repeat(50))
+        .expect("warn mode still writes");
+
+    // The write lands...
+    assert!(outcome.touched());
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains(&"y".repeat(50)), "warn mode writes the state");
+
+    // ...but a single advisory rides back, naming the overflow.
+    assert_eq!(
+        outcome.warnings.len(),
+        1,
+        "one advisory per over-limit write"
+    );
+    let warning = &outcome.warnings[0];
+    assert!(
+        warning.contains("50"),
+        "advisory names the length: {warning}"
+    );
+    assert!(
+        warning.contains("20"),
+        "advisory names the limit: {warning}"
+    );
+
+    // ...and the previous state is still auto-logged to the daily — the
+    // "history is never lost" guarantee holds under warn exactly as under
+    // a clean write.
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note created");
+    assert!(
+        daily.contains("was: Short."),
+        "logs the previous state:\n{daily}"
+    );
+    assert!(daily.contains("now:"), "logs the new state:\n{daily}");
+}
+
+#[test]
+fn update_project_state_off_ignores_the_limit() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Off),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"z".repeat(500))
+        .expect("off disables the check entirely");
+    assert!(outcome.touched());
+    assert!(outcome.warnings.is_empty(), "off never advises");
+}
+
+#[test]
+fn update_project_state_zero_cap_disables_the_check() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    // Reject policy, but a zero cap is the other disable switch.
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(0, StateOverflow::Reject),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"q".repeat(500))
+        .expect("a zero cap accepts any length");
+    assert!(outcome.touched());
+    assert!(outcome.warnings.is_empty());
+}
+
+#[test]
+fn update_project_state_noop_skips_the_check_for_grandfathered_state() {
+    // Seed a state that already exceeds the cap: existing content is
+    // grandfathered and must never be blocked, only a genuine *change*
+    // is measured. Re-submitting it verbatim is a no-op, not a rejection.
+    let seeded = "w".repeat(50);
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", &seeded);
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &seeded)
+        .expect("re-submitting grandfathered over-limit state is a no-op, not an error");
+    assert!(!outcome.touched(), "unchanged text writes nothing");
+}
+
+#[test]
+fn update_project_state_allows_trimming_a_grandfathered_over_limit_state() {
+    // A state already over the cap can be trimmed even while still over —
+    // improvement is always allowed, so you're never forced under the cap
+    // in a single edit. Seed 50 chars (over 20), trim to 30 (still over).
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(50),
+    );
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(30))
+        .expect("trimming a grandfathered over-limit state is accepted under reject");
+
+    assert!(outcome.touched(), "the shorter state is written");
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains(&"x".repeat(30)), "new (shorter) state landed");
+
+    // Even under reject, a nudge rides back: still over, accepted because
+    // it shrank.
+    assert_eq!(
+        outcome.warnings.len(),
+        1,
+        "one advisory on an accepted shrink"
+    );
+    let warning = &outcome.warnings[0];
+    assert!(
+        warning.contains("still"),
+        "advisory flags it's still over: {warning}"
+    );
+    assert!(
+        warning.contains("30") && warning.contains("20"),
+        "names count and limit: {warning}"
+    );
+}
+
+#[test]
+fn update_project_state_rejects_growing_a_grandfathered_over_limit_state() {
+    // The escape hatch is one-directional: an already-over state may
+    // shrink, but growing it further is still blocked under reject.
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(30),
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(50))
+        .expect_err("growing an over-limit state is rejected");
+    assert!(
+        matches!(
+            err,
+            DomainError::StateTooLong {
+                chars: 50,
+                max: 20,
+                ..
+            }
+        ),
+        "grew past the existing over-limit length: {err:?}"
+    );
+}
+
+#[test]
+fn update_project_state_allows_a_same_length_rewrite_of_a_grandfathered_state() {
+    // The escape hatch is "don't grow it", not "must shrink": a lateral
+    // edit that reworks an over-limit state without lengthening it is
+    // accepted under reject (the cap's job is to stop growth). This pins
+    // the `<=` boundary — tightening it to `<` would reject this and the
+    // change would slip by silently.
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(50),
+    );
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    // Different content, identical length (50), still over the cap of 20.
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"z".repeat(50))
+        .expect("a same-length rewrite that doesn't grow the state is accepted");
+
+    assert!(outcome.touched(), "the reworked state is written");
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        raw.contains(&"z".repeat(50)),
+        "new (same-length) state landed"
+    );
+    assert_eq!(
+        outcome.warnings.len(),
+        1,
+        "still-over rewrite carries the nudge"
+    );
+    assert!(
+        outcome.warnings[0].contains("still"),
+        "advisory flags it's still over: {}",
+        outcome.warnings[0]
+    );
+}
+
+#[test]
+fn update_project_state_counts_unicode_scalars_not_bytes() {
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(5, StateOverflow::Reject),
+    );
+
+    // 5 accented scalars = 10 bytes. A byte-count cap of 5 would reject
+    // this; a scalar count accepts it (5 == cap).
+    vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", "áéíóú")
+        .expect("five scalars fit a five-char cap regardless of byte width");
+
+    // Six scalars overflow, and the reported count is scalars, not bytes.
+    let err = vault
+        .update_project_state(dt(2026, 5, 2, 9, 0), "icml-paper", "áéíóúñ")
+        .expect_err("six scalars exceed a five-char cap");
+    match err {
+        DomainError::StateTooLong { chars, max, .. } => {
+            assert_eq!(chars, 6, "count is scalars, not the 12 bytes");
+            assert_eq!(max, 5);
+        }
+        other => panic!("expected StateTooLong, got {other:?}"),
+    }
+}
+
+#[test]
+fn update_project_state_default_config_rejects_over_500_chars() {
+    // The shipped default: 500-char cap, reject policy. This pins the
+    // behaviour an unconfigured vault gets on upgrade.
+    let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml-paper.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(501))
+        .expect_err("the default cap rejects a 501-char state");
+    assert!(
+        matches!(
+            err,
+            DomainError::StateTooLong {
+                max: 500,
+                chars: 501,
+                ..
+            }
+        ),
+        "default cap is 500 under reject: {err:?}"
     );
 }
 

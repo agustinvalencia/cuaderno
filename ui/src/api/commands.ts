@@ -88,9 +88,11 @@ export function completeAction(project: string, action: string): Promise<void> {
   return call("complete_action", { project, action });
 }
 
-export function updateProjectState(project: string, newState: string): Promise<void> {
+export function updateProjectState(project: string, newState: string): Promise<string[]> {
   // Rust `new_state` is `newState` on the wire (Tauri camelCases
   // command args) — pinned by the backend IPC round-trip test.
+  // Resolves to any soft length advisories (state_overflow = "warn");
+  // empty on the default reject path and whenever the state fits.
   return call("update_project_state", { project, newState });
 }
 

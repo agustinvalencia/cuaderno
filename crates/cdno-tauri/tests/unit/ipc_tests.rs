@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::{VaultConfig, VaultMeta};
+use cdno_core::config::{StateOverflow, VaultConfig, VaultMeta};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -51,6 +51,7 @@ fn config_capped_at(max: u8) -> VaultConfig {
         vault: VaultMeta {
             name: "test-vault".to_owned(),
             max_active_projects: max,
+            ..VaultMeta::default()
         },
         ..VaultConfig::default()
     }
@@ -252,6 +253,43 @@ fn update_project_state_round_trips_camel_cased_args() {
         .read_file(&VaultPath::new("projects/alpha.md").unwrap())
         .unwrap();
     assert!(content.contains("Rewired and humming."), "{content}");
+}
+
+#[test]
+fn update_project_state_returns_warn_advisories_across_the_ipc_boundary() {
+    // With `state_overflow = "warn"` and a low cap, an over-limit update
+    // still writes, and the advisory must cross the IPC boundary as the
+    // command's `Vec<String>` return — the contract the UI toasts. This
+    // pins the return-type change (was `()`), which serialises to `[]` on
+    // the default path.
+    let mut config = VaultConfig::default();
+    config.vault.max_state_chars = 20;
+    config.vault.state_overflow = StateOverflow::Warn;
+    let (app, _store) = mock_app_configured(&[], config);
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-warn", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "newState": "x".repeat(50),
+    }));
+    let response = get_ipc_response(&webview, request_with("update_project_state", body))
+        .expect("warn mode still succeeds");
+    let value = response_json(response);
+
+    let warnings = value
+        .as_array()
+        .expect("command returns a JSON array of warnings");
+    assert_eq!(
+        warnings.len(),
+        1,
+        "one advisory crosses the boundary: {value}"
+    );
+    assert!(
+        warnings[0].as_str().unwrap().contains("20"),
+        "advisory names the limit: {value}"
+    );
 }
 
 #[test]
@@ -1644,6 +1682,7 @@ fn config_named(name: &str) -> VaultConfig {
         vault: VaultMeta {
             name: name.to_owned(),
             max_active_projects: 5,
+            ..VaultMeta::default()
         },
         ..VaultConfig::default()
     }
