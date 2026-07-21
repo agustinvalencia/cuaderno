@@ -870,6 +870,48 @@ fn update_project_state_rejects_growing_a_grandfathered_over_limit_state() {
 }
 
 #[test]
+fn update_project_state_allows_a_same_length_rewrite_of_a_grandfathered_state() {
+    // The escape hatch is "don't grow it", not "must shrink": a lateral
+    // edit that reworks an over-limit state without lengthening it is
+    // accepted under reject (the cap's job is to stop growth). This pins
+    // the `<=` boundary — tightening it to `<` would reject this and the
+    // change would slip by silently.
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(50),
+    );
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    // Different content, identical length (50), still over the cap of 20.
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"z".repeat(50))
+        .expect("a same-length rewrite that doesn't grow the state is accepted");
+
+    assert!(outcome.touched(), "the reworked state is written");
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(
+        raw.contains(&"z".repeat(50)),
+        "new (same-length) state landed"
+    );
+    assert_eq!(
+        outcome.warnings.len(),
+        1,
+        "still-over rewrite carries the nudge"
+    );
+    assert!(
+        outcome.warnings[0].contains("still"),
+        "advisory flags it's still over: {}",
+        outcome.warnings[0]
+    );
+}
+
+#[test]
 fn update_project_state_counts_unicode_scalars_not_bytes() {
     let body = project_body_with_state("work", "active", "2026-04-01", "ICML paper", "Short.");
     let (vault, _store) = vault_with_seeded_store(
