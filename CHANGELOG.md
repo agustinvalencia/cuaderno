@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-21
+
 ### Added
 
 - **Configurable length ceiling on a project's Current State.** Agent-driven state
