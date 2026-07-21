@@ -29,7 +29,7 @@ const AXE_OPTIONS = { rules: { "color-contrast": { enabled: false } } };
 
 /** A draft carrying one custom note type and one typed schema field. */
 const MODEL: ConfigModel = {
-  vault: { name: "Demo Vault", max_active_projects: 3 },
+  vault: { name: "Demo Vault", max_active_projects: 3, max_state_chars: 500, state_overflow: "reject" },
   note_types: [
     {
       name: "reading",
@@ -177,7 +177,7 @@ test("a schema declaring only extra_required (no fields) is hidden", async () =>
   // so it is filtered out and the empty state stands — the guarantee the
   // read-only PR5a shipped, still held now the view is editable.
   const model: ConfigModel = {
-    vault: { name: "Demo Vault", max_active_projects: 3 },
+    vault: { name: "Demo Vault", max_active_projects: 3, max_state_chars: 500, state_overflow: "reject" },
     note_types: [],
     schemas: [{ name: "proj-a", schema: { extra_required: ["author"], fields: {} } }],
     variables: { static_vars: [], prompt: [] },

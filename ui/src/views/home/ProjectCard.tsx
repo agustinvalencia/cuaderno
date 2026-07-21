@@ -99,7 +99,10 @@ export default function ProjectCard({
   const saveState = useMutation({
     mutationFn: (newState: string) => updateProjectState(project.slug, newState),
     onError: (error) => toast(errorMessage(error), "attention"),
-    onSuccess: () => setEditing(false),
+    onSuccess: (warnings) => {
+      setEditing(false);
+      warnings.forEach((w) => toast(w, "attention"));
+    },
     onSettled: () => client.invalidateQueries({ queryKey: ["get_orientation"] }),
   });
 

@@ -16,6 +16,15 @@ pub enum DomainError {
         active_projects: Vec<String>,
     },
 
+    #[error(
+        "Current State for '{slug}' is {chars} characters (limit {max}) \u{2014} summarise it; the detail belongs in the daily log (the previous state is auto-logged there on every change)"
+    )]
+    StateTooLong {
+        slug: String,
+        chars: usize,
+        max: usize,
+    },
+
     #[error("project is not active: {0}")]
     ProjectNotActive(String),
 

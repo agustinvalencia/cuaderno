@@ -28,9 +28,10 @@ function ProjectStateEditor({
   const save = useMutation({
     mutationFn: (newState: string) => updateProjectState(project.slug, newState),
     onError: (error) => toast(errorMessage(error), "attention"),
-    onSuccess: () => {
+    onSuccess: (warnings) => {
       setEditing(false);
       toast(`Updated ${project.slug}.`);
+      warnings.forEach((w) => toast(w, "attention"));
       onSaved();
     },
     // The review reads from this bundle, so a state write refreshes it.

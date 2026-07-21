@@ -221,7 +221,7 @@ pub async fn update_project_state<R: tauri::Runtime>(
     state: tauri::State<'_, AppState>,
     project: String,
     new_state: String,
-) -> Result<(), CmdError> {
+) -> Result<Vec<String>, CmdError> {
     let now = Local::now().naive_local();
     let outcome = with_vault(&state.vault(), move |vault| {
         vault.update_project_state(now, &project, &new_state)
@@ -238,7 +238,10 @@ pub async fn update_project_state<R: tauri::Runtime>(
         &outcome,
         vec![VaultArea::Projects, VaultArea::Daily],
     );
-    Ok(())
+    // Hand any soft length advisories (state_overflow = "warn") back to
+    // the caller so the UI can toast them; empty on the default reject
+    // path and whenever the state fits.
+    Ok(outcome.warnings)
 }
 
 /// Add a Waiting-On blocker via the Project Detail quick-row (plan

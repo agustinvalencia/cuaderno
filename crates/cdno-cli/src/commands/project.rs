@@ -302,11 +302,16 @@ fn state(
     }
     // Report the primary path; the outcome's touched-path set and no-op
     // signal are for the desktop echo journal (#315), not the CLI.
-    let path = vault
+    let outcome = vault
         .update_project_state(at, &slug, &text)
-        .context("updating project state")?
-        .primary;
+        .context("updating project state")?;
+    let path = &outcome.primary;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
+    // Soft length advisories (state_overflow = "warn") go to stderr so
+    // they never pollute a `--json` stdout that scripted callers parse.
+    for warning in &outcome.warnings {
+        eprintln!("warning: {warning}");
+    }
     Ok(())
 }
 

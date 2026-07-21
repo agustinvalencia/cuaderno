@@ -131,7 +131,10 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
   const saveState = useMutation({
     mutationFn: (newState: string) => updateProjectState(slug, newState),
     onError: (err) => toast(errorMessage(err), "attention"),
-    onSuccess: () => setEditingState(false),
+    onSuccess: (warnings) => {
+      setEditingState(false);
+      warnings.forEach((w) => toast(w, "attention"));
+    },
     onSettled: invalidate,
   });
 

@@ -1,4 +1,4 @@
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{StateOverflow, VaultConfig};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -16,6 +16,8 @@ fn load_returns_defaults_when_no_config_file() {
 
     assert_eq!(config.vault.name, "My Vault");
     assert_eq!(config.vault.max_active_projects, 5);
+    assert_eq!(config.vault.max_state_chars, 500);
+    assert_eq!(config.vault.state_overflow, StateOverflow::Reject);
     assert!(config.schemas.is_empty());
     assert!(config.variables.static_vars.is_empty());
     assert!(config.variables.prompt.is_empty());
@@ -78,6 +80,61 @@ experiment_id = "Experiment identifier?"
         Some("Who are the collaborators?")
     );
     assert_eq!(config.prompt_for_variable("author"), None);
+}
+
+#[test]
+fn load_parses_state_limit_keys() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Research Lab"
+max_state_chars = 120
+state_overflow = "warn"
+"#,
+    );
+
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.vault.max_state_chars, 120);
+    assert_eq!(config.vault.state_overflow, StateOverflow::Warn);
+    // Unrelated `[vault]` keys still fall back to their defaults.
+    assert_eq!(config.vault.max_active_projects, 5);
+}
+
+#[test]
+fn state_limit_keys_default_when_absent_from_a_present_vault_table() {
+    // A `[vault]` table that omits the new keys — the shape every
+    // pre-upgrade vault has — must still get the shipped defaults.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Legacy Vault"
+max_active_projects = 4
+"#,
+    );
+
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.vault.max_state_chars, 500);
+    assert_eq!(config.vault.state_overflow, StateOverflow::Reject);
+}
+
+#[test]
+fn load_rejects_unknown_state_overflow_value() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+state_overflow = "explode"
+"#,
+    );
+
+    // An out-of-set enum value is a hard deserialize error, loud on an
+    // older binary rather than silently misparsed.
+    assert!(VaultConfig::load(dir.path()).is_err());
 }
 
 #[test]

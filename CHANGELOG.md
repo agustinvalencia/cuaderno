@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable length ceiling on a project's Current State.** Agent-driven state
+  updates tend to sprawl the `## Current State` section into a running narrative —
+  more noise than signal. Two new `[vault]` config keys cap it: `max_state_chars`
+  (Unicode scalar count, default `500`, `0` disables) and `state_overflow` (`reject`
+  the default, `warn`, or `off`). Enforced once in `update_project_state`, so it
+  covers the CLI, MCP, and desktop uniformly. `reject` blocks the write with an
+  actionable message; `warn` writes but returns an advisory the surfaces show;
+  existing over-limit states are grandfathered — only a genuine change is measured.
+  The previous state is still auto-logged to the daily on every update, so the
+  long-form history is never lost. (#436)
+
 ## [0.30.0] - 2026-07-20
 
 ### Added

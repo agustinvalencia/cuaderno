@@ -8,6 +8,20 @@
 name = "My Vault"
 max_active_projects = 5
 
+# max_state_chars — length ceiling, in characters, on a project's
+# `## Current State` section. Current State is a snapshot, not a log:
+# every update auto-logs the previous body to the daily note, so the
+# long-form history lives there regardless. The cap keeps the snapshot
+# terse (agent-driven updates tend to sprawl). Default 500; 0 disables.
+max_state_chars = 500
+
+# state_overflow — what happens when a Current State update exceeds
+# max_state_chars. "reject" (default) blocks the write with a message
+# asking you to summarise; "warn" writes it but surfaces an advisory;
+# "off" skips the check entirely. Existing over-limit states are
+# grandfathered — only a genuine change is measured.
+state_overflow = "reject"
+
 # ignore — glob patterns for files to keep out of the index (and so out
 # of reconciliation, search, and lint). Matched against each file's
 # vault-relative path: `*` stays within one path segment, `**` spans

@@ -93,6 +93,7 @@ impl From<DomainError> for CmdError {
             DomainError::Store(StoreError::NotFound(_)) => CmdError::NotFound(e.to_string()),
 
             DomainError::ProjectNotActive(_)
+            | DomainError::StateTooLong { .. }
             | DomainError::ProjectNotParked(_)
             | DomainError::CommitmentNotActive(_)
             | DomainError::ActionAlreadyPromoted { .. }

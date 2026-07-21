@@ -4,6 +4,7 @@
 
 use chrono::NaiveDateTime;
 
+use cdno_core::config::StateOverflow;
 use cdno_core::error::StoreError;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
@@ -85,7 +86,40 @@ impl Vault {
             // Silent no-op: report the resolved path but signal (empty
             // `paths`) that nothing was written, so the caller doesn't
             // journal or emit for a write that never happened.
+            //
+            // Ordered *before* the length check on purpose: re-submitting
+            // an already-over-limit body verbatim is a no-op, not a
+            // rejection — grandfathered content is never retroactively
+            // blocked, only a genuine *change* is measured.
             return Ok(WriteOutcome::noop(path));
+        }
+
+        // Length ceiling on the Current State snapshot. The old body is
+        // auto-logged to the daily just below, so the long-form history
+        // survives regardless — capping here only stops agent-driven
+        // updates from sprawling into noise. Disabled by `cap == 0` or
+        // `state_overflow = "off"`; `reject` blocks, `warn` writes but
+        // advises. Char count is Unicode scalars, matching the slug cap.
+        let mut warnings = Vec::new();
+        let cap = self.config.vault.max_state_chars as usize;
+        if cap > 0 && self.config.vault.state_overflow != StateOverflow::Off {
+            let len = new_trimmed.chars().count();
+            if len > cap {
+                match self.config.vault.state_overflow {
+                    StateOverflow::Reject => {
+                        return Err(DomainError::StateTooLong {
+                            slug: slug.to_owned(),
+                            chars: len,
+                            max: cap,
+                        });
+                    }
+                    StateOverflow::Warn => warnings.push(format!(
+                        "Current State for '{slug}' is {len} characters (over the {cap} \
+                         limit) \u{2014} consider trimming; the detail belongs in the daily log."
+                    )),
+                    StateOverflow::Off => unreachable!("guarded by the `!= Off` check above"),
+                }
+            }
         }
 
         // Normalise so the section ends with a blank line — preserves
@@ -103,7 +137,7 @@ impl Vault {
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         let touched = tx.commit()?;
 
-        Ok(WriteOutcome::written(path, touched))
+        Ok(WriteOutcome::written(path, touched).with_warnings(warnings))
     }
 }
 
