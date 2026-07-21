@@ -133,7 +133,7 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
     onError: (err) => toast(errorMessage(err), "attention"),
     onSuccess: (warnings) => {
       setEditingState(false);
-      warnings.forEach((w) => toast(w, "attention"));
+      (warnings ?? []).forEach((w) => toast(w, "attention"));
     },
     onSettled: invalidate,
   });

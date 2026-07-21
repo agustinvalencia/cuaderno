@@ -101,7 +101,7 @@ export default function ProjectCard({
     onError: (error) => toast(errorMessage(error), "attention"),
     onSuccess: (warnings) => {
       setEditing(false);
-      warnings.forEach((w) => toast(w, "attention"));
+      (warnings ?? []).forEach((w) => toast(w, "attention"));
     },
     onSettled: () => client.invalidateQueries({ queryKey: ["get_orientation"] }),
   });

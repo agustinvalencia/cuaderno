@@ -98,27 +98,41 @@ impl Vault {
         // auto-logged to the daily just below, so the long-form history
         // survives regardless — capping here only stops agent-driven
         // updates from sprawling into noise. Disabled by `cap == 0` or
-        // `state_overflow = "off"`; `reject` blocks, `warn` writes but
-        // advises. Char count is Unicode scalars, matching the slug cap.
+        // `state_overflow = "off"`. Char count is Unicode scalars,
+        // matching the slug cap.
         let mut warnings = Vec::new();
         let cap = self.config.vault.max_state_chars as usize;
         if cap > 0 && self.config.vault.state_overflow != StateOverflow::Off {
             let len = new_trimmed.chars().count();
             if len > cap {
-                match self.config.vault.state_overflow {
-                    StateOverflow::Reject => {
-                        return Err(DomainError::StateTooLong {
-                            slug: slug.to_owned(),
-                            chars: len,
-                            max: cap,
-                        });
-                    }
-                    StateOverflow::Warn => warnings.push(format!(
-                        "Current State for '{slug}' is {len} characters (over the {cap} \
-                         limit) \u{2014} consider trimming; the detail belongs in the daily log."
-                    )),
-                    StateOverflow::Off => unreachable!("guarded by the `!= Off` check above"),
+                // Improvement is always allowed. If the previous body was
+                // already over the cap — it predates this setting, or a
+                // lowered cap — accept any change that doesn't grow it, so
+                // an over-limit state can be trimmed toward compliance
+                // across several edits instead of demanding a single edit
+                // under the limit. Only a *new* overflow, or growing an
+                // existing one, is what `reject` blocks.
+                let old_len = old_state.chars().count();
+                let shrinking_existing = old_len > cap && len <= old_len;
+                if self.config.vault.state_overflow == StateOverflow::Reject && !shrinking_existing
+                {
+                    return Err(DomainError::StateTooLong {
+                        slug: slug.to_owned(),
+                        chars: len,
+                        max: cap,
+                    });
                 }
+                warnings.push(if shrinking_existing {
+                    format!(
+                        "Current State for '{slug}' is still {len} characters (over the {cap} \
+                         limit), accepted because it's shorter than before \u{2014} keep trimming."
+                    )
+                } else {
+                    format!(
+                        "Current State for '{slug}' is {len} characters (over the {cap} limit) \
+                         \u{2014} consider trimming; the detail belongs in the daily log."
+                    )
+                });
             }
         }
 

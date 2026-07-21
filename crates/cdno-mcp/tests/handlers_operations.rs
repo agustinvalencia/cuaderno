@@ -383,10 +383,17 @@ async fn update_project_state_reject_mode_surfaces_an_error_over_the_limit() {
         }))
         .await
         .expect_err("over-limit state is rejected");
-    let msg = err.message.to_lowercase();
+    // The message must carry both the guidance and the numbers — assert
+    // them separately so dropping either fails the test (an `||` over two
+    // substrings the message always contains can't catch a half-break).
     assert!(
-        msg.contains("summarise") || msg.contains("characters"),
-        "actionable message: {}",
+        err.message.to_lowercase().contains("summarise"),
+        "actionable guidance: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("50") && err.message.contains("20"),
+        "names the count and the limit: {}",
         err.message
     );
 

@@ -31,7 +31,7 @@ function ProjectStateEditor({
     onSuccess: (warnings) => {
       setEditing(false);
       toast(`Updated ${project.slug}.`);
-      warnings.forEach((w) => toast(w, "attention"));
+      (warnings ?? []).forEach((w) => toast(w, "attention"));
       onSaved();
     },
     // The review reads from this bundle, so a state write refreshes it.

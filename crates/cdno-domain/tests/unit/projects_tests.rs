@@ -731,6 +731,18 @@ fn update_project_state_warn_writes_and_returns_an_advisory() {
         warning.contains("20"),
         "advisory names the limit: {warning}"
     );
+
+    // ...and the previous state is still auto-logged to the daily — the
+    // "history is never lost" guarantee holds under warn exactly as under
+    // a clean write.
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note created");
+    assert!(
+        daily.contains("was: Short."),
+        "logs the previous state:\n{daily}"
+    );
+    assert!(daily.contains("now:"), "logs the new state:\n{daily}");
 }
 
 #[test]
@@ -780,6 +792,81 @@ fn update_project_state_noop_skips_the_check_for_grandfathered_state() {
         .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &seeded)
         .expect("re-submitting grandfathered over-limit state is a no-op, not an error");
     assert!(!outcome.touched(), "unchanged text writes nothing");
+}
+
+#[test]
+fn update_project_state_allows_trimming_a_grandfathered_over_limit_state() {
+    // A state already over the cap can be trimmed even while still over —
+    // improvement is always allowed, so you're never forced under the cap
+    // in a single edit. Seed 50 chars (over 20), trim to 30 (still over).
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(50),
+    );
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let outcome = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(30))
+        .expect("trimming a grandfathered over-limit state is accepted under reject");
+
+    assert!(outcome.touched(), "the shorter state is written");
+    let raw = store.read_file(&vp("projects/icml-paper.md")).unwrap();
+    assert!(raw.contains(&"x".repeat(30)), "new (shorter) state landed");
+
+    // Even under reject, a nudge rides back: still over, accepted because
+    // it shrank.
+    assert_eq!(
+        outcome.warnings.len(),
+        1,
+        "one advisory on an accepted shrink"
+    );
+    let warning = &outcome.warnings[0];
+    assert!(
+        warning.contains("still"),
+        "advisory flags it's still over: {warning}"
+    );
+    assert!(
+        warning.contains("30") && warning.contains("20"),
+        "names count and limit: {warning}"
+    );
+}
+
+#[test]
+fn update_project_state_rejects_growing_a_grandfathered_over_limit_state() {
+    // The escape hatch is one-directional: an already-over state may
+    // shrink, but growing it further is still blocked under reject.
+    let body = project_body_with_state(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML paper",
+        &"w".repeat(30),
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/icml-paper.md", &body)],
+        config_with_state_limit(20, StateOverflow::Reject),
+    );
+
+    let err = vault
+        .update_project_state(dt(2026, 5, 1, 9, 0), "icml-paper", &"x".repeat(50))
+        .expect_err("growing an over-limit state is rejected");
+    assert!(
+        matches!(
+            err,
+            DomainError::StateTooLong {
+                chars: 50,
+                max: 20,
+                ..
+            }
+        ),
+        "grew past the existing over-limit length: {err:?}"
+    );
 }
 
 #[test]

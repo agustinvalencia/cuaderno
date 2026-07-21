@@ -14,8 +14,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (Unicode scalar count, default `500`, `0` disables) and `state_overflow` (`reject`
   the default, `warn`, or `off`). Enforced once in `update_project_state`, so it
   covers the CLI, MCP, and desktop uniformly. `reject` blocks the write with an
-  actionable message; `warn` writes but returns an advisory the surfaces show;
-  existing over-limit states are grandfathered — only a genuine change is measured.
+  actionable message; `warn` writes but returns an advisory that the surfaces show.
+  Existing over-limit states are grandfathered: a state that already exceeds the cap
+  (e.g. one predating this setting) can always be trimmed — any edit that does not
+  grow it is accepted even while still over — so you are never forced under the cap
+  in a single edit; only a *new* overflow, or growing an existing one, is blocked.
   The previous state is still auto-logged to the daily on every update, so the
   long-form history is never lost. (#436)
 

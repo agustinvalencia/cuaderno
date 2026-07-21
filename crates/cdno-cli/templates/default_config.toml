@@ -19,7 +19,9 @@ max_state_chars = 500
 # max_state_chars. "reject" (default) blocks the write with a message
 # asking you to summarise; "warn" writes it but surfaces an advisory;
 # "off" skips the check entirely. Existing over-limit states are
-# grandfathered — only a genuine change is measured.
+# grandfathered: one already over the cap can always be trimmed (any
+# edit that doesn't grow it is accepted, even while still over) — only a
+# new overflow, or growing an existing one, is blocked.
 state_overflow = "reject"
 
 # ignore — glob patterns for files to keep out of the index (and so out

@@ -72,7 +72,9 @@ impl Default for VaultMeta {
             name: String::from("My Vault"),
             max_active_projects: 5,
             max_state_chars: 500,
-            state_overflow: StateOverflow::Reject,
+            // Single source of truth for the default policy: the enum's
+            // `#[default]`, so the two can't drift.
+            state_overflow: StateOverflow::default(),
         }
     }
 }
