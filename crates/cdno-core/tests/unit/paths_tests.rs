@@ -97,3 +97,148 @@ fn init_dirs_includes_year_partitions_and_static_folders() {
     assert!(dirs.contains(&paths::INBOX.to_string()));
     assert!(dirs.contains(&paths::CUADERNO_DIR.to_string()));
 }
+
+// ---------------------------------------------------------------------
+// Attachment-artefact ownership (#451). A markdown file inside a folder
+// owned by an evidence stub is a filed document, not a note, so
+// reconciliation must not try to index it and lint must not call its
+// folder an orphan. Both sides resolve ownership through this helper.
+// ---------------------------------------------------------------------
+
+use cdno_core::path::VaultPath;
+
+fn vp(p: &str) -> VaultPath {
+    VaultPath::new(p).unwrap()
+}
+
+/// Resolve against a fixed set of stub paths, as reconciliation does
+/// against the filesystem's markdown set.
+fn owner(path: &str, stubs: &[&str]) -> Option<String> {
+    paths::owning_artefact_stub(&vp(path), |stub| stubs.iter().any(|s| vp(s) == *stub))
+        .map(|s| s.to_string())
+}
+
+#[test]
+fn artefact_beside_its_stub_is_owned() {
+    assert_eq!(
+        owner(
+            "portfolios/demo/2026-06-13-paper/paper.pdf",
+            &["portfolios/demo/2026-06-13-paper.md"],
+        ),
+        Some("portfolios/demo/2026-06-13-paper.md".to_string()),
+    );
+}
+
+#[test]
+fn markdown_artefact_is_owned_just_like_any_other_file() {
+    // The whole point of #451: filing a `.md` document produces the same
+    // stub-plus-folder pair as filing a PDF, and the artefact has no
+    // frontmatter, so indexing it can only ever fail.
+    assert_eq!(
+        owner(
+            "portfolios/demo/2026-07-03-review-panel/02-reviewer-b.md",
+            &["portfolios/demo/2026-07-03-review-panel.md"],
+        ),
+        Some("portfolios/demo/2026-07-03-review-panel.md".to_string()),
+    );
+}
+
+#[test]
+fn evidence_note_at_the_portfolio_root_is_not_an_artefact() {
+    assert_eq!(
+        owner(
+            "portfolios/demo/2026-06-13-paper.md",
+            &["portfolios/demo/2026-06-13-paper.md", "portfolios.md"],
+        ),
+        None,
+    );
+}
+
+#[test]
+fn portfolio_index_is_not_an_artefact() {
+    assert_eq!(
+        owner("portfolios/demo/_index.md", &["portfolios/demo.md"]),
+        None
+    );
+}
+
+#[test]
+fn folder_without_a_stub_owns_nothing() {
+    assert_eq!(owner("portfolios/demo/assets/pasted.png", &[]), None);
+}
+
+#[test]
+fn ownership_survives_an_intervening_grouping_folder() {
+    // Depth-independence, the constraint from #454: a portfolio that
+    // grows grouping subfolders must not need this rule rewritten.
+    assert_eq!(
+        owner(
+            "portfolios/demo/sweep/2026-06-13-run-07/metrics.json",
+            &["portfolios/demo/sweep/2026-06-13-run-07.md"],
+        ),
+        Some("portfolios/demo/sweep/2026-06-13-run-07.md".to_string()),
+    );
+}
+
+#[test]
+fn ownership_reaches_through_nesting_inside_the_artefact_folder() {
+    // A filed directory tree keeps its internal structure; every file in
+    // it resolves to the same owning stub as its siblings.
+    assert_eq!(
+        owner(
+            "portfolios/demo/2026-06-13-bundle/src/deep/main.rs",
+            &["portfolios/demo/2026-06-13-bundle.md"],
+        ),
+        Some("portfolios/demo/2026-06-13-bundle.md".to_string()),
+    );
+}
+
+#[test]
+fn nearest_owning_ancestor_wins() {
+    // Both an inner and an outer candidate stub exist; the inner one is
+    // the owner, so the artefact is attributed to the closest stub.
+    assert_eq!(
+        owner(
+            "portfolios/demo/outer/inner/file.txt",
+            &["portfolios/demo/outer.md", "portfolios/demo/outer/inner.md"],
+        ),
+        Some("portfolios/demo/outer/inner.md".to_string()),
+    );
+}
+
+#[test]
+fn a_dotted_folder_name_pairs_with_the_right_stub() {
+    // `with_extension` would rewrite `run-v1.2` to the stub `run-v1.md`
+    // and pair the artefact with an unrelated note; the stub name is
+    // built by appending, not replacing.
+    assert_eq!(
+        owner(
+            "portfolios/demo/run-v1.2/out.log",
+            &["portfolios/demo/run-v1.md"],
+        ),
+        None,
+    );
+    assert_eq!(
+        owner(
+            "portfolios/demo/run-v1.2/out.log",
+            &["portfolios/demo/run-v1.2.md"],
+        ),
+        Some("portfolios/demo/run-v1.2.md".to_string()),
+    );
+}
+
+#[test]
+fn the_rule_is_confined_to_portfolios() {
+    // An expanded stewardship is `stewardships/<slug>/` and a flat one is
+    // `stewardships/<slug>.md`. If the pairing applied vault-wide, a
+    // vault holding both spellings would see the expanded folder's notes
+    // silently vanish from the index.
+    assert_eq!(
+        owner("stewardships/health/_index.md", &["stewardships/health.md"],),
+        None,
+    );
+    assert_eq!(
+        owner("projects/alpha/notes.md", &["projects/alpha.md"]),
+        None,
+    );
+}

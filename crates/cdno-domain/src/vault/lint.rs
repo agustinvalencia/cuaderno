@@ -424,71 +424,91 @@ fn periodic_line_hint(line: &str) -> &'static str {
 
 /// Attachment stub ↔ artefact-folder pairing, reverse direction (#154).
 ///
-/// Walks the non-markdown artefacts under `portfolios/` and reports any
-/// whose evidence stub is gone — the mirror of the forward check above.
-/// We look for the shape we create: `portfolios/<p>/<stem>/<artefact>`,
-/// which must be paired with the stub `portfolios/<p>/<stem>.md`. The
-/// artefacts are not indexed, so this filesystem walk is the only way to
-/// catch a folder whose stub was hand-deleted or moved, leaving evidence
-/// invisible to every structural retrieval.
+/// Walks the files under `portfolios/` and reports any subfolder holding
+/// files that no evidence stub claims — the mirror of the forward check
+/// above. Reconciliation excludes a stub's artefacts from the index
+/// ([`cdno_core::paths::owning_artefact_stub`]), so this filesystem walk
+/// is the only way to catch a folder whose stub was hand-deleted or
+/// moved, leaving evidence invisible to every structural retrieval.
+///
+/// Ownership is resolved with the same helper reconciliation uses, so the
+/// two can never disagree about what an artefact is. That also makes the
+/// check depth-independent: a stub owns its folder however deeply the
+/// artefact sits, which the previous fixed three-segment shape missed
+/// (#451).
+///
+/// Markdown is deliberately *not* exempt. Filing a `.md` document
+/// produces exactly the same stub-plus-folder pair as filing a PDF, so
+/// skipping markdown left a folder of filed documents unchecked — the
+/// blind spot that made a detached one invisible in both directions.
 ///
 /// Folders are reported at most once regardless of how many artefacts
-/// they hold. Anything that doesn't match the exact three-segment shape
-/// (markdown files, stray top-level non-markdown, deeper nesting we never
-/// generate) is left alone — lint is best-effort, not a fsck.
+/// they hold, and always at the `portfolios/<p>/<folder>` level, so a
+/// deep tree yields one finding rather than one per file. Files sitting
+/// directly at a portfolio's root are left alone — they are notes, or
+/// strays, but never orphaned artefacts.
 ///
 /// Shape alone can't distinguish an artefact folder from a hand-made
 /// grouping subfolder a user might drop under a portfolio, so the message
 /// hedges ("orphaned attachment or stray file") rather than asserting the
-/// file *is* a detached artefact.
+/// file *is* a detached artefact. #454 will make grouping explicit and
+/// let this assert rather than hedge.
 fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
     };
     // A vault with no portfolios yet has no `portfolios/` directory;
     // that's not an error, just nothing to check.
-    let Ok(artefacts) = store.walk_dir(&root) else {
+    let Ok(files) = store.walk_dir(&root) else {
         return Ok(Vec::new());
     };
 
     let mut issues = Vec::new();
     let mut seen: HashSet<VaultPath> = HashSet::new();
-    for file in artefacts {
-        let p = file.as_path();
-        if p.extension().and_then(|e| e.to_str()) == Some("md") {
+    for file in files {
+        if cdno_core::paths::owning_artefact_stub(&file, |stub| store.exists(stub).unwrap_or(false))
+            .is_some()
+        {
             continue;
         }
-        let Some(parent) = p.parent() else { continue };
-        let segments: Vec<&str> = parent
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(s) => s.to_str(),
-                _ => None,
-            })
-            .collect();
-        // Exactly `portfolios/<p>/<stem>` — the folder an attachment
-        // stub owns. Deeper paths aren't a layout we produce.
-        if segments.len() != 3 || segments[0] != cdno_core::paths::PORTFOLIOS {
-            continue;
-        }
-        let Ok(folder) = VaultPath::new(parent) else {
+        let Some(folder) = portfolio_subfolder_of(&file) else {
             continue;
         };
         if !seen.insert(folder.clone()) {
             continue;
         }
-        let Ok(stub) = VaultPath::new(parent.with_extension("md")) else {
-            continue;
-        };
-        if !store.exists(&stub).unwrap_or(false) {
-            let message = format!(
-                "artefact folder `{folder}` has no evidence stub `{stub}` \
-                 -- orphaned attachment or stray non-markdown file"
-            );
-            issues.push(LintIssue::error(folder, message));
-        }
+        // The stub the folder *would* pair with, named so the message can
+        // point at the exact file to restore.
+        let stub = format!("{folder}.md");
+        let message = format!(
+            "artefact folder `{folder}` has no evidence stub `{stub}` \
+             -- orphaned attachment or stray file"
+        );
+        issues.push(LintIssue::error(folder, message));
     }
     Ok(issues)
+}
+
+/// The `portfolios/<p>/<folder>` directory `file` sits under, or `None`
+/// when it sits at a portfolio's root (or outside `portfolios/` entirely).
+///
+/// Reporting at this fixed level — rather than at the file's immediate
+/// parent — collapses a deeply nested orphan tree into a single finding
+/// pointing at the folder a user would actually act on.
+fn portfolio_subfolder_of(file: &VaultPath) -> Option<VaultPath> {
+    let segments: Vec<&str> = file
+        .as_path()
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => s.to_str(),
+            _ => None,
+        })
+        .collect();
+    // `portfolios/<p>/<folder>/…/<file>` — four components minimum.
+    if segments.len() < 4 || segments[0] != cdno_core::paths::PORTFOLIOS {
+        return None;
+    }
+    VaultPath::new(segments[..3].join("/")).ok()
 }
 
 /// Compare the current file against an archival snapshot. Returns

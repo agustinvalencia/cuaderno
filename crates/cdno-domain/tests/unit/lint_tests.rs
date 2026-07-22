@@ -1359,3 +1359,95 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
         warnings[0].message
     );
 }
+
+// ---------------------------------------------------------------------
+// Orphan detection after #451. Ownership is resolved by location, not by
+// extension, so a folder of filed markdown is checked like any other —
+// the blind spot that let a detached one go unreported in both
+// directions. The finding is raised once, at the
+// `portfolios/<p>/<folder>` level, however deep the artefacts sit.
+// ---------------------------------------------------------------------
+
+const MD_ARTEFACT: &str = "# Reviewer notes\n\nVerdict: approve with changes.\n";
+
+#[test]
+fn lint_flags_orphan_folder_holding_only_markdown() {
+    // Filing a `.md` document produces the same stub-plus-folder pair as
+    // filing a PDF, so losing the stub is the same failure: the evidence
+    // is invisible to every structural retrieval.
+    let vault = vault_with_notes(
+        &[(
+            "portfolios/demo/2026-07-03-review-panel/02-reviewer-b.md",
+            MD_ARTEFACT,
+        )],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(
+        report.issues[0].path,
+        vp("portfolios/demo/2026-07-03-review-panel")
+    );
+}
+
+#[test]
+fn lint_passes_markdown_artefact_paired_with_its_stub() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/demo/2026-07-03-review-panel.md",
+                ATTACHMENT_STUB,
+            ),
+            (
+                "portfolios/demo/2026-07-03-review-panel/02-reviewer-b.md",
+                MD_ARTEFACT,
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_reports_a_deep_orphan_tree_once_at_the_portfolio_subfolder() {
+    // A pasted-image folder can hold dozens of files across several
+    // levels. One finding, pointing at the folder a user would act on.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/assets/first.png", "fake bytes"),
+            ("portfolios/demo/assets/second.png", "fake bytes"),
+            ("portfolios/demo/assets/nested/third.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
+
+#[test]
+fn lint_passes_an_artefact_nested_inside_its_stubs_folder() {
+    // A filed directory tree keeps its internal structure; every file in
+    // it resolves to the same owning stub, so nothing is orphaned.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-06-13-bundle.md", ATTACHMENT_STUB),
+            (
+                "portfolios/demo/2026-06-13-bundle/src/main.rs",
+                "fn main() {}",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}

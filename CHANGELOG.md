@@ -6,6 +6,34 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Markdown filed into a portfolio is treated as an attachment, not a note.** Filing a
+  `.md` document with `cdno file` writes an evidence stub beside a folder holding the
+  artefact — but reconciliation walked into that folder, found a document with no
+  frontmatter, and reported it as a note that could not be indexed, on every CLI
+  invocation, MCP session and app launch. Artefacts are now excluded by *location*: a
+  file inside a folder owned by an evidence stub belongs to that stub, whatever its
+  extension. Ownership is resolved by walking a file's ancestors rather than by a fixed
+  depth, so it holds under any intervening folder, and it applies only inside
+  `portfolios/` — vault-wide it would make a stewardship with both a flat and an
+  expanded spelling vanish from the index. The count of skipped artefacts is reported
+  by `cdno reindex` alongside the `ignore`-glob count, since a file absent from the
+  index is absent from search and lint too. (#451)
+
+### Changed
+
+- **The orphan-artefact lint no longer exempts markdown.** A folder of filed markdown
+  whose evidence stub was deleted or moved is now reported like any other detached
+  artefact — previously it was invisible in both directions, since the check skipped
+  `.md` while reconciliation tried to index it. The check also resolves ownership
+  through the same helper reconciliation uses, so the two can no longer disagree, and
+  reports once per `portfolios/<portfolio>/<folder>` however deep the artefacts sit.
+  Note that a hand-made grouping subfolder holding notes is indistinguishable from a
+  detached artefact folder by shape alone, so it will be reported until #454 makes
+  grouping explicit; the message hedges ("orphaned attachment or stray file") for that
+  reason. (#451)
+
 ## [0.31.0] - 2026-07-21
 
 ### Added

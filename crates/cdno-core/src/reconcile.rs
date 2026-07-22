@@ -4,8 +4,11 @@
 //! every `Vault::new` (and can be re-run on demand). The algorithm is
 //! simple:
 //!
-//! 1. Walk every `.md` file in the vault, minus any matching the
-//!    config `ignore` globs (passed in as a compiled [`IgnoreSet`]).
+//! 1. Walk every `.md` file in the vault, minus attachment artefacts
+//!    (markdown filed *into* a portfolio folder owned by an evidence
+//!    stub — see [`crate::paths::owning_artefact_stub`]) and any
+//!    matching the config `ignore` globs (passed in as a compiled
+//!    [`IgnoreSet`]).
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -53,6 +56,11 @@ pub struct ReconciliationReport {
     /// than a silent retrieval blackout — the files themselves are never
     /// touched, and clearing the glob then reindexing restores every row.
     pub ignored: usize,
+    /// Markdown files skipped because they are attachment artefacts
+    /// owned by an evidence stub (#451). Reported for the same reason as
+    /// `ignored`: a file quietly absent from the index is absent from
+    /// search, lint and backlinks too, so the count has to be visible.
+    pub artefacts: usize,
     /// Notes present in the `notes` table but absent from the FTS index
     /// that were backfilled this pass. Non-zero on the first reconcile
     /// after the FTS migration (or after the index is dropped), when the
@@ -91,7 +99,7 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    let candidate_md_paths: Vec<VaultPath> = all_fs_paths
+    let all_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
         // `.cuaderno/` is the vault's meta directory — config,
@@ -100,6 +108,19 @@ pub fn reconcile(
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
         .collect();
+
+    // Attachment artefacts (#451): a markdown file inside a folder owned
+    // by an evidence stub is a filed *document*, not a note — it has no
+    // frontmatter, so indexing it can only ever fail. Resolved against
+    // the full markdown set rather than the post-`ignore` one, so the two
+    // exclusions stay independent: ignoring a stub must not silently
+    // promote its artefacts into notes.
+    let md_set: HashSet<VaultPath> = all_md_paths.iter().cloned().collect();
+    let (artefact_paths, candidate_md_paths): (Vec<VaultPath>, Vec<VaultPath>) =
+        all_md_paths.into_iter().partition(|p| {
+            crate::paths::owning_artefact_stub(p, |stub| md_set.contains(stub)).is_some()
+        });
+    report.artefacts = artefact_paths.len();
     // Config `ignore` globs (#242): user-declared non-vault docs (e.g.
     // CLAUDE.md, README.md) that live in the vault dir but aren't notes.
     // Excluding them here is the single enforcement point — a path absent

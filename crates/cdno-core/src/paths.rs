@@ -22,6 +22,8 @@
 
 use chrono::{Datelike, NaiveDate};
 
+use crate::path::VaultPath;
+
 // Journal — daily, weekly, and monthly notes, year-partitioned. Use the
 // helper functions below to build the actual paths.
 pub const JOURNAL: &str = "journal";
@@ -149,6 +151,68 @@ pub fn monthly_note_relpath(date: NaiveDate) -> String {
         journal_monthly_dir(date.year()),
         date.format("%Y-%m")
     )
+}
+
+/// The evidence stub that owns `path` as an attachment artefact, if any.
+///
+/// Filing an artefact writes a stub note beside a folder of the same
+/// stem, and everything inside that folder belongs to the stub:
+///
+/// ```text
+/// portfolios/<portfolio>/<stem>.md   <- the evidence stub (kind: file)
+/// portfolios/<portfolio>/<stem>/…    <- the artefacts it owns
+/// ```
+///
+/// Membership is by *location*, not extension. A markdown file inside an
+/// artefact folder is a document that was filed, not a note: it carries
+/// no frontmatter contract, and its searchable abstract lives in the stub.
+/// Treating it as a note means reconciliation fails on it forever.
+///
+/// The walk goes from the nearest ancestor outwards rather than testing a
+/// fixed depth, so the rule survives any intervening folder — which is
+/// what lets a portfolio grow grouping subfolders without this changing.
+/// It also means an artefact nested inside an artefact folder (a filed
+/// directory tree keeps its internal structure) resolves to the same
+/// owning stub as its siblings.
+///
+/// Only ancestors strictly inside `portfolios/` count. The
+/// stub-beside-folder shape is a portfolio convention, and applying it
+/// vault-wide would be actively harmful: an expanded stewardship is
+/// `stewardships/<slug>/` and a flat one is `stewardships/<slug>.md`, so
+/// a vault holding both spellings of one slug would see the expanded
+/// folder's notes silently vanish from the index.
+///
+/// `stub_exists` decides whether a candidate stub is really there —
+/// callers that already hold the filesystem's path set answer from it,
+/// others hit the store.
+pub fn owning_artefact_stub(
+    path: &VaultPath,
+    stub_exists: impl Fn(&VaultPath) -> bool,
+) -> Option<VaultPath> {
+    let mut ancestor = path.as_path().parent();
+    while let Some(dir) = ancestor {
+        // The shallowest folder that can own artefacts is
+        // `portfolios/<portfolio>/<stem>`; anything with fewer than three
+        // components sits above the layout, so the walk is done.
+        if !dir.starts_with(PORTFOLIOS) || dir.components().count() < 3 {
+            return None;
+        }
+        // `with_file_name`, never `with_extension`: the latter *replaces*
+        // a trailing dotted segment, so a folder named `run-v1.2` would
+        // yield the stub `run-v1.md` and pair with the wrong note.
+        let stub = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| dir.with_file_name(format!("{name}.md")))
+            .and_then(|candidate| VaultPath::new(candidate).ok());
+        if let Some(stub) = stub
+            && stub_exists(&stub)
+        {
+            return Some(stub);
+        }
+        ancestor = dir.parent();
+    }
+    None
 }
 
 /// Every directory `cdno init` creates for a fresh vault, given

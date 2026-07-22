@@ -163,6 +163,7 @@ vault/
 - **`_done/`** inside `commitments/`: fulfilled commitments, kept for record.
 - **`_done/<year>/`** inside `actions/`: completed action notes, partitioned by year so the active set stays scannable. Year subfolders are created on demand at completion time.
 - **`_index.md`** inside portfolio and expanded stewardship folders: the folder’s identity note.
+- **`<stem>.md` beside `<stem>/`** inside a portfolio: an evidence *stub* and the artefact folder it owns. Everything inside that folder is an attachment, whatever its extension and however deeply nested — a filed markdown document is a document, not a note, and is deliberately kept out of the index (it has no frontmatter contract; its searchable abstract lives in the stub). Ownership is resolved by walking a file’s ancestors, so the rule holds under any intervening folder. It applies only inside `portfolios/` — elsewhere a `.md` beside a folder of the same name is legitimate, notably a stewardship with both a flat and an expanded spelling.
 - **`routines/`** inside stewardship folders: prescriptive reference documents (workout plans, routines), not logs.
 - **`tracking/`** inside stewardship folders: structured time-series entries.
 - Stewardships can be either a flat `.md` file or an expanded folder with `_index.md`. The tool handles both.
