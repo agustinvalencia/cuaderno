@@ -17,7 +17,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   "this section is broken" rather than "this vault is misconfigured"; the CLI has warned
   about it since the globs shipped, but the app discarded the same numbers. Artefact
   exclusions are reported alongside but never raise the notice — they are by design, not
-  configuration. (#440)
+  configuration. The counts follow the live config: a reload that adds or narrows an
+  `ignore` glob re-reconciles the index, so the notice appears and clears in step rather
+  than describing the state at launch. (#440)
 
 ### Fixed
 

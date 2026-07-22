@@ -23,10 +23,17 @@ export default function IndexExclusionsBanner() {
   const { data } = useQuery({
     queryKey: ["get_index_exclusions"],
     queryFn: getIndexExclusions,
-    // Startup state: fixed for the process lifetime, so never refetch.
-    staleTime: Infinity,
   });
   const [dismissed, setDismissed] = useState(false);
+
+  // A config reload can change the counts in either direction, so a
+  // dismissal covers the condition the user actually saw. When the numbers
+  // move, the notice earns a fresh hearing.
+  const signature = data ? `${data.ignored}/${data.indexed}/${data.artefacts}` : null;
+  const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
+  if (dismissed && dismissedSignature !== signature) {
+    setDismissed(false);
+  }
 
   if (!data?.ignore_looks_over_broad || dismissed) return null;
 
@@ -48,7 +55,10 @@ export default function IndexExclusionsBanner() {
       </div>
       <button
         type="button"
-        onClick={() => setDismissed(true)}
+        onClick={() => {
+          setDismissedSignature(signature);
+          setDismissed(true);
+        }}
         className="shrink-0 rounded px-2 py-0.5 text-xs text-ink-muted hover:text-ink"
       >
         Dismiss

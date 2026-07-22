@@ -117,7 +117,7 @@ fn init_with_vault(
         ignore: ignore.clone(),
         journal: WriteJournal::default(),
         root: root.clone(),
-        exclusions,
+        exclusions: Arc::new(ArcSwap::from_pointee(exclusions)),
     });
 
     // Global capture hotkey (⌘⇧C on macOS; SUPER maps to Cmd).

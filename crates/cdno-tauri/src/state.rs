@@ -52,10 +52,15 @@ pub struct AppState {
     /// domain works purely in `VaultPath`s and never needs the root,
     /// so this lives here rather than on `Vault`.
     pub root: std::path::PathBuf,
-    /// What the startup reconciliation left out of the index (#440).
-    /// Fixed for the lifetime of the process: it describes the pass that
-    /// ran at launch, which is the one a user is being told about.
-    pub exclusions: crate::events::IndexExclusions,
+    /// What the most recent reconciliation left out of the index (#440).
+    ///
+    /// `ArcSwap` for the same reason `vault` and `ignore` above are: a
+    /// config reload re-reconciles against the new `ignore` globs and can
+    /// change these counts in either direction. A launch-time snapshot
+    /// would go stale on exactly the flow the notice recommends — the user
+    /// narrows an over-broad glob, the notes return to the index, and the
+    /// banner keeps insisting they are missing until a restart.
+    pub exclusions: Arc<ArcSwap<crate::events::IndexExclusions>>,
 }
 
 impl AppState {

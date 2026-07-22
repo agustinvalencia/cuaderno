@@ -66,3 +66,36 @@ test("can be dismissed", async () => {
   fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
   expect(screen.queryByRole("status")).toBeNull();
 });
+
+test("a dismissal does not silence a different set of counts", async () => {
+  // A config reload changes the numbers in either direction. Dismissal
+  // covers the condition the user actually saw, not the banner forever —
+  // otherwise fixing one glob and introducing another would go unreported.
+  const exclusions = { ...OVER_BROAD };
+  mockIPC((cmd) => {
+    if (cmd === "get_index_exclusions") return exclusions;
+    throw new Error(`unexpected command: ${cmd}`);
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { rerender } = render(
+    <QueryClientProvider client={client}>
+      <IndexExclusionsBanner />
+    </QueryClientProvider>,
+  );
+
+  await screen.findByRole("status");
+  fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+  expect(screen.queryByRole("status")).toBeNull();
+
+  // The counts move: a different over-broad glob now applies.
+  exclusions.ignored = 80;
+  await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
+  rerender(
+    <QueryClientProvider client={client}>
+      <IndexExclusionsBanner />
+    </QueryClientProvider>,
+  );
+
+  const notice = await screen.findByRole("status");
+  expect(notice.textContent).toContain("80 of");
+});

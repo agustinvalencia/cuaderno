@@ -461,7 +461,7 @@ pub fn load_vault_and_ignore(
     store: Arc<dyn VaultStore>,
     index: Arc<dyn VaultIndex>,
     root: &std::path::Path,
-) -> Result<(Vault, IgnoreSet), DomainError> {
+) -> Result<(Vault, IgnoreSet, crate::events::IndexExclusions), DomainError> {
     // A missing file falls back to the default config, matching
     // `open_vault`'s first-launch behaviour.
     let config = VaultConfig::load(root)?;
@@ -470,8 +470,14 @@ pub fn load_vault_and_ignore(
     // matcher must be the same set the rebuilt index was reconciled against.
     let ignore = config.ignore_set()?;
     // Rebuild on the retained store/index — no SQLite reopen.
-    let (vault, _report) = Vault::new(store, index, config)?;
-    Ok((vault, ignore))
+    let (vault, report) = Vault::new(store, index, config)?;
+    // The reload re-reconciles against the NEW globs, so its exclusion
+    // counts supersede the ones the caller is holding: a glob added here
+    // evicts notes from the index, and one narrowed here restores them
+    // (#440). Dropping this report is what left the notice describing a
+    // state that no longer existed.
+    let exclusions = crate::events::IndexExclusions::from_report(&report);
+    Ok((vault, ignore, exclusions))
 }
 
 /// Rebuild the vault (and its ignore set) from the on-disk config and swap
@@ -491,7 +497,7 @@ pub fn load_vault_and_ignore(
 /// calls this directly; the async command hops it onto the blocking pool.
 pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), DomainError> {
     let state = app.state::<AppState>();
-    let (vault, ignore) =
+    let (vault, ignore, exclusions) =
         load_vault_and_ignore(state.store.clone(), state.index.clone(), &state.root)?;
     // Both built successfully — only now swap, so a failure above leaves the
     // old handles live. The vault swaps first, then its matching ignore set;
@@ -499,6 +505,7 @@ pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<
     // finishes cleanly (the swap never pulls a vault out from under it).
     state.vault.store(Arc::new(vault));
     state.ignore.store(Arc::new(ignore));
+    state.exclusions.store(Arc::new(exclusions));
     Ok(())
 }
 

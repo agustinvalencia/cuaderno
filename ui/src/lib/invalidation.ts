@@ -74,6 +74,11 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "list_template_placeholders",
     "read_config",
     "read_config_model",
+    // A config reload re-reconciles against the new `ignore` globs, so the
+    // exclusion counts change in either direction — a glob added here
+    // evicts notes, one narrowed here restores them. Without this the
+    // notice would go stale on exactly the flow it recommends (#440).
+    "get_index_exclusions",
   ],
 };
 
