@@ -39,13 +39,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   whose evidence stub was deleted or moved is now reported like any other detached
   artefact — previously it was invisible in both directions, since the check skipped
   `.md` while reconciliation tried to index it. The check resolves ownership through
-  the same helper reconciliation uses, so the two can no longer disagree, and reports
-  once per `portfolios/<portfolio>/<folder>` however deep the artefacts sit. It now
-  also skips files that are notes (anything in the index) and files excluded by the
-  config `ignore` globs, so a hand-organised subfolder of evidence notes is not
-  mistaken for a detached artefact folder — and, importantly, lint never advises
-  creating a `<folder>.md` that would make reconciliation drop the notes underneath it.
-  (#451)
+  the same helper reconciliation uses, so the two can no longer disagree. It now also
+  skips files that are notes (anything in the index) and files excluded by the config
+  `ignore` globs, so a hand-organised subfolder of evidence notes is not mistaken for a
+  detached artefact folder.
+
+  A finding names the **outermost folder that holds no note**, rather than a fixed
+  `portfolios/<portfolio>/<folder>`. A deep tree of stray files still collapses to one
+  finding, but a folder whose stub was deleted is named individually even when it sits
+  inside a folder of evidence notes — otherwise one surviving stub would hide every
+  detached sibling beside it. Consequently a folder holding notes is never itself
+  named, so lint cannot advise creating a `<folder>.md` that would make reconciliation
+  drop the notes underneath it.
+
+  Where the folder holds markdown that is not indexed, the message offers both readings
+  — notes whose frontmatter needs fixing, or filed documents whose stub was lost — and
+  says which one warrants restoring the stub, because creating it is right for the
+  second and would permanently hide the first. (#451)
 
 ## [0.31.0] - 2026-07-21
 

@@ -460,8 +460,10 @@ fn periodic_line_hint(line: &str) -> &'static str {
 ///   PDF.
 ///
 /// Folders are reported at most once regardless of how many artefacts
-/// they hold, and always at the `portfolios/<p>/<folder>` level, so a
-/// deep tree yields one finding rather than one per file. Files sitting
+/// they hold, and at the outermost ancestor that holds no note (see
+/// [`orphan_folder_for`]), so a deep tree yields one finding rather than
+/// one per file — but a detached folder inside a grouping folder is still
+/// named individually rather than being swallowed by it. Files sitting
 /// directly at a portfolio's root are left alone — they are notes, or
 /// strays, but never orphaned artefacts.
 ///

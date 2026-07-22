@@ -32,3 +32,8 @@ ui/node_modules/
 ui/dist/
 crates/cdno-tauri/gen/
 ui/tsconfig.tsbuildinfo
+
+# SQLite runtime sidecars for the repo-root dev vault. Rewritten on every
+# open (WAL mode), so they churn or vanish on any `cdno` invocation.
+.cuaderno/index.db-shm
+.cuaderno/index.db-wal
