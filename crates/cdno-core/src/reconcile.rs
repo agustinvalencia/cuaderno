@@ -6,7 +6,7 @@
 //!
 //! 1. Walk every `.md` file in the vault, minus attachment artefacts
 //!    (markdown filed *into* a portfolio folder owned by an evidence
-//!    stub — see [`crate::paths::owning_artefact_stub`]) and any
+//!    stub — see [`crate::artefacts::owning_artefact_stub`]) and any
 //!    matching the config `ignore` globs (passed in as a compiled
 //!    [`IgnoreSet`]).
 //! 2. For each file: take the fast path (skip on matching mtime + size,

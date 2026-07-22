@@ -78,10 +78,13 @@ pub fn is_attachment_stub(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool
 /// The attachment stubs among `md_paths`, resolved with one read each.
 ///
 /// Only files that could actually own something are read: a stub must sit
-/// under `portfolios/` and have a sibling directory of the same stem that
-/// holds at least one file. `dirs` is the set of directories containing
-/// the walked files, so a portfolio full of ordinary evidence notes costs
-/// no reads at all.
+/// under `portfolios/` and have a sibling directory of the same stem. The
+/// read count is therefore bounded by the number of `<dir>.md` / `<dir>/`
+/// pairs in the vault — the artefact folders themselves, plus any
+/// accidental namesake — not by the note count, so a portfolio full of
+/// ordinary evidence notes costs no reads at all. These reads sit outside
+/// the mtime+size fast path (#94), which is why the candidate set is kept
+/// this narrow.
 pub fn attachment_stubs(
     store: &Arc<dyn VaultStore>,
     md_paths: &HashSet<VaultPath>,
@@ -112,12 +115,13 @@ pub fn attachment_stubs(
 /// vault holding both spellings of one slug would see the expanded folder's
 /// notes silently vanish from the index.
 ///
-/// `is_stub` decides whether a candidate is a real attachment stub —
-/// callers pass a set resolved once by [`attachment_stubs`] rather than
-/// re-reading per file.
+/// `is_stub` decides whether a candidate is a real attachment stub. It
+/// is `FnMut` so a caller can memoise: the walk probes the same candidate
+/// once per file beneath it, and each probe costs a read and a parse.
+/// Reconciliation passes a set resolved once by [`attachment_stubs`].
 pub fn owning_artefact_stub(
     path: &VaultPath,
-    is_stub: impl Fn(&VaultPath) -> bool,
+    mut is_stub: impl FnMut(&VaultPath) -> bool,
 ) -> Option<VaultPath> {
     let mut ancestor = path.as_path().parent();
     while let Some(dir) = ancestor {

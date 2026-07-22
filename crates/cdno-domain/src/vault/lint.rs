@@ -482,32 +482,69 @@ fn orphan_artefact_issues(
         return Ok(Vec::new());
     };
 
+    // A folder holding any indexed note, at any depth, is a grouping
+    // folder rather than a detached artefact folder — and must never be
+    // reported, because the remedy the message names would claim those
+    // notes as artefacts and drop them from the index.
+    //
+    // Scoped to the folder, not the file: exempting note files one by one
+    // still leaves a stray beside them (a `.DS_Store` is enough) to raise
+    // the finding on their behalf, so the harmful advice arrives anyway.
+    let mut grouping_folders: HashSet<VaultPath> = HashSet::new();
+    for file in &files {
+        if notes.contains(file)
+            && let Some(folder) = portfolio_subfolder_of(file)
+        {
+            grouping_folders.insert(folder);
+        }
+    }
+
+    // Stub-ness costs a read and a YAML parse, and the ancestor walk probes
+    // the same candidate once per file beneath it. Memoise per pass.
+    let mut stub_cache: HashMap<VaultPath, bool> = HashMap::new();
+
     let mut issues = Vec::new();
     let mut seen: HashSet<VaultPath> = HashSet::new();
-    for file in files {
-        if notes.contains(&file) || ignore.is_match(file.as_path()) {
+    for file in &files {
+        if notes.contains(file) || ignore.is_match(file.as_path()) {
             continue;
         }
-        if cdno_core::artefacts::owning_artefact_stub(&file, |stub| {
-            cdno_core::artefacts::is_attachment_stub(store, stub)
+        let owned = cdno_core::artefacts::owning_artefact_stub(file, |stub| {
+            *stub_cache
+                .entry(stub.clone())
+                .or_insert_with(|| cdno_core::artefacts::is_attachment_stub(store, stub))
         })
-        .is_some()
-        {
+        .is_some();
+        if owned {
             continue;
         }
-        let Some(folder) = portfolio_subfolder_of(&file) else {
+        let Some(folder) = portfolio_subfolder_of(file) else {
             continue;
         };
-        if !seen.insert(folder.clone()) {
+        if grouping_folders.contains(&folder) || !seen.insert(folder.clone()) {
             continue;
         }
-        // The stub the folder *would* pair with, named so the message can
-        // point at the exact file to restore.
+        // Name the stub the folder would pair with, so the message points
+        // at the exact file to restore. When that file is already there but
+        // isn't a stub, say so rather than calling it missing — otherwise
+        // the message names a file the user can plainly see.
         let stub = format!("{folder}.md");
-        let message = format!(
-            "artefact folder `{folder}` has no evidence stub `{stub}` \
-             -- orphaned attachment or stray file"
-        );
+        let stub_present = VaultPath::new(&stub)
+            .ok()
+            .and_then(|p| store.exists(&p).ok())
+            .unwrap_or(false);
+        let message = if stub_present {
+            format!(
+                "artefact folder `{folder}` is not claimed by `{stub}`, which is not an \
+                 attachment stub (an evidence note carrying a `kind`) \
+                 -- orphaned attachment or stray file"
+            )
+        } else {
+            format!(
+                "artefact folder `{folder}` has no evidence stub `{stub}` \
+                 -- orphaned attachment or stray file"
+            )
+        };
         issues.push(LintIssue::error(folder, message));
     }
     Ok(issues)

@@ -1525,3 +1525,70 @@ fn lint_still_flags_an_unowned_non_note_file() {
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
 }
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_that_also_holds_a_stray_file() {
+    // The exemption is folder-scoped, not file-scoped. Exempting note
+    // files one by one still let a single stray beside them raise the
+    // finding on their behalf — and the remedy it names (create
+    // `<folder>.md`) would claim those notes as artefacts and drop them
+    // from the index. A macOS `.DS_Store` is enough to trigger it, so this
+    // is not a hypothetical.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/second.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/.DS_Store", "mac metadata"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_exempts_a_grouping_folder_from_a_note_nested_deeper_in_it() {
+    // The folder is exempt because it holds a note *anywhere* beneath it:
+    // the stub the message would name owns the whole subtree, so a note at
+    // any depth is a note the advice would lose.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/sweep/runs/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/sweep/chart.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_says_a_namesake_that_is_not_a_stub_does_not_claim_the_folder() {
+    // `<folder>.md` is right there on disk, so calling it missing would
+    // name a file the user can plainly see. It is simply not a stub.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/assets.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/assets/pasted.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        report.issues[0].message.contains("is not claimed by"),
+        "message: {}",
+        report.issues[0].message
+    );
+    assert!(
+        !report.issues[0].message.contains("has no evidence stub"),
+        "message: {}",
+        report.issues[0].message
+    );
+}
