@@ -482,20 +482,21 @@ fn orphan_artefact_issues(
         return Ok(Vec::new());
     };
 
-    // A folder holding any indexed note, at any depth, is a grouping
-    // folder rather than a detached artefact folder — and must never be
-    // reported, because the remedy the message names would claim those
-    // notes as artefacts and drop them from the index.
+    // Every folder holding an indexed note, at any depth. A stub named
+    // after one of these would claim those notes as artefacts, so no
+    // finding may ever name one.
     //
-    // Scoped to the folder, not the file: exempting note files one by one
-    // still leaves a stray beside them (a `.DS_Store` is enough) to raise
-    // the finding on their behalf, so the harmful advice arrives anyway.
-    let mut grouping_folders: HashSet<VaultPath> = HashSet::new();
+    // Marked for *all* ancestors of each note, not just the fixed
+    // `portfolios/<p>/<folder>` level, because the walk below relies on the
+    // transitive property: if a folder holds a note then so does every
+    // folder containing it.
+    let mut folders_with_notes: HashSet<VaultPath> = HashSet::new();
     for file in &files {
-        if notes.contains(file)
-            && let Some(folder) = portfolio_subfolder_of(file)
-        {
-            grouping_folders.insert(folder);
+        if !notes.contains(file) {
+            continue;
+        }
+        for dir in portfolio_ancestors(file) {
+            folders_with_notes.insert(dir);
         }
     }
 
@@ -518,10 +519,10 @@ fn orphan_artefact_issues(
         if owned {
             continue;
         }
-        let Some(folder) = portfolio_subfolder_of(file) else {
+        let Some(folder) = orphan_folder_for(file, &folders_with_notes) else {
             continue;
         };
-        if grouping_folders.contains(&folder) || !seen.insert(folder.clone()) {
+        if !seen.insert(folder.clone()) {
             continue;
         }
         // Name the stub the folder would pair with, so the message points
@@ -533,45 +534,97 @@ fn orphan_artefact_issues(
             .ok()
             .and_then(|p| store.exists(&p).ok())
             .unwrap_or(false);
-        let message = if stub_present {
+        let claim = if stub_present {
             format!(
                 "artefact folder `{folder}` is not claimed by `{stub}`, which is not an \
-                 attachment stub (an evidence note carrying a `kind`) \
-                 -- orphaned attachment or stray file"
+                 attachment stub (an evidence note carrying a `kind`)"
             )
         } else {
+            format!("artefact folder `{folder}` has no evidence stub `{stub}`")
+        };
+        // Unindexed markdown in the folder is ambiguous: a filed document
+        // whose stub was lost, or a note whose frontmatter is broken (which
+        // reconciliation reports separately). Creating the stub would be
+        // right for the first and would permanently hide the second, so the
+        // message must not prescribe it blindly.
+        let holds_markdown = files.iter().any(|f| {
+            f.as_path().extension() == Some(std::ffi::OsStr::new("md"))
+                && f.as_path().starts_with(folder.as_path())
+        });
+        let message = if holds_markdown {
             format!(
-                "artefact folder `{folder}` has no evidence stub `{stub}` \
-                 -- orphaned attachment or stray file"
+                "{claim} -- it holds markdown that is not indexed: either notes whose \
+                 frontmatter needs fixing, or filed documents whose stub was lost \
+                 (restore the stub only in the second case)"
             )
+        } else {
+            format!("{claim} -- orphaned attachment or stray file")
         };
         issues.push(LintIssue::error(folder, message));
     }
     Ok(issues)
 }
 
-/// The `portfolios/<p>/<folder>` directory `file` sits under, or `None`
-/// when it sits at a portfolio's root (or outside `portfolios/` entirely).
+/// `file`'s ancestor directories that could be artefact folders —
+/// everything from `portfolios/<p>/<folder>` down to the file's immediate
+/// parent — ordered nearest first.
 ///
-/// Reporting at this fixed level — rather than at the file's immediate
-/// parent — collapses a deeply nested orphan tree into a single finding
-/// pointing at the folder a user would actually act on.
-fn portfolio_subfolder_of(file: &VaultPath) -> Option<VaultPath> {
+/// Empty when the file sits at a portfolio's root or outside `portfolios/`
+/// entirely: those are notes, or strays, but never orphaned artefacts.
+fn portfolio_ancestors(file: &VaultPath) -> Vec<VaultPath> {
     // Bail on anything that isn't a plain UTF-8 component rather than
     // filtering it out: dropping one shifts every later index, which would
     // name a folder that does not exist (or miss the orphan entirely).
     let mut segments: Vec<&str> = Vec::new();
     for component in file.as_path().components() {
         match component {
-            Component::Normal(s) => segments.push(s.to_str()?),
-            _ => return None,
+            Component::Normal(s) => match s.to_str() {
+                Some(text) => segments.push(text),
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
         }
     }
     // `portfolios/<p>/<folder>/…/<file>` — four components minimum.
     if segments.len() < 4 || segments[0] != cdno_core::paths::PORTFOLIOS {
-        return None;
+        return Vec::new();
     }
-    VaultPath::new(segments[..3].join("/")).ok()
+    // Nearest first: the file's parent, then outward to `portfolios/<p>/<folder>`.
+    (3..segments.len())
+        .rev()
+        .filter_map(|end| VaultPath::new(segments[..end].join("/")).ok())
+        .collect()
+}
+
+/// The folder to report `file` against: the **outermost** ancestor that
+/// holds no note, or `None` when even its immediate parent holds one.
+///
+/// Outermost, so a deep tree of stray files yields one finding naming the
+/// folder a user would actually act on rather than one per subdirectory.
+/// But never past a folder holding a note, because the remedy a finding
+/// implies — pairing the folder with an evidence stub — would claim every
+/// note beneath it as an artefact and drop them from the index.
+///
+/// Stopping at the boundary rather than suppressing the whole subtree is
+/// what keeps orphan detection alive inside a grouping folder: a stub
+/// hand-deleted from `portfolios/<p>/<group>/<stem>/` is still reported,
+/// against `<stem>`, even though `<group>` holds notes. Suppressing
+/// instead would blind the check to every detached sibling of any
+/// surviving stub — a stub is itself an indexed note.
+fn orphan_folder_for(
+    file: &VaultPath,
+    folders_with_notes: &HashSet<VaultPath>,
+) -> Option<VaultPath> {
+    let mut safe = None;
+    for dir in portfolio_ancestors(file) {
+        // Notes are transitive: once an ancestor holds one, so does every
+        // folder containing it, so nothing further out can be safe.
+        if folders_with_notes.contains(&dir) {
+            break;
+        }
+        safe = Some(dir);
+    }
+    safe
 }
 
 /// Compare the current file against an archival snapshot. Returns

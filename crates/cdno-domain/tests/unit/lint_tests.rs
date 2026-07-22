@@ -1592,3 +1592,91 @@ fn lint_says_a_namesake_that_is_not_a_stub_does_not_claim_the_folder() {
         report.issues[0].message
     );
 }
+
+#[test]
+fn lint_reports_an_orphan_nested_inside_a_grouping_folder() {
+    // The grouping folder holds a note, so it can never be named — but the
+    // detached folder inside it can. Suppressing the whole subtree instead
+    // would lose exactly the failure this check exists for (#154).
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/summary.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/paper/paper.pdf", "%PDF-1.7"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/2026-Q2/paper"));
+}
+
+#[test]
+fn a_surviving_stub_does_not_blind_the_scan_to_its_detached_siblings() {
+    // A stub is itself an indexed note, so keying suppression on "this
+    // folder holds a note" would let one intact pair hide every deleted
+    // stub beside it. The intact pair must stay clean and the detached one
+    // must still be reported.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/intact.md", ATTACHMENT_STUB),
+            ("portfolios/demo/2026-Q2/intact/intact.pdf", "%PDF-1.7"),
+            ("portfolios/demo/2026-Q2/detached/lost.pdf", "%PDF-1.7"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(
+        report.issues[0].path,
+        vp("portfolios/demo/2026-Q2/detached")
+    );
+}
+
+#[test]
+fn lint_does_not_prescribe_a_stub_over_markdown_that_failed_to_index() {
+    // A note with broken frontmatter is not in the index, so it cannot
+    // exempt its folder. Reporting is still right — something there is
+    // unaccounted for — but blindly advising "create the stub" would make
+    // the folder artefacts, so the note would stay invisible even after
+    // its frontmatter is fixed. The message has to carry both readings.
+    let vault = vault_with_notes(
+        &[("portfolios/demo/2026-Q2/broken.md", "# No frontmatter\n")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    let message = &report.issues[0].message;
+    assert!(
+        message.contains("frontmatter needs fixing"),
+        "message: {message}"
+    );
+    assert!(
+        message.contains("restore the stub only in the second case"),
+        "message: {message}"
+    );
+}
+
+#[test]
+fn a_note_at_the_portfolio_root_does_not_exempt_any_subfolder() {
+    // `portfolios/<p>/note.md` has no qualifying ancestor folder, so it
+    // must not mark anything as note-holding — otherwise one root note
+    // would silence the whole portfolio.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-07-03-note.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/assets/pasted.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
