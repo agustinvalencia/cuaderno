@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use chrono::NaiveDate;
 
+use cdno_core::config::IgnoreSet;
 use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
@@ -268,7 +269,11 @@ impl Vault {
             }
         }
 
-        issues.extend(orphan_artefact_issues(&self.store)?);
+        // `path_set` is the indexed notes; the ignore matcher is compiled
+        // from the same config reconciliation used, so lint and the index
+        // agree on what is not a note.
+        let ignore = self.config.ignore_set()?;
+        issues.extend(orphan_artefact_issues(&self.store, &path_set, &ignore)?);
         issues.extend(self.stewardship_dashboard_issues()?);
 
         Ok(LintReport { issues })
@@ -424,71 +429,204 @@ fn periodic_line_hint(line: &str) -> &'static str {
 
 /// Attachment stub ↔ artefact-folder pairing, reverse direction (#154).
 ///
-/// Walks the non-markdown artefacts under `portfolios/` and reports any
-/// whose evidence stub is gone — the mirror of the forward check above.
-/// We look for the shape we create: `portfolios/<p>/<stem>/<artefact>`,
-/// which must be paired with the stub `portfolios/<p>/<stem>.md`. The
-/// artefacts are not indexed, so this filesystem walk is the only way to
-/// catch a folder whose stub was hand-deleted or moved, leaving evidence
-/// invisible to every structural retrieval.
+/// Walks the files under `portfolios/` and reports any subfolder holding
+/// files that are neither notes nor claimed by an evidence stub — the
+/// mirror of the forward check above. Reconciliation excludes a stub's
+/// artefacts from the index ([`cdno_core::artefacts::owning_artefact_stub`]),
+/// so this filesystem walk is the only way to catch a folder whose stub was
+/// hand-deleted or moved, leaving evidence invisible to every structural
+/// retrieval.
+///
+/// Ownership is resolved with the same helper reconciliation uses, so the
+/// two can never disagree about what an artefact is. That also makes the
+/// check depth-independent: a stub owns its folder however deeply the
+/// artefact sits, which the previous fixed three-segment shape missed
+/// (#451).
+///
+/// Three things are exempt, and between them they confine the check to what
+/// it is actually for:
+///
+/// - **Notes.** A file in the index is a note, wherever it sits, so it can
+///   never make its folder an orphan. Without this, an evidence stub filed
+///   one level down would report *its own* folder as unowned — and the
+///   remedy the message names (create `<folder>.md`) is precisely what
+///   would make reconciliation treat that stub as an artefact and drop it
+///   from the index. Lint must not hand out advice that loses notes.
+/// - **Ignored files.** `ignore` globs are the user saying "not a note";
+///   lint walks the store directly, so it has to honour them itself or it
+///   reports on files the rest of the tool has been told to disregard.
+/// - **Markdown owned by a stub**, like any other artefact — filing a `.md`
+///   document produces exactly the same stub-plus-folder pair as filing a
+///   PDF.
 ///
 /// Folders are reported at most once regardless of how many artefacts
-/// they hold. Anything that doesn't match the exact three-segment shape
-/// (markdown files, stray top-level non-markdown, deeper nesting we never
-/// generate) is left alone — lint is best-effort, not a fsck.
+/// they hold, and at the outermost ancestor that holds no note (see
+/// [`orphan_folder_for`]), so a deep tree yields one finding rather than
+/// one per file — but a detached folder inside a grouping folder is still
+/// named individually rather than being swallowed by it. Files sitting
+/// directly at a portfolio's root are left alone — they are notes, or
+/// strays, but never orphaned artefacts.
 ///
-/// Shape alone can't distinguish an artefact folder from a hand-made
-/// grouping subfolder a user might drop under a portfolio, so the message
-/// hedges ("orphaned attachment or stray file") rather than asserting the
-/// file *is* a detached artefact.
-fn orphan_artefact_issues(store: &Arc<dyn VaultStore>) -> Result<Vec<LintIssue>, DomainError> {
+/// The message still hedges ("orphaned attachment or stray file") rather
+/// than asserting the file *is* a detached artefact: an unowned
+/// non-markdown file could equally be something dropped in by hand.
+fn orphan_artefact_issues(
+    store: &Arc<dyn VaultStore>,
+    notes: &HashSet<VaultPath>,
+    ignore: &IgnoreSet,
+) -> Result<Vec<LintIssue>, DomainError> {
     let Ok(root) = VaultPath::new(cdno_core::paths::PORTFOLIOS) else {
         return Ok(Vec::new());
     };
     // A vault with no portfolios yet has no `portfolios/` directory;
     // that's not an error, just nothing to check.
-    let Ok(artefacts) = store.walk_dir(&root) else {
+    let Ok(files) = store.walk_dir(&root) else {
         return Ok(Vec::new());
     };
 
+    // Every folder holding an indexed note, at any depth. A stub named
+    // after one of these would claim those notes as artefacts, so no
+    // finding may ever name one.
+    //
+    // Marked for *all* ancestors of each note, not just the fixed
+    // `portfolios/<p>/<folder>` level, because the walk below relies on the
+    // transitive property: if a folder holds a note then so does every
+    // folder containing it.
+    let mut folders_with_notes: HashSet<VaultPath> = HashSet::new();
+    for file in &files {
+        if !notes.contains(file) {
+            continue;
+        }
+        for dir in portfolio_ancestors(file) {
+            folders_with_notes.insert(dir);
+        }
+    }
+
+    // Stub-ness costs a read and a YAML parse, and the ancestor walk probes
+    // the same candidate once per file beneath it. Memoise per pass.
+    let mut stub_cache: HashMap<VaultPath, bool> = HashMap::new();
+
     let mut issues = Vec::new();
     let mut seen: HashSet<VaultPath> = HashSet::new();
-    for file in artefacts {
-        let p = file.as_path();
-        if p.extension().and_then(|e| e.to_str()) == Some("md") {
+    for file in &files {
+        if notes.contains(file) || ignore.is_match(file.as_path()) {
             continue;
         }
-        let Some(parent) = p.parent() else { continue };
-        let segments: Vec<&str> = parent
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(s) => s.to_str(),
-                _ => None,
-            })
-            .collect();
-        // Exactly `portfolios/<p>/<stem>` — the folder an attachment
-        // stub owns. Deeper paths aren't a layout we produce.
-        if segments.len() != 3 || segments[0] != cdno_core::paths::PORTFOLIOS {
+        let owned = cdno_core::artefacts::owning_artefact_stub(file, |stub| {
+            *stub_cache
+                .entry(stub.clone())
+                .or_insert_with(|| cdno_core::artefacts::is_attachment_stub(store, stub))
+        })
+        .is_some();
+        if owned {
             continue;
         }
-        let Ok(folder) = VaultPath::new(parent) else {
+        let Some(folder) = orphan_folder_for(file, &folders_with_notes) else {
             continue;
         };
         if !seen.insert(folder.clone()) {
             continue;
         }
-        let Ok(stub) = VaultPath::new(parent.with_extension("md")) else {
-            continue;
+        // Name the stub the folder would pair with, so the message points
+        // at the exact file to restore. When that file is already there but
+        // isn't a stub, say so rather than calling it missing — otherwise
+        // the message names a file the user can plainly see.
+        let stub = format!("{folder}.md");
+        let stub_present = VaultPath::new(&stub)
+            .ok()
+            .and_then(|p| store.exists(&p).ok())
+            .unwrap_or(false);
+        let claim = if stub_present {
+            format!(
+                "artefact folder `{folder}` is not claimed by `{stub}`, which is not an \
+                 attachment stub (an evidence note carrying a `kind`)"
+            )
+        } else {
+            format!("artefact folder `{folder}` has no evidence stub `{stub}`")
         };
-        if !store.exists(&stub).unwrap_or(false) {
-            let message = format!(
-                "artefact folder `{folder}` has no evidence stub `{stub}` \
-                 -- orphaned attachment or stray non-markdown file"
-            );
-            issues.push(LintIssue::error(folder, message));
-        }
+        // Unindexed markdown in the folder is ambiguous: a filed document
+        // whose stub was lost, or a note whose frontmatter is broken (which
+        // reconciliation reports separately). Creating the stub would be
+        // right for the first and would permanently hide the second, so the
+        // message must not prescribe it blindly.
+        let holds_markdown = files.iter().any(|f| {
+            f.as_path().extension() == Some(std::ffi::OsStr::new("md"))
+                && f.as_path().starts_with(folder.as_path())
+        });
+        let message = if holds_markdown {
+            format!(
+                "{claim} -- it holds markdown that is not indexed: either notes whose \
+                 frontmatter needs fixing, or filed documents whose stub was lost \
+                 (restore the stub only in the second case)"
+            )
+        } else {
+            format!("{claim} -- orphaned attachment or stray file")
+        };
+        issues.push(LintIssue::error(folder, message));
     }
     Ok(issues)
+}
+
+/// `file`'s ancestor directories that could be artefact folders —
+/// everything from `portfolios/<p>/<folder>` down to the file's immediate
+/// parent — ordered nearest first.
+///
+/// Empty when the file sits at a portfolio's root or outside `portfolios/`
+/// entirely: those are notes, or strays, but never orphaned artefacts.
+fn portfolio_ancestors(file: &VaultPath) -> Vec<VaultPath> {
+    // Bail on anything that isn't a plain UTF-8 component rather than
+    // filtering it out: dropping one shifts every later index, which would
+    // name a folder that does not exist (or miss the orphan entirely).
+    let mut segments: Vec<&str> = Vec::new();
+    for component in file.as_path().components() {
+        match component {
+            Component::Normal(s) => match s.to_str() {
+                Some(text) => segments.push(text),
+                None => return Vec::new(),
+            },
+            _ => return Vec::new(),
+        }
+    }
+    // `portfolios/<p>/<folder>/…/<file>` — four components minimum.
+    if segments.len() < 4 || segments[0] != cdno_core::paths::PORTFOLIOS {
+        return Vec::new();
+    }
+    // Nearest first: the file's parent, then outward to `portfolios/<p>/<folder>`.
+    (3..segments.len())
+        .rev()
+        .filter_map(|end| VaultPath::new(segments[..end].join("/")).ok())
+        .collect()
+}
+
+/// The folder to report `file` against: the **outermost** ancestor that
+/// holds no note, or `None` when even its immediate parent holds one.
+///
+/// Outermost, so a deep tree of stray files yields one finding naming the
+/// folder a user would actually act on rather than one per subdirectory.
+/// But never past a folder holding a note, because the remedy a finding
+/// implies — pairing the folder with an evidence stub — would claim every
+/// note beneath it as an artefact and drop them from the index.
+///
+/// Stopping at the boundary rather than suppressing the whole subtree is
+/// what keeps orphan detection alive inside a grouping folder: a stub
+/// hand-deleted from `portfolios/<p>/<group>/<stem>/` is still reported,
+/// against `<stem>`, even though `<group>` holds notes. Suppressing
+/// instead would blind the check to every detached sibling of any
+/// surviving stub — a stub is itself an indexed note.
+fn orphan_folder_for(
+    file: &VaultPath,
+    folders_with_notes: &HashSet<VaultPath>,
+) -> Option<VaultPath> {
+    let mut safe = None;
+    for dir in portfolio_ancestors(file) {
+        // Notes are transitive: once an ancestor holds one, so does every
+        // folder containing it, so nothing further out can be safe.
+        if folders_with_notes.contains(&dir) {
+            break;
+        }
+        safe = Some(dir);
+    }
+    safe
 }
 
 /// Compare the current file against an archival snapshot. Returns

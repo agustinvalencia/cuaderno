@@ -46,5 +46,14 @@ pub fn run(root: &Path) -> Result<()> {
             report.ignored
         );
     }
+    // Artefacts are excluded by design, not by configuration, but the
+    // count is reported for the same reason: a file absent from the index
+    // is absent from search and lint, so it should never be a surprise.
+    if report.artefacts > 0 {
+        println!(
+            "{} markdown file(s) skipped as attachment artefacts (filed documents, reachable through their evidence stub).",
+            report.artefacts
+        );
+    }
     Ok(())
 }

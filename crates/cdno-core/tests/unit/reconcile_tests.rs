@@ -1282,3 +1282,265 @@ fn invalid_ignore_glob_is_a_config_error() {
     let err = IgnoreSet::compile(&["a[".to_string()]).unwrap_err();
     assert!(matches!(err, cdno_core::error::ConfigError::InvalidGlob(_)));
 }
+
+// ---------------------------------------------------------------------
+// Attachment artefacts (#451). Filing a document into a portfolio writes
+// an evidence stub beside a folder holding the artefact. A markdown
+// artefact has no frontmatter, so indexing it can only ever fail — it is
+// excluded by location, not by extension.
+// ---------------------------------------------------------------------
+
+const STUB: &str = "---\ntype: evidence\ncreated: 2026-07-03\nsource: A filed document\nportfolio: demo\norigin: \"[[projects/foo]]\"\nkind: file\n---\n# A filed document\n\n## Abstract\n\nWhat it says.\n";
+
+/// An ordinary evidence note: no `kind`, so not an attachment stub, so it
+/// owns nothing however its name lines up with a sibling folder.
+const PLAIN_EVIDENCE: &str = "---\ntype: evidence\ncreated: 2026-07-03\nsource: A quarter summary\nportfolio: demo\norigin: \"[[projects/foo]]\"\n---\n# A quarter summary\n";
+
+/// A filed markdown artefact: a plain document, no frontmatter — exactly
+/// what reconciliation used to choke on.
+const ARTEFACT_MD: &str = "# Reviewer notes\n\nVerdict: approve with changes.\n";
+
+#[test]
+fn markdown_artefact_is_not_indexed_and_is_counted() {
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-07-03-panel.md"), STUB)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/demo/2026-07-03-panel/02-reviewer-b.md"),
+            ARTEFACT_MD,
+        )
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    // The stub is a note; its artefact is not. No error either way — the
+    // artefact never enters the pass, so it cannot fail to parse.
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.artefacts, 1);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-07-03-panel.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-07-03-panel/02-reviewer-b.md"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn markdown_in_a_folder_without_a_stub_is_still_a_note() {
+    // Only a stub-owned folder is exempt. An unpaired subfolder holds
+    // notes, and a note that fails to parse must still be reported —
+    // otherwise the exemption becomes a silent catch-all.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/loose/notes.md"), ARTEFACT_MD)
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(report.scanned, 1);
+    assert_eq!(report.errors.len(), 1);
+}
+
+#[test]
+fn ignoring_a_stub_does_not_promote_its_artefacts_to_notes() {
+    // Ownership is resolved against the full markdown set, before the
+    // `ignore` partition, so the two exclusions stay independent.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-07-03-panel.md"), STUB)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/demo/2026-07-03-panel/02-reviewer-b.md"),
+            ARTEFACT_MD,
+        )
+        .unwrap();
+
+    let ignore = IgnoreSet::compile(&["portfolios/demo/2026-07-03-panel.md".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+
+    assert_eq!(report.artefacts, 1);
+    assert_eq!(report.ignored, 1);
+    assert_eq!(report.scanned, 0);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+}
+
+#[test]
+fn artefact_exemption_reaches_through_a_grouping_folder() {
+    // Depth-independence (#454): a stub nested under a grouping folder
+    // owns its artefacts exactly as one at the portfolio root does.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/sweep/2026-07-03-run-07.md"), STUB)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/demo/sweep/2026-07-03-run-07/log.md"),
+            ARTEFACT_MD,
+        )
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 1);
+    assert_eq!(report.scanned, 1);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+}
+
+// ---------------------------------------------------------------------
+// Folder-scoped ignore globs (#440). `**` is recursive and `*` stays
+// within one segment, so `folder/*/**` matches one *or more* components
+// after the folder — the semantics that evicted every portfolio note
+// from a real vault when the intent was to exclude only what sits two
+// levels down.
+// ---------------------------------------------------------------------
+
+#[test]
+fn folder_scoped_glob_with_one_star_matches_at_every_depth_below() {
+    let (store, index) = fixtures();
+    seed_note(&store, "portfolios/demo/_index.md", "portfolio", "");
+    seed_note(&store, "portfolios/demo/2026-07-03-note.md", "evidence", "");
+    seed_note(&store, "portfolios/demo/group/nested.md", "evidence", "");
+    seed_note(&store, "projects/alpha.md", "project", "");
+
+    let ignore = IgnoreSet::compile(&["portfolios/*/**".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+
+    // Everything under a portfolio folder goes, at one level and at two.
+    assert_eq!(report.ignored, 3);
+    assert_eq!(report.scanned, 1);
+    assert!(
+        index
+            .find_by_path(&vp("projects/alpha.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/_index.md"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn folder_scoped_glob_with_two_stars_spares_the_level_above() {
+    // The pattern the vault actually wanted: exclude artefacts two levels
+    // below `portfolios/`, leaving the index and evidence notes indexed.
+    let (store, index) = fixtures();
+    seed_note(&store, "portfolios/demo/_index.md", "portfolio", "");
+    seed_note(&store, "portfolios/demo/2026-07-03-note.md", "evidence", "");
+    seed_note(&store, "portfolios/demo/group/nested.md", "evidence", "");
+
+    let ignore = IgnoreSet::compile(&["portfolios/*/*/**".to_string()]).unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &ignore).unwrap();
+
+    assert_eq!(report.ignored, 1);
+    assert_eq!(report.scanned, 2);
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/_index.md"))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn a_plain_note_beside_a_folder_does_not_evict_that_folders_notes() {
+    // Ownership is established by reading the candidate stub, never from
+    // the path shape. A quarter-summary note written beside a hand-made
+    // grouping folder must leave that folder's evidence notes indexed —
+    // inferring ownership from the name alone would drop them from search,
+    // backlinks and portfolio contents with nothing naming them.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/first.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/second.md"), PLAIN_EVIDENCE)
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(report.scanned, 3);
+    assert_eq!(report.added, 3);
+    for path in [
+        "portfolios/demo/2026-Q2.md",
+        "portfolios/demo/2026-Q2/first.md",
+        "portfolios/demo/2026-Q2/second.md",
+    ] {
+        assert!(
+            index.find_by_path(&vp(path)).unwrap().is_some(),
+            "{path} should still be indexed"
+        );
+    }
+}
+
+#[test]
+fn an_indexed_note_is_not_evicted_when_a_plain_namesake_note_appears() {
+    // The same rule across two passes: the eviction, if it happened, would
+    // land on the *second* reconcile, after the notes were already indexed.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/first.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-Q2/first.md"))
+            .unwrap()
+            .is_some()
+    );
+
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(report.removed, 0);
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-Q2/first.md"))
+            .unwrap()
+            .is_some(),
+        "the nested note must survive its namesake appearing"
+    );
+}
+
+#[test]
+fn a_stub_owns_markdown_nested_deeper_inside_its_artefact_folder() {
+    // A filed directory tree keeps its internal structure, so the stub's
+    // own folder may hold no direct files at all — only subdirectories.
+    // The stub still owns everything beneath it.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-07-03-bundle.md"), STUB)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/demo/2026-07-03-bundle/docs/readme.md"),
+            ARTEFACT_MD,
+        )
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 1);
+    assert_eq!(report.scanned, 1);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+}

@@ -4,8 +4,11 @@
 //! every `Vault::new` (and can be re-run on demand). The algorithm is
 //! simple:
 //!
-//! 1. Walk every `.md` file in the vault, minus any matching the
-//!    config `ignore` globs (passed in as a compiled [`IgnoreSet`]).
+//! 1. Walk every `.md` file in the vault, minus attachment artefacts
+//!    (markdown filed *into* a portfolio folder owned by an evidence
+//!    stub — see [`crate::artefacts::owning_artefact_stub`]) and any
+//!    matching the config `ignore` globs (passed in as a compiled
+//!    [`IgnoreSet`]).
 //! 2. For each file: take the fast path (skip on matching mtime + size,
 //!    #94), else read, hash, and compare against the matching index row.
 //!    Reindex if the hash differs or no row exists.
@@ -53,6 +56,11 @@ pub struct ReconciliationReport {
     /// than a silent retrieval blackout — the files themselves are never
     /// touched, and clearing the glob then reindexing restores every row.
     pub ignored: usize,
+    /// Markdown files skipped because they are attachment artefacts
+    /// owned by an evidence stub (#451). Reported for the same reason as
+    /// `ignored`: a file quietly absent from the index is absent from
+    /// search, lint and backlinks too, so the count has to be visible.
+    pub artefacts: usize,
     /// Notes present in the `notes` table but absent from the FTS index
     /// that were backfilled this pass. Non-zero on the first reconcile
     /// after the FTS migration (or after the index is dropped), when the
@@ -91,7 +99,22 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    let candidate_md_paths: Vec<VaultPath> = all_fs_paths
+    // Every directory on the path to a walked file — the only places an
+    // artefact folder can be, and the filter that keeps the stub lookup
+    // below from reading the whole vault.
+    //
+    // All ancestors, not just immediate parents: a filed directory tree
+    // keeps its internal structure, so an artefact folder may contain no
+    // direct files at all. `portfolios/<p>/bundle/` holding only
+    // `docs/readme.md` would otherwise never be probed, and `bundle.md`
+    // would never be recognised as the stub that owns it. The empty path
+    // that `ancestors` ends on is rejected by `VaultPath::new`.
+    let dirs: HashSet<VaultPath> = all_fs_paths
+        .iter()
+        .flat_map(|p| p.as_path().ancestors().skip(1))
+        .filter_map(|d| VaultPath::new(d).ok())
+        .collect();
+    let all_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
         // `.cuaderno/` is the vault's meta directory — config,
@@ -100,6 +123,28 @@ pub fn reconcile(
         // template surfacing in "all daily notes" queries.
         .filter(|p| !p.as_path().starts_with(crate::paths::CUADERNO_DIR))
         .collect();
+
+    // Attachment artefacts (#451): a markdown file inside a folder owned
+    // by an evidence stub is a filed *document*, not a note — it has no
+    // frontmatter, so indexing it can only ever fail.
+    //
+    // The owning stubs are identified positively, by reading their
+    // frontmatter, never by the path shape alone: a plain note that merely
+    // shares a name with a sibling folder must not swallow that folder's
+    // real notes out of the index. Only directories that could own
+    // something are probed, so the reads are proportional to the number of
+    // portfolio subfolders, not to the size of the vault.
+    //
+    // Resolved against the full markdown set rather than the post-`ignore`
+    // one, so the two exclusions stay independent: ignoring a stub must not
+    // silently promote its artefacts into notes.
+    let md_set: HashSet<VaultPath> = all_md_paths.iter().cloned().collect();
+    let stubs = crate::artefacts::attachment_stubs(store, &md_set, &dirs);
+    let (artefact_paths, candidate_md_paths): (Vec<VaultPath>, Vec<VaultPath>) =
+        all_md_paths.into_iter().partition(|p| {
+            crate::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_some()
+        });
+    report.artefacts = artefact_paths.len();
     // Config `ignore` globs (#242): user-declared non-vault docs (e.g.
     // CLAUDE.md, README.md) that live in the vault dir but aren't notes.
     // Excluding them here is the single enforcement point — a path absent

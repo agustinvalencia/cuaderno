@@ -1359,3 +1359,324 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
         warnings[0].message
     );
 }
+
+// ---------------------------------------------------------------------
+// Orphan detection after #451. Ownership is resolved by location, not by
+// extension, so a folder of filed markdown is checked like any other —
+// the blind spot that let a detached one go unreported in both
+// directions. The finding is raised once, at the
+// `portfolios/<p>/<folder>` level, however deep the artefacts sit.
+// ---------------------------------------------------------------------
+
+const MD_ARTEFACT: &str = "# Reviewer notes\n\nVerdict: approve with changes.\n";
+
+#[test]
+fn lint_flags_orphan_folder_holding_only_markdown() {
+    // Filing a `.md` document produces the same stub-plus-folder pair as
+    // filing a PDF, so losing the stub is the same failure: the evidence
+    // is invisible to every structural retrieval.
+    let vault = vault_with_notes(
+        &[(
+            "portfolios/demo/2026-07-03-review-panel/02-reviewer-b.md",
+            MD_ARTEFACT,
+        )],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(
+        report.issues[0].path,
+        vp("portfolios/demo/2026-07-03-review-panel")
+    );
+}
+
+#[test]
+fn lint_passes_markdown_artefact_paired_with_its_stub() {
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/demo/2026-07-03-review-panel.md",
+                ATTACHMENT_STUB,
+            ),
+            (
+                "portfolios/demo/2026-07-03-review-panel/02-reviewer-b.md",
+                MD_ARTEFACT,
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_reports_a_deep_orphan_tree_once_at_the_portfolio_subfolder() {
+    // A pasted-image folder can hold dozens of files across several
+    // levels. One finding, pointing at the folder a user would act on.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/assets/first.png", "fake bytes"),
+            ("portfolios/demo/assets/second.png", "fake bytes"),
+            ("portfolios/demo/assets/nested/third.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
+
+#[test]
+fn lint_passes_an_artefact_nested_inside_its_stubs_folder() {
+    // A filed directory tree keeps its internal structure; every file in
+    // it resolves to the same owning stub, so nothing is orphaned.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-06-13-bundle.md", ATTACHMENT_STUB),
+            (
+                "portfolios/demo/2026-06-13-bundle/src/main.rs",
+                "fn main() {}",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_holding_a_stub_and_its_artefacts() {
+    // The stub sits one level below the portfolio root, inside a hand-made
+    // grouping folder. Its own folder is properly owned, and the stub is a
+    // note, so nothing here is an orphan. Reporting `portfolios/demo/sweep`
+    // would be worse than noise: the remedy the message names — create
+    // `sweep.md` — is exactly what would make reconciliation treat the stub
+    // as an artefact and drop it from the index.
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/demo/sweep/2026-07-03-run-07.md",
+                ATTACHMENT_STUB,
+            ),
+            (
+                "portfolios/demo/sweep/2026-07-03-run-07/log.txt",
+                "run output",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_of_ordinary_notes() {
+    // Hand-organised evidence in a subfolder is notes, not artefacts.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/second.md", PLAIN_EVIDENCE),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_honours_ignore_globs_when_scanning_for_orphans() {
+    // The orphan scan walks the store directly rather than the index, so
+    // it has to apply the `ignore` globs itself — otherwise it reports on
+    // files the rest of the tool has been told to disregard.
+    let config = VaultConfig {
+        ignore: vec!["portfolios/*/scratch/**".to_string()],
+        ..Default::default()
+    };
+    let vault = vault_with_notes(&[("portfolios/demo/scratch/notes.txt", "scratch")], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_still_flags_an_unowned_non_note_file() {
+    // The check's actual purpose survives all three exemptions: a pasted
+    // image folder with no stub is still reported.
+    let vault = vault_with_notes(
+        &[("portfolios/demo/assets/pasted.png", "fake bytes")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_that_also_holds_a_stray_file() {
+    // The exemption is folder-scoped, not file-scoped. Exempting note
+    // files one by one still let a single stray beside them raise the
+    // finding on their behalf — and the remedy it names (create
+    // `<folder>.md`) would claim those notes as artefacts and drop them
+    // from the index. A macOS `.DS_Store` is enough to trigger it, so this
+    // is not a hypothetical.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/second.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/.DS_Store", "mac metadata"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_exempts_a_grouping_folder_from_a_note_nested_deeper_in_it() {
+    // The folder is exempt because it holds a note *anywhere* beneath it:
+    // the stub the message would name owns the whole subtree, so a note at
+    // any depth is a note the advice would lose.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/sweep/runs/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/sweep/chart.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_says_a_namesake_that_is_not_a_stub_does_not_claim_the_folder() {
+    // `<folder>.md` is right there on disk, so calling it missing would
+    // name a file the user can plainly see. It is simply not a stub.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/assets.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/assets/pasted.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert!(
+        report.issues[0].message.contains("is not claimed by"),
+        "message: {}",
+        report.issues[0].message
+    );
+    assert!(
+        !report.issues[0].message.contains("has no evidence stub"),
+        "message: {}",
+        report.issues[0].message
+    );
+}
+
+#[test]
+fn lint_reports_an_orphan_nested_inside_a_grouping_folder() {
+    // The grouping folder holds a note, so it can never be named — but the
+    // detached folder inside it can. Suppressing the whole subtree instead
+    // would lose exactly the failure this check exists for (#154).
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/summary.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/paper/paper.pdf", "%PDF-1.7"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/2026-Q2/paper"));
+}
+
+#[test]
+fn a_surviving_stub_does_not_blind_the_scan_to_its_detached_siblings() {
+    // A stub is itself an indexed note, so keying suppression on "this
+    // folder holds a note" would let one intact pair hide every deleted
+    // stub beside it. The intact pair must stay clean and the detached one
+    // must still be reported.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/intact.md", ATTACHMENT_STUB),
+            ("portfolios/demo/2026-Q2/intact/intact.pdf", "%PDF-1.7"),
+            ("portfolios/demo/2026-Q2/detached/lost.pdf", "%PDF-1.7"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(
+        report.issues[0].path,
+        vp("portfolios/demo/2026-Q2/detached")
+    );
+}
+
+#[test]
+fn lint_does_not_prescribe_a_stub_over_markdown_that_failed_to_index() {
+    // A note with broken frontmatter is not in the index, so it cannot
+    // exempt its folder. Reporting is still right — something there is
+    // unaccounted for — but blindly advising "create the stub" would make
+    // the folder artefacts, so the note would stay invisible even after
+    // its frontmatter is fixed. The message has to carry both readings.
+    let vault = vault_with_notes(
+        &[("portfolios/demo/2026-Q2/broken.md", "# No frontmatter\n")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    let message = &report.issues[0].message;
+    assert!(
+        message.contains("frontmatter needs fixing"),
+        "message: {message}"
+    );
+    assert!(
+        message.contains("restore the stub only in the second case"),
+        "message: {message}"
+    );
+}
+
+#[test]
+fn a_note_at_the_portfolio_root_does_not_exempt_any_subfolder() {
+    // `portfolios/<p>/note.md` has no qualifying ancestor folder, so it
+    // must not mark anything as note-holding — otherwise one root note
+    // would silence the whole portfolio.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-07-03-note.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/assets/pasted.png", "fake bytes"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
