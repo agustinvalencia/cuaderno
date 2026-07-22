@@ -99,12 +99,19 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
-    // Directories holding at least one walked file — the only places an
+    // Every directory on the path to a walked file — the only places an
     // artefact folder can be, and the filter that keeps the stub lookup
     // below from reading the whole vault.
+    //
+    // All ancestors, not just immediate parents: a filed directory tree
+    // keeps its internal structure, so an artefact folder may contain no
+    // direct files at all. `portfolios/<p>/bundle/` holding only
+    // `docs/readme.md` would otherwise never be probed, and `bundle.md`
+    // would never be recognised as the stub that owns it. The empty path
+    // that `ancestors` ends on is rejected by `VaultPath::new`.
     let dirs: HashSet<VaultPath> = all_fs_paths
         .iter()
-        .filter_map(|p| p.as_path().parent())
+        .flat_map(|p| p.as_path().ancestors().skip(1))
         .filter_map(|d| VaultPath::new(d).ok())
         .collect();
     let all_md_paths: Vec<VaultPath> = all_fs_paths

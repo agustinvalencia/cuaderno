@@ -1521,3 +1521,26 @@ fn an_indexed_note_is_not_evicted_when_a_plain_namesake_note_appears() {
         "the nested note must survive its namesake appearing"
     );
 }
+
+#[test]
+fn a_stub_owns_markdown_nested_deeper_inside_its_artefact_folder() {
+    // A filed directory tree keeps its internal structure, so the stub's
+    // own folder may hold no direct files at all — only subdirectories.
+    // The stub still owns everything beneath it.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-07-03-bundle.md"), STUB)
+        .unwrap();
+    store
+        .write_file(
+            &vp("portfolios/demo/2026-07-03-bundle/docs/readme.md"),
+            ARTEFACT_MD,
+        )
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 1);
+    assert_eq!(report.scanned, 1);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+}
