@@ -23,6 +23,66 @@ pub const CAPTURE_SHOW: &str = "capture:show";
 /// path, which the frontend navigates the reader to.
 pub const OPEN_NOTE_DEEPLINK: &str = "deeplink:open-note";
 
+/// How many markdown files the startup reconciliation left out of the
+/// index, and why (#440).
+///
+/// A file absent from the index is absent from search, lint and backlinks
+/// too, so the counts have to be reachable — the app previously logged
+/// only added/updated/removed and dropped these on the floor, which is how
+/// an over-broad `ignore` glob could evict every portfolio note and present
+/// as "the Portfolios section is broken" rather than "my config is wrong".
+///
+/// Delivered as a queryable command rather than a startup event: the
+/// webview may not be listening when reconciliation finishes, and a notice
+/// the user never sees is the failure being fixed.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct IndexExclusions {
+    /// Markdown excluded by the config `ignore` globs.
+    pub ignored: usize,
+    /// Markdown skipped as attachment artefacts owned by an evidence stub.
+    /// Excluded by design, never a sign of misconfiguration.
+    pub artefacts: usize,
+    /// Markdown files that did make it into the index.
+    pub indexed: usize,
+    /// Whether `ignored` is large enough to suggest an over-broad glob
+    /// rather than deliberate housekeeping. See [`glob_looks_over_broad`].
+    pub ignore_looks_over_broad: bool,
+}
+
+/// The floor below which an `ignore` count is never worth a notice, however
+/// large a share of a tiny vault it is.
+const OVER_BROAD_MIN_FILES: usize = 5;
+/// The share of all markdown above which an `ignore` count reads as a
+/// mistake rather than housekeeping, as a percentage.
+const OVER_BROAD_PERCENT: usize = 10;
+
+/// Whether `ignored` out of `total` markdown files suggests an over-broad
+/// `ignore` glob.
+///
+/// Proportional with a floor, because both halves matter: excluding
+/// `CLAUDE.md` from a 168-note vault is 0.6% and must stay silent, while
+/// the glob that started #440 excluded 54 of 221 files (24%) and had to
+/// shout. The floor keeps a three-note scratch vault from tripping the
+/// percentage on a single legitimate exclusion.
+pub fn glob_looks_over_broad(ignored: usize, total: usize) -> bool {
+    ignored >= OVER_BROAD_MIN_FILES && ignored * 100 > total * OVER_BROAD_PERCENT
+}
+
+impl IndexExclusions {
+    /// Read the counts off a reconciliation report.
+    pub fn from_report(report: &cdno_core::reconcile::ReconciliationReport) -> Self {
+        let total = report.scanned + report.ignored + report.artefacts;
+        Self {
+            ignored: report.ignored,
+            artefacts: report.artefacts,
+            indexed: report.scanned,
+            ignore_looks_over_broad: glob_looks_over_broad(report.ignored, total),
+        }
+    }
+}
+
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]

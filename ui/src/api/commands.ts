@@ -13,6 +13,7 @@ import type { ConfigValidationError } from "./bindings/ConfigValidationError";
 import type { DailyView } from "./bindings/DailyView";
 import type { EnergyLevel } from "./bindings/EnergyLevel";
 import type { MonthlyView } from "./bindings/MonthlyView";
+import type { IndexExclusions } from "./bindings/IndexExclusions";
 import type { InboxItem } from "./bindings/InboxItem";
 import type { NoteView } from "./bindings/NoteView";
 import type { OrientationView } from "./bindings/OrientationView";
@@ -40,6 +41,13 @@ export class CuadernoError extends Error {
     this.name = "CuadernoError";
     this.payload = payload;
   }
+}
+
+/** What the startup reconciliation left out of the index (#440). A file
+ * absent from the index is absent from search, lint and backlinks too, so
+ * the counts are surfaced rather than logged and forgotten. */
+export function getIndexExclusions(): Promise<IndexExclusions> {
+  return invoke<IndexExclusions>("get_index_exclusions");
 }
 
 /**

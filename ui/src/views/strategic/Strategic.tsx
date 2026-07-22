@@ -465,7 +465,15 @@ function PortfolioHealth({ portfolios }: { portfolios: PortfolioSummary[] }) {
                 return (
                   <tr key={p.slug} className="border-t border-line">
                     <td className="py-2 pr-4">
-                      <span className="text-ink">{p.question || p.slug}</span>
+                      {/* The same portfolio routes as a chip in the questions
+                          grid above; a row in its own health table was the one
+                          place it rendered as dead text (#440). */}
+                      <Link
+                        to={`/portfolios/${p.slug}`}
+                        className="text-ink hover:text-accent-interactive hover:underline"
+                      >
+                        {p.question || p.slug}
+                      </Link>
                     </td>
                     <td className="py-2 pr-4 text-ink-muted">{p.evidence_count}</td>
                     <td className={`py-2 ${tone}`}>{updated}</td>

@@ -54,7 +54,7 @@ const FIXTURE: WeeklyBundle = {
   projects: [
     { slug: "alpha", status: "active", context: "work", state_snippet: "Underway.", top_action: null },
   ],
-  stuck: [{ slug: "alpha", days_unchanged: 12n }],
+  stuck: [{ slug: "alpha", days_unchanged: 12 }],
   // A completable source (standalone commitment) — outside the review
   // its row would carry a done button, so the read-only lookahead test
   // has something real to suppress.

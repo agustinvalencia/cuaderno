@@ -54,7 +54,7 @@ const BUNDLE: StrategicBundle = {
       question: "How does the surrogate behave?",
       evidence_count: 3,
       last_updated: "2026-07-01",
-      staleness_days: 7n,
+      staleness_days: 7,
     },
     {
       // Shares the "surrogate-fidelity" research question's slug, so it
@@ -63,7 +63,7 @@ const BUNDLE: StrategicBundle = {
       question: "Fidelity evidence dossier",
       evidence_count: 2,
       last_updated: "2026-07-05",
-      staleness_days: 3n,
+      staleness_days: 3,
     },
   ],
   active: [
@@ -81,7 +81,7 @@ const BUNDLE: StrategicBundle = {
         variant: "expanded",
         tracking_count: 12,
         last_tracking_date: "2026-07-07",
-        staleness_days: 1n,
+        staleness_days: 1,
       },
       sparkline: [0, 0, 1, 2, 1, 0, 3, 2, 1, 0, 1, 2],
     },
@@ -257,4 +257,12 @@ test("the six-week timeline is read-only", async () => {
   expect(await screen.findByText("Submit the grant report")).toBeDefined();
   // Read-only: no completion control on any commitment row.
   expect(screen.queryByRole("button", { name: /Mark done/ })).toBeNull();
+});
+
+test("a portfolio-health row links to its portfolio (#440)", async () => {
+  renderStrategic(BUNDLE);
+  // The same portfolio already routed as a chip on a question card; in its
+  // own health table it rendered as dead text. Both are links now.
+  const row = await screen.findByRole("link", { name: "How does the surrogate behave?" });
+  expect(row.getAttribute("href")).toBe("/portfolios/surrogate");
 });

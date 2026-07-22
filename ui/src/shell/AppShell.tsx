@@ -23,6 +23,7 @@ import InboxDrawer from "./InboxDrawer";
 import SettingsDialog from "./SettingsDialog";
 import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
+import IndexExclusionsBanner from "./IndexExclusionsBanner";
 import { ReaderProvider } from "./reader";
 import { useHistoryNavigation } from "./useHistoryNavigation";
 import { useDeepLinkNavigation } from "./useDeepLinkNavigation";
@@ -224,6 +225,7 @@ export default function AppShell() {
         <div data-tauri-drag-region className="h-[var(--titlebar-height)] shrink-0" />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ConfigStatusBanner />
+          <IndexExclusionsBanner />
           <Outlet />
         </div>
       </main>

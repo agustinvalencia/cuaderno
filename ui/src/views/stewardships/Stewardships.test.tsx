@@ -16,7 +16,7 @@ const ROWS: StewardshipSummary[] = [
     variant: "expanded",
     tracking_count: 12,
     last_tracking_date: "2026-07-05",
-    staleness_days: 3n,
+    staleness_days: 3,
   },
   {
     slug: "finances",

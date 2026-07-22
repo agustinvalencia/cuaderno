@@ -66,6 +66,15 @@ pub async fn get_orientation(
     .await?
 }
 
+/// What the startup reconciliation left out of the index (#440).
+///
+/// Reads the snapshot taken at launch rather than re-reconciling: the
+/// notice is about the pass that built the index the app is running on.
+#[tauri::command]
+pub fn get_index_exclusions(state: tauri::State<'_, AppState>) -> crate::events::IndexExclusions {
+    state.exclusions
+}
+
 /// Today's date for display only (headers, date labels). Domain
 /// calls never take a frontend-computed date.
 #[tauri::command]

@@ -17,7 +17,7 @@ function ProjectStateEditor({
   onSaved,
 }: {
   project: ProjectSummary;
-  staleDays: bigint | null;
+  staleDays: number | null;
   onSaved: () => void;
 }) {
   const client = useQueryClient();

@@ -52,6 +52,10 @@ pub struct AppState {
     /// domain works purely in `VaultPath`s and never needs the root,
     /// so this lives here rather than on `Vault`.
     pub root: std::path::PathBuf,
+    /// What the startup reconciliation left out of the index (#440).
+    /// Fixed for the lifetime of the process: it describes the pass that
+    /// ran at launch, which is the one a user is being told about.
+    pub exclusions: crate::events::IndexExclusions,
 }
 
 impl AppState {
