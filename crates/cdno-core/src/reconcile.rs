@@ -99,6 +99,14 @@ pub fn reconcile(
     let all_fs_paths = store
         .walk_dir(&VaultPath::root())
         .map_err(|e| IndexError::Query(format!("walk_dir failed during reconcile: {e}")))?;
+    // Directories holding at least one walked file — the only places an
+    // artefact folder can be, and the filter that keeps the stub lookup
+    // below from reading the whole vault.
+    let dirs: HashSet<VaultPath> = all_fs_paths
+        .iter()
+        .filter_map(|p| p.as_path().parent())
+        .filter_map(|d| VaultPath::new(d).ok())
+        .collect();
     let all_md_paths: Vec<VaultPath> = all_fs_paths
         .into_iter()
         .filter(|p| p.as_path().extension() == Some(OsStr::new("md")))
@@ -111,14 +119,23 @@ pub fn reconcile(
 
     // Attachment artefacts (#451): a markdown file inside a folder owned
     // by an evidence stub is a filed *document*, not a note — it has no
-    // frontmatter, so indexing it can only ever fail. Resolved against
-    // the full markdown set rather than the post-`ignore` one, so the two
-    // exclusions stay independent: ignoring a stub must not silently
-    // promote its artefacts into notes.
+    // frontmatter, so indexing it can only ever fail.
+    //
+    // The owning stubs are identified positively, by reading their
+    // frontmatter, never by the path shape alone: a plain note that merely
+    // shares a name with a sibling folder must not swallow that folder's
+    // real notes out of the index. Only directories that could own
+    // something are probed, so the reads are proportional to the number of
+    // portfolio subfolders, not to the size of the vault.
+    //
+    // Resolved against the full markdown set rather than the post-`ignore`
+    // one, so the two exclusions stay independent: ignoring a stub must not
+    // silently promote its artefacts into notes.
     let md_set: HashSet<VaultPath> = all_md_paths.iter().cloned().collect();
+    let stubs = crate::artefacts::attachment_stubs(store, &md_set, &dirs);
     let (artefact_paths, candidate_md_paths): (Vec<VaultPath>, Vec<VaultPath>) =
         all_md_paths.into_iter().partition(|p| {
-            crate::paths::owning_artefact_stub(p, |stub| md_set.contains(stub)).is_some()
+            crate::artefacts::owning_artefact_stub(p, |stub| stubs.contains(stub)).is_some()
         });
     report.artefacts = artefact_paths.len();
     // Config `ignore` globs (#242): user-declared non-vault docs (e.g.

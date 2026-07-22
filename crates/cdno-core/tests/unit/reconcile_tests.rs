@@ -1292,6 +1292,10 @@ fn invalid_ignore_glob_is_a_config_error() {
 
 const STUB: &str = "---\ntype: evidence\ncreated: 2026-07-03\nsource: A filed document\nportfolio: demo\norigin: \"[[projects/foo]]\"\nkind: file\n---\n# A filed document\n\n## Abstract\n\nWhat it says.\n";
 
+/// An ordinary evidence note: no `kind`, so not an attachment stub, so it
+/// owns nothing however its name lines up with a sibling folder.
+const PLAIN_EVIDENCE: &str = "---\ntype: evidence\ncreated: 2026-07-03\nsource: A quarter summary\nportfolio: demo\norigin: \"[[projects/foo]]\"\n---\n# A quarter summary\n";
+
 /// A filed markdown artefact: a plain document, no frontmatter — exactly
 /// what reconciliation used to choke on.
 const ARTEFACT_MD: &str = "# Reviewer notes\n\nVerdict: approve with changes.\n";
@@ -1448,5 +1452,72 @@ fn folder_scoped_glob_with_two_stars_spares_the_level_above() {
             .find_by_path(&vp("portfolios/demo/_index.md"))
             .unwrap()
             .is_some()
+    );
+}
+
+#[test]
+fn a_plain_note_beside_a_folder_does_not_evict_that_folders_notes() {
+    // Ownership is established by reading the candidate stub, never from
+    // the path shape. A quarter-summary note written beside a hand-made
+    // grouping folder must leave that folder's evidence notes indexed —
+    // inferring ownership from the name alone would drop them from search,
+    // backlinks and portfolio contents with nothing naming them.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/first.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/second.md"), PLAIN_EVIDENCE)
+        .unwrap();
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(report.scanned, 3);
+    assert_eq!(report.added, 3);
+    for path in [
+        "portfolios/demo/2026-Q2.md",
+        "portfolios/demo/2026-Q2/first.md",
+        "portfolios/demo/2026-Q2/second.md",
+    ] {
+        assert!(
+            index.find_by_path(&vp(path)).unwrap().is_some(),
+            "{path} should still be indexed"
+        );
+    }
+}
+
+#[test]
+fn an_indexed_note_is_not_evicted_when_a_plain_namesake_note_appears() {
+    // The same rule across two passes: the eviction, if it happened, would
+    // land on the *second* reconcile, after the notes were already indexed.
+    let (store, index) = fixtures();
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2/first.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-Q2/first.md"))
+            .unwrap()
+            .is_some()
+    );
+
+    store
+        .write_file(&vp("portfolios/demo/2026-Q2.md"), PLAIN_EVIDENCE)
+        .unwrap();
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(report.artefacts, 0);
+    assert_eq!(report.removed, 0);
+    assert!(
+        index
+            .find_by_path(&vp("portfolios/demo/2026-Q2/first.md"))
+            .unwrap()
+            .is_some(),
+        "the nested note must survive its namesake appearing"
     );
 }

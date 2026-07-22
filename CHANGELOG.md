@@ -17,22 +17,35 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   extension. Ownership is resolved by walking a file's ancestors rather than by a fixed
   depth, so it holds under any intervening folder, and it applies only inside
   `portfolios/` — vault-wide it would make a stewardship with both a flat and an
-  expanded spelling vanish from the index. The count of skipped artefacts is reported
-  by `cdno reindex` alongside the `ignore`-glob count, since a file absent from the
-  index is absent from search and lint too. (#451)
+  expanded spelling vanish from the index. Ownership is also established *positively*:
+  the sibling `.md` must parse as an evidence note carrying a `kind`, not merely exist,
+  so an ordinary note that shares a name with a hand-made grouping folder cannot
+  swallow that folder's notes out of the index. The count of skipped artefacts is
+  reported by `cdno reindex` alongside the `ignore`-glob count, since a file absent
+  from the index is absent from search and lint too. (#451)
+
+  **On upgrade:** if a vault has markdown artefacts that were previously indexed —
+  because they were given frontmatter by hand, or because an editor added it — the
+  first reconcile removes their index rows, and their links, tags and search entries
+  cascade with them. The files are untouched on disk and remain reachable through their
+  evidence stub, but they stop appearing in search results and backlinks, and a
+  wikilink pointing at one now reports as broken. `cdno reindex` prints how many files
+  were skipped as artefacts. To keep such a file as a note, move it out of the artefact
+  folder.
 
 ### Changed
 
 - **The orphan-artefact lint no longer exempts markdown.** A folder of filed markdown
   whose evidence stub was deleted or moved is now reported like any other detached
   artefact — previously it was invisible in both directions, since the check skipped
-  `.md` while reconciliation tried to index it. The check also resolves ownership
-  through the same helper reconciliation uses, so the two can no longer disagree, and
-  reports once per `portfolios/<portfolio>/<folder>` however deep the artefacts sit.
-  Note that a hand-made grouping subfolder holding notes is indistinguishable from a
-  detached artefact folder by shape alone, so it will be reported until #454 makes
-  grouping explicit; the message hedges ("orphaned attachment or stray file") for that
-  reason. (#451)
+  `.md` while reconciliation tried to index it. The check resolves ownership through
+  the same helper reconciliation uses, so the two can no longer disagree, and reports
+  once per `portfolios/<portfolio>/<folder>` however deep the artefacts sit. It now
+  also skips files that are notes (anything in the index) and files excluded by the
+  config `ignore` globs, so a hand-organised subfolder of evidence notes is not
+  mistaken for a detached artefact folder — and, importantly, lint never advises
+  creating a `<folder>.md` that would make reconciliation drop the notes underneath it.
+  (#451)
 
 ## [0.31.0] - 2026-07-21
 

@@ -1451,3 +1451,77 @@ fn lint_passes_an_artefact_nested_inside_its_stubs_folder() {
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_holding_a_stub_and_its_artefacts() {
+    // The stub sits one level below the portfolio root, inside a hand-made
+    // grouping folder. Its own folder is properly owned, and the stub is a
+    // note, so nothing here is an orphan. Reporting `portfolios/demo/sweep`
+    // would be worse than noise: the remedy the message names — create
+    // `sweep.md` — is exactly what would make reconciliation treat the stub
+    // as an artefact and drop it from the index.
+    let vault = vault_with_notes(
+        &[
+            (
+                "portfolios/demo/sweep/2026-07-03-run-07.md",
+                ATTACHMENT_STUB,
+            ),
+            (
+                "portfolios/demo/sweep/2026-07-03-run-07/log.txt",
+                "run output",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_does_not_flag_a_grouping_folder_of_ordinary_notes() {
+    // Hand-organised evidence in a subfolder is notes, not artefacts.
+    let vault = vault_with_notes(
+        &[
+            ("portfolios/demo/2026-Q2/first.md", PLAIN_EVIDENCE),
+            ("portfolios/demo/2026-Q2/second.md", PLAIN_EVIDENCE),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_honours_ignore_globs_when_scanning_for_orphans() {
+    // The orphan scan walks the store directly rather than the index, so
+    // it has to apply the `ignore` globs itself — otherwise it reports on
+    // files the rest of the tool has been told to disregard.
+    let config = VaultConfig {
+        ignore: vec!["portfolios/*/scratch/**".to_string()],
+        ..Default::default()
+    };
+    let vault = vault_with_notes(&[("portfolios/demo/scratch/notes.txt", "scratch")], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert!(report.is_clean(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_still_flags_an_unowned_non_note_file() {
+    // The check's actual purpose survives all three exemptions: a pasted
+    // image folder with no stub is still reported.
+    let vault = vault_with_notes(
+        &[("portfolios/demo/assets/pasted.png", "fake bytes")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+
+    assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
+    assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
+}
