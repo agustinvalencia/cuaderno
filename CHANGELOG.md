@@ -28,6 +28,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **Stewardships show status, not an alphabet.** They are the perpetual responsibilities
+  that never complete, and the one number that matters — how long since anything was tracked
+  — sat wherever the slug ordering put it, on rows painted a flat faint tone that carried no
+  freshness signal at all. The list now leads with the quietest, says how many have gone
+  quiet, filters down to just those, reads freshness through the same ink ladder as
+  Portfolios and Monthly, and offers logging from the row. The detail promotes **Log entry**
+  to its header instead of burying it below a page of charts, puts the charts two-up behind
+  an activity filter, caps a long dashboard body, shows the honest total behind the previewed
+  entries, and carries each entry’s routine and duration. A failed log now keeps the form and
+  everything typed into it, rather than closing over the only copy. (#448)
+
 - **Commitments answer "when", not just "what".** The window was a hardcoded 90 days baked
   into the query, which silently defined what "all your commitments" meant — a promise 100
   days out was invisible with no hint it existed. The horizon is now yours to set, from a

@@ -8,7 +8,7 @@
 // its dynamic fields derived from the tracking template's prompts.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
 import {
   errorMessage,
@@ -28,8 +28,17 @@ import Markdown from "../../components/markdown/Markdown";
 import { contextDotClass } from "../../lib/contexts";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
+import { ClampedText } from "../../components/ui/clamped-text";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
+
+/** The activity a tracking series belongs to. Series are named
+ * `"<activity> · <column>"`, and only the first separator splits them —
+ * a column header may contain one. */
+export function activityOf(seriesName: string): string {
+  const at = seriesName.indexOf(" \u00b7 ");
+  return at === -1 ? seriesName : seriesName.slice(0, at);
+}
 
 /** The stewardship's on-disk note path for open-in-editor: expanded
  * dashboards live in a folder's `_index.md`, flat ones as a single file. */
@@ -84,11 +93,36 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   const navigate = useNavigate();
   const { openReader } = useReader();
   const reducedMotion = usePrefersReducedMotion();
+  const [search] = useSearchParams();
   const key = ["get_stewardship_detail", slug];
 
-  const showCharts = data.variant === "expanded" && data.series.length > 0;
   const canLog = data.variant === "expanded";
+  // The form used to sit below the dashboard, every chart and the recent
+  // list — several screens of scrolling to reach the most frequent write
+  // on the page. It is summoned from the header now, and the list's own
+  // "log" link arrives with `?log=1` so logging is one click from there.
+  const [logOpen, setLogOpen] = useState(search.get("log") === "1");
+  // Which activities to chart. Empty means all — a filter narrows, it
+  // never blanks.
+  const [activities, setActivities] = useState<Set<string>>(new Set());
 
+  const showCharts = data.variant === "expanded" && data.series.length > 0;
+  // A series is named "<activity> · <column>" (composed in
+  // `cdno-domain`'s `context.rs`), and the activity is what a reader
+  // filters by. A gym stewardship tracking sets, reps and weight across
+  // three activities is nine charts in one column — roughly 1600px of
+  // scroll with no way to narrow it.
+  //
+  // Split on the separator, not on whitespace: an activity is free text
+  // and "morning run" is an ordinary thing to type. Splitting on a space
+  // labelled the chip "morning", and two activities sharing a first word
+  // collapsed into one chip — which took the filter away entirely, since
+  // it only appears when there is more than one.
+  const chartActivities = [...new Set(data.series.map((s) => activityOf(s.name)))];
+  const shownSeries =
+    activities.size === 0
+      ? data.series
+      : data.series.filter((s) => activities.has(activityOf(s.name)));
   // Wikilinks in the dashboard body resolve to typed navigation or open
   // the linked note in the shell reader (mirrors ProjectDetail).
   async function onWikilink(target: string) {
@@ -121,27 +155,87 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
         <span className="shrink-0 rounded bg-bg-sunken px-2 py-0.5 text-xs text-ink-muted">
           {data.variant}
         </span>
+        {canLog && (
+          <button
+            type="button"
+            onClick={() => setLogOpen((open) => !open)}
+            aria-expanded={logOpen}
+            className="shrink-0 rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
+          >
+            {logOpen ? "Close log" : "Log entry"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void openInEditor(editorPath(slug, data.variant))}
-          className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
+          className="shrink-0 rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
         >
           Open in editor
         </button>
       </header>
 
+      {canLog && logOpen && (
+        <LogEntry
+          slug={slug}
+          recentActivities={data.recent.map((e) => e.activity)}
+          // Invalidation rides `onSettled`; closing does NOT. Closing
+          // from there unmounted the form on a *failed* submit too, and
+          // the form holds the only copy of what was typed — so a disk
+          // error or a vault lock silently ate the entry.
+          onLogged={() => void client.invalidateQueries({ queryKey: key })}
+          onClose={() => setLogOpen(false)}
+        />
+      )}
+
       {/* Dashboard — the body as written. */}
+      {/* Capped: a long body used to push Trends and Recent off-screen
+          entirely. Expands in place. */}
       <section aria-label="Dashboard" className="mt-8">
-        <Markdown body={data.body_markdown} onWikilink={onWikilink} />
+        <ClampedText collapsedClass="max-h-96" resetKey={slug}>
+          <Markdown body={data.body_markdown} onWikilink={onWikilink} />
+        </ClampedText>
       </section>
 
       {/* Trend charts — expanded-only, and only when there's numeric
           tracking to draw. Status visualisations, not goal trackers. */}
       {showCharts && (
         <section aria-label="Trends" className="mt-10 border-t border-line pt-6">
-          <SectionHeading>Trends</SectionHeading>
-          <div className="mt-3 space-y-6">
-            {data.series.map((series, index) => (
+          <div className="flex flex-wrap items-center gap-2">
+            <SectionHeading>Trends</SectionHeading>
+            <span className="text-xs text-ink-faint">status, not targets</span>
+            {chartActivities.length > 1 && (
+              <div role="group" aria-label="Filter charts by activity" className="ml-auto flex flex-wrap gap-1.5">
+                {chartActivities.map((activity) => (
+                  <button
+                    key={activity}
+                    type="button"
+                    aria-pressed={activities.has(activity)}
+                    onClick={() =>
+                      setActivities((current) => {
+                        const next = new Set(current);
+                        if (!next.delete(activity)) next.add(activity);
+                        return next;
+                      })
+                    }
+                    className={`rounded-full border border-line px-2 py-0.5 text-xs ${
+                      activities.has(activity)
+                        ? "bg-bg-sunken font-medium text-ink"
+                        : "text-ink-muted hover:text-ink"
+                    }`}
+                  >
+                    {activity}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* Two up rather than one long column. */}
+          <div
+            role="group"
+            aria-label="Trend charts"
+            className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-2"
+          >
+            {shownSeries.map((series, index) => (
               // Count/volume series (all-integer values — reps, laps,
               // sessions) read better as calm columns; continuous
               // measures keep the line. The choice is cosmetic.
@@ -158,11 +252,34 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
       )}
 
       {/* Recent tracking — last few entries, opening the note reader. */}
-      {data.recent.length > 0 && (
+      {canLog && (
         <section aria-label="Recent tracking" className="mt-10 border-t border-line pt-6">
-          <SectionHeading>
-            Recent tracking
-          </SectionHeading>
+          <div className="flex flex-wrap items-baseline gap-2">
+            <SectionHeading>Recent tracking</SectionHeading>
+            {/* The honest total behind the previewed few. It came over
+                the wire and nothing read it, so the page showed five
+                entries and you could not tell whether there were six or
+                six hundred. */}
+            <span className="text-xs text-ink-faint">
+              {data.tracking_count} in all
+            </span>
+            {data.tracking_count > data.recent.length && (
+              <button
+                type="button"
+                onClick={() => void openInEditor(`stewardships/${slug}/tracking`)}
+                className="text-xs text-ink-faint underline decoration-dotted underline-offset-2 hover:text-ink"
+              >
+                see all
+              </button>
+            )}
+          </div>
+          {data.recent.length === 0 ? (
+            // Not a prompt to catch up: an expanded stewardship with no
+            // tracking yet is a perfectly good state to be in.
+            <p className="mt-3 text-sm text-ink-muted">
+              Nothing tracked yet. Log an entry when there is something to record.
+            </p>
+          ) : (
           <ul className="mt-3 space-y-1">
             {data.recent.map((entry) => (
               <li key={entry.path}>
@@ -173,6 +290,14 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
                 >
                   <span className="shrink-0 text-sm text-ink">{entry.activity}</span>
                   <span className="shrink-0 text-xs text-ink-faint">{shortDate(entry.date)}</span>
+                  {entry.routine && (
+                    <span className="shrink-0 text-xs text-ink-faint">{entry.routine}</span>
+                  )}
+                  {entry.duration_min !== null && (
+                    <span className="shrink-0 text-xs text-ink-faint">
+                      {entry.duration_min} min
+                    </span>
+                  )}
                   {entry.body_excerpt && (
                     <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">
                       {entry.body_excerpt}
@@ -182,17 +307,8 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
               </li>
             ))}
           </ul>
+          )}
         </section>
-      )}
-
-      {/* Log entry — expanded stewardships only (flat ones have no
-          tracking/ subdir to file into). */}
-      {canLog && (
-        <LogEntry
-          slug={slug}
-          recentActivities={data.recent.map((e) => e.activity)}
-          onLogged={() => void client.invalidateQueries({ queryKey: key })}
-        />
       )}
 
       <p className="mt-8 text-xs text-ink-faint">
@@ -211,13 +327,19 @@ function LogEntry({
   slug,
   recentActivities,
   onLogged,
+  onClose,
 }: {
   slug: string;
   recentActivities: string[];
+  /** Settled — success or failure. Refresh what the write may have
+   * changed; never close over it. */
   onLogged: () => void;
+  /** Close the form: the header owns that state now. Called on a
+   * successful save and on Cancel, never on a failure — the draft is
+   * the only copy of what was typed. */
+  onClose: () => void;
 }) {
   const { toast } = useToast();
-  const [open, setOpen] = useState(false);
   const [activity, setActivity] = useState("");
   const [routine, setRoutine] = useState("");
   const [content, setContent] = useState("");
@@ -227,7 +349,7 @@ function LogEntry({
   const fields = useQuery({
     queryKey: ["get_tracking_template_fields", debouncedActivity],
     queryFn: () => getTrackingTemplateFields(debouncedActivity),
-    enabled: open && debouncedActivity.length > 0,
+    enabled: debouncedActivity.length > 0,
   });
 
   const activityOptions = useMemo(
@@ -273,27 +395,16 @@ function LogEntry({
     onSuccess: () => {
       toast(`Logged ${activity.trim()} — one more on the record.`);
       reset();
-      setOpen(false);
+      onClose();
     },
     onSettled: onLogged,
   });
 
-  if (!open) {
-    return (
-      <div className="mt-10 border-t border-line pt-6">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
-        >
-          Log entry
-        </button>
-      </div>
-    );
-  }
-
+  // No collapsed state of its own: the header owns whether this is open,
+  // so one control decides rather than two that can disagree. It used to
+  // render its own "Log entry" button at the very bottom of the page.
   return (
-    <section aria-label="Log a tracking entry" className="mt-10 border-t border-line pt-6">
+    <section aria-label="Log a tracking entry" className="mt-6 rounded-lg border border-line bg-bg-surface p-4">
       <SectionHeading>Log entry</SectionHeading>
       <form
         className="mt-3 space-y-3"
@@ -378,7 +489,7 @@ function LogEntry({
             type="button"
             onClick={() => {
               reset();
-              setOpen(false);
+              onClose();
             }}
             className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
           >

@@ -2,7 +2,7 @@
 // with series; a flat one has no charts pane; recent entries open the
 // reader; the log form submits with the template-derived vars.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -89,6 +89,7 @@ function NotePathProbe() {
 function renderDetail(
   fixture: StewardshipDetailData,
   onCall?: (cmd: string, args: unknown) => void,
+  at?: string,
 ) {
   mockIPC((cmd, args) => {
     onCall?.(cmd, args);
@@ -97,11 +98,22 @@ function renderDetail(
       return [{ name: "mood", prompt: "How did it feel?" }];
     return undefined;
   });
+  return mountDetail(fixture, at);
+}
+
+/** For the cases that need a mock which can throw — the write error
+ * paths, which a return-only mock cannot reach. */
+function renderDetailWith(handler: (cmd: string, args: unknown) => unknown) {
+  mockIPC(handler);
+  return mountDetail(EXPANDED);
+}
+
+function mountDetail(fixture: StewardshipDetailData, at?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter initialEntries={[`/stewardships/${fixture.slug}`]}>
+        <MemoryRouter initialEntries={[at ?? `/stewardships/${fixture.slug}`]}>
           {/* ReaderProvider needs a Router above it (it navigates); the
               `/note/*` stand-in route surfaces the opened path. */}
           <ReaderProvider>
@@ -214,4 +226,135 @@ test("switching activity clears prior field values and submits only the new acti
   });
   // A's value never rode along.
   expect((logged?.args as { vars: Record<string, string> }).vars).toEqual({ mood: "calm" });
+});
+
+test("logging is a header action, not the bottom of a page of charts", async () => {
+  // The form used to sit below the dashboard, every chart and the recent
+  // list — several screens of scrolling to reach the most frequent write
+  // on the page.
+  renderDetail(EXPANDED);
+  await screen.findByRole("heading", { name: "Health" });
+  expect(screen.queryByLabelText("Activity")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Log entry" }));
+
+  expect(screen.getByLabelText("Activity")).toBeDefined();
+  // One control owns the state: the header button becomes the closer
+  // rather than the form growing a second toggle of its own.
+  expect(screen.queryByRole("button", { name: "Log entry" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Close log" }));
+  expect(screen.queryByLabelText("Activity")).toBeNull();
+});
+
+test("arriving with ?log=1 opens the form, so the list's log link is one click", async () => {
+  renderDetail(EXPANDED, undefined, "/stewardships/health?log=1");
+  expect(await screen.findByLabelText("Activity")).toBeDefined();
+});
+
+test("the recent list says how many there are in all", async () => {
+  // tracking_count came over the wire and nothing read it, so the page
+  // showed a few entries and you could not tell whether there were six or
+  // six hundred.
+  renderDetail(EXPANDED);
+  await screen.findByRole("heading", { name: "Health" });
+  const recent = within(screen.getByRole("region", { name: "Recent tracking" }));
+  expect(recent.getByText("2 in all")).toBeDefined();
+  expect(recent.getByRole("button", { name: "see all" })).toBeDefined();
+});
+
+test("recent rows carry the duration and routine that already came over the wire", async () => {
+  // The fixture had `routine: null`, so the routine branch never rendered
+  // and could have been deleted with the suite still green.
+  renderDetail({
+    ...EXPANDED,
+    recent: [{ ...EXPANDED.recent[0], routine: "push day" }],
+  });
+  const recent = within(await screen.findByRole("region", { name: "Recent tracking" }));
+  expect(recent.getByText("55 min")).toBeDefined();
+  expect(recent.getByText("push day")).toBeDefined();
+});
+
+test("a failed log keeps the form, and everything typed into it", async () => {
+  // Closing rode `onSettled`, which fires on failure too — so a disk
+  // error or a vault lock unmounted the only copy of what was typed.
+  renderDetailWith((cmd) => {
+    if (cmd === "get_stewardship_detail") return EXPANDED;
+    if (cmd === "get_tracking_template_fields") return [];
+    if (cmd === "log_tracking_entry") throw new Error("vault is read-only");
+    return undefined;
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "felt strong" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+
+  expect(await screen.findByText(/read-only/)).toBeDefined();
+  expect((screen.getByLabelText("Notes") as HTMLTextAreaElement).value).toBe("felt strong");
+  expect((screen.getByLabelText("Activity") as HTMLInputElement).value).toBe("gym");
+});
+
+test("a successful log closes the form", async () => {
+  renderDetail(EXPANDED);
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+
+  await waitFor(() => expect(screen.queryByLabelText("Activity")).toBeNull());
+});
+
+test("Cancel closes the form too, not only the header button", async () => {
+  renderDetail(EXPANDED);
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByLabelText("Activity")).toBeNull();
+  expect(screen.getByRole("button", { name: "Log entry" })).toBeDefined();
+});
+
+test("an activity with a space in it keeps its whole name", async () => {
+  // Series are named "<activity> · <column>". Splitting on whitespace
+  // labelled the chip "morning", and two activities sharing a first word
+  // collapsed into one — which removed the filter entirely, since it only
+  // appears when there is more than one.
+  renderDetail({
+    ...MIXED,
+    series: [
+      { name: "morning run · Sets", points: [{ date: "2026-07-01", value: 3 }] },
+      { name: "morning swim · Laps", points: [{ date: "2026-07-02", value: 20 }] },
+    ],
+  });
+  await screen.findByRole("heading", { name: "Trends" });
+
+  const filter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  expect(filter.getByRole("button", { name: "morning run" })).toBeDefined();
+  expect(filter.getByRole("button", { name: "morning swim" })).toBeDefined();
+
+  fireEvent.click(filter.getByRole("button", { name: "morning swim" }));
+  const charts = within(screen.getByRole("group", { name: "Trend charts" }));
+  expect(charts.queryByText(/morning run/)).toBeNull();
+});
+
+test("an expanded stewardship with nothing tracked says so calmly", async () => {
+  // Not a prompt to catch up: it is a perfectly good state to be in. The
+  // section used to be omitted entirely, leaving a bare button.
+  renderDetail(MIXED);
+  const recent = within(await screen.findByRole("region", { name: "Recent tracking" }));
+  expect(recent.getByText(/Nothing tracked yet/)).toBeDefined();
+});
+
+test("charts can be narrowed to one activity", async () => {
+  // A gym stewardship tracking sets, reps and weight across three
+  // activities is nine charts in one column.
+  renderDetail(MIXED);
+  await screen.findByRole("heading", { name: "Trends" });
+  const filter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  expect(filter.getByRole("button", { name: "gym" })).toBeDefined();
+
+  fireEvent.click(filter.getByRole("button", { name: "weigh-in" }));
+
+  // Scoped to the charts themselves — the chips carry the same words.
+  const charts = within(screen.getByRole("group", { name: "Trend charts" }));
+  expect(charts.getByText(/weigh-in/)).toBeDefined();
+  expect(charts.queryByText(/gym/)).toBeNull();
 });
