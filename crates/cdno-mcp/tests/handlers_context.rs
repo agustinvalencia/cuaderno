@@ -948,8 +948,12 @@ fn project_backlinks_dto_caps_each_group() {
     // per-group cap. The DTO must keep only PROJECT_BACKLINKS_PER_GROUP_MAX
     // (GH #388). Exercised at the From boundary directly — no need to seed
     // hundreds of backlinking notes.
-    let evidence: Vec<cdno_core::path::VaultPath> = (0..150)
-        .map(|i| cdno_core::path::VaultPath::new(format!("portfolios/x/ev-{i}.md")).unwrap())
+    let evidence: Vec<cdno_domain::BacklinkRef> = (0..150)
+        .map(|i| cdno_domain::BacklinkRef {
+            path: cdno_core::path::VaultPath::new(format!("portfolios/x/ev-{i}.md")).unwrap(),
+            title: None,
+            modified_ns: 0,
+        })
         .collect();
     let domain = cdno_domain::ProjectBacklinks {
         evidence,

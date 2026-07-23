@@ -21,7 +21,7 @@ const ACTIVE: ProjectDetailData = {
   actions: [{ text: "Draft methods", energy: "deep", attached: null }],
   open_milestones: [{ name: "v1 ship", date: "2026-08-01", is_hard: true }],
   backlinks: {
-    portfolios: ["portfolios/x/_index.md"],
+    portfolios: [{ path: "portfolios/x/_index.md", title: null }],
     questions: [],
     evidence: [],
     actions: [],
@@ -37,7 +37,10 @@ const PARKED: ProjectDetailData = {
   actions: [],
 };
 
-function renderDetail(fixture: ProjectDetailData, onCall?: (cmd: string, args: unknown) => void) {
+function renderDetail(
+  fixture: ProjectDetailData = ACTIVE,
+  onCall?: (cmd: string, args: unknown) => void,
+) {
   mockIPC((cmd, args) => {
     onCall?.(cmd, args);
     if (cmd === "get_project") return fixture;
@@ -69,7 +72,9 @@ test("renders actions, milestones, backlinks, and log mentions", async () => {
   expect(await screen.findByText("Draft methods")).toBeDefined();
   expect(screen.getByText("v1 ship")).toBeDefined();
   expect(screen.getByText("hard:")).toBeDefined();
-  expect(screen.getByText("portfolios/x/_index.md")).toBeDefined();
+  // A backlink reads as its note, not its path; an `_index.md` names its
+  // folder, since "index" would describe every portfolio equally.
+  expect(screen.getByText("x")).toBeDefined();
   expect(screen.getByText(/worked on alpha/)).toBeDefined();
 });
 
@@ -148,4 +153,64 @@ test("a parked project renders read-only — no add row, no done", async () => {
   expect(screen.queryByLabelText("New waiting-on blocker")).toBeNull();
   // No done button on the (empty) action list.
   expect(screen.queryByRole("button", { name: /Mark done/ })).toBeNull();
+});
+
+test("the current state is rendered, not hidden behind an edit affordance", async () => {
+  // "Where am I" is the one question the map exists to answer, so the state
+  // is on the page. Previously the section held only an "Edit current
+  // state" link and the prose appeared solely in the verbatim map, several
+  // screens down.
+  renderDetail();
+
+  // Twice, deliberately: once as the section, once inside the verbatim map
+  // at the foot of the page, which still shows everything as written.
+  const shown = await screen.findAllByText("Going well.");
+  expect(shown.length).toBe(2);
+});
+
+test("clicking the current state opens the editor seeded with it", async () => {
+  renderDetail();
+
+  const region = await screen.findByLabelText("Edit the current state of alpha");
+  fireEvent.click(region);
+
+  const editor = screen.getByLabelText("Current state of alpha") as HTMLTextAreaElement;
+  expect(editor.value).toBe("Going well.");
+});
+
+test("a long backlink group collapses to a few, with the true total offered", async () => {
+  // Backlinks accumulate for as long as the project runs; past a handful
+  // they push the state and the next actions off the screen.
+  const many = Array.from({ length: 9 }, (_, i) => ({
+    path: `portfolios/x/2026-07-0${i + 1}-finding-${i + 1}.md`,
+    title: null,
+  }));
+  renderDetail({ ...ACTIVE, backlinks: { ...ACTIVE.backlinks, portfolios: many } });
+
+  expect(await screen.findByText("finding 1")).toBeDefined();
+  expect(screen.queryByText("finding 9")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show all 9 portfolios" }));
+
+  expect(screen.getByText("finding 9")).toBeDefined();
+});
+
+test("log mentions collapse the same way", async () => {
+  const many = Array.from({ length: 8 }, (_, i) => ({
+    date: `2026-07-0${i + 1}`,
+    time: "09:00:00",
+    text: `entry ${i + 1}`,
+  }));
+  renderDetail({ ...ACTIVE, log_mentions: many });
+
+  // Five of eight, whichever end the app-wide order puts first.
+  const toggle = await screen.findByRole("button", { name: "Show all 8 log mentions" });
+  const visible = many.filter((m) => screen.queryByText(m.text) !== null);
+  expect(visible.length).toBe(5);
+
+  fireEvent.click(toggle);
+
+  for (const mention of many) {
+    expect(screen.getByText(mention.text)).toBeDefined();
+  }
 });

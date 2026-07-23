@@ -86,14 +86,36 @@ pub struct ProjectStateChange {
 /// without per-row type lookups.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectBacklinks {
-    pub portfolios: Vec<VaultPath>,
-    pub questions: Vec<VaultPath>,
-    pub evidence: Vec<VaultPath>,
-    pub actions: Vec<VaultPath>,
+    pub portfolios: Vec<BacklinkRef>,
+    pub questions: Vec<BacklinkRef>,
+    pub evidence: Vec<BacklinkRef>,
+    pub actions: Vec<BacklinkRef>,
     /// Anything else (commitments, daily notes, hand-edited
     /// references). Lets the caller still render every backlink even
     /// when the source type isn't one of the call-out groups.
-    pub other: Vec<VaultPath>,
+    pub other: Vec<BacklinkRef>,
+}
+
+/// One note that links to the subject, with what a reader needs to
+/// recognise it.
+///
+/// A path alone is a poor label — `portfolios/how-should-the-pipeline-be-staged/2026-07-13-index-shape.md`
+/// says less at a glance than the note's own title — and gives no basis
+/// for ordering, so a long list arrives in whatever order the index
+/// happened to yield.
+///
+/// (`QuestionBacklinks` still carries bare paths. Its only consumer is the
+/// Strategic view, which is being reworked separately; converting it here
+/// would churn a file that is about to be rewritten.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BacklinkRef {
+    pub path: VaultPath,
+    /// The source note's title, when the index has one. Absent for a note
+    /// with no H1 or title frontmatter — the caller falls back to the path.
+    pub title: Option<String>,
+    /// Filesystem mtime, the key the buckets are sorted on (newest first).
+    /// Carried so a caller can show recency without a second lookup.
+    pub modified_ns: u64,
 }
 
 /// Backlinks to a question, grouped by source note type (#354) — the
@@ -416,7 +438,11 @@ impl Vault {
         let backlinks = self.index.find_backlinks(&project_path)?;
         let mut out = ProjectBacklinks::default();
         for source in backlinks {
-            let bucket = match self.index.find_by_path(&source)? {
+            // One lookup serves both the bucketing and the label: the entry
+            // already carries the title and mtime, so enriching the row
+            // costs no extra I/O.
+            let entry = self.index.find_by_path(&source)?;
+            let bucket = match &entry {
                 Some(entry) => match entry.note_type.as_str() {
                     "portfolio" => &mut out.portfolios,
                     "question" => &mut out.questions,
@@ -429,11 +455,16 @@ impl Vault {
                 // Park in `other` rather than drop.
                 None => &mut out.other,
             };
-            bucket.push(source);
+            bucket.push(BacklinkRef {
+                path: source,
+                title: entry.as_ref().and_then(|e| e.title.clone()),
+                modified_ns: entry.as_ref().map_or(0, |e| e.mtime_ns),
+            });
         }
-        // Sort each bucket for deterministic output. VaultPath
-        // isn't Ord; compare on the underlying Path.
-        let by_path = |a: &VaultPath, b: &VaultPath| a.as_path().cmp(b.as_path());
+        // Newest first: a project accrues backlinks for as long as it runs,
+        // and the recent ones are the context a reader wants. Path breaks
+        // ties so the order stays deterministic (VaultPath isn't Ord, so
+        // compare the underlying Path).
         for bucket in [
             &mut out.portfolios,
             &mut out.questions,
@@ -441,7 +472,11 @@ impl Vault {
             &mut out.actions,
             &mut out.other,
         ] {
-            bucket.sort_by(by_path);
+            bucket.sort_by(|a, b| {
+                b.modified_ns
+                    .cmp(&a.modified_ns)
+                    .then_with(|| a.path.as_path().cmp(b.path.as_path()))
+            });
         }
         Ok(out)
     }

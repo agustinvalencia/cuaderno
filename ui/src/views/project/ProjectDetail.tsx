@@ -11,6 +11,7 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
+import type { BacklinkRow } from "../../api/bindings/BacklinkRow";
 import type { ProjectDetail as ProjectDetailData } from "../../api/bindings/ProjectDetail";
 import {
   activateProject,
@@ -29,6 +30,8 @@ import {
 import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import Markdown from "../../components/markdown/Markdown";
+import { CappedList } from "../../components/ui/capped-list";
+import { noteLabel } from "../../lib/noteLabel";
 import { LogCard } from "../../components/ui/log-card";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
@@ -40,6 +43,12 @@ import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
+
+// How much of each accumulating section shows before the rest folds away.
+// Both grow for as long as the project runs; a handful is context, dozens
+// is a wall that pushes the state and the next actions off the screen.
+const BACKLINKS_SHOWN = 6;
+const LOG_MENTIONS_SHOWN = 5;
 
 /** The project map's note path for open-in-editor — parked maps live
  * under `_parked/`. */
@@ -227,7 +236,10 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
     },
   });
 
-  const backlinkGroups: [string, string[]][] = [
+  // Pulled once: it seeds the editor and, now, renders as the section body.
+  const currentState = extractSection(data.body_markdown, "Current State");
+
+  const backlinkGroups: [string, BacklinkRow[]][] = [
     ["portfolios", data.backlinks.portfolios],
     ["questions", data.backlinks.questions],
     ["evidence", data.backlinks.evidence],
@@ -285,7 +297,7 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           >
             <textarea
               ref={stateDraft}
-              defaultValue={extractSection(data.body_markdown, "Current State")}
+              defaultValue={currentState}
               rows={4}
               aria-label={`Current state of ${slug}`}
               className="w-full rounded border border-line bg-bg-base p-2 text-sm text-ink"
@@ -308,13 +320,23 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
             </div>
           </form>
         ) : (
+          // The state IS the answer to "where am I" — the one thing the map
+          // exists to tell you — so it is rendered, not hidden behind an
+          // affordance. Click it to edit; the button wraps the prose rather
+          // than replacing it.
           <button
             type="button"
             onClick={() => setEditingState(true)}
             aria-label={`Edit the current state of ${slug}`}
-            className="mt-2 block rounded text-left text-sm text-accent-interactive hover:underline"
+            className="mt-2 block w-full rounded p-1 text-left hover:bg-bg-sunken"
           >
-            Edit current state
+            {currentState ? (
+              <Markdown body={currentState} onWikilink={onWikilink} />
+            ) : (
+              <span className="text-sm text-ink-muted">
+                No state written yet — say where this stands.
+              </span>
+            )}
           </button>
         )}
       </section>
@@ -494,23 +516,26 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           <SectionHeading>
             Linked from
           </SectionHeading>
-          {backlinkGroups.map(([group, paths]) =>
-            paths.length === 0 ? null : (
+          {backlinkGroups.map(([group, rows]) =>
+            rows.length === 0 ? null : (
               <div key={group} className="mt-2">
                 <p className="text-xs text-ink-faint">{group}</p>
-                <ul className="mt-1 space-y-0.5">
-                  {paths.map((path) => (
-                    <li key={path}>
+                <CappedList
+                  label={group}
+                  limit={BACKLINKS_SHOWN}
+                  items={rows.map((row) => (
+                    <div key={row.path}>
                       <button
                         type="button"
-                        onClick={() => openReader(path)}
-                        className="truncate text-left text-sm text-ink-muted hover:text-ink"
+                        onClick={() => openReader(row.path)}
+                        title={row.path}
+                        className="block w-full truncate text-left text-sm text-ink-muted hover:text-ink"
                       >
-                        {path}
+                        {noteLabel(row.path, row.title)}
                       </button>
-                    </li>
+                    </div>
                   ))}
-                </ul>
+                />
               </div>
             ),
           )}
@@ -524,16 +549,18 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
             <SectionHeading>Recently in your logs</SectionHeading>
             <LogOrderToggle />
           </div>
-          <div className="mt-2 space-y-1.5">
-            {orderLogs(data.log_mentions, logOrder).map((mention, index) => (
-              <LogCard
-                key={`${mention.date}-${mention.time}-${index}`}
-                date={shortDate(mention.date)}
-                time={mention.time.slice(0, 5)}
-              >
-                {mention.text}
-              </LogCard>
-            ))}
+          <div className="mt-2">
+            <CappedList
+              label="log mentions"
+              limit={LOG_MENTIONS_SHOWN}
+              items={orderLogs(data.log_mentions, logOrder).map((mention, index) => (
+                <div key={`${mention.date}-${mention.time}-${index}`} className="mb-1.5">
+                  <LogCard date={shortDate(mention.date)} time={mention.time.slice(0, 5)}>
+                    {mention.text}
+                  </LogCard>
+                </div>
+              ))}
+            />
           </div>
         </section>
       )}

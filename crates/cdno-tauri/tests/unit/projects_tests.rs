@@ -74,10 +74,13 @@ fn get_project_composes_the_rich_detail_view() {
     assert!(detail.open_milestones[0].is_hard);
 
     // The question's body wikilink is a backlink grouped under questions.
-    assert_eq!(
-        detail.backlinks.questions,
-        vec!["questions/research/alpha-q.md".to_owned()]
-    );
+    let questions: Vec<&str> = detail
+        .backlinks
+        .questions
+        .iter()
+        .map(|r| r.path.as_str())
+        .collect();
+    assert_eq!(questions, vec!["questions/research/alpha-q.md"]);
 }
 
 #[test]

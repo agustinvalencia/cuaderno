@@ -70,19 +70,42 @@ pub struct MilestoneView {
     pub is_hard: bool,
 }
 
-/// Backlinks to the project, grouped by source note type, as path
-/// strings ready for the frontend to render and route on. Mirrors the
-/// domain `ProjectBacklinks` grouping (which holds `VaultPath`s and
-/// carries no ts-rs derives).
+/// Backlinks to the project, grouped by source note type, ready for the
+/// frontend to render and route on. Mirrors the domain `ProjectBacklinks`
+/// grouping (which holds `VaultPath`s and carries no ts-rs derives).
+///
+/// Each group is ordered newest-first by the domain — a project accrues
+/// backlinks for as long as it runs, and the recent ones are the context a
+/// reader wants — so the frontend renders the order it receives.
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct BacklinksView {
-    pub portfolios: Vec<String>,
-    pub questions: Vec<String>,
-    pub evidence: Vec<String>,
-    pub actions: Vec<String>,
-    pub other: Vec<String>,
+    pub portfolios: Vec<BacklinkRow>,
+    pub questions: Vec<BacklinkRow>,
+    pub evidence: Vec<BacklinkRow>,
+    pub actions: Vec<BacklinkRow>,
+    pub other: Vec<BacklinkRow>,
+}
+
+/// One backlinking note: where it is, and what to call it.
+///
+/// A raw vault path is a poor label, so the title travels alongside it —
+/// but the index's `title` is the *frontmatter* field, and most RLM note
+/// types carry their name in the body H1 instead (the H1 feeds the search
+/// row, not this one). So `title` is absent more often than not, and the
+/// frontend derives a readable label from the filename in that case.
+/// Reading each source's H1 here would mean a file read per backlink on
+/// every load of the page.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BacklinkRow {
+    pub path: String,
+    /// The source note's frontmatter `title`, absent for the many note
+    /// types that don't declare one — the frontend then derives a label
+    /// from the filename.
+    pub title: Option<String>,
 }
 
 /// One daily-log line mentioning the project, for the "recently in
@@ -149,11 +172,11 @@ pub fn get_project_impl(
 
     let backlinks = vault.project_backlinks(slug)?;
     let backlinks = BacklinksView {
-        portfolios: to_strings(&backlinks.portfolios),
-        questions: to_strings(&backlinks.questions),
-        evidence: to_strings(&backlinks.evidence),
-        actions: to_strings(&backlinks.actions),
-        other: to_strings(&backlinks.other),
+        portfolios: to_rows(&backlinks.portfolios),
+        questions: to_rows(&backlinks.questions),
+        evidence: to_rows(&backlinks.evidence),
+        actions: to_rows(&backlinks.actions),
+        other: to_rows(&backlinks.other),
     };
 
     let since = today - Duration::days(LOG_MENTION_WINDOW_DAYS);
@@ -181,8 +204,13 @@ pub fn get_project_impl(
     })
 }
 
-fn to_strings(paths: &[VaultPath]) -> Vec<String> {
-    paths.iter().map(|p| p.to_string()).collect()
+fn to_rows(refs: &[cdno_domain::BacklinkRef]) -> Vec<BacklinkRow> {
+    refs.iter()
+        .map(|r| BacklinkRow {
+            path: r.path.to_string(),
+            title: r.title.clone(),
+        })
+        .collect()
 }
 
 /// The active-project note path for `slug` — `projects/<slug>.md`.
