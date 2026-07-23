@@ -9,7 +9,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { ProjectDetail as ProjectDetailData } from "../../api/bindings/ProjectDetail";
 import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
-import ProjectDetail from "./ProjectDetail";
+import ProjectDetail, { recentLogMentions } from "./ProjectDetail";
 
 const ACTIVE: ProjectDetailData = {
   slug: "alpha",
@@ -168,14 +168,31 @@ test("the current state is rendered, not hidden behind an edit affordance", asyn
   expect(shown.length).toBe(2);
 });
 
-test("clicking the current state opens the editor seeded with it", async () => {
+test("the edit affordance sits beside the heading, not around the prose", async () => {
+  // Wrapping the rendered state in a button nests its wikilinks inside a
+  // control: invalid, and a click on one bubbles into opening the editor.
   renderDetail();
 
-  const region = await screen.findByLabelText("Edit the current state of alpha");
-  fireEvent.click(region);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
 
   const editor = screen.getByLabelText("Current state of alpha") as HTMLTextAreaElement;
   expect(editor.value).toBe("Going well.");
+});
+
+test("a wikilink in the state resolves without opening the editor", async () => {
+  const linked = {
+    ...ACTIVE,
+    body_markdown: "## Current State\nBlocked on [[projects/beta]].\n",
+  };
+  const calls: string[] = [];
+  renderDetail(linked, (cmd) => calls.push(cmd));
+
+  // Twice on the page: once in the state section, once in the verbatim map.
+  const links = await screen.findAllByText("projects/beta");
+  fireEvent.click(links[0]);
+
+  expect(calls).toContain("resolve_wikilink");
+  expect(screen.queryByLabelText("Current state of alpha")).toBeNull();
 });
 
 test("a long backlink group collapses to a few, with the true total offered", async () => {
@@ -213,4 +230,21 @@ test("log mentions collapse the same way", async () => {
   for (const mention of many) {
     expect(screen.getByText(mention.text)).toBeDefined();
   }
+});
+
+test("the collapsed log summary is the recent mentions, not the first five", () => {
+  // The cap and the sort answer different questions. Capping the display
+  // order meant an oldest-first reader saw the five OLDEST entries under a
+  // heading that says "Recently in your logs".
+  const mentions = Array.from({ length: 8 }, (_, i) => ({
+    date: `2026-07-0${i + 1}`,
+    time: "09:00:00",
+    text: `entry ${i + 1}`,
+  }));
+
+  const oldestFirst = recentLogMentions(mentions, "oldest", 3);
+  expect(oldestFirst.map((m) => m.text)).toEqual(["entry 6", "entry 7", "entry 8"]);
+
+  const newestFirst = recentLogMentions(mentions, "newest", 3);
+  expect(newestFirst.map((m) => m.text)).toEqual(["entry 8", "entry 7", "entry 6"]);
 });

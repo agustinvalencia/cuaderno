@@ -30,3 +30,12 @@ test("a path with no folder still yields something", () => {
 test("a date-only filename falls back to the path rather than an empty label", () => {
   expect(noteLabel("journal/2026/daily/2026-07-13.md", null)).toBe("2026-07-13");
 });
+
+test("a weekly note keeps its ISO week form", () => {
+  // `2026-W30` is how cuaderno names weeklies; "2026 W30" is not friendlier.
+  expect(noteLabel("journal/2026/weekly/2026-W30.md", null)).toBe("2026-W30");
+});
+
+test("a monthly note keeps its date form", () => {
+  expect(noteLabel("journal/2026/monthly/2026-07.md", null)).toBe("2026-07");
+});

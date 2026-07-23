@@ -28,9 +28,10 @@ export function noteLabel(path: string, title?: string | null): string {
     const folder = path.split("/").slice(-2, -1)[0];
     if (folder) return folder.replace(/-/g, " ");
   }
-  // A note named only for its date — a daily, a weekly — keeps its dashes.
-  // "2026 07 13" is not a friendlier way to write a date.
-  if (/^\d{4}-\d{2}(-\d{2})?$/.test(name)) return name;
+  // A note named only for a date or an ISO week keeps its dashes: a daily
+  // (`2026-07-13`), a monthly (`2026-07`), a weekly (`2026-W30`).
+  // "2026 W30" is not a friendlier way to write a week.
+  if (/^\d{4}-(W\d{2}|\d{2}(-\d{2})?)$/.test(name)) return name;
   const words = name.replace(/-/g, " ").trim();
   return words === "" ? path : words;
 }

@@ -13,12 +13,21 @@ import { useState, type ReactNode } from "react";
 
 export function CappedList({
   items,
+  collapsedItems,
   limit = 5,
   children,
   label,
 }: {
   items: ReactNode[];
-  /** How many to show collapsed. */
+  /** What to show while collapsed, when that is not simply the first
+   * `limit` of `items`.
+   *
+   * Which items to show and which order to show them in are different
+   * questions. A log list ordered oldest-first still wants its *recent*
+   * entries in the collapsed summary, and taking a prefix would show the
+   * oldest — so the caller picks the subset and this renders it. */
+  collapsedItems?: ReactNode[];
+  /** How many to show collapsed, when `collapsedItems` is not given. */
   limit?: number;
   /** Optional trailing content, rendered inside the list container. */
   children?: ReactNode;
@@ -28,21 +37,34 @@ export function CappedList({
   label: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const overflows = items.length > limit;
-  const shown = expanded || !overflows ? items : items.slice(0, limit);
+  const collapsed = collapsedItems ?? items.slice(0, limit);
+  const overflows = items.length > collapsed.length;
+  const shown = expanded || !overflows ? items : collapsed;
 
   return (
     <div>
-      <div
-        className={
-          // Only the expanded, genuinely-long case gets an inner scroller,
-          // so short lists never trap a wheel gesture or add a tab stop.
-          expanded && overflows ? "max-h-80 overflow-y-auto pr-1" : undefined
-        }
-      >
-        {shown}
-        {children}
-      </div>
+      {expanded && overflows ? (
+        // Focusable so a keyboard user can arrow-scroll it (axe
+        // scrollable-region-focusable). The items here are often plain
+        // prose — a log card carries no button or link — so without this
+        // the content below the fold is simply unreachable without a mouse.
+        <div
+          tabIndex={0}
+          role="group"
+          aria-label={label}
+          className="max-h-80 overflow-y-auto pr-1"
+        >
+          {shown}
+          {children}
+        </div>
+      ) : (
+        // Short or collapsed: no inner scroller, so no trapped wheel
+        // gesture and no extra tab stop for a list that does not need one.
+        <div>
+          {shown}
+          {children}
+        </div>
+      )}
       {overflows && (
         <button
           type="button"

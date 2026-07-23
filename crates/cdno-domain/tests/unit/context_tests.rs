@@ -699,7 +699,33 @@ fn project_backlinks_are_ordered_newest_first() {
 
     assert_eq!(bl.evidence.len(), 3, "{bl:?}");
     let mtimes: Vec<u64> = bl.evidence.iter().map(|r| r.modified_ns).collect();
+
+    // Without distinct mtimes the ordering claim is unfalsifiable — every
+    // sort key agrees when all the values are equal — so say so loudly
+    // rather than letting the assertion below pass vacuously.
+    let distinct: std::collections::HashSet<u64> = mtimes.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        3,
+        "the store must stamp distinct mtimes for this to test anything: {mtimes:?}"
+    );
+
     let mut newest_first = mtimes.clone();
     newest_first.sort_by(|a, b| b.cmp(a));
     assert_eq!(mtimes, newest_first, "newest first: {mtimes:?}");
+
+    // And pin that it is the MTIME, not the path, that orders them: the
+    // paths here ascend (ev-1, ev-2, ev-3) while the newest was written
+    // last, so a path-descending sort would give a different answer.
+    let newest_path = bl
+        .evidence
+        .iter()
+        .max_by_key(|r| r.modified_ns)
+        .map(|r| r.path.to_string())
+        .unwrap();
+    assert_eq!(
+        bl.evidence[0].path.to_string(),
+        newest_path,
+        "the newest note leads, whatever its name sorts as"
+    );
 }

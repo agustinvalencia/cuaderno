@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
 import type { BacklinkRow } from "../../api/bindings/BacklinkRow";
+import type { LogMentionView } from "../../api/bindings/LogMentionView";
 import type { ProjectDetail as ProjectDetailData } from "../../api/bindings/ProjectDetail";
 import {
   activateProject,
@@ -37,7 +38,7 @@ import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
-import { orderLogs, useLogOrder } from "../../lib/logOrder";
+import { orderLogs, useLogOrder, type LogOrder } from "../../lib/logOrder";
 import { LogOrderToggle } from "../../components/ui/log-order-toggle";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
@@ -54,6 +55,35 @@ const LOG_MENTIONS_SHOWN = 5;
  * under `_parked/`. */
 function projectPath(slug: string, parked: boolean): string {
   return parked ? `projects/_parked/${slug}.md` : `projects/${slug}.md`;
+}
+
+/** The mentions to show, most recent first *chosen*, then ordered for
+ * display.
+ *
+ * The cap and the sort are different questions and were briefly the same
+ * one: capping the display order meant "Recently in your logs" showed the
+ * five OLDEST mentions whenever the app-wide order was oldest-first. Pick
+ * by recency, then present in whichever direction the reader prefers.
+ */
+/** One mention as a timestamped card. */
+function logCard(mention: LogMentionView, index: number) {
+  return (
+    <div key={`${mention.date}-${mention.time}-${index}`} className="mb-1.5">
+      <LogCard date={shortDate(mention.date)} time={mention.time.slice(0, 5)}>
+        {mention.text}
+      </LogCard>
+    </div>
+  );
+}
+
+export function recentLogMentions(
+  mentions: LogMentionView[],
+  order: LogOrder,
+  limit = LOG_MENTIONS_SHOWN,
+): LogMentionView[] {
+  const newestFirst = orderLogs(mentions, "newest");
+  const kept = newestFirst.slice(0, Math.max(limit, 0));
+  return order === "newest" ? kept : [...kept].reverse();
 }
 
 /** Pull the body of a `## <heading>` section out of the map markdown,
@@ -279,9 +309,22 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
       {/* Current State — inline editor (active projects only). */}
       <section aria-label="Current state" className="mt-8">
-        <SectionHeading>
-          Current state
-        </SectionHeading>
+        <div className="flex items-baseline justify-between gap-2">
+          <SectionHeading>Current state</SectionHeading>
+          {!parked && !editingState && (
+            // The edit affordance sits beside the heading rather than
+            // wrapping the prose. Wrapping it in a button nests the state's
+            // own wikilinks inside a control — invalid, and a click on one
+            // then bubbles into opening the editor as a side effect.
+            <button
+              type="button"
+              onClick={() => setEditingState(true)}
+              className="shrink-0 rounded px-1.5 py-0.5 text-xs text-accent-interactive hover:underline"
+            >
+              {currentState ? "Edit" : "Write one"}
+            </button>
+          )}
+        </div>
         {parked ? (
           <p className="mt-2 text-sm text-ink-muted">
             This project is parked. Activate it to edit its state.
@@ -321,23 +364,17 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           </form>
         ) : (
           // The state IS the answer to "where am I" — the one thing the map
-          // exists to tell you — so it is rendered, not hidden behind an
-          // affordance. Click it to edit; the button wraps the prose rather
-          // than replacing it.
-          <button
-            type="button"
-            onClick={() => setEditingState(true)}
-            aria-label={`Edit the current state of ${slug}`}
-            className="mt-2 block w-full rounded p-1 text-left hover:bg-bg-sunken"
-          >
+          // exists to tell you — so it is rendered, plainly, and its
+          // wikilinks stay live.
+          <div className="mt-2">
             {currentState ? (
               <Markdown body={currentState} onWikilink={onWikilink} />
             ) : (
-              <span className="text-sm text-ink-muted">
+              <p className="text-sm text-ink-muted">
                 No state written yet — say where this stands.
-              </span>
+              </p>
             )}
-          </button>
+          </div>
         )}
       </section>
 
@@ -552,14 +589,12 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           <div className="mt-2">
             <CappedList
               label="log mentions"
-              limit={LOG_MENTIONS_SHOWN}
-              items={orderLogs(data.log_mentions, logOrder).map((mention, index) => (
-                <div key={`${mention.date}-${mention.time}-${index}`} className="mb-1.5">
-                  <LogCard date={shortDate(mention.date)} time={mention.time.slice(0, 5)}>
-                    {mention.text}
-                  </LogCard>
-                </div>
-              ))}
+              items={orderLogs(data.log_mentions, logOrder).map(logCard)}
+              // The collapsed summary is the RECENT mentions, whichever way
+              // the reader has the list sorted — a prefix of an oldest-first
+              // list would be the five oldest, under a heading that says
+              // "recently".
+              collapsedItems={recentLogMentions(data.log_mentions, logOrder).map(logCard)}
             />
           </div>
         </section>
