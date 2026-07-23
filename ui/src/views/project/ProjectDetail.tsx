@@ -57,14 +57,6 @@ function projectPath(slug: string, parked: boolean): string {
   return parked ? `projects/_parked/${slug}.md` : `projects/${slug}.md`;
 }
 
-/** The mentions to show, most recent first *chosen*, then ordered for
- * display.
- *
- * The cap and the sort are different questions and were briefly the same
- * one: capping the display order meant "Recently in your logs" showed the
- * five OLDEST mentions whenever the app-wide order was oldest-first. Pick
- * by recency, then present in whichever direction the reader prefers.
- */
 /** One mention as a timestamped card. */
 function logCard(mention: LogMentionView, index: number) {
   return (
@@ -76,6 +68,14 @@ function logCard(mention: LogMentionView, index: number) {
   );
 }
 
+/** The mentions to show: most recent first *chosen*, then ordered for
+ * display.
+ *
+ * The cap and the sort are different questions and were briefly the same
+ * one: capping the display order meant "Recently in your logs" showed the
+ * five OLDEST mentions whenever the app-wide order was oldest-first. Pick
+ * by recency, then present in whichever direction the reader prefers.
+ */
 export function recentLogMentions(
   mentions: LogMentionView[],
   order: LogOrder,
@@ -117,7 +117,15 @@ export default function ProjectDetail() {
     );
   }
 
-  return <ProjectDetailBody slug={slug} data={data} />;
+  // Keyed on the slug so a project-to-project navigation REMOUNTS the body.
+  // Without it, react-query serves a cached project synchronously, the
+  // `isPending` branch never unmounts anything, and the body is reconciled
+  // with new props while keeping its state — an open Current State editor
+  // survives, its uncontrolled textarea still holds the previous project's
+  // text (a `defaultValue` only applies at mount), and Save writes that
+  // text onto the project now on screen. The sidebar's project links are on
+  // every view, so the route is a click away at all times.
+  return <ProjectDetailBody key={slug} slug={slug} data={data} />;
 }
 
 function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailData }) {

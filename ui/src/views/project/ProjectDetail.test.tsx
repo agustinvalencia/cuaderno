@@ -3,7 +3,7 @@
 // a parked project read-only (no add row, no done buttons).
 import { afterEach, expect, test } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { ProjectDetail as ProjectDetailData } from "../../api/bindings/ProjectDetail";
@@ -247,4 +247,61 @@ test("the collapsed log summary is the recent mentions, not the first five", () 
 
   const newestFirst = recentLogMentions(mentions, "newest", 3);
   expect(newestFirst.map((m) => m.text)).toEqual(["entry 8", "entry 7", "entry 6"]);
+});
+
+test("an open editor does not survive a move to another project", async () => {
+  // The data-loss path: react-query serves a cached project synchronously,
+  // so nothing unmounts, the body is RECONCILED with new props, and an
+  // uncontrolled textarea keeps the FIRST project's text — Save would then
+  // write it onto the second. The sidebar lists every active project on
+  // every view, so this navigation is always one click away.
+  //
+  // Navigation happens in place, through the router, because that is what
+  // reconciles. Unmounting and rendering afresh would pass with or without
+  // the fix and prove nothing.
+  const beta: ProjectDetailData = {
+    ...ACTIVE,
+    slug: "beta",
+    body_markdown: "## Current State\nQuite different.\n",
+  };
+  mockIPC((cmd, args) => {
+    if (cmd === "get_project") {
+      return (args as { project?: string; slug?: string }).slug === "beta" ||
+        (args as { project?: string }).project === "beta"
+        ? beta
+        : ACTIVE;
+    }
+    return undefined;
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // Beta must already be cached — that is the whole precondition. With a
+  // cold cache the `isPending` branch unmounts the body and clears its
+  // state, so the bug hides; a project visited in the last few minutes is
+  // served synchronously and the body is reconciled instead.
+  client.setQueryData(["get_project", "beta"], beta);
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/projects/alpha"]}>
+          <ReaderProvider>
+            {/* Stands in for the sidebar's always-present project links. */}
+            <Link to="/projects/beta">go to beta</Link>
+            <Routes>
+              <Route path="/projects/:slug" element={<ProjectDetail />} />
+            </Routes>
+          </ReaderProvider>
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+  const editor = screen.getByLabelText("Current state of alpha") as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: "Waiting on the ethics board" } });
+
+  fireEvent.click(screen.getByRole("link", { name: "go to beta" }));
+
+  await screen.findAllByText("Quite different.");
+  expect(screen.queryByLabelText("Current state of beta")).toBeNull();
+  expect(screen.queryByDisplayValue("Waiting on the ethics board")).toBeNull();
 });
