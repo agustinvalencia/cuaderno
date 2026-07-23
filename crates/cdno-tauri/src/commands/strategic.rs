@@ -15,15 +15,20 @@
 //! frontend as a plain `Vec<u32>` it only has to draw — the webview
 //! never buckets dates itself.
 
+use std::str::FromStr;
+
 use chrono::{Datelike, Duration, Local, NaiveDate};
 
 use cdno_core::path::VaultPath;
 use cdno_domain::vault::{
-    CommitmentEntry, PortfolioSummary, QuestionSummary, StewardshipSummary, StewardshipVariant,
+    CommitmentEntry, MonthlySection, PortfolioSummary, QuestionSummary, StewardshipSummary,
+    StewardshipVariant,
 };
 use cdno_domain::{Context, Vault};
 
+use crate::commands::actions::record_and_emit;
 use crate::error::CmdError;
+use crate::events::VaultArea;
 use crate::state::AppState;
 use crate::with_vault::with_vault;
 
@@ -314,4 +319,43 @@ pub async fn get_strategic_bundle(
         get_strategic_bundle_impl(vault, today)
     })
     .await?
+}
+
+/// The first of a calendar month from a `YYYY-MM` string. Public for
+/// the test seam.
+pub fn parse_month(s: &str) -> Result<NaiveDate, CmdError> {
+    NaiveDate::parse_from_str(&format!("{}-01", s.trim()), "%Y-%m-%d")
+        .map_err(|e| CmdError::Invalid(format!("month must be YYYY-MM: {e}")))
+}
+
+/// Write one section of a month's note (compose/overwrite — each save
+/// replaces the section, the review-pass default). `month` is `YYYY-MM`,
+/// or `None` for the current month; `section` is the kebab wire string
+/// (`"wins" | "themes" | "next-months-focus"`), with the domain's
+/// tolerant parser also accepting snake and spaced forms.
+///
+/// The monthly note is self-contained review content with no daily-log
+/// side effect, so only the monthly path is journalled and only the
+/// `Monthly` area is invalidated — mirroring `save_weekly_section`.
+#[tauri::command]
+pub async fn save_monthly_section<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    month: Option<String>,
+    section: String,
+    content: String,
+) -> Result<(), CmdError> {
+    let month_of = match month {
+        Some(m) => parse_month(&m)?,
+        None => Local::now().date_naive(),
+    };
+    // Parse before the blocking-pool boundary: a bad section name is a
+    // fast, cheap Invalid, no vault work needed.
+    let parsed = MonthlySection::from_str(&section).map_err(CmdError::Invalid)?;
+    let path = with_vault(&state.vault(), move |vault| {
+        vault.upsert_monthly_section(month_of, parsed, &content, false)
+    })
+    .await??;
+    record_and_emit(&app, &state, vec![path], vec![VaultArea::Monthly]);
+    Ok(())
 }

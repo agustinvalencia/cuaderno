@@ -24,7 +24,7 @@ import type { CommitmentsView } from "../api/bindings/CommitmentsView";
 import type { StrategicBundle } from "../api/bindings/StrategicBundle";
 import Home from "./home/Home";
 import Commitments from "./commitments/Commitments";
-import Strategic from "./strategic/Strategic";
+import MonthlyReview from "./monthly/MonthlyReview";
 import Calendar from "./calendar/Calendar";
 import Questions from "./questions/Questions";
 
@@ -180,9 +180,9 @@ test("Commitments has no axe violations", async () => {
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
 
-test("Strategic has no axe violations", async () => {
+test("Monthly review has no axe violations", async () => {
   mockIPC((cmd) => (cmd === "get_strategic_bundle" ? STRATEGIC : undefined));
-  const { container } = renderView(<Strategic />);
+  const { container } = renderView(<MonthlyReview />);
   await screen.findByText("alpha");
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });

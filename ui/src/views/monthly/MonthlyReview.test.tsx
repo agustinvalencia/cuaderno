@@ -11,7 +11,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { StrategicBundle } from "../../api/bindings/StrategicBundle";
 import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
-import Strategic from "./Strategic";
+import MonthlyReview from "./MonthlyReview";
 
 const BUNDLE: StrategicBundle = {
   today: "2026-07-08",
@@ -111,26 +111,33 @@ const BUNDLE: StrategicBundle = {
 
 type Handler = (cmd: string, args: unknown) => unknown;
 
-function renderStrategic(bundle: StrategicBundle, handler?: Handler) {
+function renderMonthly(bundle: StrategicBundle, handler?: Handler) {
   mockIPC((cmd, args) => {
     const overridden = handler?.(cmd, args);
     if (overridden !== undefined) return overridden;
     if (cmd === "get_strategic_bundle") return bundle;
-    // park / activate default to success (undefined = resolved void).
+    // park / activate / save_monthly_section default to success.
     return undefined;
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <MemoryRouter initialEntries={["/strategic"]}>
+        <MemoryRouter initialEntries={["/monthly"]}>
           <ReaderProvider>
-            <Strategic />
+            <MonthlyReview />
           </ReaderProvider>
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
   );
+}
+
+/** The review is stepped now, so every panel but Questions starts
+ * hidden. Click its rail entry to bring one into view. */
+async function goToStep(label: string) {
+  const rail = within(await screen.findByRole("navigation", { name: "Review steps" }));
+  fireEvent.click(rail.getByRole("button", { name: label }));
 }
 
 afterEach(() => {
@@ -139,7 +146,7 @@ afterEach(() => {
 });
 
 test("questions are grouped by domain", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   // Both domain headings render, each over its question card.
   expect(await screen.findByText("research")).toBeDefined();
   expect(screen.getByText("life")).toBeDefined();
@@ -148,7 +155,7 @@ test("questions are grouped by domain", async () => {
 });
 
 test("a question with a matching portfolio shows a chip that navigates to it", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   // The "surrogate-fidelity" question shares its slug with a portfolio,
   // so its card carries a chip linking to that portfolio's detail route.
   const chip = await screen.findByRole("link", { name: "surrogate-fidelity" });
@@ -156,7 +163,7 @@ test("a question with a matching portfolio shows a chip that navigates to it", a
 });
 
 test("a question without a matching portfolio shows no chip", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   // The "balance" life question has no same-slug portfolio, so no chip
   // links out from it.
   await screen.findByText("What does a sustainable week look like?");
@@ -164,7 +171,7 @@ test("a question without a matching portfolio shows no chip", async () => {
 });
 
 test("a question backlinked by a project shows a chip routing to that project (#354)", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   // The "surrogate-fidelity" question is referenced by projects/delta.md,
   // so its card carries a project chip linking to that project's route.
   const chip = await screen.findByRole("link", { name: "delta" });
@@ -172,7 +179,7 @@ test("a question backlinked by a project shows a chip routing to that project (#
 });
 
 test("a portfolio backlinked by a differing slug surfaces a routed chip (#354)", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   // A portfolio that body-links the question with a slug OTHER than the
   // question's (link_portfolio_to_question) still shows a chip, routed via
   // its parent-dir slug — not only the slug-correlated portfolios.
@@ -181,7 +188,7 @@ test("a portfolio backlinked by a differing slug surfaces a routed chip (#354)",
 });
 
 test("an `other` backlink (e.g. a daily note) is not chipped on the grid (#354)", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
   await screen.findByText("How faithful is the surrogate?");
   // The daily-note backlink in the `other` bucket is deliberately not
   // rendered — it's noise on the calm strategic grid.
@@ -189,7 +196,8 @@ test("an `other` backlink (e.g. a daily note) is not chipped on the grid (#354)"
 });
 
 test("the allocator draws filled slots and dashed open slots from the cap", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
+  await goToStep("Projects");
   // Two active projects fill two slots; the cap of five leaves three
   // soft "open slot" placeholders — breathing room, not vacancy.
   await screen.findByText("alpha");
@@ -199,13 +207,13 @@ test("the allocator draws filled slots and dashed open slots from the cap", asyn
 
 test("park fires park_project for the slot", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
-  renderStrategic(BUNDLE, (cmd, args) => {
+  renderMonthly(BUNDLE, (cmd, args) => {
     calls.push({ cmd, args });
     return undefined;
   });
-  await screen.findByText("alpha");
+  await goToStep("Projects");
   // The park button on the first active slot.
-  const parkButtons = screen.getAllByRole("button", { name: "park" });
+  const parkButtons = await screen.findAllByRole("button", { name: "park" });
   fireEvent.click(parkButtons[0]);
   await waitFor(() => expect(calls.some((c) => c.cmd === "park_project")).toBe(true));
   const parked = calls.find((c) => c.cmd === "park_project");
@@ -213,7 +221,7 @@ test("park fires park_project for the slot", async () => {
 });
 
 test("an over-cap activate opens the gentle modal listing the active projects", async () => {
-  renderStrategic(BUNDLE, (cmd) => {
+  renderMonthly(BUNDLE, (cmd) => {
     if (cmd === "activate_project") {
       // The structured CmdError the allocator modal keys on.
       throw {
@@ -223,6 +231,7 @@ test("an over-cap activate opens the gentle modal listing the active projects", 
     }
     return undefined;
   });
+  await goToStep("Projects");
   fireEvent.click(await screen.findByRole("button", { name: "activate" }));
 
   // The gentle copy — no red, no scolding — with the actives listed for
@@ -235,7 +244,8 @@ test("an over-cap activate opens the gentle modal listing the active projects", 
 });
 
 test("portfolio rows show neutral staleness tiers, never a hue", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
+  await goToStep("Portfolios");
   expect(await screen.findByText("How does the surrogate behave?")).toBeDefined();
   const cell = screen.getByText("7d ago");
   // A fresh dossier (7 days) sits at full ink — a neutral tier, not a
@@ -244,7 +254,8 @@ test("portfolio rows show neutral staleness tiers, never a hue", async () => {
 });
 
 test("a tracked stewardship renders a sparkline; a flat one does not", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
+  await goToStep("Stewardships");
   await screen.findByText("Health");
   // The expanded, tracked stewardship draws its 12-week spark.
   expect(screen.getByRole("img", { name: /Health: 12-week/ })).toBeDefined();
@@ -253,16 +264,107 @@ test("a tracked stewardship renders a sparkline; a flat one does not", async () 
 });
 
 test("the six-week timeline is read-only", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
+  await goToStep("Lookahead");
   expect(await screen.findByText("Submit the grant report")).toBeDefined();
   // Read-only: no completion control on any commitment row.
   expect(screen.queryByRole("button", { name: /Mark done/ })).toBeNull();
 });
 
 test("a portfolio-health row links to its portfolio (#440)", async () => {
-  renderStrategic(BUNDLE);
+  renderMonthly(BUNDLE);
+  await goToStep("Portfolios");
   // The same portfolio already routed as a chip on a question card; in its
   // own health table it rendered as dead text. Both are links now.
   const row = await screen.findByRole("link", { name: "How does the surrogate behave?" });
   expect(row.getAttribute("href")).toBe("/portfolios/surrogate");
+});
+
+test("the review is stepped, and opens on Questions", async () => {
+  renderMonthly(BUNDLE);
+  const rail = within(await screen.findByRole("navigation", { name: "Review steps" }));
+  for (const label of ["Questions", "Portfolios", "Projects", "Stewardships", "Lookahead", "Focus"]) {
+    expect(rail.getByRole("button", { name: label }).textContent).toContain(label);
+  }
+  expect(rail.getByRole("button", { name: "Questions" }).getAttribute("aria-current")).toBe("step");
+});
+
+test("a stewardship row links to its detail", async () => {
+  renderMonthly(BUNDLE);
+  await goToStep("Stewardships");
+  const link = await screen.findByRole("link", { name: /health/i });
+  expect(link.getAttribute("href")).toBe("/stewardships/health");
+});
+
+test("the focus step writes only the sections you filled, to the right month", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderMonthly(BUNDLE, (cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  await goToStep("Focus");
+
+  fireEvent.change(screen.getByLabelText("Wins"), { target: { value: "shipped the epic" } });
+  fireEvent.change(screen.getByLabelText("Next month's focus"), {
+    target: { value: "the migration" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save to the note" }));
+
+  await screen.findByText(/Saved to/);
+  const writes = calls.filter((c) => c.cmd === "save_monthly_section");
+  expect(writes).toHaveLength(2);
+  expect(writes.map((c) => (c.args as { section: string }).section).sort()).toEqual([
+    "next-months-focus",
+    "wins",
+  ]);
+  expect((writes[0].args as { month: string }).month).toBe("2026-07");
+});
+
+test("a blank section is not written, even when another is filled", async () => {
+  // Each section is its own compose/overwrite; leaving Wins empty must
+  // not clobber a Wins section the note may already hold.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderMonthly(BUNDLE, (cmd, args) => {
+    calls.push({ cmd, args });
+    return undefined;
+  });
+  await goToStep("Focus");
+
+  // Only Themes; Wins and Focus left blank.
+  fireEvent.change(screen.getByLabelText("Themes"), { target: { value: "steady progress" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save to the note" }));
+
+  await screen.findByText(/Saved to/);
+  const writes = calls.filter((c) => c.cmd === "save_monthly_section");
+  expect(writes).toHaveLength(1);
+  expect((writes[0].args as { section: string }).section).toBe("themes");
+});
+
+test("the focus step will not save an empty review", async () => {
+  renderMonthly(BUNDLE);
+  await goToStep("Focus");
+  expect(
+    (screen.getByRole("button", { name: "Save to the note" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+});
+
+test("saving the focus step earns the 'already saved' stop line", async () => {
+  renderMonthly(BUNDLE);
+  await goToStep("Focus");
+  expect(screen.queryByText(/already saved/)).toBeNull();
+
+  fireEvent.change(screen.getByLabelText("Wins"), { target: { value: "a good month" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save to the note" }));
+
+  expect(await screen.findByText(/already saved/)).toBeDefined();
+});
+
+test("Back and Next walk the steps", async () => {
+  renderMonthly(BUNDLE);
+  await screen.findByRole("navigation", { name: "Review steps" });
+  expect((screen.getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  const rail = within(screen.getByRole("navigation", { name: "Review steps" }));
+  expect(rail.getByRole("button", { name: "Portfolios" }).getAttribute("aria-current")).toBe("step");
 });

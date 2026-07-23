@@ -1,15 +1,21 @@
-// Strategic / Monthly view (M9, plan §1.5; #57) — the calm monthly
-// review behind `/strategic`. One composed read paints every panel:
-// the questions grid (by domain), the portfolio-health table, the
-// button-based 5-slot project allocator (drag was dropped per review),
-// the stewardship overview with habit sparklines, and the six-week
-// commitments timeline.
+// Monthly review (M9, plan §1.5; #57; made a ritual in #450) — behind
+// `/monthly`.
+//
+// It was a dashboard wearing a review's name: five sections you looked
+// at and closed, with no write and nothing asked. The monthly cadence is
+// where RLM asks its highest-altitude question — "am I still pointed at
+// the right questions?" — and a surface with no artefact has no reason
+// to be visited on a schedule, so the cadence had no home in the app.
+//
+// Now it is stepped like the weekly review, and it leaves an artefact:
+// Wins, Themes and Next Month's Focus land in the monthly note. The
+// panels are unchanged reads, walked one at a time and stoppable
+// partway.
 //
 // Colour laws hold throughout: context hues are identity, staleness is
 // neutral ink emphasis (never a hue), and there is no red anywhere — an
 // over-cap activate is met with a gentle "room for five" modal, not an
-// alarm. Empty project slots read as soft dashed "open slot" — breathing
-// room, not vacancy.
+// alarm. Empty project slots read as soft dashed "open slot".
 import { useState } from "react";
 import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +31,7 @@ import {
   errorMessage,
   getStrategicBundle,
   parkProject,
+  saveMonthlySection,
 } from "../../api/commands";
 import CommitmentsTimeline from "../../components/commitments/CommitmentsTimeline";
 import { Sparkline, usePrefersReducedMotion } from "../../components/charts/TrendChart";
@@ -40,6 +47,7 @@ import { stalenessAgo, stalenessTone } from "../../lib/staleness";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
 import { SectionHeading } from "../../components/ui/section-heading";
+import { Stepper, StepperNav, type Step } from "../../components/ui/stepper";
 import { useToast } from "../../shell/Toasts";
 
 // The commitments timeline takes a context filter; the Strategic six-week
@@ -65,7 +73,7 @@ function numberWord(n: number): string {
   return words[n] ?? String(n);
 }
 
-export default function Strategic() {
+export default function MonthlyReview() {
   const { data, isPending, isError, error } = useQuery({
     queryKey: ["get_strategic_bundle"],
     queryFn: getStrategicBundle,
@@ -83,24 +91,208 @@ export default function Strategic() {
     );
   }
 
-  return <StrategicBody data={data} />;
+  return <MonthlyReviewBody data={data} />;
 }
 
-function StrategicBody({ data }: { data: StrategicBundle }) {
-  return (
-    <div className="mx-auto max-w-4xl space-y-12 p-8">
-      <header>
-        <h1 className="text-xl font-semibold text-ink">Strategic</h1>
-        <p className="mt-1 text-sm text-ink-muted">
-          The long view — questions, projects, portfolios, and what's promised.
-        </p>
-      </header>
+/** The month, e.g. "July 2026", for the header and the note-write's
+ * `YYYY-MM`. Derived from the bundle's stamped `today`, never computed
+ * from the platform clock. */
+function monthOf(today: string): { label: string; ym: string } {
+  const [y, m] = today.split("-");
+  const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+  return { label, ym: `${y}-${m}` };
+}
 
-      <QuestionsGrid questions={data.questions} portfolios={data.portfolios} />
-      <ProjectSlots active={data.active} parked={data.parked} maxActive={data.max_active} />
-      <PortfolioHealth portfolios={data.portfolios} />
-      <StewardshipsOverview rows={data.stewardships} />
-      <NextSixWeeks commitments={data.commitments} today={data.today} />
+const STEPS: Step[] = [
+  { label: "Questions" },
+  { label: "Portfolios" },
+  { label: "Projects" },
+  { label: "Stewardships" },
+  { label: "Lookahead" },
+  { label: "Focus" },
+];
+
+/** Steps that write to the note earn the firmer "already saved" line;
+ * the read panels get the softer "nothing here demands finishing". */
+const WRITE_STEPS = new Set([5]);
+
+function MonthlyReviewBody({ data }: { data: StrategicBundle }) {
+  const { label, ym } = monthOf(data.today);
+  const [step, setStep] = useState(0);
+  const [completed, setCompleted] = useState<Set<number>>(new Set());
+
+  function markComplete(index: number) {
+    setCompleted((prev) => new Set(prev).add(index));
+  }
+
+  const hasWritten = [...completed].some((i) => WRITE_STEPS.has(i));
+  const hasLookedAt = completed.size > 0;
+
+  return (
+    <div className="mx-auto max-w-4xl p-8">
+      <h1 className="text-xl font-semibold text-ink">Monthly review</h1>
+      <p className="mt-1 text-sm text-ink-muted">
+        {label} — am I still pointed at the right questions?
+      </p>
+
+      <div className="mt-6">
+        <Stepper
+          steps={STEPS}
+          current={step}
+          completed={completed}
+          onSelect={setStep}
+          label="Review steps"
+        />
+      </div>
+
+      {hasWritten ? (
+        <p className="mt-3 text-sm text-ink-muted">you can stop here — it's already saved</p>
+      ) : hasLookedAt ? (
+        <p className="mt-3 text-sm text-ink-muted">
+          you can stop anytime — nothing here demands finishing
+        </p>
+      ) : null}
+
+      {/* Every step stays mounted; only visibility toggles, so a jump
+          away and back never discards the focus step's draft. */}
+      <section className="mt-6">
+        <div hidden={step !== 0}>
+          <QuestionsGrid questions={data.questions} portfolios={data.portfolios} />
+        </div>
+        <div hidden={step !== 1}>
+          <PortfolioHealth portfolios={data.portfolios} />
+        </div>
+        <div hidden={step !== 2}>
+          <ProjectSlots active={data.active} parked={data.parked} maxActive={data.max_active} />
+        </div>
+        <div hidden={step !== 3}>
+          <StewardshipsOverview rows={data.stewardships} />
+        </div>
+        <div hidden={step !== 4}>
+          <NextSixWeeks commitments={data.commitments} today={data.today} />
+        </div>
+        <div hidden={step !== 5}>
+          <FocusStep month={ym} monthLabel={label} onSaved={() => markComplete(5)} />
+        </div>
+      </section>
+
+      <StepperNav current={step} count={STEPS.length} onSelect={setStep} />
+    </div>
+  );
+}
+
+/** The one write on the page: the review's artefact. Wins, Themes and
+ * Next Month's Focus into the monthly note — a dashboard with no write
+ * has no reason to be visited on a schedule, which is exactly why the
+ * cadence had no home before. */
+function FocusStep({
+  month,
+  monthLabel,
+  onSaved,
+}: {
+  month: string;
+  monthLabel: string;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [wins, setWins] = useState("");
+  const [themes, setThemes] = useState("");
+  const [focus, setFocus] = useState("");
+
+  const save = useMutation({
+    mutationFn: async () => {
+      // Each section is its own compose/overwrite write; only the ones
+      // you filled in are touched, so a partial review leaves the rest
+      // of the note alone.
+      const writes: Promise<void>[] = [];
+      if (wins.trim()) writes.push(saveMonthlySection("wins", wins.trim(), month));
+      if (themes.trim()) writes.push(saveMonthlySection("themes", themes.trim(), month));
+      if (focus.trim()) writes.push(saveMonthlySection("next-months-focus", focus.trim(), month));
+      await Promise.all(writes);
+      return writes.length;
+    },
+    onError: (error) => toast(errorMessage(error), "attention"),
+    onSuccess: (written) => {
+      if (written === 0) {
+        toast("Nothing to save yet — fill in a section first.", "attention");
+        return;
+      }
+      toast(`Saved to ${monthLabel}'s note.`);
+      onSaved();
+    },
+  });
+
+  const anything = wins.trim() !== "" || themes.trim() !== "" || focus.trim() !== "";
+
+  return (
+    <div>
+      <h2 className="font-medium text-ink">Next month</h2>
+      <p className="mt-1 text-sm text-ink-muted">
+        What went well, what themes you noticed, and where to point next — written to{" "}
+        {monthLabel}'s note.
+      </p>
+
+      <div className="mt-4 space-y-4">
+        <FocusField
+          label="Wins"
+          hint="What the month is worth remembering for."
+          value={wins}
+          onChange={setWins}
+        />
+        <FocusField
+          label="Themes"
+          hint="Patterns worth naming — what kept recurring."
+          value={themes}
+          onChange={setThemes}
+        />
+        <FocusField
+          label="Next month's focus"
+          hint="The one thing to keep pointed at."
+          value={focus}
+          onChange={setFocus}
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={() => save.mutate()}
+        disabled={save.isPending || !anything}
+        className="mt-4 rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken disabled:opacity-50"
+      >
+        Save to the note
+      </button>
+    </div>
+  );
+}
+
+function FocusField({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const id = `focus-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+  return (
+    <div>
+      <label htmlFor={id} className="text-sm font-medium text-ink">
+        {label}
+      </label>
+      <p className="text-xs text-ink-faint">{hint}</p>
+      <textarea
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        rows={3}
+        className="mt-1 w-full resize-y rounded border border-line bg-bg-base p-2 text-sm text-ink"
+      />
     </div>
   );
 }
@@ -509,9 +701,15 @@ function StewardshipsOverview({ rows }: { rows: StewardshipStrategicRow[] }) {
                 aria-hidden
                 className={`h-2.5 w-2.5 shrink-0 rounded-full ${contextDotClass(summary.context)}`}
               />
-              <span className="min-w-0 flex-1 truncate text-sm text-ink">
+              {/* A link, like the portfolio rows above — /stewardships/:slug
+                  exists, and a review you cannot click through from is a
+                  dead end. */}
+              <Link
+                to={`/stewardships/${summary.slug}`}
+                className="min-w-0 flex-1 truncate text-sm text-ink hover:text-accent-interactive hover:underline"
+              >
                 {summary.name || summary.slug}
-              </span>
+              </Link>
               {/* Sparkline draws only when there's data (expanded, tracked);
                   a flat stewardship's empty series renders nothing. */}
               <Sparkline

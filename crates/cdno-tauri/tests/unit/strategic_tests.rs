@@ -207,3 +207,24 @@ fn entries_per_week_buckets_by_iso_week() {
         "the out-of-window and future dates are dropped: {counts:?}",
     );
 }
+
+// --- save_monthly_section's month parsing ----------------------------
+// The domain covers the section round-trip and the MonthlySection
+// allowlist; the Tauri wrapper only adds YYYY-MM parsing, so that is what
+// is pinned here.
+
+use cdno_tauri::commands::strategic::parse_month;
+
+#[test]
+fn parse_month_normalises_to_the_first() {
+    assert_eq!(parse_month("2026-07").unwrap(), ymd(2026, 7, 1));
+    // Whitespace is tolerated, as read_monthly's does.
+    assert_eq!(parse_month("  2026-12 ").unwrap(), ymd(2026, 12, 1));
+}
+
+#[test]
+fn parse_month_rejects_a_malformed_month() {
+    assert!(parse_month("2026").is_err());
+    assert!(parse_month("July").is_err());
+    assert!(parse_month("2026-13").is_err());
+}

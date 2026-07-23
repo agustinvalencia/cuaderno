@@ -24,12 +24,12 @@ const StewardshipDetail = lazy(() => import("./views/stewardships/StewardshipDet
 // navigation like the other secondary surfaces.
 const Portfolios = lazy(() => import("./views/portfolios/Portfolios"));
 const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"));
-// Monthly (M9, renamed from Strategic in #444): the composed monthly
-// review — questions
-// grid, project-slot allocator, portfolio health, stewardship
-// sparklines, and the six-week timeline. Pulls in recharts (sparklines)
-// and the shared timeline, so it splits onto navigation.
-const Strategic = lazy(() => import("./views/strategic/Strategic"));
+// Monthly review (M9; made a stepped ritual in #450): the six-step
+// review — questions, portfolios, projects, stewardships, the six-week
+// lookahead, and a focus step that writes Wins/Themes/Focus to the
+// monthly note. Pulls in recharts (sparklines) and the shared timeline,
+// so it splits onto navigation.
+const MonthlyReview = lazy(() => import("./views/monthly/MonthlyReview"));
 // Questions (#443): RLM's Important Questions as a surface of their own,
 // rather than chips inside the monthly dashboard. Splits onto navigation
 // like the other secondary surfaces.
@@ -88,7 +88,7 @@ export default function App() {
           path="monthly"
           element={
             <Suspense fallback={<ViewFallback />}>
-              <Strategic />
+              <MonthlyReview />
             </Suspense>
           }
         />
