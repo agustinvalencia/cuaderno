@@ -27,6 +27,7 @@ import {
   saveTemplate,
 } from "../../api/commands";
 import { SectionHeading } from "../../components/ui/section-heading";
+import { useReportDirty } from "../../shell/settingsDirty";
 import { useToast } from "../../shell/Toasts";
 
 /** The distinct `{{placeholder}}` names referenced in `content`, in
@@ -77,15 +78,17 @@ const SOURCE_GROUPS: { kind: PlaceholderSource["kind"]; heading: string; note: s
   { kind: "prompt", heading: "Prompted", note: "Asked for at creation time" },
 ];
 
-export default function Templates() {
+/** The browser without page chrome, so the Settings dialog can host it
+ * (#444). The `/templates` route below stays for deep links. */
+export function TemplatesPanel() {
   const list = useQuery({ queryKey: ["list_templates"], queryFn: listTemplates });
 
   if (list.isPending) {
-    return <p className="p-8 text-ink-muted">Reading the vault…</p>;
+    return <p className="text-ink-muted">Reading the vault…</p>;
   }
   if (list.isError) {
     return (
-      <div className="p-8">
+      <div>
         <p className="text-ink">Templates could not be opened.</p>
         <p className="mt-2 text-sm text-ink-muted">{String(list.error)}</p>
       </div>
@@ -94,64 +97,74 @@ export default function Templates() {
   return <TemplatesBody templates={list.data} />;
 }
 
+export default function Templates() {
+  return (
+    <div className="mx-auto max-w-5xl p-8">
+      <h1 className="mb-2 text-xl font-semibold text-ink">Templates</h1>
+      <TemplatesPanel />
+    </div>
+  );
+}
+
 function TemplatesBody({ templates }: { templates: TemplateSummary[] }) {
   const [selected, setSelected] = useState<string>(templates[0]?.note_type ?? "");
   const current = templates.find((t) => t.note_type === selected) ?? templates[0];
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <h1 className="text-xl font-semibold text-ink">Templates</h1>
-      <p className="mt-2 text-sm text-ink-muted">
+    <div>
+      <p className="text-sm text-ink-muted">
         Each note type's template. Edit one to save a custom override in{" "}
         <code className="text-ink-faint">.cuaderno/templates/</code>.
       </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-8 md:grid-cols-[16rem_1fr]">
-        {/* Left: the note-type list with a source badge each. */}
-        <nav aria-label="Note types" className="min-w-0">
-          <ul className="space-y-1">
-            {templates.map((t) => {
-              const badge = sourceBadge(t);
-              const isSelected = t.note_type === current?.note_type;
-              return (
-                <li key={t.note_type}>
-                  <button
-                    type="button"
-                    aria-current={isSelected ? "true" : undefined}
-                    onClick={() => setSelected(t.note_type)}
-                    className={`flex w-full items-center justify-between gap-2 rounded border px-3 py-2 text-left text-sm ${
-                      isSelected
-                        ? "border-line bg-bg-sunken font-medium text-ink"
-                        : "border-transparent text-ink-muted hover:bg-bg-sunken hover:text-ink"
-                    }`}
-                  >
-                    <span className="min-w-0 truncate">{t.display_name}</span>
-                    <span
-                      title={badge.title}
-                      className="shrink-0 rounded border border-line px-1.5 py-0.5 text-xs text-ink-faint"
-                    >
-                      {badge.label}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
+      {/* The note-type chooser was a 16rem vertical rail. Inside the
+          Settings dialog that would be a second rail beside the section
+          one — two columns of navigation for a dozen items — so it
+          flattens to a wrapping row of chips, used here too rather than
+          keeping two layouts of the same control in sync (#444). */}
+      <nav aria-label="Note types" className="mt-4 flex flex-wrap gap-1.5">
+        {templates.map((t) => {
+          const badge = sourceBadge(t);
+          const isSelected = t.note_type === current?.note_type;
+          return (
+            <button
+              key={t.note_type}
+              type="button"
+              aria-current={isSelected ? "true" : undefined}
+              onClick={() => setSelected(t.note_type)}
+              className={`flex items-center gap-1.5 rounded border px-2 py-1 text-sm ${
+                isSelected
+                  ? "border-line bg-bg-sunken font-medium text-ink"
+                  : "border-transparent text-ink-muted hover:bg-bg-sunken hover:text-ink"
+              }`}
+            >
+              <span className="truncate">{t.display_name}</span>
+              {/* Only the notable sources get a chip badge — "Built-in"
+                  is the unremarkable default, and repeating it on nine of
+                  eleven chips buries the two that differ. The editor
+                  header states the source either way. */}
+              {t.source !== "builtin_default" && t.source !== "builtin_variant" && (
+                <span title={badge.title} className="shrink-0 text-xs text-ink-faint">
+                  {badge.label}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
 
-        {/* Right: the editor, or the Create affordance for a template-less
-            custom type. Keyed by the selection so the editor's draft state
-            resets cleanly when the type changes. */}
-        <section aria-label="Template" className="min-w-0">
-          {current === undefined ? (
-            <p className="text-sm text-ink-muted">No note types.</p>
-          ) : current.is_custom_type && !current.has_custom_file ? (
-            <CreatePanel key={current.note_type} summary={current} />
-          ) : (
-            <TemplateEditor key={current.note_type} summary={current} />
-          )}
-        </section>
-      </div>
+      {/* The editor, or the Create affordance for a template-less custom
+          type. Keyed by the selection so the editor's draft state resets
+          cleanly when the type changes. */}
+      <section aria-label="Template" className="mt-4 min-w-0">
+        {current === undefined ? (
+          <p className="text-sm text-ink-muted">No note types.</p>
+        ) : current.is_custom_type && !current.has_custom_file ? (
+          <CreatePanel key={current.note_type} summary={current} />
+        ) : (
+          <TemplateEditor key={current.note_type} summary={current} />
+        )}
+      </section>
     </div>
   );
 }
@@ -250,6 +263,11 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
     onError: (err) => toast(errorMessage(err), "attention"),
   });
 
+  const dirty = baseline !== null && draft !== baseline;
+  // Above the early returns: hooks cannot hide behind a loading branch,
+  // and a panel that is still reading holds nothing to lose anyway.
+  useReportDirty("templates", "Templates", dirty);
+
   if (read.isPending) {
     return <p className="text-sm text-ink-muted">Reading…</p>;
   }
@@ -257,8 +275,8 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
     return <p className="text-sm text-ink-muted">{String(read.error)}</p>;
   }
 
-  const dirty = baseline !== null && draft !== baseline;
   const isBuiltinDefault = summary.source === "builtin_default" || summary.source === "builtin_variant";
+  const badge = sourceBadge(summary);
 
   // Unknown tokens: `{{...}}` names not in the backend-supplied set. Held
   // back until the placeholder set has loaded, so the editor never
@@ -272,9 +290,17 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
   return (
     <div className="rounded-lg border border-line bg-bg-surface">
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
+        <h2 className="min-w-0 truncate text-base font-semibold text-ink">
           {summary.display_name}
         </h2>
+        {/* The source moved off the chips, so it is stated here — the one
+            place it is always visible for the type being edited. */}
+        <span
+          title={badge.title}
+          className="mr-auto shrink-0 rounded border border-line px-1.5 py-0.5 text-xs text-ink-faint"
+        >
+          {badge.label}
+        </span>
         <button
           type="button"
           onClick={() => void openInEditor(summary.path)}
@@ -307,7 +333,10 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
           value={draft}
           spellCheck={false}
           onChange={(event) => setDraft(event.target.value)}
-          className="h-96 w-full resize-y rounded border border-line bg-bg-base p-3 font-mono text-sm text-ink"
+          // Clamped rather than fixed: the same editor now renders inside
+          // the Settings dialog, where a flat 24rem would overrun a short
+          // window before the dialog's own scroller could help.
+          className="h-[clamp(12rem,35vh,24rem)] w-full resize-y rounded border border-line bg-bg-base p-3 font-mono text-sm text-ink"
         />
 
         {/* Calm, non-blocking unknown-token notice — an ink/attention

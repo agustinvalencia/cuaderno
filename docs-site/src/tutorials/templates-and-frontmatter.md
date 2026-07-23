@@ -318,15 +318,17 @@ reference for the full grammar and its limits.
 
 ## Edit templates in the desktop app
 
-Everything above works from the CLI, but the desktop app also has a **Templates** view (in the
-sidebar's *Browse* group) that does the same job without a terminal.
+Everything above works from the CLI, but the desktop app also has a **Templates** editor that does
+the same job without a terminal — press `⌘,` and pick **Templates** from the settings rail.
 
-Open it and you get a list of every note type — the built-ins plus any custom types you declared
-under `[note_types.<name>]` — each with a badge:
+You get a chip for every note type — the built-ins plus any custom types you declared
+under `[note_types.<name>]`. Selecting one names its source in the editor's header:
 
 - **Built-in** — the type is using its built-in default (no override yet).
 - **Custom** — a custom override exists in `.cuaderno/templates/`.
 - **No template** — a custom type that has no template file yet.
+
+The chips themselves flag only the last two, since most types sit on their built-in default.
 
 Select a type to see its effective template in the editor. Edit the text and press **Save**: the
 app writes `.cuaderno/templates/<type>.md`. For a type currently on the built-in default, that first

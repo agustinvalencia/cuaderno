@@ -1,12 +1,25 @@
 // SettingsDialog (⌘,): renders the app preferences, persists theme and
-// metrics choices, jumps to the vault config editor, and is axe-clean.
+// metrics choices, navigates its section rail, hosts the vault config and
+// template editors (#444), refuses to close over an unsaved draft, and is
+// axe-clean.
 import { afterEach, beforeAll, expect, test, vi } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router";
-import SettingsDialog from "./SettingsDialog";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { useState } from "react";
+import { MemoryRouter } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { ToastProvider } from "./Toasts";
+import SettingsDialog, { type SettingsSection } from "./SettingsDialog";
 
 expect.extend(matchers);
 declare module "vitest" {
@@ -50,21 +63,71 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
+  clearMocks();
   localStorage.clear();
 });
 
-function Probe() {
-  const location = useLocation();
-  return <div data-testid="path">{location.pathname}</div>;
+const CONFIG_TOML = '[vault]\nname = "Test"\nmax_active_projects = 5\n';
+
+/** Serve the two hosted panels' reads. Only the config editor is
+ * exercised here; the template browser has its own suite. */
+function installMock() {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "read_config":
+        return { content: CONFIG_TOML, hash: "deadbeefdeadbeef" };
+      case "list_templates":
+        return [];
+      case "validate_config":
+        return undefined;
+      default:
+        return undefined;
+    }
+  });
 }
 
-function renderDialog(onOpenChange = () => {}) {
-  return render(
-    <MemoryRouter initialEntries={["/"]}>
-      <Probe />
-      <SettingsDialog open onOpenChange={onOpenChange} />
-    </MemoryRouter>,
+/** The dialog is controlled by the shell, so the harness holds the same
+ * state the shell does: the rail writes back through `onSectionChange`,
+ * and `null` is closed. */
+function Harness({
+  onSectionChange,
+  initial = "appearance",
+}: {
+  onSectionChange?: (section: SettingsSection | null) => void;
+  initial?: SettingsSection;
+}) {
+  const [section, setSection] = useState<SettingsSection | null>(initial);
+  return (
+    <SettingsDialog
+      section={section}
+      onSectionChange={(next) => {
+        onSectionChange?.(next);
+        setSection(next);
+      }}
+    />
   );
+}
+
+function renderDialog(
+  onSectionChange?: (section: SettingsSection | null) => void,
+  initial: SettingsSection = "appearance",
+) {
+  installMock();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/"]}>
+          <Harness onSectionChange={onSectionChange} initial={initial} />
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+/** Move to a section by clicking its rail entry. */
+function openSection(label: string) {
+  fireEvent.click(screen.getByRole("button", { name: label }));
 }
 
 test("renders the preference controls", () => {
@@ -72,10 +135,30 @@ test("renders the preference controls", () => {
   expect(screen.getByRole("heading", { name: "Settings" })).toBeDefined();
   expect(screen.getByRole("button", { name: "System" })).toBeDefined();
   expect(screen.getByRole("button", { name: "Dark" })).toBeDefined();
-  expect(
-    screen.getByRole("switch", { name: "Show progress metrics" }),
-  ).toBeDefined();
-  expect(screen.getByRole("button", { name: "Edit…" })).toBeDefined();
+});
+
+test("the rail names every section, configuration included", () => {
+  renderDialog();
+  const rail = within(screen.getByRole("navigation", { name: "Settings sections" }));
+  for (const label of [
+    "Appearance",
+    "Reading",
+    "General",
+    "Vault config",
+    "Templates",
+    "Advanced",
+  ]) {
+    expect(rail.getByRole("button", { name: label })).toBeDefined();
+  }
+});
+
+test("only the chosen section is showing", () => {
+  renderDialog();
+  // Reading and General live behind their own rail entries, so their
+  // controls are out of the tree until chosen.
+  expect(screen.queryByRole("switch", { name: "Show progress metrics" })).toBeNull();
+  openSection("General");
+  expect(screen.getByRole("switch", { name: "Show progress metrics" })).toBeDefined();
 });
 
 test("choosing a theme marks it selected and persists", () => {
@@ -94,6 +177,7 @@ test("choosing a theme marks it selected and persists", () => {
 
 test("choosing a reading setting marks it selected and persists", () => {
   renderDialog();
+  openSection("Reading");
   // A Reading-section segmented control (aria-pressed), like the theme group.
   fireEvent.click(screen.getByRole("button", { name: "Large" }));
   expect(
@@ -113,6 +197,7 @@ test("reduce transparency flips the switch and persists", () => {
 
 test("toggling metrics flips the switch and persists", () => {
   renderDialog();
+  openSection("General");
   const toggle = screen.getByRole("switch", { name: "Show progress metrics" });
   expect(toggle.getAttribute("aria-checked")).toBe("false");
   fireEvent.click(toggle);
@@ -120,19 +205,93 @@ test("toggling metrics flips the switch and persists", () => {
   expect(localStorage.getItem("cuaderno-show-metrics")).toBe("true");
 });
 
-test("Edit… closes the dialog and routes to the config editor", () => {
-  const onOpenChange = vi.fn();
-  renderDialog(onOpenChange);
-  fireEvent.click(screen.getByRole("button", { name: "Edit…" }));
-  expect(onOpenChange).toHaveBeenCalledWith(false);
-  expect(screen.getByTestId("path").textContent).toBe("/config");
+test("the vault config editor opens in the dialog rather than routing away", async () => {
+  // It used to be an "Edit…" row that closed the dialog and navigated to
+  // /config. Configuration is not content, so it lives here now.
+  renderDialog();
+  openSection("Vault config");
+  const editor = (await screen.findByLabelText("config.toml content")) as HTMLTextAreaElement;
+  expect(editor.value).toContain("max_active_projects");
 });
 
 test("Done closes the dialog", () => {
-  const onOpenChange = vi.fn();
-  renderDialog(onOpenChange);
+  const onSectionChange = vi.fn();
+  renderDialog(onSectionChange);
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(onSectionChange).toHaveBeenCalledWith(null);
+});
+
+test("an unsaved draft blocks the close, and can be kept or discarded", async () => {
+  // Every other preference here applies on click, so nothing ever needed
+  // guarding. The hosted editors have a real Save, and Radix would hand a
+  // silent discard to Esc, the overlay or Done.
+  const onSectionChange = vi.fn();
+  renderDialog(onSectionChange);
+  openSection("Vault config");
+  const editor = await screen.findByLabelText("config.toml content");
+  fireEvent.change(editor, { target: { value: "[vault]\nname = \"Edited\"\n" } });
+
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(onSectionChange).not.toHaveBeenCalledWith(null);
+  expect((await screen.findByRole("alert")).textContent).toContain("Vault config");
+
+  // Keeping editing leaves the draft in hand.
+  fireEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect((screen.getByLabelText("config.toml content") as HTMLTextAreaElement).value).toContain(
+    "Edited",
+  );
+
+  // Discarding is a second, deliberate click.
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Discard and close" }));
+  expect(onSectionChange).toHaveBeenCalledWith(null);
+});
+
+test("Esc closes a dialog with nothing unsaved", () => {
+  // The control for the guard test below: without this, "Esc did not
+  // close" would pass just as well if Esc never reached Radix at all.
+  const onSectionChange = vi.fn();
+  renderDialog(onSectionChange);
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  expect(onSectionChange).toHaveBeenCalledWith(null);
+});
+
+test("Esc over an unsaved draft is guarded too, not just Done", async () => {
+  // The guard sits on Radix's one close channel, so every route out is
+  // covered — a guard on the button alone would leave two doors open.
+  const onSectionChange = vi.fn();
+  renderDialog(onSectionChange);
+  openSection("Vault config");
+  const editor = await screen.findByLabelText("config.toml content");
+  fireEvent.change(editor, { target: { value: "[vault]\nname = \"Edited\"\n" } });
+
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+  expect(onSectionChange).not.toHaveBeenCalledWith(null);
+  expect((await screen.findByRole("alert")).textContent).toContain("Vault config");
+});
+
+test("a draft survives a look at another section", async () => {
+  // The panes unmount-on-switch would be the same silent discard the
+  // close guard exists to prevent, one click earlier.
+  renderDialog();
+  openSection("Vault config");
+  const editor = await screen.findByLabelText("config.toml content");
+  fireEvent.change(editor, { target: { value: "[vault]\nname = \"Edited\"\n" } });
+
+  openSection("Appearance");
+  // Still mounted, but `hidden` — so it is out of the accessibility tree
+  // (a role query cannot see it) while its draft stays in hand.
+  expect(screen.queryByRole("textbox")).toBeNull();
+  // The rail still marks it, so the draft is not out of sight entirely.
+  await waitFor(() =>
+    expect(screen.getByText(/Unsaved changes in Vault config/)).toBeDefined(),
+  );
+
+  openSection("Vault config");
+  expect((screen.getByLabelText("config.toml content") as HTMLTextAreaElement).value).toContain(
+    "Edited",
+  );
 });
 
 test("is axe-clean", async () => {

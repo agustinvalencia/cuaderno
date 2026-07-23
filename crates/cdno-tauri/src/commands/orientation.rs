@@ -24,6 +24,15 @@ pub struct OrientationView {
     pub commitments: Vec<CommitmentEntry>,
     pub projects: Vec<OrientationProject>,
     pub lapsed_habits: Vec<LapsedHabit>,
+    /// The configured active-project cap (`max_active_projects`, default
+    /// 5), read from the vault config rather than hardcoded.
+    ///
+    /// The five-slot rule is load-bearing in the method — it is the whole
+    /// reason a sixth project has to displace one — so the shell's project
+    /// list says "3 of 5 slots" rather than leaving the cap to be
+    /// discovered by hitting it. The strategic bundle already carried this
+    /// for its allocator; the sidebar needs it on every page.
+    pub max_active: usize,
 }
 
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
@@ -53,6 +62,7 @@ pub fn get_orientation_impl(vault: &Vault, today: NaiveDate) -> Result<Orientati
         commitments: ctx.commitments,
         projects,
         lapsed_habits: ctx.lapsed_habits,
+        max_active: vault.config().vault.max_active_projects as usize,
     })
 }
 

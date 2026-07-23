@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -9,11 +9,9 @@ import {
   Handshake,
   HelpCircle,
   Inbox as InboxIcon,
-  LayoutTemplate,
   ListChecks,
   Search,
   Settings as SettingsIcon,
-  SlidersHorizontal,
   Sprout,
   Sun,
   type LucideIcon,
@@ -21,7 +19,7 @@ import {
 import { getOrientation, listInbox } from "../api/commands";
 import { contextDotClass } from "../lib/contexts";
 import InboxDrawer from "./InboxDrawer";
-import SettingsDialog from "./SettingsDialog";
+import SettingsDialog, { type SettingsSection } from "./SettingsDialog";
 import WatcherPill from "./WatcherPill";
 import ConfigStatusBanner from "./ConfigStatusBanner";
 import IndexExclusionsBanner from "./IndexExclusionsBanner";
@@ -34,21 +32,38 @@ import { useDeepLinkNavigation } from "./useDeepLinkNavigation";
 // (The note reader is now its own `/note/*` route, code-split in routes.tsx.)
 const CommandPalette = lazy(() => import("./CommandPalette"));
 
-const NAV: { to: string; label: string; icon: LucideIcon }[] = [
+// The nav is the first and most persistent thing the app says about
+// itself, and a flat list of ten destinations says "here are ten
+// screens". The method is two tracks — inquiry and operations — bound by
+// a cadence of daily, weekly and monthly review, so that is what the
+// sidebar is shaped like (#444).
+//
+// The old "Browse" bucket mixed the knowledge layer (Portfolios), the
+// responsibility layer (Stewardships) and two settings surfaces
+// (Templates, Config) into one list, which invited the reading that a
+// template is a note. Templates and Config now live behind Cmd+, where
+// configuration belongs; their routes survive for deep links.
+type NavItem = { to: string; label: string; icon: LucideIcon };
+
+const RHYTHM: NavItem[] = [
   { to: "/", label: "Today", icon: Sun },
-  { to: "/actions", label: "Actions", icon: ListChecks },
   { to: "/calendar", label: "Calendar", icon: Calendar },
-  { to: "/commitments", label: "Commitments", icon: Handshake },
   { to: "/weekly", label: "Weekly", icon: CalendarRange },
-  { to: "/strategic", label: "Strategic", icon: Compass },
+  { to: "/monthly", label: "Monthly", icon: Compass },
 ];
 
-const BROWSE: { to: string; label: string; icon: LucideIcon }[] = [
+// Projects are not in this list: they get their own sub-header inside the
+// group, because the active list nests under it and the header carries the
+// slot count.
+const OPERATIONS: NavItem[] = [
+  { to: "/actions", label: "Actions", icon: ListChecks },
+  { to: "/commitments", label: "Commitments", icon: Handshake },
+  { to: "/stewardships", label: "Stewardships", icon: Sprout },
+];
+
+const INQUIRY: NavItem[] = [
   { to: "/questions", label: "Questions", icon: HelpCircle },
   { to: "/portfolios", label: "Portfolios", icon: Briefcase },
-  { to: "/stewardships", label: "Stewardships", icon: Sprout },
-  { to: "/templates", label: "Templates", icon: LayoutTemplate },
-  { to: "/config", label: "Config", icon: SlidersHorizontal },
 ];
 
 export default function AppShell() {
@@ -62,7 +77,10 @@ export default function AppShell() {
   const [inboxOpen, setInboxOpen] = useState(false);
   const inboxButtonRef = useRef<HTMLButtonElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Which settings section to land on, and `null` for closed. Held as the
+  // section rather than a bare boolean so the palette can jump straight to
+  // Vault config or Templates — the destinations that left the sidebar.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
 
   // Back/forward via the mouse side buttons, Cmd/Ctrl+[ / ], and the
   // native macOS bridge — history navigation, as in a browser.
@@ -81,7 +99,7 @@ export default function AppShell() {
         setPaletteOpen((prev) => !prev);
       } else if (event.key === ",") {
         event.preventDefault();
-        setSettingsOpen(true);
+        setSettingsSection("appearance");
       }
     }
     window.addEventListener("keydown", onKeyDown);
@@ -109,60 +127,53 @@ export default function AppShell() {
           cuaderno
         </div>
 
-        <nav aria-label="Views" className="flex flex-col gap-0.5">
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-2.5 rounded px-2 py-1 text-sm ${
-                  isActive ? "bg-bg-surface font-medium text-ink" : "text-ink-muted hover:text-ink"
-                }`
-              }
-            >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-        </nav>
+        {/* Scrolls on its own so a vault at the project cap never pushes
+            the Inbox and Settings buttons off a short window. */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <NavGroup label="Rhythm" blurb="the cadence" items={RHYTHM} first />
 
-        <div className="mt-6 px-2 text-xs font-medium uppercase tracking-wider text-ink-faint">
-          Projects
-        </div>
-        <nav aria-label="Active projects" className="mt-1 flex flex-col gap-0.5">
-          {(orientation.data?.projects ?? []).map((project) => (
-            <NavLink
-              key={project.slug}
-              to={`/projects/${project.slug}`}
-              className="flex items-center gap-2.5 rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              {/* The context dot is this row's "icon" — its colour carries
-                  the project's life context. */}
-              <span
-                aria-hidden
-                className={`ml-0.5 h-2 w-2 shrink-0 rounded-full ${contextDotClass(project.context)}`}
-              />
-              <span className="truncate">{project.slug}</span>
-            </NavLink>
-          ))}
-        </nav>
+          <NavGroup label="Operations" blurb="delivery" items={OPERATIONS}>
+            {/* Projects lead the group and carry the list, so the header
+                doubles as the slot counter. */}
+            <div className="mt-1 flex items-baseline justify-between gap-2 px-2">
+              <span className="text-sm text-ink-muted">Projects</span>
+              {/* Not behind `useMetrics()`: the cap is a rule of the
+                  method, not a progress reading. It is the reason a sixth
+                  project has to displace one, and the sidebar is where it
+                  should be legible rather than discovered by hitting it. */}
+              {orientation.data !== undefined && (
+                <span className="shrink-0 text-xs text-ink-faint">
+                  {orientation.data.projects.length} of {orientation.data.max_active} slots
+                </span>
+              )}
+            </div>
+            <nav aria-label="Active projects" className="mt-0.5 flex flex-col gap-0.5">
+              {(orientation.data?.projects ?? []).map((project) => (
+                <NavLink
+                  key={project.slug}
+                  to={`/projects/${project.slug}`}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2.5 rounded py-1 pl-4 pr-2 text-sm ${
+                      isActive
+                        ? "bg-bg-surface font-medium text-ink"
+                        : "text-ink-muted hover:text-ink"
+                    }`
+                  }
+                >
+                  {/* The context dot is this row's "icon" — its colour
+                      carries the project's life context. */}
+                  <span
+                    aria-hidden
+                    className={`h-2 w-2 shrink-0 rounded-full ${contextDotClass(project.context)}`}
+                  />
+                  <span className="truncate">{project.slug}</span>
+                </NavLink>
+              ))}
+            </nav>
+          </NavGroup>
 
-        <div className="mt-6 px-2 text-xs font-medium uppercase tracking-wider text-ink-faint">
-          Browse
+          <NavGroup label="Inquiry" blurb="investigation" items={INQUIRY} />
         </div>
-        <nav aria-label="Browse" className="mt-1 flex flex-col gap-0.5">
-          {BROWSE.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className="flex items-center gap-2.5 rounded px-2 py-1 text-sm text-ink-muted hover:text-ink"
-            >
-              <Icon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-        </nav>
 
         <button
           ref={inboxButtonRef}
@@ -170,7 +181,7 @@ export default function AppShell() {
           aria-expanded={inboxOpen}
           aria-label={`Inbox, ${inboxCount} waiting`}
           onClick={() => setInboxOpen((open) => !open)}
-          className={`mt-auto flex items-center justify-between rounded px-2 py-1 text-sm ${
+          className={`mt-2 flex items-center justify-between rounded px-2 py-1 text-sm ${
             inboxOpen ? "bg-bg-surface text-ink" : "text-ink-muted hover:text-ink"
           }`}
         >
@@ -206,7 +217,7 @@ export default function AppShell() {
           <button
             type="button"
             aria-label="Open settings"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setSettingsSection("appearance")}
             className="flex w-full items-center justify-between rounded px-2 py-1 text-xs text-ink-muted hover:text-ink"
           >
             <span className="flex items-center gap-2.5">
@@ -240,11 +251,67 @@ export default function AppShell() {
           the shell's first paint. */}
       {paletteOpen && (
         <Suspense fallback={null}>
-          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+          <CommandPalette
+            open={paletteOpen}
+            onOpenChange={setPaletteOpen}
+            onOpenSettings={setSettingsSection}
+          />
         </Suspense>
       )}
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        section={settingsSection}
+        onSectionChange={setSettingsSection}
+      />
     </div>
     </ReaderProvider>
+  );
+}
+
+/** One track of the sidebar: its name, a one-word gloss in the method's
+ * language, and its destinations.
+ *
+ * `children` render *above* the flat items, not below — the only group
+ * that uses them is Operations, whose Projects block leads it. */
+function NavGroup({
+  label,
+  blurb,
+  items,
+  first,
+  children,
+}: {
+  label: string;
+  blurb: string;
+  items: NavItem[];
+  /** Skips the top margin, for the group that sits under the title strip. */
+  first?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={first ? "" : "mt-5"}>
+      <div className="flex items-baseline gap-1.5 px-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+          {label}
+        </span>
+        <span className="truncate text-xs text-ink-faint opacity-70">{blurb}</span>
+      </div>
+      {children}
+      <nav aria-label={label} className="mt-1 flex flex-col gap-0.5">
+        {items.map(({ to, label: itemLabel, icon: Icon }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === "/"}
+            className={({ isActive }) =>
+              `flex items-center gap-2.5 rounded px-2 py-1 text-sm ${
+                isActive ? "bg-bg-surface font-medium text-ink" : "text-ink-muted hover:text-ink"
+              }`
+            }
+          >
+            <Icon className="h-4 w-4 shrink-0" aria-hidden strokeWidth={1.75} />
+            <span>{itemLabel}</span>
+          </NavLink>
+        ))}
+      </nav>
+    </div>
   );
 }

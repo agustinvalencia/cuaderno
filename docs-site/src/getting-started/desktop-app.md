@@ -62,29 +62,43 @@ xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 ## A quick tour
 
-The sidebar leads with **Today** — the day's own note, with the morning orientation above it: a
+The sidebar is grouped the way the method is: a **rhythm**, and the two tracks it binds.
+
+**Rhythm** is the cadence. **Today** is the day's own note, with the morning orientation above it: a
 **Now** band naming whatever you started and have not finished (read back from the day's log, so a
 `cdno` start from the terminal counts too), a one-line log composer, commitments due soon, and an
 energy-filtered shortlist of one action per project to pick from. Any quietly lapsed habits sit at
-the foot. **Actions** is the cross-project list of next actions; **Calendar** a month grid
-of your journal — days with a daily note are marked, and clicking one opens it in an embedded
-panel that reads read-only and jumps to the previous or next day, the day's week, or its month;
-**Commitments** a chronological timeline of everything promised (context-coloured, never red);
-**Weekly** a guided, stop-anywhere five-step review; **Strategic** the monthly view — questions
-grid, five-slot project allocator, portfolio health, stewardship trends. Below those, each active
-project has a full map (`/projects/<slug>`) — leading with its current state, then the next
-actions, blockers and milestones, with backlinks and recent log mentions kept to a few and the
-rest a click away, and **Questions**, **Portfolios** and **Stewardships** browse the
-knowledge and responsibility layers — Questions being the important-questions list that sits above
-any one project, grouped into research and life, each showing what is pointed at it. A stewardship's detail draws each tracked series as a calm
-trend — counts and volumes (reps, laps, sessions) as columns, continuous measures (a weight, a
-pace) as lines, always in the context hue and never as a target to hit. **Config** edits
-`.cuaderno/config.toml` in the app — a Raw text view and a structured Form for note types and
-schemas, every save validated before it touches disk, and a live reload whenever the config changes
-on disk. See [Editing the config in the app](config-editor.md) for the full walkthrough. Everywhere:
-`⌘K` opens search-and-jump, `⌘⇧C` summons the
-global capture window from any app (Enter files to the inbox, `⌘Enter` appends to today's log),
-and the menu-bar tray keeps Quick capture / Open / Quit reachable even with every window closed.
-`⌘[` and `⌘]` (or the mouse's back and forward side buttons) step backward and forward through
-your view history, just like a browser. `⌘,` opens **Settings** — a calm panel for the app-level
-preferences (theme, whether to show progress metrics) and a jump to the vault's config editor.
+the foot. **Calendar** is a month grid of your journal — days with a daily note are marked, and
+clicking one opens it in an embedded panel that reads read-only and jumps to the previous or next
+day, the day's week, or its month. **Weekly** is a guided, stop-anywhere five-step review, and
+**Monthly** the long view: questions grid, five-slot project allocator, portfolio health,
+stewardship trends.
+
+**Operations** is delivery. **Projects** heads the group and says how many of your slots are taken
+("3 of 5"), with each active project listed beneath it; every one has a full map
+(`/projects/<slug>`) leading with its current state, then the next actions, blockers and milestones,
+with backlinks and recent log mentions kept to a few and the rest a click away. **Actions** is the
+cross-project list of next actions. **Commitments** is a chronological timeline of everything
+promised — what someone else is counting on, as against what you merely decided to do
+(context-coloured, never red). **Stewardships** are the perpetual responsibilities; a stewardship's
+detail draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
+columns, continuous measures (a weight, a pace) as lines, always in the context hue and never as a
+target to hit.
+
+**Inquiry** is investigation. **Questions** is the important-questions list that sits above any one
+project, grouped into research and life, each showing what is pointed at it and each movable between
+active, parked, answered and retired in place. **Portfolios** are the evidence dossiers those
+questions accumulate.
+
+Everywhere: `⌘K` opens search-and-jump, `⌘⇧C` summons the global capture window from any app (Enter
+files to the inbox, `⌘Enter` appends to today's log), and the menu-bar tray keeps Quick capture /
+Open / Quit reachable even with every window closed. `⌘[` and `⌘]` (or the mouse's back and forward
+side buttons) step backward and forward through your view history, just like a browser.
+
+`⌘,` opens **Settings**, which holds everything that configures the app or the vault rather than
+living in it: Appearance and Reading, a metrics toggle under General, custom CSS under Advanced,
+and two full editors — **Vault config**, which edits `.cuaderno/config.toml` in a Raw text view and
+a structured Form for note types and schemas (every save validated before it touches disk, with a
+live reload whenever the config changes underneath), and **Templates**, the per-note-type template
+browser and editor. Both hold real drafts, so Settings will not close over unsaved changes without
+asking. See [Editing the config in the app](config-editor.md) for the full walkthrough.
