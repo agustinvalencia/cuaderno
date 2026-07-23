@@ -28,6 +28,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The weekly review shows its shape, and hands you your wins as cards.** The five steps
+  were unlabelled 10px dots whose names lived only in `aria-label`, so a sighted reader saw
+  five dots and had to click each to learn what it was; they are named now, on a rail, with
+  Back and Next. And the wins step — the one the method insists comes first — was a
+  fixed-height text box with a decorative grid of the same completions above it. It hands you
+  the week's completed actions and log lines as cards you add with a click, and the wins
+  themselves are cards you tick, edit in place, reorder and remove. Markdown stays the source
+  of truth: what saves is ordinary bullets, and a hand-written `## Wins` section parses
+  straight back. The project scan links to each project and names the next action it always
+  had; the stop-anywhere reassurance moved above the step, where a tall one no longer hides
+  it. (#449)
+
 - **Stewardships show status, not an alphabet.** They are the perpetual responsibilities
   that never complete, and the one number that matters — how long since anything was tracked
   — sat wherever the slug ordering put it, on rows painted a flat faint tone that carried no

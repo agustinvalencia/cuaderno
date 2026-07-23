@@ -6,6 +6,7 @@
 // saved"; a mere "looked at" earns the softer "you can stop anytime".
 // No "N of 5" counter unless the metrics toggle (§3.11) is on.
 import { useState } from "react";
+import { Stepper, StepperNav } from "../../components/ui/stepper";
 import { useQuery } from "@tanstack/react-query";
 import { getWeeklyBundle } from "../../api/commands";
 import { useMetrics } from "../../lib/metrics";
@@ -75,46 +76,38 @@ export default function WeeklyReview() {
       <h1 className="text-xl font-semibold text-ink">Weekly review</h1>
       <p className="mt-1 text-sm text-ink-muted">Week of {weekLabel(data.week_of)}</p>
 
-      <nav aria-label="Review steps" className="mt-6 flex items-center gap-1">
-        {STEPS.map((label, i) => {
-          const isCurrent = i === step;
-          const isDone = completed.has(i);
-          return (
-            // The button carries p-2 padding around the 10px dot so the
-            // hit target is ~26px (>= the 24px WCAG minimum) while the
-            // dot itself stays visually small.
-            <button
-              key={label}
-              type="button"
-              aria-label={label}
-              aria-current={isCurrent ? "step" : undefined}
-              onClick={() => setStep(i)}
-              className="group rounded-full p-2"
-            >
-              <span
-                aria-hidden
-                className={`block h-2.5 w-2.5 rounded-full transition-colors ${
-                  isCurrent
-                    ? // The current step reads as more than a colour
-                      // change: a focus-ring-token outline ringing the
-                      // filled dot (plus aria-current for AT).
-                      "bg-ink outline outline-2 outline-offset-2 outline-focus-ring"
-                    : isDone
-                      ? "bg-ink-muted"
-                      : "border border-line bg-transparent group-hover:bg-bg-sunken"
-                }`}
-              />
-            </button>
-          );
-        })}
+      <div className="mt-6 flex flex-wrap items-center gap-3">
+        {/* Named steps on a rail. They were five unlabelled 10px dots
+            whose names lived only in `aria-label` — so a sighted user saw
+            five dots and had to click each one to find out what it was,
+            and the shape of the review stayed hidden until you had walked
+            it. */}
+        <Stepper
+          steps={STEPS.map((label) => ({ label }))}
+          current={step}
+          completed={completed}
+          onSelect={setStep}
+          label="Review steps"
+        />
         {/* The counter is a metrics surface: hidden by default (calm is
             the default posture), a muted aside only when the toggle is on. */}
         {showMetrics && (
-          <span className="ml-2 text-xs text-ink-faint">
+          <span className="text-xs text-ink-faint">
             {completed.size} of {STEPS.length} complete
           </span>
         )}
-      </nav>
+      </div>
+
+      {/* The reassurance sits above the step, not below it. On a tall
+          step it was under the fold — which is exactly the moment it is
+          needed. */}
+      {hasWritten ? (
+        <p className="mt-3 text-sm text-ink-muted">you can stop here — it's already saved</p>
+      ) : hasLookedAt ? (
+        <p className="mt-3 text-sm text-ink-muted">
+          you can stop anytime — nothing here demands finishing
+        </p>
+      ) : null}
 
       {/* All five steps stay MOUNTED; only visibility toggles (the
           `hidden` attribute — display:none via the reset, so a hidden
@@ -150,13 +143,9 @@ export default function WeeklyReview() {
         </div>
       </section>
 
-      {hasWritten ? (
-        <p className="mt-8 text-sm text-ink-muted">you can stop here — it's already saved</p>
-      ) : hasLookedAt ? (
-        <p className="mt-8 text-sm text-ink-muted">
-          you can stop anytime — nothing here demands finishing
-        </p>
-      ) : null}
+      {/* Clicking a rail entry used to be the only way to move, which
+          makes a linear ritual read as a menu. */}
+      <StepperNav current={step} count={STEPS.length} onSelect={setStep} />
     </div>
   );
 }

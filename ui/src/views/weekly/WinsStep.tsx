@@ -1,34 +1,41 @@
-// Step 1 — Wins (celebration first, plan §1.4). A seeded, editable
-// textarea: the seed is composed from the week's completed actions and
-// a few log lines, unless the note already holds Wins content (existing
-// beats seed). An empty week seeds nothing and shows the calm prompt as
-// a placeholder rather than a blank reproach.
-import { useRef } from "react";
+// Step 1 — Wins (celebration first, plan §1.4; reworked in #449).
+//
+// RLM insists the wins come first because that is what reframes a week
+// for a brain prone to counting only what it missed. The step asked you
+// to compose prose in a fixed-height editor at exactly the moment the
+// method is trying to hand you a list of things that already went right.
+//
+// So the candidates — the week's completed actions and its log lines —
+// are cards you add with a click, and the wins themselves are cards you
+// can tick, edit, reorder and remove. Markdown stays the source of
+// truth: what is saved is ordinary bullets, and a hand-written `## Wins`
+// section parses straight back into cards.
+import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
-import MarkdownEditor from "../../components/markdown/MarkdownEditor";
 import { errorMessage, saveWeeklySection } from "../../api/commands";
+import { CappedList } from "../../components/ui/capped-list";
 import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
+import { parseWins, reorder, serialiseWins, type Win } from "./wins";
 
-// A few log lines are enough to jog memory; the whole week's log would
-// bury the completions.
-const SEED_LOG_LINES = 3;
+/** How many candidates show before "show all". The old seed took the
+ * first three log lines and dropped the rest silently. */
+const CANDIDATES_SHOWN = 5;
 
-/** Compose the Wins seed. Existing note content wins; otherwise build
- * it from completed actions ("- Completed: {title} ({project})") plus a
- * few log lines. `empty` is true only when nothing at all was parsed —
- * the calm-placeholder case. */
-export function composeWinsSeed(bundle: WeeklyBundle): { seed: string; empty: boolean } {
-  const existing = bundle.weekly.wins;
-  if (existing) {
-    return { seed: existing, empty: false };
-  }
-  const lines = [
-    ...bundle.completed_actions.map((c) => `- Completed: ${c.title} (${c.project})`),
-    ...bundle.logs.slice(0, SEED_LOG_LINES).map((l) => `- ${l.text}`),
+/** What the week offers as a starting point, in the order the method
+ * would read them: what you finished, then what you wrote down. */
+export function candidatesFor(bundle: WeeklyBundle): string[] {
+  return [
+    ...bundle.completed_actions.map((c) => `Completed: ${c.title} (${c.project})`),
+    ...bundle.logs.map((l) => l.text),
   ];
-  return { seed: lines.join("\n"), empty: lines.length === 0 };
+}
+
+/** The wins the step opens with: whatever the note already holds. An
+ * existing section always beats a seed — the note is the record. */
+export function initialWins(bundle: WeeklyBundle): Win[] {
+  return bundle.weekly.wins ? parseWins(bundle.weekly.wins) : [];
 }
 
 export default function WinsStep({
@@ -39,10 +46,9 @@ export default function WinsStep({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const { seed, empty } = composeWinsSeed(bundle);
-  // The editor is uncontrolled (seeded once); track its latest value in a ref
-  // so Save reads it without re-rendering the editor on every keystroke.
-  const draft = useRef(seed);
+  const [wins, setWins] = useState<Win[]>(() => initialWins(bundle));
+  const candidates = candidatesFor(bundle);
+  const taken = new Set(wins.map((w) => w.text));
 
   const save = useMutation({
     mutationFn: (content: string) => saveWeeklySection("wins", content, bundle.week_of),
@@ -53,7 +59,19 @@ export default function WinsStep({
     },
   });
 
-  const completed = bundle.completed_actions;
+  function add(text: string) {
+    setWins((current) => [...current, { text, done: true, checkbox: true }]);
+  }
+
+  /** What to call a win in an accessible name. A just-added blank one
+   * has no text to name it by, and "Win: " reads as nothing at all. */
+  function nameOf(win: Win): string {
+    return win.text.trim() || "new win";
+  }
+
+  function update(index: number, patch: Partial<Win>) {
+    setWins((current) => current.map((w, i) => (i === index ? { ...w, ...patch } : w)));
+  }
 
   return (
     <div>
@@ -62,74 +80,134 @@ export default function WinsStep({
         Celebration first — what went well this week?
       </p>
 
-      {/* The week's completions as celebration cards — a scannable "look
-          what you did" before you write it up. Calm, never a tally. */}
-      {completed.length > 0 && (
-        <section aria-labelledby="wins-completed" className="mt-4">
-          <h3
-            id="wins-completed"
-            className="text-xs font-medium uppercase tracking-wider text-ink-faint"
-          >
-            Completed this week
-          </h3>
-          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
-            {completed.map((action, index) => (
+      <section aria-label="Your wins" className="mt-4">
+        {wins.length === 0 ? (
+          <p className="rounded border border-line bg-bg-surface p-4 text-sm text-ink-muted">
+            Nothing here yet. Add from the week below, or write your own — something felt
+            like progress even on a week that did not look like it.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {wins.map((win, index) => (
               <li
-                key={`${action.slug}-${action.title}-${index}`}
-                className="flex items-start gap-2 rounded-md border border-line bg-bg-surface px-3 py-2"
+                key={index}
+                className="flex items-center gap-2 rounded-md border border-line bg-bg-surface px-3 py-2"
               >
-                <span aria-hidden className="mt-0.5 shrink-0 text-accent-interactive">
-                  ✓
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm text-ink">{action.title}</p>
-                  <p className="text-xs text-ink-faint">
-                    {action.project} · {shortDate(action.completed)}
-                  </p>
-                </div>
+                <input
+                  type="checkbox"
+                  checked={win.done}
+                  aria-label={`Done: ${nameOf(win)}`}
+                  onChange={(event) =>
+                    update(index, { done: event.target.checked, checkbox: true })
+                  }
+                  className="shrink-0 accent-[var(--color-accent-interactive)]"
+                />
+                {/* Editable in place. The old blob could only be edited
+                    as a whole, which meant fixing one word was a
+                    text-selection exercise in a 16-line box. */}
+                <input
+                  type="text"
+                  value={win.text}
+                  aria-label={`Win: ${nameOf(win)}`}
+                  onChange={(event) => update(index, { text: event.target.value })}
+                  className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm text-ink hover:border-line focus:border-line focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setWins((c) => reorder(c, index, index - 1))}
+                  disabled={index === 0}
+                  aria-label={`Move up: ${nameOf(win)}`}
+                  className="shrink-0 rounded px-1 text-xs text-ink-faint hover:text-ink disabled:opacity-30"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWins((c) => reorder(c, index, index + 1))}
+                  disabled={index === wins.length - 1}
+                  aria-label={`Move down: ${nameOf(win)}`}
+                  className="shrink-0 rounded px-1 text-xs text-ink-faint hover:text-ink disabled:opacity-30"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWins((c) => c.filter((_, i) => i !== index))}
+                  aria-label={`Remove: ${nameOf(win)}`}
+                  className="shrink-0 rounded px-1 text-xs text-ink-faint hover:text-ink"
+                >
+                  ×
+                </button>
               </li>
             ))}
           </ul>
+        )}
+
+        <button
+          type="button"
+          onClick={() => add("")}
+          className="mt-2 rounded text-xs text-ink-faint underline decoration-dotted underline-offset-2 hover:text-ink"
+        >
+          Add your own
+        </button>
+      </section>
+
+      {/* The week's own record, offered rather than pasted. These cards
+          used to sit above the editor as decoration — the same
+          completions the prose below already listed, with no way to act
+          on them. */}
+      {candidates.length > 0 && (
+        <section aria-label="From your week" className="mt-6 border-t border-line pt-4">
+          <h3 className="text-xs font-medium uppercase tracking-wider text-ink-faint">
+            From your week
+          </h3>
+          <div className="mt-2">
+            <CappedList
+              label="candidates"
+              limit={CANDIDATES_SHOWN}
+              items={candidates.map((text, index) => {
+                const already = taken.has(text);
+                const completion = bundle.completed_actions[index];
+                return (
+                  <div
+                    key={`${text}-${index}`}
+                    className="mb-1.5 flex items-center gap-2 rounded-md border border-line bg-bg-surface px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm text-ink">{text}</p>
+                      {completion && (
+                        <p className="text-xs text-ink-faint">
+                          {shortDate(completion.completed)}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => add(text)}
+                      disabled={already}
+                      aria-label={already ? `Already added: ${text}` : `Add: ${text}`}
+                      className="shrink-0 rounded border border-line px-2 py-0.5 text-xs text-ink-muted hover:text-ink disabled:opacity-40"
+                    >
+                      {already ? "added" : "add"}
+                    </button>
+                  </div>
+                );
+              })}
+            />
+          </div>
         </section>
       )}
 
-      <form
-        className="mt-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const value = draft.current.trim();
-          if (value) save.mutate(value);
-        }}
-      >
-        {/* An empty week has no seed to show in the editor, so the calm
-            prompt is a visible hint — reachable by sighted and screen-reader
-            users alike (a CodeMirror placeholder is aria-hidden, and
-            placeholder-as-instruction is a discouraged a11y pattern). */}
-        {empty && (
-          <p className="mb-1 text-sm text-ink-muted">
-            No completions parsed — what felt like progress anyway?
-          </p>
-        )}
-        <div className="h-64">
-          <MarkdownEditor
-            initialDoc={seed}
-            ariaLabel="This week's wins"
-            autoFocus={false}
-            onChange={(value) => {
-              draft.current = value;
-            }}
-          />
-        </div>
-        <div className="mt-2">
-          <button
-            type="submit"
-            disabled={save.isPending}
-            className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken"
-          >
-            Save wins
-          </button>
-        </div>
-      </form>
+      <div className="mt-4">
+        <button
+          type="button"
+          disabled={save.isPending || wins.length === 0}
+          onClick={() => save.mutate(serialiseWins(wins))}
+          className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken disabled:opacity-50"
+        >
+          Save wins
+        </button>
+      </div>
     </div>
   );
 }
