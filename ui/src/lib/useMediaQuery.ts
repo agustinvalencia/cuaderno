@@ -26,7 +26,12 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
-/** The breakpoint the app treats as "there is room for two columns" —
- * Tailwind's `lg`. The window minimum is 800px wide, so the narrow case
- * is real, not theoretical. */
-export const WIDE = "(min-width: 1024px)";
+/** The breakpoint the app treats as "there is room for two columns".
+ *
+ * A media query measures the *viewport*, and the shell spends the first
+ * 15-17.5rem of it on the sidebar — so this is Tailwind's `lg` plus that
+ * allowance rather than `lg` itself, or the second column would start
+ * appearing while the content pane still had `lg`-minus-a-sidebar to
+ * give it. The window minimum is 800px wide, so the narrow case is real,
+ * not theoretical. */
+export const WIDE = "(min-width: 1300px)";

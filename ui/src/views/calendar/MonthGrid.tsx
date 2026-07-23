@@ -138,7 +138,7 @@ export default function MonthGrid({
       >
         {/* Leading blanks so the 1st lands under its weekday column. */}
         {Array.from({ length: offset }, (_unused, i) => (
-          <div key={`pad-${i}`} aria-hidden />
+          <div key={`pad-${i}`} aria-hidden className="aspect-square" />
         ))}
         {Array.from({ length: total }, (_unused, i) => {
           const day = i + 1;
@@ -185,8 +185,11 @@ export default function MonthGrid({
         {/* Trailing blanks to a fixed six-row grid. Without them the last
             row is short and the card's bottom edge lands somewhere new
             each month — the shape you page through should not move. */}
+        {/* `aspect-square` like a day cell: an empty div has no height,
+            so pads without it collapse their row and the fixed grid this
+            exists to create is fixed only in cell count. */}
         {Array.from({ length: CELLS - offset - total }, (_unused, i) => (
-          <div key={`tail-${i}`} aria-hidden />
+          <div key={`tail-${i}`} aria-hidden className="aspect-square" />
         ))}
       </div>
     </div>

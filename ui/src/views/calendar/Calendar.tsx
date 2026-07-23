@@ -6,7 +6,7 @@
 // (prev_date / next_date / week_of / month), so the frontend never
 // computes a domain date for a read (plan §3.7). A day, week, or month
 // with no note shows a calm empty state — never an error.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import NoteContent from "./NoteContent";
@@ -114,6 +114,15 @@ function CalendarBody({ today }: { today: string }) {
   // month shape something you glimpse rather than something you read.
   const pinned = useMediaQuery(WIDE);
 
+  // Narrowing the window past the breakpoint un-pins the grid, and the
+  // collapsed default would take the month you were reading with it. A
+  // layout change is not a request to close something.
+  const wasPinned = useRef(pinned);
+  useEffect(() => {
+    if (wasPinned.current && !pinned) setShowPicker(true);
+    wasPinned.current = pinned;
+  }, [pinned]);
+
   // The days in the shown month that have a note, for the grid marks.
   const monthDays = useQuery({
     queryKey: ["list_daily_dates", viewYear, viewMonth],
@@ -212,6 +221,7 @@ function CalendarBody({ today }: { today: string }) {
   const noteDays = new Set(monthDays.data ?? []);
 
   const gridOpen = pinned || showPicker;
+  const onToday = mode === "daily" && selectedDate === today;
 
   return (
     <div className="mx-auto max-w-5xl p-8">
@@ -225,17 +235,27 @@ function CalendarBody({ today }: { today: string }) {
           {/* Jump straight back to today's daily note — the common "I've
               paged away, take me home" move. Disabled when already showing
               today's day, so it never fires a no-op. */}
+          {/* `aria-disabled`, not `disabled`.
+              
+              The jump lands on today, which is exactly when this button
+              stops applying — and a real `disabled` on the element you
+              just activated is unfocusable, so the browser blurs it to
+              document.body and the next Tab restarts at the top of the
+              shell. It used to hand focus to the adjacent picker toggle,
+              but that toggle is not rendered in the pinned layout, which
+              is the default window size. Staying focusable is the fix
+              that needs no handoff at all: the state is still announced,
+              and the press is a no-op. */}
           <button
             type="button"
             onClick={() => {
+              if (onToday) return;
               goToDay(today);
-              // The jump lands on today's day, which disables this button —
-              // hand focus to the adjacent picker toggle so a keyboard user
-              // isn't dropped to document.body (matching selectDay's handoff).
-              pickToggleRef.current?.focus();
             }}
-            disabled={mode === "daily" && selectedDate === today}
-            className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink disabled:opacity-50"
+            aria-disabled={onToday}
+            className={`rounded border border-line px-3 py-1 text-sm text-ink-muted ${
+              onToday ? "opacity-50" : "hover:text-ink"
+            }`}
           >
             Today
           </button>
