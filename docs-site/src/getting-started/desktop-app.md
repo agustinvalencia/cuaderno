@@ -71,8 +71,9 @@ energy-filtered shortlist of one action per project to pick from. Any quietly la
 the foot. **Calendar** is a month grid of your journal — days with a daily note are marked, today carries a
 ring wherever you have paged to, and clicking a day opens it in a panel beside the grid that reads
 read-only and jumps to the previous or next day, the day's week, or its month. On a narrower window
-the grid collapses behind a **The month** toggle instead of sitting alongside. **Weekly** is a guided, stop-anywhere five-step review, and
-**Monthly** the long view: questions grid, five-slot project allocator, portfolio health,
+the grid collapses behind a **The month** toggle instead of sitting alongside. **Weekly** is a guided, stop-anywhere five-step review with a labelled stepper and Back/Next; its
+wins step hands you the week's completions and log lines as cards you tick and reshuffle rather than a
+blank box to compose in. **Monthly** is the long view: questions grid, five-slot project allocator, portfolio health,
 stewardship trends.
 
 **Operations** is delivery. **Projects** heads the group and says how many of your slots are taken

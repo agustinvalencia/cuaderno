@@ -8,6 +8,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ProjectSummary } from "../../api/bindings/ProjectSummary";
 import type { StuckProject } from "../../api/bindings/StuckProject";
 import { errorMessage, updateProjectState } from "../../api/commands";
+import { Link } from "react-router";
+import { actionLabel } from "../../lib/actionLabel";
 import { contextDotClass } from "../../lib/contexts";
 import { useToast } from "../../shell/Toasts";
 
@@ -45,8 +47,22 @@ function ProjectStateEditor({
           aria-hidden
           className={`h-2.5 w-2.5 shrink-0 rounded-full ${contextDotClass(project.context)}`}
         />
-        <h3 className="min-w-0 flex-1 truncate font-medium text-ink">{project.slug}</h3>
+        {/* A link, not a heading with a slug in it. You could read the
+            scan and have no way to reach the project it was about. */}
+        <h3 className="min-w-0 flex-1 truncate font-medium">
+          <Link to={`/projects/${project.slug}`} className="text-ink hover:underline">
+            {project.slug}
+          </Link>
+        </h3>
       </div>
+
+      {/* The next action the bundle already carried and the scan never
+          rendered — the one line that says what "keep going" means here. */}
+      {project.top_action && (
+        <p className="mt-1 text-xs text-ink-muted">
+          next: {actionLabel(project.top_action.text)}
+        </p>
+      )}
 
       {staleDays !== null && (
         // Grey, factual — the staleness nudge, never a scolding.
