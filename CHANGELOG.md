@@ -28,6 +28,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **Actions is a working surface, not a scroll.** It was one unbounded column of every open
+  bullet on every active project: no way to jump to a project, no context filter, no search,
+  and rows that wrapped to two or three lines beside single-line neighbours. It now has a
+  project rail with counts, a sticky filter bar of context and energy chips plus a text
+  filter, and rows that stay one line until you expand them. Projects are ordered by name;
+  bullets keep the order you gave them in the project map, which is the ranking the method
+  asks you to make. (#445)
+
 - **The sidebar says what the method is.** It was a flat list of ten destinations with a
   "Browse" bucket that mixed the knowledge layer, the responsibility layer and two settings
   surfaces into one list — which reads as "here are ten screens", not as a method. It is now
@@ -51,6 +59,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   before closing over it, and marks the holding section in the rail. (#444)
 
 ### Fixed
+
+- **The energy filter no longer drops untagged work on the floor.** RLM tags actions by
+  cognitive cost so you can match work to the state you are actually in — and the filter
+  tested `energy === chosen` with no chip for "no suffix", so the moment you touched it every
+  untagged bullet vanished, with no count to say how many. "Untagged" is now a chip of its
+  own, every chip carries its count, and a filter states how much it is hiding. (#445)
 
 - **An unsaved editor draft is no longer thrown away without asking.** Three routes did it
   silently. Switching note types in the Templates editor discarded whatever you had typed,
