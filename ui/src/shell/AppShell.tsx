@@ -42,7 +42,8 @@ const CommandPalette = lazy(() => import("./CommandPalette"));
 // responsibility layer (Stewardships) and two settings surfaces
 // (Templates, Config) into one list, which invited the reading that a
 // template is a note. Templates and Config now live behind Cmd+, where
-// configuration belongs; their routes survive for deep links.
+// configuration belongs. Their routes still resolve, but nothing links
+// to them any more.
 type NavItem = { to: string; label: string; icon: LucideIcon };
 
 const RHYTHM: NavItem[] = [
@@ -147,7 +148,7 @@ export default function AppShell() {
                 </span>
               )}
             </div>
-            <nav aria-label="Active projects" className="mt-0.5 flex flex-col gap-0.5">
+            <div className="mt-0.5 flex flex-col gap-0.5">
               {(orientation.data?.projects ?? []).map((project) => (
                 <NavLink
                   key={project.slug}
@@ -169,7 +170,7 @@ export default function AppShell() {
                   <span className="truncate">{project.slug}</span>
                 </NavLink>
               ))}
-            </nav>
+            </div>
           </NavGroup>
 
           <NavGroup label="Inquiry" blurb="investigation" items={INQUIRY} />
@@ -270,8 +271,11 @@ export default function AppShell() {
 /** One track of the sidebar: its name, a one-word gloss in the method's
  * language, and its destinations.
  *
- * `children` render *above* the flat items, not below — the only group
- * that uses them is Operations, whose Projects block leads it. */
+ * `children` render *inside* the group's landmark and above its flat
+ * items. Inside, because the only group that uses them is Operations and
+ * its Projects block is part of Operations — rendered as a sibling it sat
+ * outside the landmark, which both split the group for a screen reader
+ * and made it invisible to a `within(operations)` query. */
 function NavGroup({
   label,
   blurb,
@@ -292,10 +296,10 @@ function NavGroup({
         <span className="text-xs font-medium uppercase tracking-wider text-ink-faint">
           {label}
         </span>
-        <span className="truncate text-xs text-ink-faint opacity-70">{blurb}</span>
+        <span className="truncate text-xs text-ink-faint">{blurb}</span>
       </div>
-      {children}
       <nav aria-label={label} className="mt-1 flex flex-col gap-0.5">
+        {children}
         {items.map(({ to, label: itemLabel, icon: Icon }) => (
           <NavLink
             key={to}

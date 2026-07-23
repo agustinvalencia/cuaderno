@@ -6,7 +6,7 @@ import { afterEach, expect, test } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -234,4 +234,58 @@ test("has no axe violations", async () => {
   const { container } = renderView();
   await screen.findByRole("textbox");
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
+test("a draft survives switching to another note type and back", async () => {
+  // The editor used to be keyed by note type, so a chip click unmounted it
+  // and took the draft with it — the same silent discard the Settings
+  // dialog's close guard exists to prevent, one click earlier, from a row
+  // of targets sitting directly above the textarea. What holds it now is
+  // that the drafts live above the editor, one entry per note type — not
+  // the absence of a `key`.
+  installMock([]);
+  renderView();
+
+  const editor = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: "edited project template" } });
+
+  fireEvent.click(screen.getByRole("button", { name: /Daily/ }));
+  await waitFor(() =>
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).not.toContain(
+      "edited project template",
+    ),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Project/ }));
+  await waitFor(() =>
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "edited project template",
+    ),
+  );
+});
+
+test("a type holding an unsaved draft is marked in the chip row", async () => {
+  // So a draft left behind another chip is visible rather than remembered.
+  installMock([]);
+  renderView();
+
+  const editor = await screen.findByRole("textbox");
+  expect(screen.queryByRole("img", { name: "unsaved" })).toBeNull();
+  fireEvent.change(editor, { target: { value: "edited" } });
+
+  const marked = await screen.findByRole("img", { name: "unsaved" });
+  expect(marked.closest("button")?.textContent).toContain("Project");
+});
+
+test("only the notable sources carry a chip badge", async () => {
+  // "Built-in" is the unremarkable default; repeating it on every chip
+  // buries the ones that differ.
+  installMock([]);
+  renderView();
+
+  await screen.findByRole("textbox");
+  const chips = within(screen.getByRole("navigation", { name: "Note types" }));
+  expect(chips.getByRole("button", { name: /Daily/ }).textContent).toContain("Custom");
+  expect(chips.getByRole("button", { name: /Person/ }).textContent).toContain("No template");
+  expect(chips.getByRole("button", { name: /Project/ }).textContent).not.toContain("Built-in");
 });

@@ -33,7 +33,8 @@ type ViewMode = "raw" | "structured";
 
 /** The editor without page chrome, so the Settings dialog can host it
  * (#444) — configuration belongs behind `Cmd+,`, not in a list beside
- * notes. The `/config` route below stays for deep links. */
+ * notes. The `/config` route below still resolves, but nothing in the
+ * app links to it any more. */
 export function ConfigPanel() {
   const read = useQuery({ queryKey: ["read_config"], queryFn: readConfig });
 
@@ -48,9 +49,12 @@ export function ConfigPanel() {
       </div>
     );
   }
-  // Key the view by the loaded hash so a hard external reload (a new
-  // document identity) resets the draft/baseline state cleanly.
-  return <ConfigView key={read.data.hash} doc={read.data} />;
+  // Deliberately unkeyed. Keying by the loaded hash used to re-seed the
+  // editor whenever the file changed on disk, which threw away a draft
+  // mid-edit — and with this panel now hosted in a dialog that promises
+  // otherwise, that is the guard defeated by a background refetch.
+  // `useConfigDraft` adopts an on-disk change only while clean.
+  return <ConfigView doc={read.data} />;
 }
 
 export default function Config() {

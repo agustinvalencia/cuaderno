@@ -7,7 +7,7 @@ import { afterEach, expect, test } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -32,6 +32,14 @@ function EXCLUSIONS_OR_NOTHING(cmd: string) {
   }
   return undefined;
 }
+
+// jsdom lacks the layout APIs cmdk and Radix Dialog reach for.
+if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+globalThis.ResizeObserver ||= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
 
 expect.extend(matchers);
 declare module "vitest" {
@@ -85,9 +93,13 @@ afterEach(() => {
 
 test("the sidebar is three tracks, not one flat pile", async () => {
   renderShell();
+  // The project rows arrive with the orientation query, so wait for them
+  // before reading the groups.
+  await screen.findByRole("link", { name: "alpha" });
+
   // Rhythm is the cadence: the daily log, the log through time, and the
   // two reviews.
-  const rhythm = within(await screen.findByRole("navigation", { name: "Rhythm" }));
+  const rhythm = within(screen.getByRole("navigation", { name: "Rhythm" }));
   for (const label of ["Today", "Calendar", "Weekly", "Monthly"]) {
     expect(rhythm.getByRole("link", { name: label })).toBeDefined();
   }
@@ -96,6 +108,10 @@ test("the sidebar is three tracks, not one flat pile", async () => {
   for (const label of ["Actions", "Commitments", "Stewardships"]) {
     expect(operations.getByRole("link", { name: label })).toBeDefined();
   }
+  // Projects are part of Operations, not a fourth thing beside it: the
+  // heading and every active project sit inside the same landmark.
+  expect(operations.getByText("Projects")).toBeDefined();
+  expect(operations.getByRole("link", { name: "alpha" })).toBeDefined();
 
   const inquiry = within(screen.getByRole("navigation", { name: "Inquiry" }));
   for (const label of ["Questions", "Portfolios"]) {
@@ -127,6 +143,52 @@ test("settings surfaces are no longer filed beside notes", async () => {
   expect(screen.queryByRole("navigation", { name: "Browse" })).toBeNull();
   // The way in is the settings button, and it advertises the shortcut.
   expect(screen.getByRole("button", { name: "Open settings" })).toBeDefined();
+});
+
+test("the settings button opens the dialog, on Appearance", async () => {
+  // The shell holds the section state and the dialog renders from it. The
+  // dialog's own suite drives a local stand-in for that state, so without
+  // this the one wiring the PR introduced is asserted by nothing — and a
+  // no-op gear button would ship green with Templates and Vault config
+  // now unreachable from the sidebar.
+  renderShell();
+  fireEvent.click(await screen.findByRole("button", { name: "Open settings" }));
+
+  expect(await screen.findByRole("heading", { name: "Settings" })).toBeDefined();
+  const rail = within(screen.getByRole("navigation", { name: "Settings sections" }));
+  expect(rail.getByRole("button", { name: "Appearance" }).getAttribute("aria-current")).toBe(
+    "true",
+  );
+});
+
+test("Cmd+, opens the dialog too", async () => {
+  renderShell();
+  await screen.findByRole("navigation", { name: "Rhythm" });
+  fireEvent.keyDown(window, { key: ",", metaKey: true });
+
+  expect(await screen.findByRole("heading", { name: "Settings" })).toBeDefined();
+});
+
+test("the palette opens Settings at the section it names", async () => {
+  // Templates and Vault config left the sidebar, so the palette is the
+  // only way to reach them by name. Driven through the real shell and the
+  // real dialog: a spy would pass just as well with the entries mislabelled.
+  for (const [entry, expected] of [
+    ["Templates…", "Templates"],
+    ["Vault config…", "Vault config"],
+    ["Settings…", "Appearance"],
+  ] as const) {
+    renderShell();
+    await screen.findByRole("navigation", { name: "Rhythm" });
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await screen.findByText(entry));
+
+    const rail = within(await screen.findByRole("navigation", { name: "Settings sections" }));
+    expect(rail.getByRole("button", { name: expected }).getAttribute("aria-current")).toBe(
+      "true",
+    );
+    cleanup();
+  }
 });
 
 test("Strategic is Monthly in the sidebar", async () => {

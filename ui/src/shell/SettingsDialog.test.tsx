@@ -283,10 +283,18 @@ test("a draft survives a look at another section", async () => {
   // Still mounted, but `hidden` — so it is out of the accessibility tree
   // (a role query cannot see it) while its draft stays in hand.
   expect(screen.queryByRole("textbox")).toBeNull();
-  // The rail still marks it, so the draft is not out of sight entirely.
-  await waitFor(() =>
-    expect(screen.getByText(/Unsaved changes in Vault config/)).toBeDefined(),
-  );
+  // The rail itself marks the holding pane, so the draft is not out of
+  // sight entirely — asserted on the rail button, not on the footer line,
+  // which would pass with the dot missing.
+  await waitFor(() => {
+    const rail = within(screen.getByRole("navigation", { name: "Settings sections" }));
+    expect(rail.getByRole("button", { name: "Vault config" }).querySelector("span[aria-hidden]")).not.toBeNull();
+  });
+  const rail = within(screen.getByRole("navigation", { name: "Settings sections" }));
+  expect(
+    rail.getByRole("button", { name: "Appearance" }).querySelector("span[aria-hidden]"),
+  ).toBeNull();
+  expect(screen.getByText(/Unsaved changes in Vault config/)).toBeDefined();
 
   openSection("Vault config");
   expect((screen.getByLabelText("config.toml content") as HTMLTextAreaElement).value).toContain(
@@ -294,7 +302,15 @@ test("a draft survives a look at another section", async () => {
   );
 });
 
-test("is axe-clean", async () => {
-  const { baseElement } = renderDialog();
-  expect(await axe(baseElement)).toHaveNoViolations();
+test("every section is axe-clean, not just the one that opens first", async () => {
+  // The sections used to render together in one scrolling column, so one
+  // axe pass covered them all. Behind a rail they no longer do, and an
+  // unwalked pane is an unchecked pane.
+  for (const label of ["Appearance", "Reading", "General", "Advanced", "Vault config"]) {
+    const { baseElement } = renderDialog();
+    openSection(label);
+    if (label === "Vault config") await screen.findByLabelText("config.toml content");
+    expect(await axe(baseElement)).toHaveNoViolations();
+    cleanup();
+  }
 });

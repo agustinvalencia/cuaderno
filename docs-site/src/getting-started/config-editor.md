@@ -9,9 +9,8 @@ This page covers using the editor. For *what* each key means, see
 [Configuration](../concepts/configuration.md) and the
 [Configuration reference](../reference/configuration.md).
 
-Open it with `⌘,` and pick **Vault config** from the settings rail. (Configuration is not content,
-so it lives in Settings rather than in the sidebar beside your notes. `/config` still works as a
-deep link.)
+Open it with `⌘,` and pick **Vault config** from the settings rail. Configuration is not content,
+so it lives in Settings rather than in the sidebar beside your notes.
 
 ## Raw and Form
 

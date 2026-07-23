@@ -94,9 +94,12 @@ export default function App() {
         />
         {/* "Strategic" named a dashboard; "Monthly" names the review in
             the cadence it belongs to (#444). The old path stays as a
-            redirect so bookmarks, notes and any `cuaderno://` link
-            written before the rename still land. `replace` keeps it out
-            of the history, so Back does not bounce off it. */}
+            redirect so anything still pointing at it — an in-app link
+            written before the rename, a `navigate("/strategic")` left in
+            code — lands rather than falling through to a blank shell.
+            (Not `cuaderno://` links: that scheme only ever carries note
+            paths, see `deeplink.rs`.) `replace` keeps it out of the
+            history, so Back does not bounce off it. */}
         <Route path="strategic" element={<Navigate to="/monthly" replace />} />
         <Route
           path="questions"

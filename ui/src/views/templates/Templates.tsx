@@ -12,7 +12,7 @@
 // but saving is never blocked. The known set is computed entirely by the
 // backend (list_template_placeholders) — including a config custom type's
 // declared schema fields — so the frontend never re-derives domain data.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PlaceholderSource } from "../../api/bindings/PlaceholderSource";
 import type { TemplatePlaceholder } from "../../api/bindings/TemplatePlaceholder";
@@ -79,7 +79,8 @@ const SOURCE_GROUPS: { kind: PlaceholderSource["kind"]; heading: string; note: s
 ];
 
 /** The browser without page chrome, so the Settings dialog can host it
- * (#444). The `/templates` route below stays for deep links. */
+ * (#444). The `/templates` route below still resolves, but nothing in
+ * the app links to it any more. */
 export function TemplatesPanel() {
   const list = useQuery({ queryKey: ["list_templates"], queryFn: listTemplates });
 
@@ -106,9 +107,37 @@ export default function Templates() {
   );
 }
 
+/** One note type's editing state: the last-loaded (or last-saved)
+ * content, and the live buffer. Dirty is the two differing. */
+export interface TemplateDraft {
+  baseline: string | null;
+  draft: string;
+}
+
+export function isDirty(entry: TemplateDraft | undefined): boolean {
+  return entry !== undefined && entry.baseline !== null && entry.draft !== entry.baseline;
+}
+
 function TemplatesBody({ templates }: { templates: TemplateSummary[] }) {
   const [selected, setSelected] = useState<string>(templates[0]?.note_type ?? "");
   const current = templates.find((t) => t.note_type === selected) ?? templates[0];
+
+  // Held here, one entry per note type, rather than inside the editor.
+  //
+  // The editor used to be keyed by note type, so clicking another chip
+  // unmounted it and took the draft with it — no prompt, no trace. That
+  // was the same silent discard the Settings dialog's close guard exists
+  // to prevent, reachable one click earlier and from a row of eleven
+  // adjacent targets sitting directly above the textarea.
+  const [drafts, setDrafts] = useState<Record<string, TemplateDraft>>({});
+  const setDraftFor = useCallback((noteType: string, entry: TemplateDraft) => {
+    setDrafts((prev) => ({ ...prev, [noteType]: entry }));
+  }, []);
+
+  // Any type holding an edit keeps the dialog's guard armed, whichever
+  // chip happens to be showing.
+  const anyDirty = Object.values(drafts).some((entry) => isDirty(entry));
+  useReportDirty("templates", "Templates", anyDirty);
 
   return (
     <div>
@@ -148,21 +177,35 @@ function TemplatesBody({ templates }: { templates: TemplateSummary[] }) {
                   {badge.label}
                 </span>
               )}
+              {/* Which types you have edited and not saved, so a draft
+                  left behind another chip is visible rather than
+                  remembered. Ink, never a hue. */}
+              {isDirty(drafts[t.note_type]) && (
+                <span
+                  aria-label="unsaved"
+                  role="img"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-faint"
+                />
+              )}
             </button>
           );
         })}
       </nav>
 
       {/* The editor, or the Create affordance for a template-less custom
-          type. Keyed by the selection so the editor's draft state resets
-          cleanly when the type changes. */}
+          type. Unkeyed: its editing state lives above it now, so a chip
+          switch changes what is shown without discarding anything. */}
       <section aria-label="Template" className="mt-4 min-w-0">
         {current === undefined ? (
           <p className="text-sm text-ink-muted">No note types.</p>
         ) : current.is_custom_type && !current.has_custom_file ? (
           <CreatePanel key={current.note_type} summary={current} />
         ) : (
-          <TemplateEditor key={current.note_type} summary={current} />
+          <TemplateEditor
+            summary={current}
+            entry={drafts[current.note_type]}
+            onEntryChange={setDraftFor}
+          />
         )}
       </section>
     </div>
@@ -218,7 +261,17 @@ function CreatePanel({ summary }: { summary: TemplateSummary }) {
 
 /** The editor: the effective content in a <textarea>, a Save action, a
  * calm unknown-token notice, and a placeholder-reference panel. */
-function TemplateEditor({ summary }: { summary: TemplateSummary }) {
+function TemplateEditor({
+  summary,
+  entry,
+  onEntryChange,
+}: {
+  summary: TemplateSummary;
+  /** This type's editing state, held by the parent so it survives a chip
+   * switch. Absent until the effective content has first loaded. */
+  entry: TemplateDraft | undefined;
+  onEntryChange: (noteType: string, entry: TemplateDraft) => void;
+}) {
   const noteType = summary.note_type;
   const client = useQueryClient();
   const { toast } = useToast();
@@ -232,10 +285,9 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
     queryFn: () => listTemplatePlaceholders(noteType),
   });
 
-  // `baseline` is the last-loaded (or last-saved) content; `draft` is what
-  // the textarea holds. Dirty = they differ.
-  const [baseline, setBaseline] = useState<string | null>(null);
-  const [draft, setDraft] = useState<string>("");
+  const baseline = entry?.baseline ?? null;
+  const draft = entry?.draft ?? "";
+  const setDraft = (next: string) => onEntryChange(noteType, { baseline, draft: next });
 
   // Adopt the effective content when it first arrives, and re-adopt an
   // external change — but only while there are no unsaved local edits, so
@@ -245,17 +297,16 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
     const content = read.data.content;
     const clean = baseline === null || draft === baseline;
     if (content !== baseline && clean) {
-      setBaseline(content);
-      setDraft(content);
+      onEntryChange(noteType, { baseline: content, draft: content });
     }
-  }, [read.data, baseline, draft]);
+  }, [read.data, baseline, draft, noteType, onEntryChange]);
 
   const save = useMutation({
     mutationFn: (content: string) => saveTemplate(noteType, content),
     onSuccess: (_result, content) => {
       // The saved content is the new baseline, so the editor is clean
       // again and a refetch of the same content is a no-op.
-      setBaseline(content);
+      onEntryChange(noteType, { baseline: content, draft: content });
       toast("Saved.");
       void client.invalidateQueries({ queryKey: ["list_templates"] });
       void client.invalidateQueries({ queryKey: ["read_template", noteType] });
@@ -263,10 +314,7 @@ function TemplateEditor({ summary }: { summary: TemplateSummary }) {
     onError: (err) => toast(errorMessage(err), "attention"),
   });
 
-  const dirty = baseline !== null && draft !== baseline;
-  // Above the early returns: hooks cannot hide behind a loading branch,
-  // and a panel that is still reading holds nothing to lose anyway.
-  useReportDirty("templates", "Templates", dirty);
+  const dirty = isDirty(entry);
 
   if (read.isPending) {
     return <p className="text-sm text-ink-muted">Reading…</p>;
