@@ -146,6 +146,35 @@ pub struct StewardshipStrategicRow {
     pub sparkline: Vec<u32>,
 }
 
+/// Pair each question with its backlinks, bucketed by source note type
+/// (#354) — one extra read per question, matched to the handful a grid
+/// shows.
+///
+/// Shared by the Strategic bundle and the Questions view (#443) so the two
+/// cannot disagree about what a question is linked to.
+///
+/// A per-question backlink lookup that fails must not blank the whole
+/// surface — a hand-edited vault with the same slug in both question
+/// domains resolves as `AmbiguousSlug` — so that one question falls back to
+/// no backlinks rather than propagating.
+pub fn question_rows(vault: &Vault, summaries: Vec<QuestionSummary>) -> Vec<QuestionStrategicRow> {
+    summaries
+        .into_iter()
+        .map(|summary| {
+            let bl = vault.question_backlinks(&summary.slug).unwrap_or_default();
+            QuestionStrategicRow {
+                backlinks: QuestionBacklinksView {
+                    projects: paths_to_strings(&bl.projects),
+                    portfolios: paths_to_strings(&bl.portfolios),
+                    evidence: paths_to_strings(&bl.evidence),
+                    other: paths_to_strings(&bl.other),
+                },
+                summary,
+            }
+        })
+        .collect()
+}
+
 /// Compose the Strategic bundle as of `today`. Public and synchronous —
 /// the test seam, exercised directly over the Memory doubles.
 ///
@@ -159,26 +188,7 @@ pub fn get_strategic_bundle_impl(
     vault: &Vault,
     today: NaiveDate,
 ) -> Result<StrategicBundle, CmdError> {
-    // Each active question carries its backlinks bucketed by source type
-    // (#354) — one extra read per question, matched to the handful the grid
-    // shows. `active_questions` is already sorted `(domain, slug)`.
-    let mut questions = Vec::new();
-    for summary in vault.active_questions()? {
-        // A per-question backlink lookup that fails must not blank the whole
-        // strategic view — e.g. a hand-edited vault with the same slug in
-        // both question domains resolves as `AmbiguousSlug`. Fall back to no
-        // backlinks for that one question rather than `?`-propagating.
-        let bl = vault.question_backlinks(&summary.slug).unwrap_or_default();
-        questions.push(QuestionStrategicRow {
-            backlinks: QuestionBacklinksView {
-                projects: paths_to_strings(&bl.projects),
-                portfolios: paths_to_strings(&bl.portfolios),
-                evidence: paths_to_strings(&bl.evidence),
-                other: paths_to_strings(&bl.other),
-            },
-            summary,
-        });
-    }
+    let questions = question_rows(vault, vault.active_questions()?);
     let portfolios = vault.list_portfolios(today)?;
 
     let active = vault

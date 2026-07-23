@@ -20,6 +20,8 @@ import type { NowView } from "./bindings/NowView";
 import type { OrientationView } from "./bindings/OrientationView";
 import type { PortfolioDetail } from "./bindings/PortfolioDetail";
 import type { PortfolioSummary } from "./bindings/PortfolioSummary";
+import type { QuestionStatus } from "./bindings/QuestionStatus";
+import type { QuestionStrategicRow } from "./bindings/QuestionStrategicRow";
 import type { ProjectActions } from "./bindings/ProjectActions";
 import type { ProjectDetail } from "./bindings/ProjectDetail";
 import type { ResolvedLink } from "./bindings/ResolvedLink";
@@ -42,6 +44,16 @@ export class CuadernoError extends Error {
     this.name = "CuadernoError";
     this.payload = payload;
   }
+}
+
+/** Every question with its backlinks, whatever its status (#443). */
+export function listQuestions(): Promise<QuestionStrategicRow[]> {
+  return invoke<QuestionStrategicRow[]>("list_questions");
+}
+
+/** Move a question between active / parked / answered / retired (#443). */
+export function setQuestionStatus(slug: string, status: QuestionStatus): Promise<void> {
+  return invoke<void>("set_question_status", { slug, status });
 }
 
 /** What you are in the middle of, per today's log (#442). `null` when

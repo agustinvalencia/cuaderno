@@ -21,6 +21,8 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     // The Strategic allocator's slots + parked shelf are project state,
     // so a park/activate (in-app or an external edit) must refresh it.
     "get_strategic_bundle",
+    // A project's `core_question` is a backlink on the question it names.
+    "list_questions",
   ],
   // `get_now` rides the action and daily areas: the Now band is read back
   // from the day's log, so a start or completion made ANYWHERE — the CLI,
@@ -46,7 +48,9 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   // jump, so an edit refreshes just that read (#340).
   monthly: ["read_monthly"],
   commitments: ["get_strategic_bundle", "get_orientation", "get_commitments", "get_weekly_bundle"],
-  portfolios: ["list_portfolios", "get_portfolio", "get_strategic_bundle"],
+  // A portfolio links to the question it gathers evidence for, so its
+  // edits change what the questions view shows.
+  portfolios: ["list_portfolios", "get_portfolio", "get_strategic_bundle", "list_questions"],
   // A tracking-log write (or an external edit under stewardships/)
   // touches both the list and the open detail — the detail composes the
   // series, recent entries, and count that a new note changes.
@@ -60,7 +64,12 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "get_stewardship_detail",
     "get_weekly_bundle",
   ],
-  questions: ["get_strategic_bundle"],
+  // `list_questions` composes each question WITH its backlinks, so it goes
+  // stale on more than a question edit: a project's `core_question`, a
+  // portfolio's link, an evidence note's origin all change what the view
+  // shows. The strategic bundle has always had the same exposure; it is
+  // listed on those areas for the same reason.
+  questions: ["get_strategic_bundle", "list_questions"],
   inbox: ["list_inbox"],
   // The config area covers both config.toml and the template files
   // under .cuaderno/templates/. An edit to a custom tracking template

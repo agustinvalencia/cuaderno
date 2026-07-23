@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Questions have a view of their own.** RLM puts three-to-five research questions and
+  three-to-five life questions *above* the project level, reviewed monthly, precisely to
+  stop drift across months — but the app surfaced them only as chips inside the Strategic
+  dashboard, the view you open least. `/questions` groups them by domain, shows each one
+  as the question it is (its H1, never its slug), and lists what points at it. A question
+  nothing links to says so plainly: that is not an empty state, it is the signal a monthly
+  read-through is looking for. Status is changeable in place, so an answered question stops
+  asking itself rather than the page being one more thing to look at and close. Parked and
+  answered questions stay reachable below the active ones rather than vanishing. (#443)
+
 - **Today shows what you are in the middle of.** A "Now" band names the action you started
   and have not finished, and how long ago you started it, with Done to close it out. It is
   read back from the day's own log rather than kept as separate state — starting an action

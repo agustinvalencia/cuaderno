@@ -438,6 +438,8 @@ pub fn run() {
             commands::portfolios::get_portfolio,
             commands::portfolios::add_evidence,
             commands::strategic::get_strategic_bundle,
+            commands::questions::list_questions,
+            commands::questions::set_question_status,
             commands::calendar::read_daily,
             commands::calendar::read_weekly,
             commands::calendar::read_monthly,

@@ -21,6 +21,7 @@ const NAV_ITEMS: { label: string; to: string }[] = [
   { label: "Commitments", to: "/commitments" },
   { label: "Weekly", to: "/weekly" },
   { label: "Strategic", to: "/strategic" },
+  { label: "Questions", to: "/questions" },
   { label: "Portfolios", to: "/portfolios" },
   { label: "Stewardships", to: "/stewardships" },
 ];

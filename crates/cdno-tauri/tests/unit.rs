@@ -13,6 +13,7 @@ mod unit {
     mod orientation_tests;
     mod portfolios_tests;
     mod projects_tests;
+    mod questions_tests;
     mod stewardships_tests;
     mod strategic_tests;
     mod vault_locator_tests;

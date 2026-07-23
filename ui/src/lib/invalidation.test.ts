@@ -76,3 +76,30 @@ test("the Now band refreshes when the day rolls over", async () => {
 
   expect(client.getQueryState(["get_now"])?.isInvalidated).toBe(true);
 });
+
+test("the questions view refreshes on a question edit from any origin (#443)", async () => {
+  // A `cdno question park` in a terminal, or Claude calling
+  // set_question_status over MCP, must reach an open Questions page — the
+  // mutation's own onSuccess covers only writes made from that page.
+  const client = new QueryClient();
+  await seed(client, "list_questions");
+
+  invalidateAreas(client, ["questions"]);
+
+  expect(client.getQueryState(["list_questions"])?.isInvalidated).toBe(true);
+});
+
+test("the questions view refreshes when a linking note changes", async () => {
+  // Each question is composed WITH its backlinks, so a project's
+  // core_question or a portfolio's link changes what the view shows.
+  const client = new QueryClient();
+  await seed(client, "list_questions");
+
+  invalidateAreas(client, ["projects"]);
+  expect(client.getQueryState(["list_questions"])?.isInvalidated).toBe(true);
+
+  const other = new QueryClient();
+  await seed(other, "list_questions");
+  invalidateAreas(other, ["portfolios"]);
+  expect(other.getQueryState(["list_questions"])?.isInvalidated).toBe(true);
+});

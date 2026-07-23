@@ -29,6 +29,10 @@ const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"))
 // sparklines, and the six-week timeline. Pulls in recharts (sparklines)
 // and the shared timeline, so it splits onto navigation.
 const Strategic = lazy(() => import("./views/strategic/Strategic"));
+// Questions (#443): RLM's Important Questions as a surface of their own,
+// rather than chips inside the monthly dashboard. Splits onto navigation
+// like the other secondary surfaces.
+const Questions = lazy(() => import("./views/questions/Questions"));
 // Calendar (#340): the month grid + embedded daily/weekly/monthly panel.
 // Pulls in react-markdown (the note renderer), so it splits onto
 // navigation like the other secondary surfaces.
@@ -84,6 +88,14 @@ export default function App() {
           element={
             <Suspense fallback={<ViewFallback />}>
               <Strategic />
+            </Suspense>
+          }
+        />
+        <Route
+          path="questions"
+          element={
+            <Suspense fallback={<ViewFallback />}>
+              <Questions />
             </Suspense>
           }
         />

@@ -74,8 +74,9 @@ panel that reads read-only and jumps to the previous or next day, the day's week
 grid, five-slot project allocator, portfolio health, stewardship trends. Below those, each active
 project has a full map (`/projects/<slug>`) — leading with its current state, then the next
 actions, blockers and milestones, with backlinks and recent log mentions kept to a few and the
-rest a click away, and **Portfolios** and **Stewardships** browse the
-knowledge and responsibility layers. A stewardship's detail draws each tracked series as a calm
+rest a click away, and **Questions**, **Portfolios** and **Stewardships** browse the
+knowledge and responsibility layers — Questions being the important-questions list that sits above
+any one project, grouped into research and life, each showing what is pointed at it. A stewardship's detail draws each tracked series as a calm
 trend — counts and volumes (reps, laps, sessions) as columns, continuous measures (a weight, a
 pace) as lines, always in the context hue and never as a target to hit. **Config** edits
 `.cuaderno/config.toml` in the app — a Raw text view and a structured Form for note types and
