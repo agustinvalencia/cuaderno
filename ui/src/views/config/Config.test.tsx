@@ -80,8 +80,13 @@ function installMock(
   });
 }
 
+/** The last-rendered view's query client, so a test can force the
+ * refetch an external config edit would cause. */
+let lastClient: QueryClient;
+
 function renderView() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  lastClient = client;
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
@@ -93,6 +98,11 @@ function renderView() {
       </ToastProvider>
     </QueryClientProvider>,
   );
+}
+
+/** The editor's textarea right now, for re-reading after a refetch. */
+function findEditorSync(): HTMLTextAreaElement {
+  return screen.getByLabelText("config.toml content") as HTMLTextAreaElement;
 }
 
 /** The editor's textarea, once the config has loaded. */
@@ -241,4 +251,49 @@ test("has no axe violations", async () => {
   const { container } = renderView();
   await findEditor();
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
+test("an external config change is adopted while the editor is clean", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let onDisk = { content: CONFIG_TOML, hash: CONFIG_HASH };
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "read_config") return onDisk;
+    return undefined;
+  });
+  renderView();
+  const editor = await findEditor();
+  expect(editor.value).toBe(CONFIG_TOML);
+
+  // Someone edits config.toml in nvim; the watcher's `config` area
+  // invalidates the read.
+  onDisk = { content: '[vault]\nname = "Renamed"\n', hash: "0123456789abcdef" };
+  await lastClient.invalidateQueries({ queryKey: ["read_config"] });
+
+  await waitFor(() => expect(findEditorSync().value).toContain("Renamed"));
+});
+
+test("an external config change does NOT clobber an unsaved draft", async () => {
+  // The view used to be keyed by the on-disk hash, so a background
+  // refetch re-seeded it and the draft vanished — with the dialog now
+  // promising a draft is safe, that is the guard defeated by the watcher.
+  // The dirty case has its own recovery: the save's compare-and-swap
+  // refuses to clobber the newer file and offers a reload.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let onDisk = { content: CONFIG_TOML, hash: CONFIG_HASH };
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "read_config") return onDisk;
+    return undefined;
+  });
+  renderView();
+  const editor = await findEditor();
+  fireEvent.change(editor, { target: { value: '[vault]\nname = "Mine"\n' } });
+
+  onDisk = { content: '[vault]\nname = "Theirs"\n', hash: "0123456789abcdef" };
+  await lastClient.invalidateQueries({ queryKey: ["read_config"] });
+
+  // Give the refetch every chance to land before asserting it did nothing.
+  await waitFor(() => expect(calls.filter((c) => c.cmd === "read_config").length).toBeGreaterThan(1));
+  expect(findEditorSync().value).toContain("Mine");
 });

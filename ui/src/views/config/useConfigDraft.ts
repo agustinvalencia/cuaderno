@@ -86,6 +86,27 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
     if (conflict) setConflict(false);
   }
 
+  // Adopt an on-disk change — but only while there is nothing unsaved.
+  //
+  // The view used to remount on every new content hash (`key={doc.hash}`),
+  // which re-seeded from the fresh file and silently discarded whatever
+  // was being typed. Harmless while the editor was one page you had
+  // deliberately opened; not harmless now that the same panel is hosted in
+  // a Settings dialog whose close guard promises a draft is safe, and that
+  // two instances can share this one query.
+  //
+  // For the dirty case the recovery already exists and is better: the
+  // save's compare-and-swap refuses to clobber the newer file and raises
+  // the conflict notice, which offers an explicit reload.
+  useEffect(() => {
+    if (dirty || conflict) return;
+    if (doc.content === baseline && doc.hash === hash) return;
+    setBaseline(doc.content);
+    setDraftState(doc.content);
+    setHash(doc.hash);
+    setValidation(null);
+  }, [doc.content, doc.hash, dirty, conflict, baseline, hash]);
+
   // Debounced pre-save validation: after the draft settles, dry-run the
   // backend's exact check so the author sees an invalid config before
   // pressing Save. The stale-closure guard (`cancelled`) drops a result

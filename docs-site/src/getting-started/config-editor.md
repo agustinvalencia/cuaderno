@@ -1,7 +1,7 @@
 # Editing the config in the app
 
-The [desktop app](desktop-app.md)'s **Config** view edits `.cuaderno/config.toml` without leaving
-the app. It reads the file, edits it two ways, validates every change before it touches disk, and
+The [desktop app](desktop-app.md)'s **Vault config** editor edits `.cuaderno/config.toml` without
+leaving the app. It reads the file, edits it two ways, validates every change before it touches disk, and
 reloads the live vault the moment the config changes — whether the change came from the app or from
 your editor.
 
@@ -9,11 +9,12 @@ This page covers using the editor. For *what* each key means, see
 [Configuration](../concepts/configuration.md) and the
 [Configuration reference](../reference/configuration.md).
 
-Open it from **Config** in the sidebar.
+Open it with `⌘,` and pick **Vault config** from the settings rail. Configuration is not content,
+so it lives in Settings rather than in the sidebar beside your notes.
 
 ## Raw and Form
 
-Config opens on a **Raw / Form** toggle:
+The editor opens on a **Raw / Form** toggle:
 
 - **Raw** is the whole `config.toml` in a text editor. Everything is editable here, byte for byte —
   it is the escape hatch for anything the Form doesn't cover.

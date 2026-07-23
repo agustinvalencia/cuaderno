@@ -62,6 +62,7 @@ const ORIENTATION: OrientationView = {
     },
   ],
   lapsed_habits: [{ stewardship: "health", detail: "Swimming 1x/week — lapsed since March" }],
+  max_active: 5,
 };
 
 const COMMITMENTS: CommitmentsView = {

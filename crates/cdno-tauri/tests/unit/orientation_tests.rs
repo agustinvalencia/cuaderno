@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use cdno_core::config::VaultConfig;
+use cdno_core::config::{VaultConfig, VaultMeta};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -20,12 +20,16 @@ fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
 }
 
 fn vault_with(notes: &[(&str, &str)]) -> Vault {
+    vault_with_config(notes, VaultConfig::default())
+}
+
+fn vault_with_config(notes: &[(&str, &str)], config: VaultConfig) -> Vault {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     for (path, body) in notes {
         store.write_file(&vp(path), body).unwrap();
     }
-    let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
+    let (vault, _report) = Vault::new(store, index, config).expect("Vault::new");
     vault
 }
 
@@ -57,6 +61,23 @@ fn orientation_view_composes_context_actions_and_lapses() {
 
     assert_eq!(view.lapsed_habits.len(), 1);
     assert_eq!(view.lapsed_habits[0].stewardship, "health");
+}
+
+/// The sidebar states "n of N slots" on every page, and N is the vault's
+/// own cap — a vault that lowered it must not be told it has five (#444).
+#[test]
+fn max_active_reflects_the_configured_cap() {
+    let config = VaultConfig {
+        vault: VaultMeta {
+            name: "test-vault".to_owned(),
+            max_active_projects: 3,
+            ..VaultMeta::default()
+        },
+        ..VaultConfig::default()
+    };
+    let vault = vault_with_config(&[("projects/alpha.md", ALPHA)], config);
+    let view = get_orientation_impl(&vault, ymd(2026, 5, 26)).unwrap();
+    assert_eq!(view.max_active, 3);
 }
 
 #[test]

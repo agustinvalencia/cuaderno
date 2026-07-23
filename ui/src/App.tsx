@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
 import AppShell from "./shell/AppShell";
 import Commitments from "./views/commitments/Commitments";
 import Home from "./views/home/Home";
@@ -24,7 +24,8 @@ const StewardshipDetail = lazy(() => import("./views/stewardships/StewardshipDet
 // navigation like the other secondary surfaces.
 const Portfolios = lazy(() => import("./views/portfolios/Portfolios"));
 const PortfolioDetail = lazy(() => import("./views/portfolios/PortfolioDetail"));
-// Strategic / Monthly (M9): the composed monthly review — questions
+// Monthly (M9, renamed from Strategic in #444): the composed monthly
+// review — questions
 // grid, project-slot allocator, portfolio health, stewardship
 // sparklines, and the six-week timeline. Pulls in recharts (sparklines)
 // and the shared timeline, so it splits onto navigation.
@@ -84,13 +85,22 @@ export default function App() {
           }
         />
         <Route
-          path="strategic"
+          path="monthly"
           element={
             <Suspense fallback={<ViewFallback />}>
               <Strategic />
             </Suspense>
           }
         />
+        {/* "Strategic" named a dashboard; "Monthly" names the review in
+            the cadence it belongs to (#444). The old path stays as a
+            redirect so anything still pointing at it — an in-app link
+            written before the rename, a `navigate("/strategic")` left in
+            code — lands rather than falling through to a blank shell.
+            (Not `cuaderno://` links: that scheme only ever carries note
+            paths, see `deeplink.rs`.) `replace` keeps it out of the
+            history, so Back does not bounce off it. */}
+        <Route path="strategic" element={<Navigate to="/monthly" replace />} />
         <Route
           path="questions"
           element={

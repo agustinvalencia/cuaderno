@@ -12,18 +12,33 @@ import * as Dialog from "@radix-ui/react-dialog";
 import type { SearchResultEntry } from "../api/bindings/SearchResultEntry";
 import { captureQuick, errorMessage, logQuick, searchVault } from "../api/commands";
 import { useReader } from "./reader";
+import type { SettingsSection } from "./SettingsDialog";
 import { useToast } from "./Toasts";
 
-/** Static navigation targets — the visible views, jumpable by name. */
+/** Static navigation targets — the visible views, jumpable by name, in
+ * the sidebar's own order so the palette teaches the same shape (#444). */
 const NAV_ITEMS: { label: string; to: string }[] = [
   { label: "Today", to: "/" },
+  { label: "Calendar", to: "/calendar" },
+  { label: "Weekly", to: "/weekly" },
+  { label: "Monthly", to: "/monthly" },
   { label: "Actions", to: "/actions" },
   { label: "Commitments", to: "/commitments" },
-  { label: "Weekly", to: "/weekly" },
-  { label: "Strategic", to: "/strategic" },
+  { label: "Stewardships", to: "/stewardships" },
   { label: "Questions", to: "/questions" },
   { label: "Portfolios", to: "/portfolios" },
-  { label: "Stewardships", to: "/stewardships" },
+];
+
+/** The settings sections the palette can open directly.
+ *
+ * Templates and Vault config left the sidebar for `Cmd+,` (#444), so
+ * without these two entries the only way to reach them by name would be
+ * typing a URL. They open the dialog at that section rather than
+ * navigating, since that is where they now live. */
+const SETTINGS_ITEMS: { label: string; section: SettingsSection }[] = [
+  { label: "Settings…", section: "appearance" },
+  { label: "Vault config…", section: "config" },
+  { label: "Templates…", section: "templates" },
 ];
 
 /** Debounce window before a keystroke turns into a search invoke — long
@@ -40,9 +55,11 @@ type Mode = "root" | "capture" | "log";
 export default function CommandPalette({
   open,
   onOpenChange,
+  onOpenSettings,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenSettings: (section: SettingsSection) => void;
 }) {
   const navigate = useNavigate();
   const { openReader } = useReader();
@@ -113,6 +130,9 @@ export default function CommandPalette({
   const navMatches = query
     ? NAV_ITEMS.filter((item) => item.label.toLowerCase().includes(query))
     : NAV_ITEMS;
+  const settingsMatches = query
+    ? SETTINGS_ITEMS.filter((item) => item.label.toLowerCase().includes(query))
+    : SETTINGS_ITEMS;
 
   const verbMode = mode !== "root";
 
@@ -214,6 +234,19 @@ export default function CommandPalette({
                   >
                     Log to daily…
                   </Command.Item>
+                  {settingsMatches.map((item) => (
+                    <Command.Item
+                      key={item.section}
+                      value={`settings:${item.label}`}
+                      onSelect={() => {
+                        onOpenSettings(item.section);
+                        onOpenChange(false);
+                      }}
+                      className="cursor-pointer rounded px-2 py-1.5 text-sm text-ink data-[selected=true]:bg-bg-sunken"
+                    >
+                      {item.label}
+                    </Command.Item>
+                  ))}
                 </Command.Group>
               </Command.List>
             </Command>

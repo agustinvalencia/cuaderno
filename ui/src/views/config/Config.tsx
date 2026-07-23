@@ -20,6 +20,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
 import { readConfig, type ValidationResult } from "../../api/commands";
+import { useReportDirty } from "../../shell/settingsDirty";
 import ConfigStructuredView from "./ConfigStructuredView";
 import { useConfigDraft, type ConfigDraft } from "./useConfigDraft";
 
@@ -30,23 +31,39 @@ import { useConfigDraft, type ConfigDraft } from "./useConfigDraft";
  * is one click away. */
 type ViewMode = "raw" | "structured";
 
-export default function Config() {
+/** The editor without page chrome, so the Settings dialog can host it
+ * (#444) — configuration belongs behind `Cmd+,`, not in a list beside
+ * notes. The `/config` route below still resolves, but nothing in the
+ * app links to it any more. */
+export function ConfigPanel() {
   const read = useQuery({ queryKey: ["read_config"], queryFn: readConfig });
 
   if (read.isPending) {
-    return <p className="p-8 text-ink-muted">Reading the config…</p>;
+    return <p className="text-ink-muted">Reading the config…</p>;
   }
   if (read.isError) {
     return (
-      <div className="p-8">
+      <div>
         <p className="text-ink">The config could not be opened.</p>
         <p className="mt-2 text-sm text-ink-muted">{String(read.error)}</p>
       </div>
     );
   }
-  // Key the view by the loaded hash so a hard external reload (a new
-  // document identity) resets the draft/baseline state cleanly.
-  return <ConfigView key={read.data.hash} doc={read.data} />;
+  // Deliberately unkeyed. Keying by the loaded hash used to re-seed the
+  // editor whenever the file changed on disk, which threw away a draft
+  // mid-edit — and with this panel now hosted in a dialog that promises
+  // otherwise, that is the guard defeated by a background refetch.
+  // `useConfigDraft` adopts an on-disk change only while clean.
+  return <ConfigView doc={read.data} />;
+}
+
+export default function Config() {
+  return (
+    <div className="mx-auto max-w-5xl p-8">
+      <h1 className="mb-2 text-xl font-semibold text-ink">Config</h1>
+      <ConfigPanel />
+    </div>
+  );
 }
 
 function ConfigView({ doc }: { doc: ConfigDocument }) {
@@ -54,11 +71,13 @@ function ConfigView({ doc }: { doc: ConfigDocument }) {
   // The shared draft model. Held here (above both panels) so it survives
   // toggling and is the single seam PR5b's editable form binds to.
   const cfg = useConfigDraft(doc);
+  // Tell the Settings dialog when an unsaved draft is in hand, so Esc or
+  // Done cannot discard it silently. No-op on the `/config` page.
+  useReportDirty("config", "Vault config", cfg.dirty);
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <h1 className="text-xl font-semibold text-ink">Config</h1>
-      <p className="mt-2 text-sm text-ink-muted">
+    <div>
+      <p className="text-sm text-ink-muted">
         Edit <code className="text-ink-faint">.cuaderno/config.toml</code>{" "}
         directly. Saving validates the whole file first — a config that would
         not reopen is refused, so an edit here can never break the vault — then
@@ -66,7 +85,7 @@ function ConfigView({ doc }: { doc: ConfigDocument }) {
         to dry-run the same validation before saving.
       </p>
 
-      <div className="mt-6 rounded-lg border border-line bg-bg-surface">
+      <div className="mt-4 rounded-lg border border-line bg-bg-surface">
         <header className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-3">
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-ink">
             config.toml
@@ -158,7 +177,10 @@ function ConfigEditor({ cfg }: { cfg: ConfigDraft }) {
         value={cfg.draft}
         spellCheck={false}
         onChange={(event) => cfg.setDraft(event.target.value)}
-        className="h-[32rem] w-full resize-y rounded border border-line bg-bg-base p-3 font-mono text-sm text-ink"
+        // Clamped rather than fixed: the same editor now renders inside
+        // the Settings dialog, where a flat 32rem would overrun a short
+        // window before the dialog's own scroller could help.
+        className="h-[clamp(14rem,40vh,32rem)] w-full resize-y rounded border border-line bg-bg-base p-3 font-mono text-sm text-ink"
       />
     </>
   );

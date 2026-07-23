@@ -9,6 +9,7 @@ import type { OrientationView } from "../api/bindings/OrientationView";
 import type { SearchResultEntry } from "../api/bindings/SearchResultEntry";
 import AppShell from "./AppShell";
 import CommandPalette from "./CommandPalette";
+import type { SettingsSection } from "./SettingsDialog";
 import { ReaderProvider } from "./reader";
 import { ToastProvider } from "./Toasts";
 
@@ -25,6 +26,7 @@ const EMPTY_ORIENTATION: OrientationView = {
   commitments: [],
   projects: [],
   lapsed_habits: [],
+  max_active: 5,
 };
 
 const RESULTS: SearchResultEntry[] = [
@@ -59,7 +61,10 @@ test("Cmd+K opens the palette", async () => {
   expect(await screen.findByPlaceholderText(/Search notes or jump/)).toBeDefined();
 });
 
-function renderPalette(onCall?: (cmd: string, args: unknown) => void) {
+function renderPalette(
+  onCall?: (cmd: string, args: unknown) => void,
+  onOpenSettings: (section: SettingsSection) => void = () => {},
+) {
   mockIPC((cmd, args) => {
     onCall?.(cmd, args);
     if (cmd === "search_vault") return RESULTS;
@@ -70,7 +75,11 @@ function renderPalette(onCall?: (cmd: string, args: unknown) => void) {
       <ToastProvider>
         <MemoryRouter>
           <ReaderProvider>
-            <CommandPalette open onOpenChange={() => {}} />
+            <CommandPalette
+              open
+              onOpenChange={() => {}}
+              onOpenSettings={onOpenSettings}
+            />
           </ReaderProvider>
         </MemoryRouter>
       </ToastProvider>
@@ -99,4 +108,20 @@ test("the Capture verb submits capture_quick", async () => {
   expect(await screen.findByText(/Captured to your inbox/)).toBeDefined();
   const captured = calls.find((c) => c.cmd === "capture_quick");
   expect(captured?.args).toMatchObject({ text: "buy milk" });
+});
+
+test("the settings destinations that left the sidebar are reachable by name", async () => {
+  // Templates and Vault config moved behind Cmd+, (#444). Without these
+  // entries the only way to reach them by name would be typing a URL.
+  const opened: SettingsSection[] = [];
+  renderPalette(undefined, (section) => opened.push(section));
+  fireEvent.click(await screen.findByText("Vault config…"));
+  expect(opened).toEqual(["config"]);
+});
+
+test("Monthly and Calendar are jumpable, Strategic is gone", async () => {
+  renderPalette();
+  expect(await screen.findByText("Monthly")).toBeDefined();
+  expect(screen.getByText("Calendar")).toBeDefined();
+  expect(screen.queryByText("Strategic")).toBeNull();
 });

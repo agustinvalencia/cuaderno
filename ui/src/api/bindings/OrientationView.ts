@@ -14,4 +14,15 @@ export type OrientationView = {
  * The date the snapshot was computed for (stamped in Rust — the
  * frontend never computes domain dates).
  */
-today: string, commitments: Array<CommitmentEntry>, projects: Array<OrientationProject>, lapsed_habits: Array<LapsedHabit>, };
+today: string, commitments: Array<CommitmentEntry>, projects: Array<OrientationProject>, lapsed_habits: Array<LapsedHabit>, 
+/**
+ * The configured active-project cap (`max_active_projects`, default
+ * 5), read from the vault config rather than hardcoded.
+ *
+ * The five-slot rule is load-bearing in the method — it is the whole
+ * reason a sixth project has to displace one — so the shell's project
+ * list says "3 of 5 slots" rather than leaving the cap to be
+ * discovered by hitting it. The strategic bundle already carried this
+ * for its allocator; the sidebar needs it on every page.
+ */
+max_active: number, };

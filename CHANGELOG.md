@@ -26,7 +26,40 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   clicked in the app. With nothing open it becomes the pick-one prompt instead of
   disappearing. (#442)
 
+### Changed
+
+- **The sidebar says what the method is.** It was a flat list of ten destinations with a
+  "Browse" bucket that mixed the knowledge layer, the responsibility layer and two settings
+  surfaces into one list — which reads as "here are ten screens", not as a method. It is now
+  three groups: **Rhythm** (Today, Calendar, Weekly, Monthly), **Operations** (Projects,
+  Actions, Commitments, Stewardships) and **Inquiry** (Questions, Portfolios). The project
+  list carries its slot count — "3 of 5" — because the cap is a rule you should be able to
+  read rather than one you discover by hitting it, and it is the vault's configured cap, not
+  a hardcoded five. **Strategic** is now **Monthly**: it named a dashboard, and it is a
+  review that belongs to the cadence it runs on. `/strategic` redirects rather than falling
+  through to a blank shell. (#444)
+
+- **Templates and Vault config moved into Settings (`⌘,`).** They edit files under
+  `.cuaderno/`; listing them beside Portfolios invited the reading that a template is a
+  note. The Settings dialog grew a section rail to hold them, and both are reachable by name
+  from the command palette. Their routes still resolve, but nothing in the app links to
+  them any more — Settings is the way in.
+
+  This changed the dialog's contract, so the guard came with it: every other preference
+  applies the instant you click it, but these two carry real drafts, and Esc, the overlay or
+  Done would have discarded one without a word. Settings now says what is unsaved and asks
+  before closing over it, and marks the holding section in the rail. (#444)
+
 ### Fixed
+
+- **An unsaved editor draft is no longer thrown away without asking.** Three routes did it
+  silently. Switching note types in the Templates editor discarded whatever you had typed,
+  because the editor was remounted per type; its drafts now live above it, one per type, and
+  a type holding one is marked in the chip row. Editing `config.toml` outside the app while
+  the config editor was open re-seeded it from disk mid-edit, because the view was keyed by
+  the file's content hash; an on-disk change is now adopted only while the editor is clean —
+  the dirty case already had the better recovery in the save's compare-and-swap conflict
+  notice. And closing Settings over either draft is now guarded. (#444)
 
 - **Completing or promoting an action accepts the text you were just shown.** Every action
   the tool creates carries an energy suffix, and the action list, the daily log and the
