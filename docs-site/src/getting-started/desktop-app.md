@@ -78,7 +78,10 @@ stewardship trends.
 ("3 of 5"), with each active project listed beneath it; every one has a full map
 (`/projects/<slug>`) leading with its current state, then the next actions, blockers and milestones,
 with backlinks and recent log mentions kept to a few and the rest a click away. **Actions** is the
-cross-project list of next actions. **Commitments** is a chronological timeline of everything
+cross-project list of next actions: a project rail with counts down the left, and a filter bar of
+context and energy chips plus a text filter across the top. Every chip carries its own count, and
+one of the energy chips is **untagged** — most bullets carry no `(deep|medium|light)` suffix, and
+they are work like any other. Filtering says how much it is hiding rather than just showing less. **Commitments** is a chronological timeline of everything
 promised — what someone else is counting on, as against what you merely decided to do
 (context-coloured, never red). **Stewardships** are the perpetual responsibilities; a stewardship's
 detail draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
