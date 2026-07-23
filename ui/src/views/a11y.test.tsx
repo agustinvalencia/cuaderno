@@ -26,6 +26,7 @@ import Home from "./home/Home";
 import Commitments from "./commitments/Commitments";
 import Strategic from "./strategic/Strategic";
 import Calendar from "./calendar/Calendar";
+import Questions from "./questions/Questions";
 
 expect.extend(matchers);
 // vitest-axe 0.1.0 ships type augmentation for the pre-1.0 `Vi`
@@ -209,5 +210,32 @@ test("Calendar has no axe violations", async () => {
   });
   const { container } = renderView(<Calendar />);
   await screen.findByRole("heading", { name: "Wednesday" });
+  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
+test("Questions has no axe violations", async () => {
+  mockIPC((cmd) =>
+    cmd === "list_questions"
+      ? [
+          {
+            summary: {
+              slug: "sparse",
+              domain: "research",
+              status: "active",
+              question_text: "Does the sparse variant hold up?",
+              updated: "2026-07-01",
+            },
+            backlinks: {
+              projects: ["projects/alpha.md"],
+              portfolios: [],
+              evidence: [],
+              other: [],
+            },
+          },
+        ]
+      : undefined,
+  );
+  const { container } = renderView(<Questions />);
+  await screen.findByText("Does the sparse variant hold up?");
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });

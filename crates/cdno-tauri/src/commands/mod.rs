@@ -13,6 +13,7 @@ pub mod notes;
 pub mod orientation;
 pub mod portfolios;
 pub mod projects;
+pub mod questions;
 pub mod search;
 pub mod stewardships;
 pub mod strategic;

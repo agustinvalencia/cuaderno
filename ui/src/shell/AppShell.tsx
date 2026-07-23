@@ -7,6 +7,7 @@ import {
   Compass,
   Briefcase,
   Handshake,
+  HelpCircle,
   Inbox as InboxIcon,
   LayoutTemplate,
   ListChecks,
@@ -43,6 +44,7 @@ const NAV: { to: string; label: string; icon: LucideIcon }[] = [
 ];
 
 const BROWSE: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/questions", label: "Questions", icon: HelpCircle },
   { to: "/portfolios", label: "Portfolios", icon: Briefcase },
   { to: "/stewardships", label: "Stewardships", icon: Sprout },
   { to: "/templates", label: "Templates", icon: LayoutTemplate },
