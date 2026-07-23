@@ -98,6 +98,17 @@ function renderDetail(
       return [{ name: "mood", prompt: "How did it feel?" }];
     return undefined;
   });
+  return mountDetail(fixture, at);
+}
+
+/** For the cases that need a mock which can throw — the write error
+ * paths, which a return-only mock cannot reach. */
+function renderDetailWith(handler: (cmd: string, args: unknown) => unknown) {
+  mockIPC(handler);
+  return mountDetail(EXPANDED);
+}
+
+function mountDetail(fixture: StewardshipDetailData, at?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -252,9 +263,76 @@ test("the recent list says how many there are in all", async () => {
 });
 
 test("recent rows carry the duration and routine that already came over the wire", async () => {
-  renderDetail(EXPANDED);
+  // The fixture had `routine: null`, so the routine branch never rendered
+  // and could have been deleted with the suite still green.
+  renderDetail({
+    ...EXPANDED,
+    recent: [{ ...EXPANDED.recent[0], routine: "push day" }],
+  });
   const recent = within(await screen.findByRole("region", { name: "Recent tracking" }));
   expect(recent.getByText("55 min")).toBeDefined();
+  expect(recent.getByText("push day")).toBeDefined();
+});
+
+test("a failed log keeps the form, and everything typed into it", async () => {
+  // Closing rode `onSettled`, which fires on failure too — so a disk
+  // error or a vault lock unmounted the only copy of what was typed.
+  renderDetailWith((cmd) => {
+    if (cmd === "get_stewardship_detail") return EXPANDED;
+    if (cmd === "get_tracking_template_fields") return [];
+    if (cmd === "log_tracking_entry") throw new Error("vault is read-only");
+    return undefined;
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "felt strong" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+
+  expect(await screen.findByText(/read-only/)).toBeDefined();
+  expect((screen.getByLabelText("Notes") as HTMLTextAreaElement).value).toBe("felt strong");
+  expect((screen.getByLabelText("Activity") as HTMLInputElement).value).toBe("gym");
+});
+
+test("a successful log closes the form", async () => {
+  renderDetail(EXPANDED);
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+
+  await waitFor(() => expect(screen.queryByLabelText("Activity")).toBeNull());
+});
+
+test("Cancel closes the form too, not only the header button", async () => {
+  renderDetail(EXPANDED);
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(screen.queryByLabelText("Activity")).toBeNull();
+  expect(screen.getByRole("button", { name: "Log entry" })).toBeDefined();
+});
+
+test("an activity with a space in it keeps its whole name", async () => {
+  // Series are named "<activity> · <column>". Splitting on whitespace
+  // labelled the chip "morning", and two activities sharing a first word
+  // collapsed into one — which removed the filter entirely, since it only
+  // appears when there is more than one.
+  renderDetail({
+    ...MIXED,
+    series: [
+      { name: "morning run · Sets", points: [{ date: "2026-07-01", value: 3 }] },
+      { name: "morning swim · Laps", points: [{ date: "2026-07-02", value: 20 }] },
+    ],
+  });
+  await screen.findByRole("heading", { name: "Trends" });
+
+  const filter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  expect(filter.getByRole("button", { name: "morning run" })).toBeDefined();
+  expect(filter.getByRole("button", { name: "morning swim" })).toBeDefined();
+
+  fireEvent.click(filter.getByRole("button", { name: "morning swim" }));
+  const charts = within(screen.getByRole("group", { name: "Trend charts" }));
+  expect(charts.queryByText(/morning run/)).toBeNull();
 });
 
 test("an expanded stewardship with nothing tracked says so calmly", async () => {

@@ -20,6 +20,41 @@ const QUIET: StewardshipSummary = {
   staleness_days: 200,
 };
 
+/** The ladder's middle rung — no fixture rendered one, so the ageing
+ * tier was never observed by any test. */
+const AGEING: StewardshipSummary = {
+  slug: "garden",
+  name: "Garden",
+  context: "household",
+  variant: "expanded",
+  tracking_count: 30,
+  last_tracking_date: "2026-06-01",
+  staleness_days: 50,
+};
+
+/** Never tracked at all: the branch that is meant to sort as the
+ * quietest thing there is. */
+const NEVER: StewardshipSummary = {
+  slug: "admin-new",
+  name: "Paperwork",
+  context: "legal",
+  variant: "expanded",
+  tracking_count: 0,
+  last_tracking_date: null,
+  staleness_days: null,
+};
+
+/** Exactly on the boundary between ageing and gone-quiet. */
+const ON_BOUNDARY: StewardshipSummary = {
+  slug: "boundary",
+  name: "Boundary",
+  context: "work",
+  variant: "expanded",
+  tracking_count: 9,
+  last_tracking_date: "2026-04-06",
+  staleness_days: 90,
+};
+
 const ROWS: StewardshipSummary[] = [
   {
     slug: "health",
@@ -116,14 +151,21 @@ test("a flat stewardship is never counted as lapsed", async () => {
 test("freshness reads in the shared ink ladder, not flat faint", async () => {
   // This view hand-rolled its own status vocabulary and painted every row
   // the same tone — in the one place freshness is the whole signal.
-  renderList([...ROWS, QUIET]);
+  renderList([...ROWS, QUIET, AGEING]);
   await screen.findByText("Health");
 
-  const fresh = screen.getByText(/12 tracked/);
-  const quiet = screen.getByText(/4 tracked/);
-  expect(fresh.className).toContain("text-ink");
-  expect(fresh.className).not.toContain("text-ink-faint");
-  expect(quiet.className).toContain("text-ink-faint");
+  // Exact tokens, not `toContain`: "text-ink" is a substring of both
+  // "text-ink-muted" and "text-ink-faint", so a containment check can
+  // only tell faint from not-faint and would pass with every row shifted
+  // a full tier.
+  const tone = (text: RegExp) =>
+    screen
+      .getByText(text)
+      .className.split(/\s+/)
+      .find((c) => c.startsWith("text-ink"));
+  expect(tone(/12 tracked/)).toBe("text-ink");
+  expect(tone(/30 tracked/)).toBe("text-ink-muted");
+  expect(tone(/4 tracked/)).toBe("text-ink-faint");
 });
 
 test("an expanded stewardship can be logged from the list", async () => {
@@ -146,4 +188,36 @@ test("the name outlives the status line when space runs out", async () => {
   const status = screen.getByText(/12 tracked/);
   expect(name.className).toContain("flex-[3]");
   expect(status.className).toContain("flex-1");
+});
+
+
+test("a stewardship never tracked is the quietest thing on the list", async () => {
+  // It has no staleness to measure, which is the strongest possible
+  // reason to put it first — and it is counted in the tally, so burying
+  // it would leave the list saying "1 gone quiet" with the quietest thing
+  // on it at the bottom.
+  renderList([...ROWS, NEVER]);
+  await screen.findByText("Health");
+
+  const names = screen
+    .getAllByRole("link", { name: /^(Health|Finances|Paperwork)$/ })
+    .map((l) => l.textContent);
+  expect(names[0]).toBe("Paperwork");
+  expect(screen.getByText(/1 gone quiet/)).toBeDefined();
+});
+
+test("exactly at the threshold is still ageing, not yet quiet", async () => {
+  // The word and the ink share one threshold, which is the whole reason
+  // "lapsed" is defined as the ladder's own tier: at 90 days
+  // `stalenessTone` still returns the ageing tone, so counting the row as
+  // gone quiet would announce one thing and paint another.
+  renderList([...ROWS, ON_BOUNDARY]);
+  await screen.findByText("Health");
+
+  expect(screen.queryByText(/gone quiet/)).toBeNull();
+  const tone = screen
+    .getByText(/9 tracked/)
+    .className.split(/\s+/)
+    .find((c) => c.startsWith("text-ink"));
+  expect(tone).toBe("text-ink-muted");
 });

@@ -32,6 +32,14 @@ import { ClampedText } from "../../components/ui/clamped-text";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
+/** The activity a tracking series belongs to. Series are named
+ * `"<activity> · <column>"`, and only the first separator splits them —
+ * a column header may contain one. */
+export function activityOf(seriesName: string): string {
+  const at = seriesName.indexOf(" \u00b7 ");
+  return at === -1 ? seriesName : seriesName.slice(0, at);
+}
+
 /** The stewardship's on-disk note path for open-in-editor: expanded
  * dashboards live in a folder's `_index.md`, flat ones as a single file. */
 function editorPath(slug: string, variant: StewardshipDetailData["variant"]): string {
@@ -99,15 +107,22 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   const [activities, setActivities] = useState<Set<string>>(new Set());
 
   const showCharts = data.variant === "expanded" && data.series.length > 0;
-  // A series is named "<activity> · <column>"; the activity is what a
-  // reader filters by. A gym stewardship tracking sets, reps and weight
-  // across three activities is nine charts in one column — roughly
-  // 1600px of scroll with no way to narrow it.
-  const chartActivities = [...new Set(data.series.map((s) => s.name.split(" ")[0]))];
+  // A series is named "<activity> · <column>" (composed in
+  // `cdno-domain`'s `context.rs`), and the activity is what a reader
+  // filters by. A gym stewardship tracking sets, reps and weight across
+  // three activities is nine charts in one column — roughly 1600px of
+  // scroll with no way to narrow it.
+  //
+  // Split on the separator, not on whitespace: an activity is free text
+  // and "morning run" is an ordinary thing to type. Splitting on a space
+  // labelled the chip "morning", and two activities sharing a first word
+  // collapsed into one chip — which took the filter away entirely, since
+  // it only appears when there is more than one.
+  const chartActivities = [...new Set(data.series.map((s) => activityOf(s.name)))];
   const shownSeries =
     activities.size === 0
       ? data.series
-      : data.series.filter((s) => activities.has(s.name.split(" ")[0]));
+      : data.series.filter((s) => activities.has(activityOf(s.name)));
   // Wikilinks in the dashboard body resolve to typed navigation or open
   // the linked note in the shell reader (mirrors ProjectDetail).
   async function onWikilink(target: string) {
@@ -163,11 +178,12 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
         <LogEntry
           slug={slug}
           recentActivities={data.recent.map((e) => e.activity)}
-          onLogged={() => {
-            void client.invalidateQueries({ queryKey: key });
-            setLogOpen(false);
-          }}
-          onCancel={() => setLogOpen(false)}
+          // Invalidation rides `onSettled`; closing does NOT. Closing
+          // from there unmounted the form on a *failed* submit too, and
+          // the form holds the only copy of what was typed — so a disk
+          // error or a vault lock silently ate the entry.
+          onLogged={() => void client.invalidateQueries({ queryKey: key })}
+          onClose={() => setLogOpen(false)}
         />
       )}
 
@@ -311,13 +327,17 @@ function LogEntry({
   slug,
   recentActivities,
   onLogged,
-  onCancel,
+  onClose,
 }: {
   slug: string;
   recentActivities: string[];
+  /** Settled — success or failure. Refresh what the write may have
+   * changed; never close over it. */
   onLogged: () => void;
-  /** Close the form — the header owns that state now. */
-  onCancel: () => void;
+  /** Close the form: the header owns that state now. Called on a
+   * successful save and on Cancel, never on a failure — the draft is
+   * the only copy of what was typed. */
+  onClose: () => void;
 }) {
   const { toast } = useToast();
   const [activity, setActivity] = useState("");
@@ -375,6 +395,7 @@ function LogEntry({
     onSuccess: () => {
       toast(`Logged ${activity.trim()} — one more on the record.`);
       reset();
+      onClose();
     },
     onSettled: onLogged,
   });
@@ -468,7 +489,7 @@ function LogEntry({
             type="button"
             onClick={() => {
               reset();
-              onCancel();
+              onClose();
             }}
             className="rounded px-3 py-1 text-sm text-ink-muted hover:text-ink"
           >

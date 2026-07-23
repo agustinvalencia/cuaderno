@@ -36,7 +36,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Portfolios and Monthly, and offers logging from the row. The detail promotes **Log entry**
   to its header instead of burying it below a page of charts, puts the charts two-up behind
   an activity filter, caps a long dashboard body, shows the honest total behind the previewed
-  entries, and carries each entry's routine and duration. (#448)
+  entries, and carries each entry’s routine and duration. A failed log now keeps the form and
+  everything typed into it, rather than closing over the only copy. (#448)
 
 - **Commitments answer "when", not just "what".** The window was a hardcoded 90 days baked
   into the query, which silently defined what "all your commitments" meant — a promise 100
