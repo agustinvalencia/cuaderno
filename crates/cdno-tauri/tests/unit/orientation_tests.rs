@@ -67,3 +67,65 @@ fn orientation_view_empty_vault_is_calmly_empty() {
     assert!(view.projects.is_empty());
     assert!(view.lapsed_habits.is_empty());
 }
+
+// ---------------------------------------------------------------------
+// get_now (#442) — the Today page's Now band. Reconstructed from the
+// day's log, so it needs no state of its own and sees a start made from
+// anywhere: the app, the CLI, or an agent over MCP.
+// ---------------------------------------------------------------------
+
+use cdno_tauri::commands::orientation::get_now_impl;
+
+const PROJECT: &str = "---\ntype: project\ncontext: university\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Current State\nGoing.\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n";
+
+fn daily(lines: &[&str]) -> String {
+    let body = lines
+        .iter()
+        .map(|l| format!("- {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("---\ndate: 2026-07-13\ntype: daily\n---\n\n# 2026-07-13\n\n## Logs\n{body}\n")
+}
+
+#[test]
+fn get_now_is_none_when_nothing_was_started() {
+    let vault = vault_with(&[("projects/alpha.md", PROJECT)]);
+
+    let now = get_now_impl(&vault, ymd(2026, 7, 13)).unwrap();
+
+    assert!(now.is_none());
+}
+
+#[test]
+fn get_now_reports_the_open_action_with_its_project_context() {
+    let log = daily(&["**09:30**: started [[alpha]] \u{2014} Draft the methods section (deep)"]);
+    let vault = vault_with(&[
+        ("projects/alpha.md", PROJECT),
+        ("journal/2026/daily/2026-07-13.md", &log),
+    ]);
+
+    let now = get_now_impl(&vault, ymd(2026, 7, 13))
+        .unwrap()
+        .expect("a focus");
+
+    assert_eq!(now.project, "alpha");
+    assert_eq!(now.action, "Draft the methods section (deep)");
+    assert_eq!(now.started, "09:30");
+    assert_eq!(now.context, Some(cdno_domain::Context::University));
+}
+
+#[test]
+fn get_now_still_reports_a_focus_whose_project_is_gone() {
+    // The log is the record. A project renamed or archived since the line
+    // was written must not make what you are on disappear — only its
+    // colour dot is unknown.
+    let log = daily(&["**09:30**: started [[vanished]] \u{2014} Something in flight"]);
+    let vault = vault_with(&[("journal/2026/daily/2026-07-13.md", &log)]);
+
+    let now = get_now_impl(&vault, ymd(2026, 7, 13))
+        .unwrap()
+        .expect("a focus");
+
+    assert_eq!(now.project, "vanished");
+    assert_eq!(now.context, None);
+}

@@ -6,7 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Today shows what you are in the middle of.** A "Now" band names the action you started
+  and have not finished, and how long ago you started it, with Done to close it out. It is
+  read back from the day's own log rather than kept as separate state — starting an action
+  already writes a line and completing it writes another — so it needs nothing to stay in
+  sync and it picks up a start made from the CLI or by Claude over MCP, not only one
+  clicked in the app. With nothing open it becomes the pick-one prompt instead of
+  disappearing. (#442)
+
 ### Changed
+
+- **Today is the day's own note.** The daily note — intention, standup, agenda, and the
+  append-only log that is the method's spine — used to be reachable only through the
+  Calendar, while Today showed a grid of project cards restating what the sidebar already
+  lists and what the project map says better. The note is the page now. Above it sit the
+  Now band, the quick-log composer, what is due soon, and an energy-filtered shortlist of
+  one line per project answering "pick one thing" — keeping the rule that a low-energy
+  moment is never met by an empty page. (#442)
 
 - **The project view leads with the Current State.** The section previously held only an
   "Edit current state" link — the prose itself appeared nowhere until you clicked, except

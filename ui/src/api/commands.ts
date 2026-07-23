@@ -16,6 +16,7 @@ import type { MonthlyView } from "./bindings/MonthlyView";
 import type { IndexExclusions } from "./bindings/IndexExclusions";
 import type { InboxItem } from "./bindings/InboxItem";
 import type { NoteView } from "./bindings/NoteView";
+import type { NowView } from "./bindings/NowView";
 import type { OrientationView } from "./bindings/OrientationView";
 import type { PortfolioDetail } from "./bindings/PortfolioDetail";
 import type { PortfolioSummary } from "./bindings/PortfolioSummary";
@@ -41,6 +42,12 @@ export class CuadernoError extends Error {
     this.name = "CuadernoError";
     this.payload = payload;
   }
+}
+
+/** What you are in the middle of, per today's log (#442). `null` when
+ * nothing is open. */
+export function getNow(): Promise<NowView | null> {
+  return invoke<NowView | null>("get_now");
 }
 
 /** What the startup reconciliation left out of the index (#440). A file

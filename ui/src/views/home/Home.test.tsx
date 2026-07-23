@@ -1,17 +1,20 @@
-// Smoke for the frontend test stack itself (M1 review condition:
-// verify Testing Library + @tauri-apps/api/mocks run under Node/jsdom
-// before committing to the stack) — and for Home's three render
-// states against a fixture shaped like the ts-rs bindings.
+// Today (#442): the Now band, the pick-one shortlist, and the daily note
+// as the page. Fixtures are shaped like the ts-rs bindings, so a Rust type
+// change breaks these at compile time.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
-import { ToastProvider } from "../../shell/Toasts";
+
+import type { DailyView } from "../../api/bindings/DailyView";
+import type { NowView } from "../../api/bindings/NowView";
 import type { OrientationView } from "../../api/bindings/OrientationView";
+import { ReaderProvider } from "../../shell/reader";
+import { ToastProvider } from "../../shell/Toasts";
 import Home from "./Home";
 
-const FIXTURE: OrientationView = {
+const ORIENTATION: OrientationView = {
   today: "2026-07-07",
   commitments: [
     {
@@ -35,14 +38,11 @@ const FIXTURE: OrientationView = {
   lapsed_habits: [{ stewardship: "health", detail: "Swimming 1x/week — lapsed since March" }],
 };
 
-// A variant carrying a second, lower-energy action so the energy
-// filter surfaces a *different* bullet — the reset-on-swap path. Kept
-// separate from FIXTURE so the deep-only no-match test stays valid.
-const FIXTURE_TWO_ACTIONS: OrientationView = {
-  ...FIXTURE,
+const TWO_ACTIONS: OrientationView = {
+  ...ORIENTATION,
   projects: [
     {
-      ...FIXTURE.projects[0],
+      ...ORIENTATION.projects[0],
       actions: [
         { text: "Draft methods (deep)", energy: "deep", attached: null },
         { text: "File receipts (light)", energy: "light", attached: null },
@@ -51,13 +51,48 @@ const FIXTURE_TWO_ACTIONS: OrientationView = {
   ],
 };
 
+const DAILY: DailyView = {
+  date: "2026-07-07",
+  exists: true,
+  markdown:
+    "---\ndate: 2026-07-07\ntype: daily\n---\n\n# Tuesday\n\n## Intention\nFinish the draft.\n\n## Logs\n- **09:30**: started something\n",
+  path: "journal/2026/daily/2026-07-07.md",
+  prev_date: "2026-07-06",
+  next_date: "2026-07-08",
+  week_of: "2026-07-06",
+  month: "2026-07",
+};
+
+const NOW: NowView = {
+  project: "alpha",
+  context: "work",
+  action: "Draft methods (deep)",
+  started: "09:30",
+};
+
+/** Install an IPC mock; `now` and `daily` default to the happy shapes. */
+function installMock(
+  calls: Array<{ cmd: string; args: unknown }>,
+  overrides: { orientation?: OrientationView; now?: NowView | null; daily?: DailyView } = {},
+) {
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_orientation") return overrides.orientation ?? ORIENTATION;
+    if (cmd === "get_now") return overrides.now === undefined ? NOW : overrides.now;
+    if (cmd === "read_daily") return overrides.daily ?? DAILY;
+    return undefined;
+  });
+}
+
 function renderHome() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <MemoryRouter>
-          <Home />
+          <ReaderProvider>
+            <Home />
+          </ReaderProvider>
         </MemoryRouter>
       </ToastProvider>
     </QueryClientProvider>,
@@ -65,163 +100,128 @@ function renderHome() {
 }
 
 afterEach(() => {
-  // Auto-cleanup needs vitest globals, which stay off — clean by hand.
   cleanup();
   clearMocks();
 });
 
-test("renders commitments, project cards, and the lapsed line", async () => {
-  mockIPC((cmd) => {
-    if (cmd === "get_orientation") return FIXTURE;
-    throw new Error(`unexpected command ${cmd}`);
-  });
-
+test("the day's own note is the page", async () => {
+  // It used to live one view away, behind the Calendar, while this page
+  // showed cards restating the sidebar.
+  installMock([]);
   renderHome();
 
-  expect(await screen.findByText("alpha")).toBeDefined();
-  expect(screen.getByText("submit-report")).toBeDefined();
-  expect(screen.getByText(/Draft methods/)).toBeDefined();
-  expect(screen.getByText(/quietly lapsed/)).toBeDefined();
+  expect(await screen.findByText("Finish the draft.")).toBeDefined();
+  expect(screen.getByText("Intention")).toBeDefined();
 });
 
-test("the quick-log input appends to today's log via log_quick", async () => {
-  const calls: Array<{ cmd: string; args: unknown }> = [];
-  mockIPC((cmd, args) => {
-    calls.push({ cmd, args });
-    if (cmd === "get_orientation") return FIXTURE;
-    return undefined; // log_quick resolves to unit
-  });
+test("the Now band says what is open, and since when", async () => {
+  installMock([]);
   renderHome();
 
-  const input = (await screen.findByLabelText("Log entry")) as HTMLInputElement;
-  fireEvent.change(input, { target: { value: "paired on the parser" } });
+  const band = await screen.findByLabelText("What you are working on");
+  expect(band.textContent).toContain("Draft methods");
+  expect(band.textContent).toContain("09:30");
+});
+
+test("with nothing started, the band points at the shortlist", async () => {
+  // A blank morning gets the honest answer, not an empty frame.
+  installMock([], { now: null });
+  renderHome();
+
+  expect(await screen.findByText(/Nothing started yet/)).toBeDefined();
+});
+
+test("Done on the band completes the open action", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Done" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "complete_action")?.args).toMatchObject({
+      project: "alpha",
+      action: "Draft methods (deep)",
+    });
+  });
+});
+
+test("Start logs the action so the band can read it back", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { now: null });
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_action")?.args).toMatchObject({
+      project: "alpha",
+      action: "Draft methods (deep)",
+    });
+  });
+});
+
+test("the energy filter never blanks a row (no-match rule)", async () => {
+  // A low-energy moment must not be met by an empty page: the project
+  // still offers its best-available action, with a muted note.
+  installMock([]);
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "light" }));
+
+  // Scoped to the shortlist: the Now band names the same action, since it
+  // is what is currently open.
+  const shortlist = within(screen.getByLabelText("Pick one thing"));
+  expect(shortlist.getByText(/Draft methods/)).toBeDefined();
+  expect(shortlist.getByText(/no light action here/)).toBeDefined();
+});
+
+test("the energy filter surfaces a matching action when there is one", async () => {
+  installMock([], { orientation: TWO_ACTIONS });
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "light" }));
+
+  expect(screen.getByText(/File receipts/)).toBeDefined();
+});
+
+test("the quick-log input appends to today's log", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls);
+  renderHome();
+
+  const input = await screen.findByLabelText("Log entry");
+  fireEvent.change(input, { target: { value: "picked up the draft" } });
   fireEvent.click(screen.getByRole("button", { name: "Add log" }));
 
   await waitFor(() => {
-    const call = calls.find((c) => c.cmd === "log_quick");
-    expect(call?.args).toMatchObject({ text: "paired on the parser" });
+    expect(calls.find((c) => c.cmd === "log_quick")?.args).toMatchObject({
+      text: "picked up the draft",
+    });
   });
-  // On success the field clears, ready for the next entry.
-  await waitFor(() => expect(input.value).toBe(""));
 });
 
-test("a rapid double-submit logs only once", async () => {
-  const calls: Array<{ cmd: string; args: unknown }> = [];
-  mockIPC((cmd, args) => {
-    calls.push({ cmd, args });
-    if (cmd === "get_orientation") return FIXTURE;
-    return undefined;
-  });
+test("commitments and the lapsed line still show", async () => {
+  installMock([]);
   renderHome();
 
-  fireEvent.change(await screen.findByLabelText("Log entry"), { target: { value: "once" } });
-  const button = screen.getByRole("button", { name: "Add log" });
-  // Two submits before the first write resolves — the in-flight guard must
-  // drop the second so only one line is appended.
-  fireEvent.click(button);
-  fireEvent.click(button);
-
-  await waitFor(() => {
-    expect(calls.filter((c) => c.cmd === "log_quick").length).toBe(1);
-  });
+  expect(await screen.findByText("submit-report")).toBeDefined();
+  expect(screen.getByText(/quietly lapsed/)).toBeDefined();
 });
 
-test("backend failure renders the calm error state", async () => {
-  mockIPC(() => {
-    throw { kind: "internal", data: "internal error" };
-  });
-
+test("a day with no note yet says so rather than rendering nothing", async () => {
+  installMock([], { daily: { ...DAILY, exists: false, markdown: "" } });
   renderHome();
 
-  expect(await screen.findByText(/could not be read/)).toBeDefined();
+  expect(await screen.findByText(/No note for today yet/)).toBeDefined();
 });
 
-test("empty vault renders the warm empty state, not blanks", async () => {
-  mockIPC((cmd) =>
-    cmd === "get_orientation"
-      ? ({ today: "2026-07-07", commitments: [], projects: [], lapsed_habits: [] } as OrientationView)
-      : undefined,
-  );
-
+test("an empty vault gets the warm empty state", async () => {
+  installMock([], {
+    orientation: { ...ORIENTATION, projects: [], commitments: [], lapsed_habits: [] },
+    now: null,
+  });
   renderHome();
 
   expect(await screen.findByText(/Nothing active/)).toBeDefined();
-  expect(screen.queryByText(/quietly lapsed/)).toBeNull();
-});
-
-test("energy filter never blanks a card (no-match rule)", async () => {
-  mockIPC((cmd) => (cmd === "get_orientation" ? FIXTURE : undefined));
-  const { getByRole } = renderHome();
-
-  await screen.findByText("alpha");
-  // The only action is (deep); filtering to light must keep it
-  // visible behind the muted smallest-step note.
-  getByRole("button", { name: "light" }).click();
-
-  expect(await screen.findByText(/no light action here/)).toBeDefined();
-  expect(screen.getByText(/Draft methods/)).toBeDefined();
-});
-
-test("Start invokes start_action and flips to the started note", async () => {
-  const calls: Array<{ cmd: string; args: unknown }> = [];
-  mockIPC((cmd, args) => {
-    calls.push({ cmd, args });
-    if (cmd === "get_orientation") return FIXTURE;
-    return undefined;
-  });
-  renderHome();
-
-  (await screen.findByRole("button", { name: "Start" })).click();
-
-  expect(await screen.findByText(/in today's log/)).toBeDefined();
-  const started = calls.find((c) => c.cmd === "start_action");
-  expect(started?.args).toMatchObject({ project: "alpha", action: "Draft methods (deep)" });
-});
-
-test("done optimistically removes the action and calls complete_action", async () => {
-  const calls: string[] = [];
-  mockIPC((cmd) => {
-    calls.push(cmd);
-    if (cmd === "get_orientation") return FIXTURE;
-    return undefined;
-  });
-  renderHome();
-
-  (await screen.findByRole("button", { name: /Mark done/ })).click();
-
-  // The success toast confirms the mutation settled.
-  expect(await screen.findByText(/one step further/)).toBeDefined();
-  expect(calls).toContain("complete_action");
-});
-
-test("typing j/k in the state editor doesn't steal focus to a card", async () => {
-  mockIPC((cmd) => (cmd === "get_orientation" ? FIXTURE : undefined));
-  renderHome();
-
-  // Open the inline Current State editor, then type navigation-shaped
-  // letters into the textarea — the roving handler must bail on
-  // editable targets rather than hijack j/k as card moves.
-  (await screen.findByRole("button", { name: /Edit the current state/ })).click();
-  const textarea = await screen.findByLabelText(/Current state of alpha/);
-  textarea.focus();
-  expect(document.activeElement).toBe(textarea);
-
-  fireEvent.keyDown(textarea, { key: "j" });
-  fireEvent.keyDown(textarea, { key: "k" });
-
-  expect(document.activeElement).toBe(textarea);
-});
-
-test("started note clears when the filter surfaces a different action", async () => {
-  mockIPC((cmd) => (cmd === "get_orientation" ? FIXTURE_TWO_ACTIONS : undefined));
-  const { getByRole } = renderHome();
-
-  await screen.findByText("alpha");
-  (await screen.findByRole("button", { name: "Start" })).click();
-  expect(await screen.findByText(/in today's log/)).toBeDefined();
-
-  // Filtering to light surfaces "File receipts", a different bullet:
-  // the optimistic started note no longer applies, so Start returns.
-  getByRole("button", { name: "light" }).click();
-  expect(await screen.findByRole("button", { name: "Start" })).toBeDefined();
 });

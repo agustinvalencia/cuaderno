@@ -80,8 +80,8 @@ pub use capture::InboxItem;
 pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use config::{ConfigDocument, ConfigSaveError, ConfigValidationError, validate_config_str};
 pub use context::{
-    BacklinkRef, CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange,
-    QuestionBacklinks, TrackingEntry, TrackingPoint, TrackingSeries,
+    BacklinkRef, CompletedActionEntry, CurrentFocus, DailyLogLine, ProjectBacklinks,
+    ProjectStateChange, QuestionBacklinks, TrackingEntry, TrackingPoint, TrackingSeries,
 };
 // Timezone-injected staleness helpers, hidden from the public API but
 // reachable by the deterministic staleness test (#380).

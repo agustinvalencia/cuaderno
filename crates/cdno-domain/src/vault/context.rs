@@ -45,6 +45,7 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::ProjectSummary;
+use super::projects::actions::{LOG_ACTION_DONE_PREFIX, LOG_STARTED_PREFIX};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -649,6 +650,76 @@ impl Vault {
             })
             .collect())
     }
+
+    /// What you are in the middle of, according to today's log.
+    ///
+    /// Starting an action writes `started [[slug]] - text` into the daily
+    /// note and completing it writes `action done on [[slug]] - text`, so
+    /// "what am I on" is already recorded. This reads it back rather than
+    /// keeping a parallel piece of state that could disagree with the
+    /// vault — which also means it sees a start made from the CLI or by an
+    /// agent over MCP, not only one clicked in the app.
+    ///
+    /// The most recent start with no matching completion wins. Several
+    /// starts in a day are normal — you pick something up, put it down,
+    /// pick up something else — and the last one standing is what you are
+    /// on.
+    pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
+        let view = self.read_daily_note(date)?;
+        if !view.exists {
+            return Ok(None);
+        }
+        let doc = MarkdownDocument::parse(view.markdown)?;
+        let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
+            return Ok(None);
+        };
+
+        // Walk forward keeping the open starts in order; a completion
+        // clears its matching start wherever it sits, since a day can
+        // interleave several.
+        let mut open: Vec<CurrentFocus> = Vec::new();
+        for (time, text) in parse_log_lines(section) {
+            if let Some((project, action)) = parse_focus_marker(&text, LOG_STARTED_PREFIX) {
+                open.push(CurrentFocus {
+                    project,
+                    action,
+                    started: time,
+                });
+            } else if let Some((project, action)) =
+                parse_focus_marker(&text, LOG_ACTION_DONE_PREFIX)
+            {
+                open.retain(|f| !(f.project == project && f.action == action));
+            }
+        }
+        Ok(open.pop())
+    }
+}
+
+/// An action started and not yet finished, as recorded in a daily log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CurrentFocus {
+    /// The project slug the action belongs to.
+    pub project: String,
+    /// The action text as logged, energy suffix and all.
+    pub action: String,
+    /// When it was started, from the log line's own stamp.
+    pub started: NaiveTime,
+}
+
+/// Split `<prefix>[[project]] - action` into its project and action.
+///
+/// `None` for a line without the marker, or with it but not in the
+/// wikilink-and-em-dash shape the writers produce: a hand-typed log line
+/// that happens to begin "started something" must not register as a focus.
+fn parse_focus_marker(text: &str, prefix: &str) -> Option<(String, String)> {
+    let rest = text.strip_prefix(prefix)?;
+    let rest = rest.strip_prefix("[[")?;
+    let (project, rest) = rest.split_once("]]")?;
+    let action = rest.trim_start().strip_prefix('\u{2014}')?.trim();
+    if project.is_empty() || action.is_empty() {
+        return None;
+    }
+    Some((project.to_owned(), action.to_owned()))
 }
 
 // ---------------------------------------------------------------------

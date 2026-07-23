@@ -84,7 +84,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         self.resolve_active_project(slug)?;
 
-        let log_entry = format!("started [[{slug}]] \u{2014} {action_text}");
+        let log_entry = format_action_started_log_entry(slug, action_text);
         let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
         Ok(daily_path)
@@ -445,12 +445,25 @@ fn format_action_added_log_entry(slug: &str, action: &str, energy: EnergyLevel) 
     )
 }
 
+/// The marker opening a daily-log line that records an action being
+/// started. Shared with the reader ([`Vault::current_focus`]) so the two
+/// cannot drift: the log IS the record of what you are on, and a parser
+/// keyed on a different string would simply never find anything.
+pub(in crate::vault) const LOG_STARTED_PREFIX: &str = "started ";
+/// The marker for the line recording that action being finished.
+pub(in crate::vault) const LOG_ACTION_DONE_PREFIX: &str = "action done on ";
+
+/// Build the daily-log entry recording an action being started.
+fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {
+    format!("{LOG_STARTED_PREFIX}[[{slug}]] \u{2014} {action_text}")
+}
+
 /// Build the daily-log entry recording an action completion.
 /// `action_text` is the raw text from the project line, including
 /// any `(<energy>)` suffix, so the historical record preserves what
 /// energy bucket the action sat in.
 fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
-    format!("action done on [[{slug}]] — {action_text}")
+    format!("{LOG_ACTION_DONE_PREFIX}[[{slug}]] — {action_text}")
 }
 
 /// If `line` is an open action bullet (`- [ ] <text>`), return the
