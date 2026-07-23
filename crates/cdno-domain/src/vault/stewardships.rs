@@ -85,6 +85,13 @@ pub struct StewardshipSummary {
     /// `last_tracking_date`. `None` when there's no tracking to
     /// measure against. Negative for future-dated tracking (rare;
     /// catches typos).
+    /// Days since the measured date. Declared to TS as `number`, not the
+    /// `bigint` ts-rs would infer from `i64`: Tauri's IPC serialises this
+    /// through JSON, so the value arrives as a JS number. The mismatch was
+    /// latent while callers only compared and stringified it — the first
+    /// arithmetic on a `bigint`-typed value that is really a number throws
+    /// `TypeError: Cannot mix BigInt` (#440).
+    #[cfg_attr(feature = "ts-bindings", ts(type = "number | null"))]
     pub staleness_days: Option<i64>,
 }
 

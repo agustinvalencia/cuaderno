@@ -66,6 +66,17 @@ pub async fn get_orientation(
     .await?
 }
 
+/// What the most recent reconciliation left out of the index (#440).
+///
+/// Reads the recorded counts rather than re-reconciling — the notice is
+/// about the pass that built the index the app is currently running on.
+/// Every reconcile replaces them: the startup pass, a config rebuild, and
+/// each of the watcher's.
+#[tauri::command]
+pub fn get_index_exclusions(state: tauri::State<'_, AppState>) -> crate::events::IndexExclusions {
+    **state.exclusions.load()
+}
+
 /// Today's date for display only (headers, date labels). Domain
 /// calls never take a frontend-computed date.
 #[tauri::command]

@@ -461,7 +461,8 @@ pub fn load_vault_and_ignore(
     store: Arc<dyn VaultStore>,
     index: Arc<dyn VaultIndex>,
     root: &std::path::Path,
-) -> Result<(Vault, IgnoreSet), DomainError> {
+    previous_generation: u32,
+) -> Result<(Vault, IgnoreSet, crate::events::IndexExclusions), DomainError> {
     // A missing file falls back to the default config, matching
     // `open_vault`'s first-launch behaviour.
     let config = VaultConfig::load(root)?;
@@ -470,8 +471,17 @@ pub fn load_vault_and_ignore(
     // matcher must be the same set the rebuilt index was reconciled against.
     let ignore = config.ignore_set()?;
     // Rebuild on the retained store/index — no SQLite reopen.
-    let (vault, _report) = Vault::new(store, index, config)?;
-    Ok((vault, ignore))
+    let (vault, report) = Vault::new(store, index, config)?;
+    // The reload re-reconciles against the NEW globs, so its exclusion
+    // counts supersede the ones the caller is holding: a glob added here
+    // evicts notes from the index, and one narrowed here restores them
+    // (#440). Dropping this report is what left the notice describing a
+    // state that no longer existed.
+    let exclusions = crate::events::IndexExclusions::from_report(
+        &report,
+        crate::events::IndexExclusions::next_generation(previous_generation),
+    );
+    Ok((vault, ignore, exclusions))
 }
 
 /// Rebuild the vault (and its ignore set) from the on-disk config and swap
@@ -481,24 +491,35 @@ pub fn load_vault_and_ignore(
 /// that fits it (`SelfWrite` for a command-driven reload, `External` for a
 /// watcher-driven one).
 ///
-/// Never-brick: the fresh `IgnoreSet` and `Vault` are both built (via
-/// [`load_vault_and_ignore`]) BEFORE either handle is swapped, so any error
-/// returns with the OLD vault and OLD ignore set still live — the session
-/// is never left vault-less. This is the last safety net beneath PR3's
-/// pre-write validate gate.
+/// Never-brick: every fresh handle — the `Vault`, its `IgnoreSet`, and the
+/// exclusion counts — is built (via [`load_vault_and_ignore`]) BEFORE any
+/// of them is swapped, so an error returns with the old set still live and
+/// the session is never left vault-less. This is the last safety net
+/// beneath PR3's pre-write validate gate, and it holds for any handle added
+/// here as long as the build-then-swap split is kept.
 ///
 /// Synchronous by design: the watcher thread is a plain `std::thread` and
 /// calls this directly; the async command hops it onto the blocking pool.
 pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), DomainError> {
     let state = app.state::<AppState>();
-    let (vault, ignore) =
-        load_vault_and_ignore(state.store.clone(), state.index.clone(), &state.root)?;
-    // Both built successfully — only now swap, so a failure above leaves the
-    // old handles live. The vault swaps first, then its matching ignore set;
-    // an in-flight command holding an owned `Arc` snapshot of the old vault
-    // finishes cleanly (the swap never pulls a vault out from under it).
+    let previous_generation = state.exclusions.load().config_generation;
+    let (vault, ignore, exclusions) = load_vault_and_ignore(
+        state.store.clone(),
+        state.index.clone(),
+        &state.root,
+        previous_generation,
+    )?;
+    // All built successfully — only now swap, so a failure above leaves the
+    // old handles live. The vault swaps first, then its matching ignore set,
+    // then the counts describing it; an in-flight command holding an owned
+    // `Arc` snapshot of the old vault finishes cleanly (the swap never pulls
+    // a vault out from under it). The three stores are not atomic as a
+    // group, so a read landing between them sees an older count — harmless,
+    // since the `vault:changed` that prompts a re-read is emitted after the
+    // whole sequence.
     state.vault.store(Arc::new(vault));
     state.ignore.store(Arc::new(ignore));
+    state.exclusions.store(Arc::new(exclusions));
     Ok(())
 }
 

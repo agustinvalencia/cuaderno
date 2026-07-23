@@ -15,7 +15,7 @@ const ROWS: PortfolioSummary[] = [
     question: "How does the surrogate behave?",
     evidence_count: 4,
     last_updated: "2026-07-05",
-    staleness_days: 3n,
+    staleness_days: 3,
   },
   {
     slug: "empty",

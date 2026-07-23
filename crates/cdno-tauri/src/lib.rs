@@ -84,6 +84,22 @@ fn init_with_vault(
             "startup reconciliation applied changes",
         );
     }
+    // What reconciliation left OUT of the index (#440). A file absent from
+    // the index is absent from search, lint and backlinks too, so these
+    // counts are logged unconditionally and surfaced to the UI — the app
+    // previously discarded them, which is how an over-broad `ignore` glob
+    // could evict every portfolio note and read as a broken view rather
+    // than a misconfigured vault.
+    let exclusions = crate::events::IndexExclusions::from_report(&opened.report, 0);
+    if exclusions.ignored + exclusions.artefacts > 0 {
+        tracing::info!(
+            ignored = exclusions.ignored,
+            artefacts = exclusions.artefacts,
+            indexed = exclusions.indexed,
+            ignore_looks_over_broad = exclusions.ignore_looks_over_broad,
+            "startup reconciliation excluded files from the index",
+        );
+    }
 
     // The store and index Arcs are shared three ways: the live vault owns
     // one clone, the watcher thread's deps another (for its reconcile
@@ -94,6 +110,10 @@ fn init_with_vault(
     // AppState and the watcher deps: a config reload swaps a fresh set in
     // via AppState and the watcher's next reconcile loads it (GH #365 PR4).
     let ignore = Arc::new(ArcSwap::from(opened.ignore));
+    // Shared by reference with the watcher deps, exactly as `ignore` is: the
+    // watcher's reconciles are reconciliations too, so both paths write the
+    // counts the #440 notice reads.
+    let exclusions = Arc::new(ArcSwap::from_pointee(exclusions));
     app.manage(AppState {
         vault: ArcSwap::from_pointee(opened.vault),
         store: opened.store.clone(),
@@ -101,6 +121,7 @@ fn init_with_vault(
         ignore: ignore.clone(),
         journal: WriteJournal::default(),
         root: root.clone(),
+        exclusions: exclusions.clone(),
     });
 
     // Global capture hotkey (⌘⇧C on macOS; SUPER maps to Cmd).
@@ -139,6 +160,7 @@ fn init_with_vault(
         store: opened.store,
         index: opened.index,
         ignore,
+        exclusions,
     };
     let watcher_app = app.clone();
     std::thread::spawn(move || watcher::run(watcher_app, deps, rx));
@@ -378,6 +400,7 @@ pub fn run() {
             deeplink::take_pending_deeplink,
             commands::orientation::get_orientation,
             commands::orientation::get_today,
+            commands::orientation::get_index_exclusions,
             commands::actions::start_action,
             commands::actions::complete_action,
             commands::actions::add_action,

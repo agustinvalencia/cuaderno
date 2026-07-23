@@ -6,7 +6,34 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **The desktop app says when your `ignore` globs are hiding notes.** Reconciliation
+  reports how many markdown files it left out of the index, and the app surfaces a calm,
+  dismissible notice when the `ignore` count looks less like housekeeping than like a
+  mistake — proportional with a floor, so excluding a lone `CLAUDE.md` stays silent while
+  a glob swallowing a quarter of the vault does not. A file absent from the index is
+  absent from search, lint and backlinks too, so an over-broad pattern used to present as
+  "this section is broken" rather than "this vault is misconfigured"; the CLI has warned
+  about it since the globs shipped, but the app discarded the same numbers. Artefact
+  exclusions are reported alongside but never raise the notice — they are by design, not
+  configuration. The counts follow the live config: a reload that adds or narrows an
+  `ignore` glob re-reconciles the index, so the notice appears and clears in step rather
+  than describing the state at launch. The watcher's own reconciles update it too, so
+  moving notes under a folder an existing glob already matches is reported even though no
+  config was edited. (#440)
+
 ### Fixed
+
+- **Portfolio rows in the Strategic view link to their portfolio.** The same portfolio
+  already routed correctly as a chip on a question card while rendering as plain text in
+  the portfolio-health table. (#440)
+- **`staleness_days` and `days_unchanged` are typed as `number`, not `bigint`.** ts-rs
+  lowers Rust `i64` to `bigint`, but Tauri's IPC serialises through JSON, so these arrive
+  as JS numbers. Nothing broke while callers only compared and stringified them, and the
+  test fixtures hard-coded `3n` so nothing would have caught it — the first arithmetic on
+  one would have thrown `TypeError: Cannot mix BigInt`. The bindings now declare what
+  actually crosses the wire. (#440)
 
 - **Markdown filed into a portfolio is treated as an attachment, not a note.** Filing a
   `.md` document with `cdno file` writes an evidence stub beside a folder holding the

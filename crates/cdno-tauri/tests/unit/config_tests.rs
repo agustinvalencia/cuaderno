@@ -252,8 +252,8 @@ fn load_vault_and_ignore_builds_from_a_valid_config() {
 
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
-    let (vault, _ignore) =
-        load_vault_and_ignore(store, index, tmp.path()).expect("a valid config must build");
+    let (vault, _ignore, _exclusions) =
+        load_vault_and_ignore(store, index, tmp.path(), 0).expect("a valid config must build");
 
     let types = vault.list_templates().expect("list_templates");
     assert!(
@@ -424,8 +424,8 @@ fn load_vault_and_ignore_reconciles_a_pending_note_into_the_index() {
         "precondition: the note is not indexed before the rebuild"
     );
 
-    let (_vault, _ignore) =
-        load_vault_and_ignore(store, index.clone(), tmp.path()).expect("a valid config must build");
+    let (_vault, _ignore, _exclusions) = load_vault_and_ignore(store, index.clone(), tmp.path(), 0)
+        .expect("a valid config must build");
 
     assert!(
         index.find_by_path(&note).unwrap().is_some(),
@@ -444,7 +444,7 @@ fn load_vault_and_ignore_rejects_a_broken_config() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     assert!(
-        load_vault_and_ignore(store, index, tmp.path()).is_err(),
+        load_vault_and_ignore(store, index, tmp.path(), 0).is_err(),
         "a broken config must error, leaving nothing to swap"
     );
 }
@@ -649,4 +649,83 @@ fn config_set_note_type_maps_a_parse_error_to_an_invalid_cmd_error() {
     ))
     .expect_err("a broken buffer must error");
     assert!(matches!(err, CmdError::Invalid(_)));
+}
+
+// --- Exclusion counts follow the live config (#440) ---
+//
+// The notice is only useful if it describes the index the app is actually
+// running on. A config reload re-reconciles against the new `ignore`
+// globs, so the counts move in both directions — and getting this wrong
+// breaks the notice on precisely the flow it recommends, since its own
+// copy tells the user to go and edit `ignore`.
+
+/// Seed a portfolio's worth of notes so an over-broad glob has something
+/// to evict.
+fn seed_portfolio_notes(store: &Arc<dyn VaultStore>, count: usize) {
+    store
+        .write_file(
+            &vp("portfolios/demo/_index.md"),
+            "---\ntype: portfolio\nquestion: Does it hold?\ncreated: 2026-07-03\n---\n# Q\n",
+        )
+        .unwrap();
+    for n in 0..count {
+        store
+            .write_file(
+                &vp(&format!("portfolios/demo/2026-07-{:02}-note.md", n + 1)),
+                "---\ntype: evidence\ncreated: 2026-07-03\nsource: An observation\nportfolio: demo\norigin: \"[[projects/foo]]\"\n---\nProse.\n",
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn a_reload_that_adds_an_over_broad_glob_reports_the_exclusions() {
+    // The failure the notice exists to catch, arriving mid-session rather
+    // than at launch: the glob is added, the notes leave the index, and
+    // the counts must say so.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_config_at(tmp.path(), "");
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    seed_portfolio_notes(&store, 9);
+
+    let (_v, _i, before) =
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
+    assert_eq!(before.ignored, 0);
+    assert!(!before.ignore_looks_over_broad);
+
+    write_config_at(tmp.path(), "ignore = [\"portfolios/*/**\"]\n");
+    let (_v, _i, after) =
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
+
+    assert_eq!(after.ignored, 10, "every portfolio note is excluded");
+    assert_eq!(after.indexed, 0);
+    assert!(
+        after.ignore_looks_over_broad,
+        "a glob taking the whole vault must raise the notice"
+    );
+}
+
+#[test]
+fn a_reload_that_narrows_the_glob_clears_the_exclusions() {
+    // The mirror, and the one that made the stale snapshot embarrassing:
+    // the user follows the notice's own advice, the notes come back, and
+    // the notice has to stop claiming they are missing.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    write_config_at(tmp.path(), "ignore = [\"portfolios/*/**\"]\n");
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    seed_portfolio_notes(&store, 9);
+
+    let (_v, _i, before) =
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
+    assert!(before.ignore_looks_over_broad);
+
+    write_config_at(tmp.path(), "ignore = [\"portfolios/*/*/**\"]\n");
+    let (_v, _i, after) =
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
+
+    assert_eq!(after.ignored, 0);
+    assert_eq!(after.indexed, 10, "every note returns to the index");
+    assert!(!after.ignore_looks_over_broad);
 }

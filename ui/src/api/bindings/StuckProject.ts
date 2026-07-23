@@ -6,4 +6,13 @@
  * `projects` to hang the grey "state untouched for N days" hint on the
  * matching card.
  */
-export type StuckProject = { slug: string, days_unchanged: bigint, };
+export type StuckProject = { slug: string, 
+/**
+ * Days since the measured date. Declared to TS as `number`, not the
+ * `bigint` ts-rs would infer from `i64`: Tauri's IPC serialises this
+ * through JSON, so the value arrives as a JS number. The mismatch was
+ * latent while callers only compared and stringified it — the first
+ * arithmetic on a `bigint`-typed value that is really a number throws
+ * `TypeError: Cannot mix BigInt` (#440).
+ */
+days_unchanged: number, };

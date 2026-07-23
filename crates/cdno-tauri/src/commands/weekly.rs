@@ -162,6 +162,13 @@ pub struct WeeklyLogLine {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StuckProject {
     pub slug: String,
+    /// Days since the measured date. Declared to TS as `number`, not the
+    /// `bigint` ts-rs would infer from `i64`: Tauri's IPC serialises this
+    /// through JSON, so the value arrives as a JS number. The mismatch was
+    /// latent while callers only compared and stringified it — the first
+    /// arithmetic on a `bigint`-typed value that is really a number throws
+    /// `TypeError: Cannot mix BigInt` (#440).
+    #[cfg_attr(feature = "ts-bindings", ts(type = "number"))]
     pub days_unchanged: i64,
 }
 

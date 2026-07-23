@@ -45,6 +45,12 @@ pub struct WatcherDeps {
     /// call rather than cached, so a mid-session swap takes effect on the
     /// very next batch.
     pub ignore: Arc<ArcSwap<IgnoreSet>>,
+    /// The exclusion counts the #440 notice reads, shared by reference with
+    /// [`AppState`]. Every reconcile updates them: the watcher's passes are
+    /// reconciliations too, and a bulk move of notes into a folder an
+    /// existing glob already matches changes what is in the index without
+    /// any config edit to trigger a rebuild.
+    pub exclusions: Arc<ArcSwap<crate::events::IndexExclusions>>,
 }
 
 /// Consume debounced batches until the sender (the `FsFileWatcher`,
@@ -158,9 +164,26 @@ fn handle_batch(app: &AppHandle, deps: &WatcherDeps, batch: Vec<FileEvent>) {
             config_changed: true,
         } => handle_external_config_edit(app, deps, areas, paths),
         other => {
-            emit_watcher_status(app, run_reconcile(deps));
+            let outcome = run_reconcile(deps);
+            emit_watcher_status(app, outcome.ok);
             match other {
-                BatchPlan::Quiet => {}
+                // A quiet batch normally tells the frontend nothing. But if
+                // this pass changed what is excluded from the index, the
+                // exclusion notice has to hear about it — and the batch that
+                // causes it (notes moved into an ignored folder) is often
+                // exactly the one that classifies to no area at all.
+                BatchPlan::Quiet => {
+                    if outcome.exclusions_changed {
+                        let _ = app.emit(
+                            VAULT_CHANGED,
+                            VaultChanged {
+                                origin: Origin::External,
+                                areas: Vec::new(),
+                                paths: Vec::new(),
+                            },
+                        );
+                    }
+                }
                 BatchPlan::Rescan => {
                     let _ = app.emit(
                         VAULT_CHANGED,
@@ -354,8 +377,12 @@ fn emit_config_reload_outcome(
     paths: Vec<String>,
 ) {
     let attempt = classify_rebuild(&result);
+    // A failed rebuild leaves the old vault live, so the standalone pass is
+    // what repairs the index — and its exclusion counts are the ones that
+    // now describe it. A successful rebuild already stored its own inside
+    // `rebuild_and_swap`.
     let ok = if attempt.needs_standalone_reconcile() {
-        run_reconcile(deps)
+        run_reconcile(deps).ok
     } else {
         true
     };
@@ -449,9 +476,27 @@ fn emit_config_status_with_edits(
     );
 }
 
-/// Repair the index; `false` (→ degraded pill + poll fallback in the
-/// frontend) only on catastrophic failure, not per-file errors.
-fn run_reconcile(deps: &WatcherDeps) -> bool {
+/// What a reconcile pass did, beyond repairing the index.
+#[derive(Debug, Clone, Copy)]
+pub struct ReconcileOutcome {
+    /// Index health for the degraded pill.
+    pub ok: bool,
+    /// Whether what is excluded from the index moved. Worth an event even
+    /// when the batch itself was quiet: a note moved into a folder an
+    /// `ignore` glob matches leaves the index without touching any area the
+    /// frontend subscribes to (#440).
+    pub exclusions_changed: bool,
+}
+
+/// Repair the index. `ok` is `false` (→ degraded pill + poll fallback in
+/// the frontend) only on catastrophic failure, not per-file errors;
+/// `exclusions_changed` says whether this pass altered what is excluded
+/// from the index, which the caller needs because that change is worth
+/// telling the frontend about even when nothing else in the batch was.
+///
+/// Public so a test can drive the exact pass the watcher thread runs,
+/// without an `AppHandle` or a real filesystem watcher.
+pub fn run_reconcile(deps: &WatcherDeps) -> ReconcileOutcome {
     // Load the current ignore set per call so a config reload's swap
     // (GH #365 PR4) is honoured on the very next reconcile.
     let ignore = deps.ignore.load_full();
@@ -463,11 +508,45 @@ fn run_reconcile(deps: &WatcherDeps) -> bool {
                     "reconcile completed with per-file errors"
                 );
             }
-            true
+            // This pass is what the index now reflects, so the notice must
+            // read from it (#440). Without this the counts would only ever
+            // follow a config rebuild, and moving 200 notes under a folder
+            // an existing glob matches would evict them from search, lint
+            // and backlinks with nothing said.
+            //
+            // Unless the globs moved underneath us. A config rebuild can swap
+            // a fresh `IgnoreSet` in while this pass is still walking, and
+            // these counts were computed against the set loaded at entry — so
+            // publishing them would overwrite the rebuild's correct numbers
+            // with ones describing globs that are no longer in force, and the
+            // emit below would then push that stale value at the user. The
+            // rebuild's own counts are authoritative; drop ours. (The index
+            // itself can still be left mixed by the interleaving — that is
+            // #459, a pre-existing race this only declines to make visible.)
+            if !Arc::ptr_eq(&ignore, &deps.ignore.load_full()) {
+                tracing::debug!("ignore set swapped mid-reconcile; keeping the rebuild's counts");
+                return ReconcileOutcome {
+                    ok: true,
+                    exclusions_changed: false,
+                };
+            }
+            let previous = **deps.exclusions.load();
+            // A reconcile never changes the config, so the generation rides
+            // through untouched — only a rebuild advances it.
+            let fresh =
+                crate::events::IndexExclusions::from_report(&report, previous.config_generation);
+            deps.exclusions.store(Arc::new(fresh));
+            ReconcileOutcome {
+                ok: true,
+                exclusions_changed: fresh != previous,
+            }
         }
         Err(e) => {
             tracing::error!(error = %e, "watcher reconcile failed");
-            false
+            ReconcileOutcome {
+                ok: false,
+                exclusions_changed: false,
+            }
         }
     }
 }

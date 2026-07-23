@@ -122,6 +122,7 @@ fn mock_app_configured(
                 cdno_core::config::IgnoreSet::empty(),
             )),
             journal: WriteJournal::default(),
+            exclusions: Arc::new(arc_swap::ArcSwap::from_pointee(Default::default())),
             root: std::path::PathBuf::from("/nonexistent-test-vault"),
         })
         .build(mock_context(noop_assets()))
@@ -1669,6 +1670,7 @@ fn mock_app_rooted(
                 cdno_core::config::IgnoreSet::empty(),
             )),
             journal: WriteJournal::default(),
+            exclusions: Arc::new(arc_swap::ArcSwap::from_pointee(Default::default())),
             root,
         })
         .build(mock_context(noop_assets()))
@@ -1872,6 +1874,7 @@ fn mock_app_fs_rooted(
                 cdno_core::config::IgnoreSet::empty(),
             )),
             journal: WriteJournal::default(),
+            exclusions: Arc::new(arc_swap::ArcSwap::from_pointee(Default::default())),
             root,
         })
         .build(mock_context(noop_assets()))

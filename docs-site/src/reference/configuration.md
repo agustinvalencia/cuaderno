@@ -50,12 +50,44 @@ collaborators = "Who are the collaborators?"
 |-----|------|---------|---------|
 | `vault.name` | string | `"My Vault"` | A human label for the vault. |
 | `vault.max_active_projects` | integer | `5` | The active-project cap. |
-| `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. |
+| `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. See [Ignore globs](#ignore-globs). |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that **built-in** note type, enforced by `cdno lint`. |
 | `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for a built-in note type (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor, type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
+
+## Ignore globs
+
+`ignore` lists files that live in the vault directory but are not notes — repo scaffolding like
+`CLAUDE.md` or `README.md`. They are excluded from the index, and therefore from **search, lint and
+backlinks** as well. The files are never touched on disk.
+
+Patterns are matched against each file's vault-relative path:
+
+| Pattern | Matches |
+|---|---|
+| `CLAUDE.md` | that file at the vault root |
+| `**/*.draft.md` | a `.draft.md` at any depth |
+| `folder/*/**` | everything **one or more** levels below `folder/<anything>/` |
+| `folder/*/*/**` | everything **two or more** levels below `folder/<anything>/` |
+
+The last two are the trap worth knowing. `*` stays inside one path segment but `**` is recursive, so
+`portfolios/*/**` does not mean "the level below a portfolio" — it matches the portfolio's own notes
+as well as anything nested under them. A glob written that way excludes every note in the folder it
+was meant to tidy, and because an unindexed note is also unsearchable and unlinkable, the symptom
+looks like a broken view rather than a misconfigured vault.
+
+Two things guard against that:
+
+- `cdno reindex` prints how many files the globs excluded.
+- The desktop app shows a dismissible notice when the count looks disproportionate — a lone
+  `CLAUDE.md` stays silent, a glob swallowing a large share of the vault does not.
+
+If notes go missing, clear the pattern and run `cdno reindex`: every row comes back.
+
+Note that attachment artefacts filed into a portfolio need no `ignore` entry — they are excluded
+automatically, by location. See [vault structure](../concepts/vault-structure.md).
 
 ## Typed schema fields
 
