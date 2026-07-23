@@ -40,22 +40,40 @@ function daysInMonth(year: number, month: number): number {
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** Six rows of seven. The most a month can need is 6 (31 days starting on
+ * a Sunday, Monday-first), so a fixed grid is uniform without ever
+ * clipping. */
+const CELLS = 42;
+
 export default function MonthGrid({
   year,
   month,
   noteDays,
   selectedDay,
+  today,
   onSelectDay,
 }: {
   /** Calendar year of the shown month. */
   year: number;
   /** Calendar month, 1..12. */
   month: number;
-  /** Day-of-month numbers that have a daily note (for the marks). */
-  noteDays: Set<number>;
+  /** `YYYY-MM-DD` of every day that has a daily note.
+   *
+   * Full dates, not day-of-month numbers: collapsing to integers was
+   * correct for the shown month and meant the grid could never mark
+   * anything outside it, which is a floor this component should not have
+   * (#446). */
+  noteDays: Set<string>;
   /** The selected day-of-month, or null when nothing is selected (e.g.
    * the shown month differs from the selection's month). */
   selectedDay: number | null;
+  /** `YYYY-MM-DD` of the real today, stamped in Rust (`get_today`).
+   *
+   * The grid is "the log through time", and paging it without an anchor
+   * means losing your place on every turn. Today used to look marked only
+   * in the current month, and only because it happened to be the initial
+   * selection. */
+  today: string;
   /** Called with a day's `YYYY-MM-DD` string when it is chosen. */
   onSelectDay: (iso: string) => void;
 }) {
@@ -124,8 +142,10 @@ export default function MonthGrid({
         ))}
         {Array.from({ length: total }, (_unused, i) => {
           const day = i + 1;
-          const hasNote = noteDays.has(day);
+          const iso = isoDay(year, month, day);
+          const hasNote = noteDays.has(iso);
           const isSelected = selectedDay === day;
+          const isToday = iso === today;
           return (
             <button
               key={day}
@@ -134,14 +154,20 @@ export default function MonthGrid({
                 cellRefs.current[day] = el;
               }}
               aria-pressed={isSelected}
-              aria-label={`${label} ${day}${hasNote ? ", has a note" : ""}`}
+              // Today rides the name, not only the ring: an anchor a
+              // screen reader cannot find is not an anchor.
+              aria-label={`${label} ${day}${isToday ? ", today" : ""}${hasNote ? ", has a note" : ""}`}
               tabIndex={day === focusedDay ? 0 : -1}
               onClick={() => onSelectDay(isoDay(year, month, day))}
+              // Two independent states, two independent marks: the
+              // selection fills, today rings, and the day that is both
+              // wears both. One style doing double duty is what made
+              // today vanish the moment you selected another day.
               className={`flex aspect-square flex-col items-center justify-center rounded border text-sm ${
                 isSelected
                   ? "border-line bg-bg-sunken font-medium text-ink"
                   : "border-transparent text-ink-muted hover:border-line hover:text-ink"
-              }`}
+              } ${isToday ? "ring-1 ring-inset ring-accent-interactive" : ""}`}
             >
               <span>{day}</span>
               {/* A calm dot marks a note-bearing day — never red, and
@@ -156,6 +182,12 @@ export default function MonthGrid({
             </button>
           );
         })}
+        {/* Trailing blanks to a fixed six-row grid. Without them the last
+            row is short and the card's bottom edge lands somewhere new
+            each month — the shape you page through should not move. */}
+        {Array.from({ length: CELLS - offset - total }, (_unused, i) => (
+          <div key={`tail-${i}`} aria-hidden />
+        ))}
       </div>
     </div>
   );

@@ -25,6 +25,7 @@ import {
 import { useReader } from "../../shell/reader";
 import { QuickLog } from "../../components/ui/quick-log";
 import MonthGrid from "./MonthGrid";
+import { useMediaQuery, WIDE } from "../../lib/useMediaQuery";
 
 /** Which note the embedded panel is showing for the selected day. */
 type PanelMode = "daily" | "weekly" | "monthly";
@@ -107,6 +108,12 @@ function CalendarBody({ today }: { today: string }) {
   const [showPicker, setShowPicker] = useState(false);
   const pickToggleRef = useRef<HTMLButtonElement>(null);
 
+  // With room for two columns the grid is pinned beside the note rather
+  // than summoned over it. The overview is the reason a calendar view
+  // exists; hiding it by default and hiding it again on use made the
+  // month shape something you glimpse rather than something you read.
+  const pinned = useMediaQuery(WIDE);
+
   // The days in the shown month that have a note, for the grid marks.
   const monthDays = useQuery({
     queryKey: ["list_daily_dates", viewYear, viewMonth],
@@ -173,8 +180,11 @@ function CalendarBody({ today }: { today: string }) {
   function selectDay(iso: string) {
     setSelectedDate(iso);
     setMode("daily");
-    // Return focus to the (always-mounted) toggle before the grid hides,
-    // so a keyboard user's place isn't lost to document.body.
+    // Collapse the narrow layout's grid on choose, returning focus to the
+    // toggle first so a keyboard user's place isn't lost to document.body.
+    // No guard for the pinned case: `gridOpen` ignores `showPicker` there,
+    // and the toggle is not rendered, so both lines are already no-ops —
+    // a `if (pinned) return` would be a branch nothing could observe.
     pickToggleRef.current?.focus();
     setShowPicker(false);
   }
@@ -195,14 +205,16 @@ function CalendarBody({ today }: { today: string }) {
   const selectedDayInView =
     selYear === viewYear && selMonth === viewMonth ? selDay : null;
 
-  const noteDays = new Set(
-    (monthDays.data ?? [])
-      .map((iso) => Number(iso.split("-")[2]))
-      .filter((d) => !Number.isNaN(d)),
-  );
+  // Full ISO dates, passed through as the backend stamped them. They used
+  // to be collapsed to day-of-month integers and re-parsed on every
+  // render, which was correct for the shown month and meant the grid could
+  // never mark anything outside it.
+  const noteDays = new Set(monthDays.data ?? []);
+
+  const gridOpen = pinned || showPicker;
 
   return (
-    <div className="mx-auto max-w-3xl p-8">
+    <div className="mx-auto max-w-5xl p-8">
       {/* The note is the hero; the month grid is a secondary, hideable
           date picker (UI request 2026-07-12) — day-to-day movement uses
           the panel's prev/next, and the grid is only summoned for a
@@ -227,27 +239,36 @@ function CalendarBody({ today }: { today: string }) {
           >
             Today
           </button>
-          <button
-            type="button"
-            ref={pickToggleRef}
-            onClick={() => setShowPicker((open) => !open)}
-            aria-expanded={showPicker}
-            aria-controls="calendar-date-picker"
-            className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink"
-          >
-            {showPicker ? "Hide calendar" : "Pick a date"}
-          </button>
+          {/* Meaningless where the grid is pinned, so it is not offered
+              there. "The month" rather than "Pick a date": it is the
+              overview, and calling it a picker was half the reason it
+              behaved like one. */}
+          {!pinned && (
+            <button
+              type="button"
+              ref={pickToggleRef}
+              onClick={() => setShowPicker((open) => !open)}
+              aria-expanded={showPicker}
+              aria-controls="calendar-date-picker"
+              className="rounded border border-line px-3 py-1 text-sm text-ink-muted hover:text-ink"
+            >
+              {showPicker ? "Hide the month" : "The month"}
+            </button>
+          )}
         </div>
       </div>
 
+      <div className={pinned ? "mt-4 grid grid-cols-[19rem_1fr] items-start gap-8" : ""}>
       {/* Kept mounted and toggled via `hidden` (not conditionally
           rendered) so the toggle's `aria-controls` always resolves; a
           `hidden` region also drops out of the a11y tree when collapsed. */}
       <section
         id="calendar-date-picker"
         aria-label="Month"
-        hidden={!showPicker}
-        className="mt-4 rounded-lg border border-line bg-bg-surface p-4"
+        hidden={!gridOpen}
+        className={`rounded-lg border border-line bg-bg-surface p-4 ${
+          pinned ? "sticky top-0" : "mt-4"
+        }`}
       >
         <div className="mb-3 flex items-center justify-between">
           <button
@@ -277,11 +298,12 @@ function CalendarBody({ today }: { today: string }) {
           month={viewMonth}
           noteDays={noteDays}
           selectedDay={selectedDayInView}
+          today={today}
           onSelectDay={selectDay}
         />
       </section>
 
-      <section aria-label="Note" className="mt-6 min-w-0">
+      <section aria-label="Note" className={pinned ? "min-w-0" : "mt-6 min-w-0"}>
         <Panel
           mode={mode}
           setMode={setMode}
@@ -297,6 +319,7 @@ function CalendarBody({ today }: { today: string }) {
           onWikilink={openTarget}
         />
       </section>
+      </div>
     </div>
   );
 }

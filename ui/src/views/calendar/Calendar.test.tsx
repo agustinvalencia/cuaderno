@@ -127,7 +127,7 @@ test("the Today button jumps back to today, and is disabled while already on it"
   expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
   // Focus is handed to the picker toggle, not dropped to the body, since
   // Today disabled itself on landing.
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pick a date" }));
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "The month" }));
 });
 
 test("Today is enabled on today's weekly view and switches back to the day", async () => {
@@ -210,16 +210,16 @@ test("the month grid is a hideable picker, collapsing once a day is chosen", asy
   // one note-bearing cell in the fixture, so its marker stands in for the
   // grid's presence).
   await screen.findByRole("heading", { name: "Wednesday" });
-  const pick = screen.getByRole("button", { name: "Pick a date" });
+  const pick = screen.getByRole("button", { name: "The month" });
   expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
 
-  // "Pick a date" reveals the month grid.
+  // "The month" reveals the grid.
   fireEvent.click(pick);
-  const day = await screen.findByRole("button", { name: /15, has a note/ });
+  const day = await screen.findByRole("button", { name: /15,.*has a note/ });
 
   // Choosing a day reads it and re-collapses the picker.
   fireEvent.click(day);
-  expect(screen.getByRole("button", { name: "Pick a date" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "The month" })).toBeDefined();
   expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
   const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
   expect(reads).toContain("2026-07-15");
@@ -301,4 +301,65 @@ test("prev-day steps to the neighbour the backend stamped", async () => {
   expect(await screen.findByText("No note for this day yet.")).toBeDefined();
   const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
   expect(reads).toContain("2026-07-14");
+});
+
+
+/** Pretend the window is wide enough for two columns. jsdom has no
+ * layout, so the breakpoint is read through `matchMedia` rather than a
+ * Tailwind class — which is also the only way it can be asserted. */
+function setWide(wide: boolean) {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: wide,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+}
+
+test("on a wide window the month is pinned beside the note, not summoned over it", async () => {
+  // The overview is the reason a calendar view exists. It used to be
+  // collapsed by default and to hide itself again the moment you used it.
+  setWide(true);
+  try {
+    installMock([]);
+    renderView();
+
+    // Visible with nothing clicked, and no toggle offered — there is
+    // nothing to toggle.
+    expect(await screen.findByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /The month/ })).toBeNull();
+  } finally {
+    setWide(false);
+  }
+});
+
+test("a pinned month does not vanish when you choose a day", async () => {
+  setWide(true);
+  try {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    installMock(calls);
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: /15,.*has a note/ }));
+
+    expect(screen.getByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+    const reads = calls
+      .filter((c) => c.cmd === "read_daily")
+      .map((c) => (c.args as { date: string }).date);
+    expect(reads).toContain("2026-07-15");
+  } finally {
+    setWide(false);
+  }
+});
+
+test("today is marked in the grid, from the date the backend stamped", async () => {
+  setWide(true);
+  try {
+    installMock([]);
+    renderView();
+    expect(await screen.findByRole("button", { name: /15, today/ })).toBeDefined();
+  } finally {
+    setWide(false);
+  }
 });
