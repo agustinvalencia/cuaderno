@@ -552,3 +552,46 @@ fn start_action_rejects_parked_project_and_blank_action() {
         .unwrap_err();
     assert!(matches!(blank, DomainError::EmptyField { .. }), "{blank:?}");
 }
+
+#[test]
+fn complete_action_accepts_the_query_it_just_handed_out() {
+    // Every action the tool creates carries an energy suffix, and both
+    // `list_actions` and the daily log carry the bullet verbatim — so the
+    // text a caller was just shown IS the suffixed form. Rejecting it made
+    // the Today page's Done button (#442) unable to close anything: the
+    // needle kept its suffix while every candidate had theirs stripped.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (deep)",
+        )
+        .expect("the suffixed query must match the bullet it came from");
+
+    // Completion removes the bullet rather than ticking it.
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        !content.contains("Draft the methods section"),
+        "the bullet is gone: {content}"
+    );
+}
+
+#[test]
+fn complete_action_still_accepts_a_bare_query() {
+    // The suffix-free phrase a person would type by hand keeps working.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(dt(2026, 5, 2, 9, 30), "alpha", "methods section")
+        .expect("a substring query still matches");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        !content.contains("Draft the methods section"),
+        "content: {content}"
+    );
+}

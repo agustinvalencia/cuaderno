@@ -16,6 +16,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   clicked in the app. With nothing open it becomes the pick-one prompt instead of
   disappearing. (#442)
 
+### Fixed
+
+- **Completing an action accepts the text you were just shown.** Every action the tool
+  creates carries an energy suffix, and both the action list and the daily log carry the
+  bullet verbatim — but the matcher stripped that suffix from each candidate while leaving
+  it on the query, so the obvious query never matched. Marking an action done from the
+  Today page, the Actions list or a project map all passed the suffixed text; the query is
+  now stripped too, and a bare phrase still matches as before. (#442)
+
 ### Changed
 
 - **Today is the day's own note.** The daily note — intention, standup, agenda, and the

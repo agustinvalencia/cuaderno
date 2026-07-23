@@ -147,17 +147,16 @@ function DailyNote({ date }: { date: string }) {
 
   if (!data) return null;
 
+  // Parsed once: the frontmatter and the sections come from the same pass.
+  const note = data.exists ? parseNote(data.markdown) : null;
+
   return (
     <section aria-label="Today's note" className="mt-10 border-t border-line pt-6">
-      {data.exists ? (
+      {note ? (
         <>
-          <MetaPanel frontmatter={parseNote(data.markdown).frontmatter} />
+          <MetaPanel frontmatter={note.frontmatter} />
           <div className="mt-4">
-            <SectionedBody
-              sections={parseNote(data.markdown).sections}
-              onWikilink={onWikilink}
-              capLogsHeight
-            />
+            <SectionedBody sections={note.sections} onWikilink={onWikilink} capLogsHeight />
           </div>
         </>
       ) : (

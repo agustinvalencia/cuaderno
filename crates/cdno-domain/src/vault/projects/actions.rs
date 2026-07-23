@@ -170,7 +170,13 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        let needle = query.trim().to_lowercase();
+        // Strip the energy suffix from the QUERY as well as from each
+        // candidate. Every action the tool creates carries one, and both
+        // `list_actions` and the daily log carry the bullet verbatim — so
+        // the obvious query, the text the caller was just shown, arrives
+        // suffixed and would never match a candidate that had its suffix
+        // removed. Callers passing a bare phrase are unaffected.
+        let needle = strip_energy_suffix(query.trim()).to_lowercase();
 
         let mut matches: Vec<usize> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
@@ -278,7 +284,13 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        let needle = query.trim().to_lowercase();
+        // Strip the energy suffix from the QUERY as well as from each
+        // candidate. Every action the tool creates carries one, and both
+        // `list_actions` and the daily log carry the bullet verbatim — so
+        // the obvious query, the text the caller was just shown, arrives
+        // suffixed and would never match a candidate that had its suffix
+        // removed. Callers passing a bare phrase are unaffected.
+        let needle = strip_energy_suffix(query.trim()).to_lowercase();
 
         // Find / disambiguate using the same rules as complete_action.
         let mut matches: Vec<usize> = Vec::new();

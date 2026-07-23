@@ -53,7 +53,19 @@ export default function NowBand() {
 
   const complete = useMutation({
     mutationFn: () => completeAction(data?.project ?? "", data?.action ?? ""),
-    onError: (error) => toast(errorMessage(error), "attention"),
+    onError: (error) => {
+      // The band reports what the log says, which can outlive the bullet it
+      // names — an action completed elsewhere, or a project since parked.
+      // Say what happened rather than repeating a bare not-found, since
+      // Done is the only affordance here.
+      const message = errorMessage(error);
+      toast(
+        message.includes("no action matching")
+          ? `That action is no longer open on ${data?.project}. The band clears once the log records a completion.`
+          : message,
+        "attention",
+      );
+    },
     onSuccess: () => toast(`Done: one step further on ${data?.project}.`),
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["get_now"] });
