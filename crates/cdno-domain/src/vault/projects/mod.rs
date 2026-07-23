@@ -32,7 +32,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 
-mod actions;
+pub(in crate::vault) mod actions;
 mod lifecycle;
 mod milestones;
 mod state;

@@ -226,7 +226,11 @@ fn promote(
             .context("listing actions for the bullet picker")?;
         let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
         let picked = prompt::prompt_bullet(&project, &labels)?;
-        Ok(strip_energy_for_query(&picked))
+        // The picker holds the bullet verbatim, and verbatim is what the
+        // domain resolves most precisely: an exact whole-bullet match wins
+        // outright, which is the only way to tell two bullets apart when
+        // they differ solely by energy. Stripping here defeated that.
+        Ok(picked)
     })?;
     // Promotion scaffolds an action note, so it gathers the action template's
     // prompted variables just like `add --note`.
@@ -271,7 +275,11 @@ fn complete(
             .context("listing actions for the bullet picker")?;
         let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
         let picked = prompt::prompt_bullet(&project, &labels)?;
-        Ok(strip_energy_for_query(&picked))
+        // The picker holds the bullet verbatim, and verbatim is what the
+        // domain resolves most precisely: an exact whole-bullet match wins
+        // outright, which is the only way to tell two bullets apart when
+        // they differ solely by energy. Stripping here defeated that.
+        Ok(picked)
     })?;
 
     if prompted
@@ -317,19 +325,6 @@ fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -
 // ---------------------------------------------------------------------
 // Shared gather helper and small utilities.
 // ---------------------------------------------------------------------
-
-/// Strip a trailing `(deep|medium|light)` suffix from a bullet label.
-/// Used when the interactive bullet picker hands back the full text —
-/// the domain's substring matcher strips the same suffix on its end,
-/// so the query without the suffix is what resolves uniquely.
-fn strip_energy_for_query(text: &str) -> String {
-    for suffix in [" (deep)", " (medium)", " (light)"] {
-        if let Some(stripped) = text.strip_suffix(suffix) {
-            return stripped.to_owned();
-        }
-    }
-    text.to_owned()
-}
 
 fn yesno(b: bool) -> &'static str {
     if b { "yes" } else { "no" }

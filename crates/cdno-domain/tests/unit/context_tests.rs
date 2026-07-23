@@ -16,7 +16,7 @@ use cdno_domain::{
     CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, QuestionBacklinks,
     TrackingEntry,
 };
-use chrono::{FixedOffset, NaiveDate};
+use chrono::{FixedOffset, NaiveDate, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -677,10 +677,15 @@ fn project_backlinks_carry_a_frontmatter_title_when_the_source_has_one() {
 #[test]
 fn project_backlinks_are_ordered_newest_first() {
     // A project accrues backlinks for as long as it runs; the recent ones
-    // are the context a reader wants, so ordering is by mtime descending.
-    // Asserted against the returned mtimes rather than a hard-coded order,
-    // so the test proves the sort key without depending on how fast the
-    // store stamps three writes.
+    // are the context a reader wants. The contract is mtime descending with
+    // the path as tiebreak, and that is what is asserted — an in-memory
+    // store stamps `SystemTime::now()` per write, so three writes can land
+    // in the same nanosecond and asserting a fixed order would flake.
+    //
+    // Teeth: the notes are written in ascending path order, so newest-first
+    // is path-DESCENDING whenever the clock separates them. A sort that
+    // used the path (or left the index order) fails then, and matches only
+    // in the degenerate all-tied case.
     let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n";
     let ev = |n: u32| {
         format!(
@@ -696,36 +701,124 @@ fn project_backlinks_are_ordered_newest_first() {
     ]);
 
     let bl = vault.project_backlinks("surrogate").unwrap();
-
     assert_eq!(bl.evidence.len(), 3, "{bl:?}");
-    let mtimes: Vec<u64> = bl.evidence.iter().map(|r| r.modified_ns).collect();
 
-    // Without distinct mtimes the ordering claim is unfalsifiable — every
-    // sort key agrees when all the values are equal — so say so loudly
-    // rather than letting the assertion below pass vacuously.
-    let distinct: std::collections::HashSet<u64> = mtimes.iter().copied().collect();
-    assert_eq!(
-        distinct.len(),
-        3,
-        "the store must stamp distinct mtimes for this to test anything: {mtimes:?}"
-    );
+    let mut expected = bl.evidence.clone();
+    expected.sort_by(|a, b| {
+        b.modified_ns
+            .cmp(&a.modified_ns)
+            .then_with(|| a.path.as_path().cmp(b.path.as_path()))
+    });
+    assert_eq!(bl.evidence, expected, "newest first, path as tiebreak");
+}
 
-    let mut newest_first = mtimes.clone();
-    newest_first.sort_by(|a, b| b.cmp(a));
-    assert_eq!(mtimes, newest_first, "newest first: {mtimes:?}");
+// ---------------------------------------------------------------------
+// current_focus (#442) — what you are in the middle of, read back from
+// the day's own log rather than held as parallel state. Starting and
+// completing an action already write it; this only reads.
+// ---------------------------------------------------------------------
 
-    // And pin that it is the MTIME, not the path, that orders them: the
-    // paths here ascend (ev-1, ev-2, ev-3) while the newest was written
-    // last, so a path-descending sort would give a different answer.
-    let newest_path = bl
-        .evidence
+/// A daily note whose `## Logs` holds `lines` verbatim.
+fn daily_with(date: NaiveDate, lines: &[&str]) -> String {
+    let body = lines
         .iter()
-        .max_by_key(|r| r.modified_ns)
-        .map(|r| r.path.to_string())
-        .unwrap();
-    assert_eq!(
-        bl.evidence[0].path.to_string(),
-        newest_path,
-        "the newest note leads, whatever its name sorts as"
-    );
+        .map(|l| format!("- {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n{body}\n")
+}
+
+fn focus_day() -> NaiveDate {
+    NaiveDate::from_ymd_opt(2026, 7, 13).unwrap()
+}
+
+fn focus_vault(lines: &[&str]) -> Vault {
+    let (vault, _store) = vault_with(&[(
+        "journal/2026/daily/2026-07-13.md",
+        &daily_with(focus_day(), lines),
+    )]);
+    vault
+}
+
+#[test]
+fn current_focus_is_none_without_a_daily_note() {
+    let (vault, _store) = vault_with(&[]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn current_focus_finds_a_started_action() {
+    let vault = focus_vault(&["**09:30**: started [[alpha]] \u{2014} Draft the methods section"]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+}
+
+#[test]
+fn a_completed_action_is_no_longer_the_focus() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**11:00**: action done on [[alpha]] \u{2014} Draft the methods section",
+    ]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn the_most_recent_open_start_wins() {
+    // A day interleaves several: pick something up, put it down, pick up
+    // something else. The one still standing is what you are on.
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:15**: started [[beta]] \u{2014} Chase the venue",
+        "**11:00**: action done on [[beta]] \u{2014} Chase the venue",
+        "**11:30**: started [[gamma]] \u{2014} Review the replies",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "gamma");
+    assert_eq!(focus.action, "Review the replies");
+}
+
+#[test]
+fn completing_one_action_leaves_an_earlier_start_standing() {
+    // The completion clears its own start, not simply the latest.
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:15**: started [[beta]] \u{2014} Chase the venue",
+        "**11:00**: action done on [[beta]] \u{2014} Chase the venue",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+}
+
+#[test]
+fn prose_that_merely_mentions_starting_is_not_a_focus() {
+    // A hand-written log line is ordinary; only the shape the writers
+    // produce counts, or the band would report someone's sentence.
+    let vault = focus_vault(&[
+        "**09:30**: started thinking about the venue problem",
+        "**10:00**: started [[alpha]] without a dash",
+    ]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn the_energy_suffix_is_preserved_and_still_matches_on_completion() {
+    // `start` logs the bullet verbatim, energy tag and all, and `complete`
+    // logs the same text — so the two must still pair up.
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section (deep)",
+        "**11:00**: action done on [[alpha]] \u{2014} Draft the methods section (deep)",
+    ]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
 }

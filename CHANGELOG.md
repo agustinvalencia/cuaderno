@@ -6,7 +6,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Today shows what you are in the middle of.** A "Now" band names the action you started
+  and have not finished, and how long ago you started it, with Done to close it out. It is
+  read back from the day's own log rather than kept as separate state — starting an action
+  already writes a line and completing it writes another — so it needs nothing to stay in
+  sync and it picks up a start made from the CLI or by Claude over MCP, not only one
+  clicked in the app. With nothing open it becomes the pick-one prompt instead of
+  disappearing. (#442)
+
+### Fixed
+
+- **Completing or promoting an action accepts the text you were just shown.** Every action
+  the tool creates carries an energy suffix, and the action list, the daily log and the
+  interactive picker all carry the bullet verbatim — but the matcher stripped that suffix
+  from each candidate while leaving it on the query, so the obvious query never matched.
+  Marking an action done from the Today page, the Actions list or a project map all passed
+  the suffixed text and all failed.
+
+  Matching now takes an **exact whole-bullet match first**, falling back to the previous
+  substring search with the suffix stripped from both sides. The exact pass is what lets
+  two bullets that differ only by their energy be told apart at all: previously the
+  ambiguity picker handed back its own candidate, that re-ambiguated, and the dialog closed
+  on itself — so neither bullet could be completed or promoted from the app. Completion and
+  promotion now share one resolver rather than two copies that had already drifted, and
+  `cdno action complete -i` / `promote -i` pass the picked bullet through verbatim instead
+  of pre-stripping it. A bare phrase typed by hand behaves as before. (#442)
+
 ### Changed
+
+- **Today is the day's own note.** The daily note — intention, standup, agenda, and the
+  append-only log that is the method's spine — used to be reachable only through the
+  Calendar, while Today showed a grid of project cards restating what the sidebar already
+  lists and what the project map says better. The note is the page now. Above it sit the
+  Now band, the quick-log composer, what is due soon, and an energy-filtered shortlist of
+  one line per project answering "pick one thing" — keeping the rule that a low-energy
+  moment is never met by an empty page. (#442)
 
 - **The project view leads with the Current State.** The section previously held only an
   "Edit current state" link — the prose itself appeared nowhere until you clicked, except

@@ -552,3 +552,169 @@ fn start_action_rejects_parked_project_and_blank_action() {
         .unwrap_err();
     assert!(matches!(blank, DomainError::EmptyField { .. }), "{blank:?}");
 }
+
+#[test]
+fn complete_action_accepts_the_query_it_just_handed_out() {
+    // Every action the tool creates carries an energy suffix, and both
+    // `list_actions` and the daily log carry the bullet verbatim — so the
+    // text a caller was just shown IS the suffixed form. Rejecting it made
+    // the Today page's Done button (#442) unable to close anything: the
+    // needle kept its suffix while every candidate had theirs stripped.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (deep)",
+        )
+        .expect("the suffixed query must match the bullet it came from");
+
+    // Completion removes the bullet rather than ticking it.
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        !content.contains("Draft the methods section"),
+        "the bullet is gone: {content}"
+    );
+}
+
+#[test]
+fn complete_action_still_accepts_a_bare_query() {
+    // The suffix-free phrase a person would type by hand keeps working.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(dt(2026, 5, 2, 9, 30), "alpha", "methods section")
+        .expect("a substring query still matches");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        !content.contains("Draft the methods section"),
+        "content: {content}"
+    );
+}
+
+#[test]
+fn a_suffixed_query_picks_the_bullet_it_names_even_among_same_text_siblings() {
+    // Two bullets differing only by energy strip to the same phrase, so a
+    // substring match alone cannot tell them apart. The full text can, and
+    // the full text is exactly what every caller has: the action list, the
+    // daily log and the ambiguity picker all carry the bullet verbatim.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n- [ ] Draft the methods section (light)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (deep)",
+        )
+        .expect("the exact bullet resolves");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        content.contains("(light)"),
+        "the sibling survives: {content}"
+    );
+    assert!(
+        !content.contains("(deep)"),
+        "the named one is gone: {content}"
+    );
+}
+
+#[test]
+fn a_partial_query_matching_several_bullets_is_still_ambiguous() {
+    // The picker exists for genuine ambiguity, and this is it: a phrase
+    // that names neither bullet outright.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n- [ ] Draft the results section (light)\n";
+    let (vault, _store) = vault_with(&[("projects/alpha.md", project)]);
+
+    let err = vault
+        .complete_action(dt(2026, 5, 2, 9, 30), "alpha", "Draft the")
+        .expect_err("a phrase matching both must ask");
+
+    match err {
+        DomainError::AmbiguousAction { candidates, .. } => {
+            assert_eq!(candidates.len(), 2, "both are offered: {candidates:?}");
+        }
+        other => panic!("expected AmbiguousAction, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_action_whose_text_ends_in_a_parenthetical_is_not_mangled() {
+    // `strip_energy_suffix` only strips the three known energies, so a
+    // bullet legitimately ending in brackets survives.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Reread the appendix (draft)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Reread the appendix (draft)",
+        )
+        .expect("a non-energy parenthetical matches verbatim");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        !content.contains("Reread the appendix"),
+        "content: {content}"
+    );
+}
+
+#[test]
+fn choosing_a_candidate_from_the_picker_resolves_it() {
+    // The ambiguity picker re-invokes with the chosen candidate's exact
+    // text. If that still only substring-matched, the pick would be
+    // ambiguous again and the dialog would reopen forever — the user could
+    // never complete either bullet. An exact match must win outright.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n- [ ] Draft the methods section (light)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .complete_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (light)",
+        )
+        .expect("the exact candidate text resolves to that one bullet");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        content.contains("Draft the methods section (deep)"),
+        "the other bullet survives: {content}"
+    );
+    assert!(
+        !content.contains("(light)"),
+        "the chosen one is gone: {content}"
+    );
+}
+
+#[test]
+fn promote_resolves_the_exact_bullet_like_completion_does() {
+    // Completion and promotion are documented as disambiguating alike, and
+    // for a while they did not: promotion kept only the substring half, so
+    // two bullets differing by energy could never be told apart. Worse than
+    // an error — the picker handed back its own candidate, that
+    // re-ambiguated, and the dialog closed on itself. Neither bullet was
+    // promotable from the UI at all.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n- [ ] Draft the methods section (light)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .promote_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (light)",
+        )
+        .expect("the exact bullet resolves, as it does for completion");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        content.contains("Draft the methods section (deep)"),
+        "the sibling survives: {content}"
+    );
+}

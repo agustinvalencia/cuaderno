@@ -1,12 +1,29 @@
-import { useRef, useState } from "react";
+// Today (#442) — the day, as written.
+//
+// The daily note IS the day: intention, standup, agenda, and the
+// append-only log that is the method's spine. It used to live one view
+// away, behind the Calendar, while this page showed a grid of project
+// cards restating the sidebar. So the note is the page now, and the
+// project cards are gone.
+//
+// Above it, in the order a morning actually needs them: what you are in
+// the middle of, a place to log a line, what is promised soon, and the
+// energy-filtered shortlist that answers "pick one thing".
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
-import { getOrientation } from "../../api/commands";
+import { getOrientation, readDaily, resolveWikilink } from "../../api/commands";
 import { contextDotClass } from "../../lib/contexts";
 import { shortDate } from "../../lib/dates";
+import { parseNote } from "../../lib/noteContent";
+import SectionedBody from "../../components/markdown/SectionedBody";
+import { MetaPanel } from "../../components/markdown/MetaPanel";
 import { QuickLog } from "../../components/ui/quick-log";
 import { SectionHeading } from "../../components/ui/section-heading";
-import ProjectCard from "./ProjectCard";
+import { useReader } from "../../shell/reader";
+import ActionShortlist from "./ActionShortlist";
+import NowBand from "./NowBand";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
 
@@ -16,11 +33,6 @@ export default function Home() {
     queryFn: getOrientation,
   });
   const [energy, setEnergy] = useState<EnergyLevel | null>(null);
-  // Roving tabindex: exactly one card wrapper is in the tab order at a
-  // time (the one at `focusedIndex`); arrow / j / k move the marker and
-  // shift DOM focus in step.
-  const [focusedIndex, setFocusedIndex] = useState(0);
-  const cardRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   if (isPending) {
     return <p className="p-8 text-ink-muted">Reading the vault…</p>;
@@ -40,43 +52,9 @@ export default function Home() {
     month: "long",
   });
 
-  // Captured out here so the roving handler (a closure, where TS won't
-  // carry the post-guard non-null narrowing of `data`) sees a plain
-  // number rather than a possibly-undefined query result.
-  const projectCount = data.projects.length;
-
-  // Roving focus across the card grid: arrow keys / j / k move
-  // between cards (operating the content, not Tab-through-everything).
-  function onGridKeyDown(event: React.KeyboardEvent) {
-    // Never hijack keystrokes destined for an editable control — the
-    // inline Current State editor lives inside a card, and there `j`,
-    // `k`, and the arrows are text input, not navigation.
-    if (
-      event.target instanceof HTMLElement &&
-      event.target.closest("input, textarea, [contenteditable]")
-    ) {
-      return;
-    }
-    const keys: Record<string, number> = {
-      ArrowRight: 1,
-      ArrowDown: 1,
-      j: 1,
-      ArrowLeft: -1,
-      ArrowUp: -1,
-      k: -1,
-    };
-    const delta = keys[event.key];
-    if (!delta) return;
-    if (projectCount === 0) return;
-    const next = (focusedIndex + delta + projectCount) % projectCount;
-    setFocusedIndex(next);
-    cardRefs.current[next]?.focus();
-    event.preventDefault();
-  }
-
   return (
-    <div className="mx-auto max-w-4xl p-8">
-      <div className="flex items-center justify-between">
+    <div className="mx-auto max-w-3xl p-8">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-ink">{heading}</h1>
         <div role="group" aria-label="Energy filter" className="flex gap-1">
           {ENERGIES.map((level) => (
@@ -97,9 +75,10 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Jot a log line into today's `## Logs` by hand — the same append-only
-          log the capture window and CLI write to. Front and centre on the
-          daily landing so it's always a keystroke away. */}
+      <div className="mt-4">
+        <NowBand />
+      </div>
+
       <div className="mt-4">
         <QuickLog date={data.today} />
       </div>
@@ -129,52 +108,14 @@ export default function Home() {
         </section>
       )}
 
-      <section aria-label="Your projects" className="mt-8">
-        <SectionHeading>
-          Your projects
-        </SectionHeading>
-        {data.projects.length === 0 ? (
-          <p className="mt-3 rounded border border-line bg-bg-surface p-6 text-ink-muted">
-            Nothing active. Your CLI or Claude can start one when you're ready.
-          </p>
-        ) : (
-          <div
-            role="list"
-            aria-label="Project cards"
-            onKeyDown={onGridKeyDown}
-            className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
-          >
-            {data.projects.map((project, index) => (
-              <div
-                key={project.slug}
-                ref={(el) => {
-                  cardRefs.current[index] = el;
-                }}
-                role="listitem"
-                data-card
-                tabIndex={index === focusedIndex ? 0 : -1}
-                onKeyDown={(event) => {
-                  // Enter / Space on the wrapper itself (focus not on a
-                  // child button) fires the card's primary action — the
-                  // Start button, located by its `data-start` marker.
-                  if (
-                    (event.key === "Enter" || event.key === " ") &&
-                    event.target === event.currentTarget
-                  ) {
-                    event.currentTarget
-                      .querySelector<HTMLElement>("[data-start]")
-                      ?.click();
-                    event.preventDefault();
-                  }
-                }}
-                className="rounded-lg"
-              >
-                <ProjectCard project={project} energy={energy} />
-              </div>
-            ))}
-          </div>
-        )}
+      <section aria-label="Pick one thing" className="mt-6">
+        <SectionHeading>Pick one thing</SectionHeading>
+        <div className="mt-2">
+          <ActionShortlist projects={data.projects} energy={energy} />
+        </div>
       </section>
+
+      <DailyNote date={data.today} />
 
       {data.lapsed_habits.length > 0 && (
         <p className="mt-8 text-sm text-ink-faint">
@@ -183,5 +124,46 @@ export default function Home() {
         </p>
       )}
     </div>
+  );
+}
+
+/** Today's note, rendered the same way the calendar's panel renders it —
+ * one reader for one note, wherever it opens. */
+function DailyNote({ date }: { date: string }) {
+  const { openReader } = useReader();
+  const { data } = useQuery({
+    queryKey: ["read_daily", date],
+    queryFn: () => readDaily(date),
+  });
+
+  async function onWikilink(target: string) {
+    try {
+      const resolved = await resolveWikilink(target);
+      if (resolved) openReader(resolved.path);
+    } catch {
+      // An unresolved target is a no-op; the anchor already rendered muted.
+    }
+  }
+
+  if (!data) return null;
+
+  // Parsed once: the frontmatter and the sections come from the same pass.
+  const note = data.exists ? parseNote(data.markdown) : null;
+
+  return (
+    <section aria-label="Today's note" className="mt-10 border-t border-line pt-6">
+      {note ? (
+        <>
+          <MetaPanel frontmatter={note.frontmatter} />
+          <div className="mt-4">
+            <SectionedBody sections={note.sections} onWikilink={onWikilink} capLogsHeight />
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-ink-muted">
+          No note for today yet — logging a line above starts one.
+        </p>
+      )}
+    </section>
   );
 }

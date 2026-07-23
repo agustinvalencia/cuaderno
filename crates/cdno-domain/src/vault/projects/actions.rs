@@ -84,7 +84,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         self.resolve_active_project(slug)?;
 
-        let log_entry = format!("started [[{slug}]] \u{2014} {action_text}");
+        let log_entry = format_action_started_log_entry(slug, action_text);
         let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
         Ok(daily_path)
@@ -170,36 +170,7 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        let needle = query.trim().to_lowercase();
-
-        let mut matches: Vec<usize> = Vec::new();
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(text) = parse_open_action_text(line)
-                && strip_energy_suffix(text).to_lowercase().contains(&needle)
-            {
-                matches.push(i);
-            }
-        }
-
-        if matches.is_empty() {
-            return Err(DomainError::ActionNotFound {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-            });
-        }
-        if matches.len() > 1 {
-            let candidates = matches
-                .iter()
-                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
-                .collect();
-            return Err(DomainError::AmbiguousAction {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-                candidates,
-            });
-        }
-
-        let removed_idx = matches[0];
+        let removed_idx = resolve_open_action(&lines, slug, query)?;
         let removed_full_text = parse_open_action_text(lines[removed_idx])
             .expect("matched line was previously parseable")
             .to_owned();
@@ -278,36 +249,7 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        let needle = query.trim().to_lowercase();
-
-        // Find / disambiguate using the same rules as complete_action.
-        let mut matches: Vec<usize> = Vec::new();
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(text) = parse_open_action_text(line)
-                && strip_energy_suffix(text).to_lowercase().contains(&needle)
-            {
-                matches.push(i);
-            }
-        }
-        if matches.is_empty() {
-            return Err(DomainError::ActionNotFound {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-            });
-        }
-        if matches.len() > 1 {
-            let candidates = matches
-                .iter()
-                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
-                .collect();
-            return Err(DomainError::AmbiguousAction {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-                candidates,
-            });
-        }
-
-        let bullet_idx = matches[0];
+        let bullet_idx = resolve_open_action(&lines, slug, query)?;
         let bullet_text = parse_open_action_text(lines[bullet_idx])
             .expect("matched line was previously parseable")
             .to_owned();
@@ -445,12 +387,25 @@ fn format_action_added_log_entry(slug: &str, action: &str, energy: EnergyLevel) 
     )
 }
 
+/// The marker opening a daily-log line that records an action being
+/// started. Shared with the reader ([`Vault::current_focus`]) so the two
+/// cannot drift: the log IS the record of what you are on, and a parser
+/// keyed on a different string would simply never find anything.
+pub(in crate::vault) const LOG_STARTED_PREFIX: &str = "started ";
+/// The marker for the line recording that action being finished.
+pub(in crate::vault) const LOG_ACTION_DONE_PREFIX: &str = "action done on ";
+
+/// Build the daily-log entry recording an action being started.
+fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {
+    format!("{LOG_STARTED_PREFIX}[[{slug}]] \u{2014} {action_text}")
+}
+
 /// Build the daily-log entry recording an action completion.
 /// `action_text` is the raw text from the project line, including
 /// any `(<energy>)` suffix, so the historical record preserves what
 /// energy bucket the action sat in.
 fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
-    format!("action done on [[{slug}]] — {action_text}")
+    format!("{LOG_ACTION_DONE_PREFIX}[[{slug}]] — {action_text}")
 }
 
 /// If `line` is an open action bullet (`- [ ] <text>`), return the
@@ -465,6 +420,67 @@ fn parse_open_action_text(line: &str) -> Option<&str> {
 
 /// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
 /// matching is case-sensitive because `add_action` always emits
+/// Find the one open action bullet `query` names, among `lines`.
+///
+/// Two rules, in order.
+///
+/// **An exact match on the whole bullet wins outright.** Every caller
+/// already holds the full text — `list_actions` returns it verbatim, the
+/// daily log records it verbatim, and the ambiguity picker hands back the
+/// candidate it was given — so the common path should be precise, not
+/// approximate. Without this, two bullets differing only by energy strip
+/// to the same phrase and the picker's own answer re-ambiguates, leaving
+/// the user unable to resolve their own choice.
+///
+/// **Otherwise, substring, with the energy suffix stripped from both
+/// sides.** Every action the tool creates carries a suffix, so a query
+/// echoing text the caller was shown arrives suffixed and would never
+/// match a candidate whose suffix had been removed. A bare phrase typed by
+/// hand is unaffected.
+///
+/// Shared by completion and promotion so the two cannot drift: they are
+/// documented as behaving alike, and for a while they did not.
+fn resolve_open_action(lines: &[&str], slug: &str, query: &str) -> Result<usize, DomainError> {
+    let trimmed = query.trim();
+    let exact = trimmed.to_lowercase();
+    let exact_matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| parse_open_action_text(line).is_some_and(|t| t.to_lowercase() == exact))
+        .map(|(i, _)| i)
+        .collect();
+    if exact_matches.len() == 1 {
+        return Ok(exact_matches[0]);
+    }
+
+    let needle = strip_energy_suffix(trimmed).to_lowercase();
+    let matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            parse_open_action_text(line)
+                .is_some_and(|t| strip_energy_suffix(t).to_lowercase().contains(&needle))
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    match matches.len() {
+        0 => Err(DomainError::ActionNotFound {
+            slug: slug.to_owned(),
+            query: query.to_owned(),
+        }),
+        1 => Ok(matches[0]),
+        _ => Err(DomainError::AmbiguousAction {
+            slug: slug.to_owned(),
+            query: query.to_owned(),
+            candidates: matches
+                .iter()
+                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
+                .collect(),
+        }),
+    }
+}
+
 /// lowercase.
 fn strip_energy_suffix(text: &str) -> &str {
     for suffix in [" (deep)", " (medium)", " (light)"] {

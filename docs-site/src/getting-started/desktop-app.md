@@ -62,9 +62,11 @@ xattr -dr com.apple.quarantine /Applications/cuaderno.app
 
 ## A quick tour
 
-The sidebar leads with **Today** — the morning orientation: commitments due soon, a card per
-active project with its current state and a next action filtered by your energy, and any quietly
-lapsed habits. **Actions** is the cross-project list of next actions; **Calendar** a month grid
+The sidebar leads with **Today** — the day's own note, with the morning orientation above it: a
+**Now** band naming whatever you started and have not finished (read back from the day's log, so a
+`cdno` start from the terminal counts too), a one-line log composer, commitments due soon, and an
+energy-filtered shortlist of one action per project to pick from. Any quietly lapsed habits sit at
+the foot. **Actions** is the cross-project list of next actions; **Calendar** a month grid
 of your journal — days with a daily note are marked, and clicking one opens it in an embedded
 panel that reads read-only and jumps to the previous or next day, the day's week, or its month;
 **Commitments** a chronological timeline of everything promised (context-coloured, never red);

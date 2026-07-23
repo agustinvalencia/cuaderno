@@ -401,6 +401,7 @@ pub fn run() {
             commands::orientation::get_orientation,
             commands::orientation::get_today,
             commands::orientation::get_index_exclusions,
+            commands::orientation::get_now,
             commands::actions::start_action,
             commands::actions::complete_action,
             commands::actions::add_action,

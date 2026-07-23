@@ -22,7 +22,12 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     // so a park/activate (in-app or an external edit) must refresh it.
     "get_strategic_bundle",
   ],
-  actions: ["get_orientation", "list_all_actions"],
+  // `get_now` rides the action and daily areas: the Now band is read back
+  // from the day's log, so a start or completion made ANYWHERE — the CLI,
+  // an MCP tool, another window — must refresh it. The band's own buttons
+  // invalidate it directly; without these entries every other origin left
+  // it stale, which is precisely the claim the feature makes (#442).
+  actions: ["get_orientation", "list_all_actions", "get_now"],
   // A daily-note edit (in the app, the CLI, or nvim) refreshes the
   // orientation, the open note reader, the composed review, AND the
   // calendar's grid marks + embedded daily panel (read_daily,
@@ -32,6 +37,7 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "read_daily",
     "list_daily_dates",
     "get_weekly_bundle",
+    "get_now",
   ],
   // The calendar panel's week jump reads the raw weekly note
   // (read_weekly), distinct from the composed get_weekly_bundle.
@@ -98,7 +104,16 @@ export function invalidateAreas(client: QueryClient, areas: VaultArea[]): void {
  * day rolls over — otherwise a surface left open across midnight keeps
  * yesterday's date (e.g. the quick-log composer's today-only gate). */
 export function invalidateDateDependent(client: QueryClient): void {
-  for (const prefix of ["get_today", "get_orientation", "get_commitments", "get_weekly_bundle"]) {
+  // `get_now` too: it is scoped to a date, so a Today page left open across
+  // midnight would otherwise keep showing yesterday's unfinished action
+  // while the backend has moved on to a new day.
+  for (const prefix of [
+    "get_today",
+    "get_orientation",
+    "get_commitments",
+    "get_weekly_bundle",
+    "get_now",
+  ]) {
     void client.invalidateQueries({ queryKey: [prefix] });
   }
 }
