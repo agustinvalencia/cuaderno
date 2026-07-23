@@ -13,7 +13,7 @@ import { afterEach, expect, test } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -24,7 +24,7 @@ import type { CommitmentsView } from "../api/bindings/CommitmentsView";
 import type { StrategicBundle } from "../api/bindings/StrategicBundle";
 import Home from "./home/Home";
 import Commitments from "./commitments/Commitments";
-import Strategic from "./strategic/Strategic";
+import MonthlyReview from "./monthly/MonthlyReview";
 import Calendar from "./calendar/Calendar";
 import Questions from "./questions/Questions";
 
@@ -180,11 +180,17 @@ test("Commitments has no axe violations", async () => {
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
 
-test("Strategic has no axe violations", async () => {
+test("Monthly review has no axe violations, on every step", async () => {
+  // The review is stepped, and a hidden step is invisible to axe — so a
+  // pass on the opening step alone would leave five of six unchecked,
+  // including the Focus step's form.
   mockIPC((cmd) => (cmd === "get_strategic_bundle" ? STRATEGIC : undefined));
-  const { container } = renderView(<Strategic />);
-  await screen.findByText("alpha");
-  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+  const { container } = renderView(<MonthlyReview />);
+  const rail = within(await screen.findByRole("navigation", { name: "Review steps" }));
+  for (const label of ["Questions", "Portfolios", "Projects", "Stewardships", "Lookahead", "Focus"]) {
+    fireEvent.click(rail.getByRole("button", { name: label }));
+    expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+  }
 });
 
 test("Calendar has no axe violations", async () => {

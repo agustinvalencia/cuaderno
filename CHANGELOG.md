@@ -28,6 +28,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The monthly review is a ritual now, not a dashboard.** Strategic was five sections you
+  looked at and closed — three of them not even clickable — with no write and nothing asked,
+  which is why it read as unfinished and why the monthly cadence had no reason to come back.
+  It is stepped like the weekly review (reusing the same labelled stepper), walks questions,
+  portfolio health, the project allocator, stewardships and the six-week lookahead one at a
+  time, and ends on a focus step that writes wins, themes and next month's focus to the
+  monthly note — the artefact a cadence needs. Stewardship rows link through to their detail
+  like the portfolio rows already did, and the view lives at `/monthly` in
+  `views/monthly/MonthlyReview.tsx`. A new `save_monthly_section` Tauri command wraps the
+  domain's existing `upsert_monthly_section`. (#450)
+
 - **The weekly review shows its shape, and hands you your wins as cards.** The five steps
   were unlabelled 10px dots whose names lived only in `aria-label`, so a sighted reader saw
   five dots and had to click each to learn what it was; they are named now, on a rail, with

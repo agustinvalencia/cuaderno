@@ -303,6 +303,17 @@ export function saveWeeklySection(
   return call("save_weekly_section", { weekOf: weekOf ?? null, section, content });
 }
 
+/** Write one section of a month's note (compose/overwrite). `section`
+ * is the kebab wire string: "wins" | "themes" | "next-months-focus".
+ * `month` is `YYYY-MM`, or omitted for the current month. */
+export function saveMonthlySection(
+  section: string,
+  content: string,
+  month?: string,
+): Promise<void> {
+  return call("save_monthly_section", { month: month ?? null, section, content });
+}
+
 // --- M7: Stewardship views ---
 
 /** Every indexed stewardship with its staleness line, sorted by slug.

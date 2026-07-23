@@ -73,8 +73,11 @@ ring wherever you have paged to, and clicking a day opens it in a panel beside t
 read-only and jumps to the previous or next day, the day's week, or its month. On a narrower window
 the grid collapses behind a **The month** toggle instead of sitting alongside. **Weekly** is a guided, stop-anywhere five-step review with a labelled stepper and Back/Next; its
 wins step hands you the week's completions and log lines as cards you tick and reshuffle rather than a
-blank box to compose in. **Monthly** is the long view: questions grid, five-slot project allocator, portfolio health,
-stewardship trends.
+blank box to compose in. **Monthly** is the review at the highest altitude — "am I still pointed at the right questions?" —
+stepped like the weekly: questions, portfolio health, the five-slot project allocator, stewardship
+trends, the six-week lookahead, and a focus step that writes wins, themes and next month's focus to
+the monthly note. It is the one review that leaves an artefact, which is what gives the monthly
+cadence a reason to come back.
 
 **Operations** is delivery. **Projects** heads the group and says how many of your slots are taken
 ("3 of 5"), with each active project listed beneath it; every one has a full map
