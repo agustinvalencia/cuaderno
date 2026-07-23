@@ -68,9 +68,10 @@ The sidebar is grouped the way the method is: a **rhythm**, and the two tracks i
 **Now** band naming whatever you started and have not finished (read back from the day's log, so a
 `cdno` start from the terminal counts too), a one-line log composer, commitments due soon, and an
 energy-filtered shortlist of one action per project to pick from. Any quietly lapsed habits sit at
-the foot. **Calendar** is a month grid of your journal — days with a daily note are marked, and
-clicking one opens it in an embedded panel that reads read-only and jumps to the previous or next
-day, the day's week, or its month. **Weekly** is a guided, stop-anywhere five-step review, and
+the foot. **Calendar** is a month grid of your journal — days with a daily note are marked, today carries a
+ring wherever you have paged to, and clicking a day opens it in a panel beside the grid that reads
+read-only and jumps to the previous or next day, the day's week, or its month. On a narrower window
+the grid collapses behind a **The month** toggle instead of sitting alongside. **Weekly** is a guided, stop-anywhere five-step review, and
 **Monthly** the long view: questions grid, five-slot project allocator, portfolio health,
 stewardship trends.
 

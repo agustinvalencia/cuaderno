@@ -75,9 +75,13 @@ function installMock(
   });
 }
 
+/** The mounted tree, so a test can re-render it after changing the
+ * simulated window width. */
+let tree: () => React.ReactElement;
+
 function renderView() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  tree = () => (
     <MemoryRouter>
       <QueryClientProvider client={client}>
         <ToastProvider>
@@ -86,8 +90,9 @@ function renderView() {
           </ReaderProvider>
         </ToastProvider>
       </QueryClientProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  return render(tree());
 }
 
 afterEach(() => {
@@ -106,28 +111,76 @@ test("opens on today's note in the embedded panel", async () => {
   expect(screen.getByRole("heading", { name: /Wednesday,.*2026/ })).toBeDefined();
 });
 
-test("the Today button jumps back to today, and is disabled while already on it", async () => {
+test("the Today button jumps back to today, and reads as unavailable while already on it", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);
   renderView();
 
   await screen.findByRole("heading", { name: "Wednesday" });
-  // On today's day, the jump is a no-op — the button is disabled.
-  expect((screen.getByRole("button", { name: "Today" }) as HTMLButtonElement).disabled).toBe(true);
+  // On today's day the jump is a no-op, and the button says so.
+  expect(screen.getByRole("button", { name: "Today" }).getAttribute("aria-disabled")).toBe("true");
 
   // Step to the next day (a note-less neighbour); now Today is live.
   fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
   await screen.findByText("No note for this day yet.");
   const todayBtn = screen.getByRole("button", { name: "Today" }) as HTMLButtonElement;
-  expect(todayBtn.disabled).toBe(false);
+  expect(todayBtn.getAttribute("aria-disabled")).toBe("false");
 
   // Clicking Today returns to today's note (the heading flips back from the
   // neighbour's empty state — the load-bearing proof the jump landed).
+  // jsdom's click does not move focus, so the keyboard path is modelled
+  // by focusing first — which is the case that matters here.
+  todayBtn.focus();
   fireEvent.click(todayBtn);
   expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
-  // Focus is handed to the picker toggle, not dropped to the body, since
-  // Today disabled itself on landing.
-  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Pick a date" }));
+  // And focus stays on the button that was pressed. A real `disabled`
+  // here would be unfocusable, so the browser would blur it and the next
+  // Tab would restart at the top of the shell.
+  expect(document.activeElement).toBe(todayBtn);
+});
+
+test("Today keeps focus in the pinned layout, where there is no toggle to hand off to", async () => {
+  // The default window is wide, so this is the common case. Today used to
+  // hand focus to the picker toggle — which the pinned layout does not
+  // render, leaving focus on document.body.
+  setWide(true);
+  try {
+    installMock([]);
+    renderView();
+
+    await screen.findByRole("heading", { name: "Wednesday" });
+    fireEvent.click(screen.getByRole("button", { name: "Next day ›" }));
+    await screen.findByText("No note for this day yet.");
+
+    const todayBtn = screen.getByRole("button", { name: "Today" });
+    todayBtn.focus();
+    fireEvent.click(todayBtn);
+
+    expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
+    expect(document.activeElement).toBe(todayBtn);
+    expect(document.activeElement).not.toBe(document.body);
+  } finally {
+    setWide(false);
+  }
+});
+
+test("narrowing the window keeps the month you were reading", async () => {
+  // Un-pinning falls back to a collapsed default, which would take the
+  // grid with it. A layout change is not a request to close something.
+  setWide(true);
+  try {
+    installMock([]);
+    const { rerender } = renderView();
+    expect(await screen.findByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+
+    setWide(false);
+    rerender(tree());
+
+    expect(screen.getByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Hide the month" })).toBeDefined();
+  } finally {
+    setWide(false);
+  }
 });
 
 test("Today is enabled on today's weekly view and switches back to the day", async () => {
@@ -142,7 +195,7 @@ test("Today is enabled on today's weekly view and switches back to the day", asy
   // Today stays enabled here (mode !== "daily"); clicking it returns to the
   // day view of today.
   const todayBtn = screen.getByRole("button", { name: "Today" }) as HTMLButtonElement;
-  expect(todayBtn.disabled).toBe(false);
+  expect(todayBtn.getAttribute("aria-disabled")).toBe("false");
   fireEvent.click(todayBtn);
   expect(await screen.findByRole("heading", { name: "Wednesday" })).toBeDefined();
 });
@@ -210,16 +263,16 @@ test("the month grid is a hideable picker, collapsing once a day is chosen", asy
   // one note-bearing cell in the fixture, so its marker stands in for the
   // grid's presence).
   await screen.findByRole("heading", { name: "Wednesday" });
-  const pick = screen.getByRole("button", { name: "Pick a date" });
+  const pick = screen.getByRole("button", { name: "The month" });
   expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
 
-  // "Pick a date" reveals the month grid.
+  // "The month" reveals the grid.
   fireEvent.click(pick);
-  const day = await screen.findByRole("button", { name: /15, has a note/ });
+  const day = await screen.findByRole("button", { name: /15,.*has a note/ });
 
   // Choosing a day reads it and re-collapses the picker.
   fireEvent.click(day);
-  expect(screen.getByRole("button", { name: "Pick a date" })).toBeDefined();
+  expect(screen.getByRole("button", { name: "The month" })).toBeDefined();
   expect(screen.queryByRole("button", { name: /has a note/ })).toBeNull();
   const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
   expect(reads).toContain("2026-07-15");
@@ -301,4 +354,65 @@ test("prev-day steps to the neighbour the backend stamped", async () => {
   expect(await screen.findByText("No note for this day yet.")).toBeDefined();
   const reads = calls.filter((c) => c.cmd === "read_daily").map((c) => (c.args as { date: string }).date);
   expect(reads).toContain("2026-07-14");
+});
+
+
+/** Pretend the window is wide enough for two columns. jsdom has no
+ * layout, so the breakpoint is read through `matchMedia` rather than a
+ * Tailwind class — which is also the only way it can be asserted. */
+function setWide(wide: boolean) {
+  window.matchMedia = ((query: string) =>
+    ({
+      matches: wide,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }) as unknown as MediaQueryList) as typeof window.matchMedia;
+}
+
+test("on a wide window the month is pinned beside the note, not summoned over it", async () => {
+  // The overview is the reason a calendar view exists. It used to be
+  // collapsed by default and to hide itself again the moment you used it.
+  setWide(true);
+  try {
+    installMock([]);
+    renderView();
+
+    // Visible with nothing clicked, and no toggle offered — there is
+    // nothing to toggle.
+    expect(await screen.findByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+    expect(screen.queryByRole("button", { name: /The month/ })).toBeNull();
+  } finally {
+    setWide(false);
+  }
+});
+
+test("a pinned month does not vanish when you choose a day", async () => {
+  setWide(true);
+  try {
+    const calls: Array<{ cmd: string; args: unknown }> = [];
+    installMock(calls);
+    renderView();
+
+    fireEvent.click(await screen.findByRole("button", { name: /15,.*has a note/ }));
+
+    expect(screen.getByRole("button", { name: /15,.*has a note/ })).toBeDefined();
+    const reads = calls
+      .filter((c) => c.cmd === "read_daily")
+      .map((c) => (c.args as { date: string }).date);
+    expect(reads).toContain("2026-07-15");
+  } finally {
+    setWide(false);
+  }
+});
+
+test("today is marked in the grid, from the date the backend stamped", async () => {
+  setWide(true);
+  try {
+    installMock([]);
+    renderView();
+    expect(await screen.findByRole("button", { name: /15, today/ })).toBeDefined();
+  } finally {
+    setWide(false);
+  }
 });

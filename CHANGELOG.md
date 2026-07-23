@@ -28,6 +28,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The Calendar keeps the month in view, and marks today.** The grid was collapsed by
+  default and hid itself again the moment you chose a day, so the overview — the reason a
+  calendar view exists — was a transient, two-click thing. On a window with room it is now a
+  pinned column beside the note; below that it stays a toggle, relabelled from "Pick a date"
+  to "The month" because it is the overview, not a picker. Every month renders the same six
+  rows, so the card's bottom edge no longer moves as you page. (#446)
+
 - **Actions is a working surface, not a scroll.** It was one unbounded column of every open
   bullet on every active project: no way to jump to a project, no context filter, no search,
   and rows that wrapped to two or three lines beside single-line neighbours. It now has a
@@ -59,6 +66,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   before closing over it, and marks the holding section in the rail. (#444)
 
 ### Fixed
+
+- **Today is marked in the Calendar.** It never was: the grid had no notion of today at all,
+  and in the current month it only looked marked because it happened to be the initial
+  selection — select another day, or page to another month, and the anchor was gone. Today
+  now carries a ring wherever you are, distinct from the selection's fill, and says so in its
+  accessible name. (#446)
 
 - **The energy filter no longer drops untagged work on the floor.** RLM tags actions by
   cognitive cost so you can match work to the state you are actually in — and the filter
