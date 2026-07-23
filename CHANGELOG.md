@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-23
+
 ### Added
 
 - **Questions have a view of their own.** RLM puts three-to-five research questions and
@@ -25,6 +27,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   sync and it picks up a start made from the CLI or by Claude over MCP, not only one
   clicked in the app. With nothing open it becomes the pick-one prompt instead of
   disappearing. (#442)
+
+- **The desktop app says when your `ignore` globs are hiding notes.** Reconciliation
+  reports how many markdown files it left out of the index, and the app surfaces a calm,
+  dismissible notice when the `ignore` count looks less like housekeeping than like a
+  mistake — proportional with a floor, so excluding a lone `CLAUDE.md` stays silent while
+  a glob swallowing a quarter of the vault does not. A file absent from the index is
+  absent from search, lint and backlinks too, so an over-broad pattern used to present as
+  "this section is broken" rather than "this vault is misconfigured"; the CLI has warned
+  about it since the globs shipped, but the app discarded the same numbers. Artefact
+  exclusions are reported alongside but never raise the notice — they are by design, not
+  configuration. The counts follow the live config: a reload that adds or narrows an
+  `ignore` glob re-reconciles the index, so the notice appears and clears in step rather
+  than describing the state at launch. The watcher's own reconciles update it too, so
+  moving notes under a folder an existing glob already matches is reported even though no
+  config was edited. (#440)
 
 ### Changed
 
@@ -110,6 +127,55 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Done would have discarded one without a word. Settings now says what is unsaved and asks
   before closing over it, and marks the holding section in the rail. (#444)
 
+- **Today is the day's own note.** The daily note — intention, standup, agenda, and the
+  append-only log that is the method's spine — used to be reachable only through the
+  Calendar, while Today showed a grid of project cards restating what the sidebar already
+  lists and what the project map says better. The note is the page now. Above it sit the
+  Now band, the quick-log composer, what is due soon, and an energy-filtered shortlist of
+  one line per project answering "pick one thing" — keeping the rule that a low-energy
+  moment is never met by an empty page. (#442)
+
+- **The project view leads with the Current State.** The section previously held only an
+  "Edit current state" link — the prose itself appeared nowhere until you clicked, except
+  inside the verbatim map at the foot of the page. It is rendered now, and clicking it
+  opens the editor. "Where am I" is the question a project map exists to answer. (#441)
+
+- **A project detail page no longer carries an open editor to another project.** Moving
+  between two recently-visited projects reconciled the page rather than remounting it, so
+  an open Current State editor survived — and its textarea kept the *first* project's
+  text, since an uncontrolled field only takes its value at mount. Saving then wrote that
+  text onto the project now on screen, and logged the overwritten state to the daily as
+  if it had legitimately been superseded. The same carry-over affected the next-action and
+  waiting-on inputs. (#441)
+
+- **Backlinks and log mentions no longer run unbounded.** Both accumulate for as long as a
+  project runs, and past a handful they pushed the state, the next actions and the
+  blockers off the screen. Each shows a few with the true total one click away, expanding
+  in place. Backlink groups arrive newest-first — the recent references are the context a
+  reader wants — and read as the note's name rather than its full vault path. (#441)
+
+- **The orphan-artefact lint no longer exempts markdown.** A folder of filed markdown
+  whose evidence stub was deleted or moved is now reported like any other detached
+  artefact — previously it was invisible in both directions, since the check skipped
+  `.md` while reconciliation tried to index it. The check resolves ownership through
+  the same helper reconciliation uses, so the two can no longer disagree. It now also
+  skips files that are notes (anything in the index) and files excluded by the config
+  `ignore` globs, so a hand-organised subfolder of evidence notes is not mistaken for a
+  detached artefact folder.
+
+  A finding names the **outermost folder that holds no note**, rather than a fixed
+  `portfolios/<portfolio>/<folder>`. A deep tree of stray files still collapses to one
+  finding, but a folder whose stub was deleted is named individually even when it sits
+  inside a folder of evidence notes — otherwise one surviving stub would hide every
+  detached sibling beside it. Consequently a folder holding notes is never itself
+  named, so lint cannot advise creating a `<folder>.md` that would make reconciliation
+  drop the notes underneath it.
+
+  Where the folder holds markdown that is not indexed, the message offers both readings
+  — notes whose frontmatter needs fixing, or filed documents whose stub was lost — and
+  says which one warrants restoring the stub, because creating it is right for the
+  second and would permanently hide the first. (#451)
+
 ### Fixed
 
 - **Today is marked in the Calendar.** It never was: the grid had no notion of today at all,
@@ -149,55 +215,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `cdno action complete -i` / `promote -i` pass the picked bullet through verbatim instead
   of pre-stripping it. A bare phrase typed by hand behaves as before. (#442)
 
-### Changed
-
-- **Today is the day's own note.** The daily note — intention, standup, agenda, and the
-  append-only log that is the method's spine — used to be reachable only through the
-  Calendar, while Today showed a grid of project cards restating what the sidebar already
-  lists and what the project map says better. The note is the page now. Above it sit the
-  Now band, the quick-log composer, what is due soon, and an energy-filtered shortlist of
-  one line per project answering "pick one thing" — keeping the rule that a low-energy
-  moment is never met by an empty page. (#442)
-
-- **The project view leads with the Current State.** The section previously held only an
-  "Edit current state" link — the prose itself appeared nowhere until you clicked, except
-  inside the verbatim map at the foot of the page. It is rendered now, and clicking it
-  opens the editor. "Where am I" is the question a project map exists to answer. (#441)
-- **A project detail page no longer carries an open editor to another project.** Moving
-  between two recently-visited projects reconciled the page rather than remounting it, so
-  an open Current State editor survived — and its textarea kept the *first* project's
-  text, since an uncontrolled field only takes its value at mount. Saving then wrote that
-  text onto the project now on screen, and logged the overwritten state to the daily as
-  if it had legitimately been superseded. The same carry-over affected the next-action and
-  waiting-on inputs. (#441)
-- **Backlinks and log mentions no longer run unbounded.** Both accumulate for as long as a
-  project runs, and past a handful they pushed the state, the next actions and the
-  blockers off the screen. Each shows a few with the true total one click away, expanding
-  in place. Backlink groups arrive newest-first — the recent references are the context a
-  reader wants — and read as the note's name rather than its full vault path. (#441)
-
-### Added
-
-- **The desktop app says when your `ignore` globs are hiding notes.** Reconciliation
-  reports how many markdown files it left out of the index, and the app surfaces a calm,
-  dismissible notice when the `ignore` count looks less like housekeeping than like a
-  mistake — proportional with a floor, so excluding a lone `CLAUDE.md` stays silent while
-  a glob swallowing a quarter of the vault does not. A file absent from the index is
-  absent from search, lint and backlinks too, so an over-broad pattern used to present as
-  "this section is broken" rather than "this vault is misconfigured"; the CLI has warned
-  about it since the globs shipped, but the app discarded the same numbers. Artefact
-  exclusions are reported alongside but never raise the notice — they are by design, not
-  configuration. The counts follow the live config: a reload that adds or narrows an
-  `ignore` glob re-reconciles the index, so the notice appears and clears in step rather
-  than describing the state at launch. The watcher's own reconciles update it too, so
-  moving notes under a folder an existing glob already matches is reported even though no
-  config was edited. (#440)
-
-### Fixed
-
 - **Portfolio rows in the Strategic view link to their portfolio.** The same portfolio
   already routed correctly as a chip on a question card while rendering as plain text in
   the portfolio-health table. (#440)
+
 - **`staleness_days` and `days_unchanged` are typed as `number`, not `bigint`.** ts-rs
   lowers Rust `i64` to `bigint`, but Tauri's IPC serialises through JSON, so these arrive
   as JS numbers. Nothing broke while callers only compared and stringified them, and the
@@ -229,30 +250,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   wikilink pointing at one now reports as broken. `cdno reindex` prints how many files
   were skipped as artefacts. To keep such a file as a note, move it out of the artefact
   folder.
-
-### Changed
-
-- **The orphan-artefact lint no longer exempts markdown.** A folder of filed markdown
-  whose evidence stub was deleted or moved is now reported like any other detached
-  artefact — previously it was invisible in both directions, since the check skipped
-  `.md` while reconciliation tried to index it. The check resolves ownership through
-  the same helper reconciliation uses, so the two can no longer disagree. It now also
-  skips files that are notes (anything in the index) and files excluded by the config
-  `ignore` globs, so a hand-organised subfolder of evidence notes is not mistaken for a
-  detached artefact folder.
-
-  A finding names the **outermost folder that holds no note**, rather than a fixed
-  `portfolios/<portfolio>/<folder>`. A deep tree of stray files still collapses to one
-  finding, but a folder whose stub was deleted is named individually even when it sits
-  inside a folder of evidence notes — otherwise one surviving stub would hide every
-  detached sibling beside it. Consequently a folder holding notes is never itself
-  named, so lint cannot advise creating a `<folder>.md` that would make reconciliation
-  drop the notes underneath it.
-
-  Where the folder holds markdown that is not indexed, the message offers both readings
-  — notes whose frontmatter needs fixing, or filed documents whose stub was lost — and
-  says which one warrants restoring the stub, because creating it is right for the
-  second and would permanently hide the first. (#451)
 
 ## [0.31.0] - 2026-07-21
 
