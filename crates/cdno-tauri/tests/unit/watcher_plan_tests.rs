@@ -279,3 +279,67 @@ fn only_an_applied_rebuild_skips_the_standalone_reconcile() {
     assert!(RebuildAttempt::Invalid.needs_standalone_reconcile());
     assert!(RebuildAttempt::Transient.needs_standalone_reconcile());
 }
+
+// ---------------------------------------------------------------------
+// The watcher's reconcile updates the #440 exclusion counts (not just the
+// config-reload path). A bulk move of notes under a folder an existing
+// glob already matches changes what is in the index with no config edit
+// to trigger a rebuild — so if only rebuilds wrote the counts, the notice
+// would stay silent through exactly the eviction it exists to report.
+// ---------------------------------------------------------------------
+
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
+use cdno_core::config::IgnoreSet;
+use cdno_core::index::{MemoryIndex, VaultIndex};
+use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_tauri::events::IndexExclusions;
+use cdno_tauri::watcher::{WatcherDeps, run_reconcile};
+
+const NOTE: &str = "---\ntype: zettel\ntitle: A note\n---\n# A note\n";
+
+fn note_path(dir: &str, n: usize) -> VaultPath {
+    VaultPath::new(format!("{dir}/note-{n:02}.md")).unwrap()
+}
+
+#[test]
+fn a_watcher_reconcile_records_what_it_excluded() {
+    // `archive/**` is already in the config and matches nothing at first;
+    // then the notes move under it, out of band. Only a watcher pass runs.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for n in 0..12 {
+        store.write_file(&note_path("notes", n), NOTE).unwrap();
+    }
+    let deps = WatcherDeps {
+        store: store.clone(),
+        index: index.clone(),
+        ignore: Arc::new(ArcSwap::from_pointee(
+            IgnoreSet::compile(&["archive/**".to_string()]).unwrap(),
+        )),
+        exclusions: Arc::new(ArcSwap::from_pointee(IndexExclusions::default())),
+    };
+
+    assert!(run_reconcile(&deps));
+    let before = **deps.exclusions.load();
+    assert_eq!(before.ignored, 0);
+    assert_eq!(before.indexed, 12);
+    assert!(!before.ignore_looks_over_broad);
+
+    // The out-of-band move the watcher exists to notice.
+    for n in 0..12 {
+        let raw = store.read_file(&note_path("notes", n)).unwrap();
+        store.write_file(&note_path("archive", n), &raw).unwrap();
+        store.delete_file(&note_path("notes", n)).unwrap();
+    }
+
+    assert!(run_reconcile(&deps));
+    let after = **deps.exclusions.load();
+    assert_eq!(after.ignored, 12, "every moved note is now excluded");
+    assert_eq!(after.indexed, 0);
+    assert!(
+        after.ignore_looks_over_broad,
+        "an eviction this size must raise the notice, config edit or not"
+    );
+}

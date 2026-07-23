@@ -19,7 +19,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   exclusions are reported alongside but never raise the notice — they are by design, not
   configuration. The counts follow the live config: a reload that adds or narrows an
   `ignore` glob re-reconciles the index, so the notice appears and clears in step rather
-  than describing the state at launch. (#440)
+  than describing the state at launch. The watcher's own reconciles update it too, so
+  moving notes under a folder an existing glob already matches is reported even though no
+  config was edited. (#440)
 
 ### Fixed
 

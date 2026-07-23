@@ -487,11 +487,12 @@ pub fn load_vault_and_ignore(
 /// that fits it (`SelfWrite` for a command-driven reload, `External` for a
 /// watcher-driven one).
 ///
-/// Never-brick: the fresh `IgnoreSet` and `Vault` are both built (via
-/// [`load_vault_and_ignore`]) BEFORE either handle is swapped, so any error
-/// returns with the OLD vault and OLD ignore set still live — the session
-/// is never left vault-less. This is the last safety net beneath PR3's
-/// pre-write validate gate.
+/// Never-brick: every fresh handle — the `Vault`, its `IgnoreSet`, and the
+/// exclusion counts — is built (via [`load_vault_and_ignore`]) BEFORE any
+/// of them is swapped, so an error returns with the old set still live and
+/// the session is never left vault-less. This is the last safety net
+/// beneath PR3's pre-write validate gate, and it holds for any handle added
+/// here as long as the build-then-swap split is kept.
 ///
 /// Synchronous by design: the watcher thread is a plain `std::thread` and
 /// calls this directly; the async command hops it onto the blocking pool.
@@ -499,10 +500,14 @@ pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<
     let state = app.state::<AppState>();
     let (vault, ignore, exclusions) =
         load_vault_and_ignore(state.store.clone(), state.index.clone(), &state.root)?;
-    // Both built successfully — only now swap, so a failure above leaves the
-    // old handles live. The vault swaps first, then its matching ignore set;
-    // an in-flight command holding an owned `Arc` snapshot of the old vault
-    // finishes cleanly (the swap never pulls a vault out from under it).
+    // All built successfully — only now swap, so a failure above leaves the
+    // old handles live. The vault swaps first, then its matching ignore set,
+    // then the counts describing it; an in-flight command holding an owned
+    // `Arc` snapshot of the old vault finishes cleanly (the swap never pulls
+    // a vault out from under it). The three stores are not atomic as a
+    // group, so a read landing between them sees an older count — harmless,
+    // since the `vault:changed` that prompts a re-read is emitted after the
+    // whole sequence.
     state.vault.store(Arc::new(vault));
     state.ignore.store(Arc::new(ignore));
     state.exclusions.store(Arc::new(exclusions));

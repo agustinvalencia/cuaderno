@@ -20,16 +20,23 @@ import { useQuery } from "@tanstack/react-query";
 import { getIndexExclusions } from "../api/commands";
 
 export default function IndexExclusionsBanner() {
+  // The refetch after a config change comes from the `config` invalidation
+  // area (lib/invalidation.ts), not from staleness: the app sets a global
+  // `staleTime: Infinity`, and an invalidation refetches active observers
+  // regardless of it.
   const { data } = useQuery({
     queryKey: ["get_index_exclusions"],
     queryFn: getIndexExclusions,
   });
   const [dismissed, setDismissed] = useState(false);
 
-  // A config reload can change the counts in either direction, so a
-  // dismissal covers the condition the user actually saw. When the numbers
-  // move, the notice earns a fresh hearing.
-  const signature = data ? `${data.ignored}/${data.indexed}/${data.artefacts}` : null;
+  // A dismissal covers the condition the user actually saw — how many notes
+  // the globs are excluding — so a genuinely different exclusion earns a
+  // fresh hearing. Keyed on `ignored` alone, never on the indexed or
+  // artefact counts: those drift with ordinary vault growth, so including
+  // them would resurrect a deliberately dismissed banner the next time an
+  // unrelated config edit triggered a re-reconcile.
+  const signature = data ? String(data.ignored) : null;
   const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
   if (dismissed && dismissedSignature !== signature) {
     setDismissed(false);

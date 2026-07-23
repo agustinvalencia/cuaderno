@@ -45,6 +45,12 @@ pub struct WatcherDeps {
     /// call rather than cached, so a mid-session swap takes effect on the
     /// very next batch.
     pub ignore: Arc<ArcSwap<IgnoreSet>>,
+    /// The exclusion counts the #440 notice reads, shared by reference with
+    /// [`AppState`]. Every reconcile updates them: the watcher's passes are
+    /// reconciliations too, and a bulk move of notes into a folder an
+    /// existing glob already matches changes what is in the index without
+    /// any config edit to trigger a rebuild.
+    pub exclusions: Arc<ArcSwap<crate::events::IndexExclusions>>,
 }
 
 /// Consume debounced batches until the sender (the `FsFileWatcher`,
@@ -451,7 +457,10 @@ fn emit_config_status_with_edits(
 
 /// Repair the index; `false` (→ degraded pill + poll fallback in the
 /// frontend) only on catastrophic failure, not per-file errors.
-fn run_reconcile(deps: &WatcherDeps) -> bool {
+///
+/// Public so a test can drive the exact pass the watcher thread runs,
+/// without an `AppHandle` or a real filesystem watcher.
+pub fn run_reconcile(deps: &WatcherDeps) -> bool {
     // Load the current ignore set per call so a config reload's swap
     // (GH #365 PR4) is honoured on the very next reconcile.
     let ignore = deps.ignore.load_full();
@@ -463,6 +472,15 @@ fn run_reconcile(deps: &WatcherDeps) -> bool {
                     "reconcile completed with per-file errors"
                 );
             }
+            // This pass is what the index now reflects, so the notice must
+            // read from it (#440). Without this the counts would only ever
+            // follow a config rebuild, and moving 200 notes under a folder
+            // an existing glob matches would evict them from search, lint
+            // and backlinks with nothing said.
+            deps.exclusions
+                .store(Arc::new(crate::events::IndexExclusions::from_report(
+                    &report,
+                )));
             true
         }
         Err(e) => {
