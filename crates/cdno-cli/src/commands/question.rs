@@ -186,10 +186,17 @@ fn transition(
         println!("Aborted.");
         return Ok(());
     }
-    let path = vault
+    let outcome = vault
         .set_question_status(at, &slug, target)
         .with_context(|| format!("{verb}ing question"))?;
-    let message = format!("{} {path}", capitalise_first(&past_tense(verb)));
+    // A no-op says so rather than claiming a change that never happened.
+    let touched = outcome.touched();
+    let path = outcome.primary;
+    let message = if touched {
+        format!("{} {path}", capitalise_first(&past_tense(verb)))
+    } else {
+        format!("{path} is already {}", target.as_str())
+    };
     crate::output::emit_write_result(json, &path.to_string(), &message)?;
     Ok(())
 }

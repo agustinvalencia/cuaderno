@@ -146,15 +146,6 @@ pub struct StewardshipStrategicRow {
     pub sparkline: Vec<u32>,
 }
 
-/// Compose the Strategic bundle as of `today`. Public and synchronous —
-/// the test seam, exercised directly over the Memory doubles.
-///
-/// Every field is a straight domain read except the sparklines, which
-/// bucket each expanded stewardship's recent tracking dates into
-/// per-ISO-week counts here (plan §3.7 keeps date maths off the
-/// frontend). Flat stewardships get an empty sparkline without a
-/// tracking scan — they have no `tracking/` subdir, so the scan would
-/// return empty anyway.
 /// Pair each question with its backlinks, bucketed by source note type
 /// (#354) — one extra read per question, matched to the handful a grid
 /// shows.
@@ -184,6 +175,15 @@ pub fn question_rows(vault: &Vault, summaries: Vec<QuestionSummary>) -> Vec<Ques
         .collect()
 }
 
+/// Compose the Strategic bundle as of `today`. Public and synchronous —
+/// the test seam, exercised directly over the Memory doubles.
+///
+/// Every field is a straight domain read except the sparklines, which
+/// bucket each expanded stewardship's recent tracking dates into
+/// per-ISO-week counts here (plan §3.7 keeps date maths off the
+/// frontend). Flat stewardships get an empty sparkline without a
+/// tracking scan — they have no `tracking/` subdir, so the scan would
+/// return empty anyway.
 pub fn get_strategic_bundle_impl(
     vault: &Vault,
     today: NaiveDate,

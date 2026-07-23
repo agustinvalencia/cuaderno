@@ -69,14 +69,20 @@ impl CuadernoServer {
         let at = chrono::Local::now().naive_local();
         let status = QuestionStatus::from_str(&input.status)
             .map_err(|e| invalid_argument("status", &e.to_string()))?;
-        let path = self
+        let outcome = self
             .with_vault(move |vault| vault.set_question_status(at, &input.question, status))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Set question status on {}", path),
-        ))
+        // Tell an agent when nothing changed, so it does not report a
+        // status move that did not happen.
+        let touched = outcome.touched();
+        let path = outcome.primary;
+        let message = if touched {
+            format!("Set question status on {path}")
+        } else {
+            format!("{path} is already {}", status.as_str())
+        };
+        json_result(WriteResultDto::new(path.to_string(), message))
     }
 
     #[tool(

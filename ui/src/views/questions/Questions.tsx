@@ -22,7 +22,6 @@ import { errorMessage, listQuestions, setQuestionStatus } from "../../api/comman
 import { CappedList } from "../../components/ui/capped-list";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { noteLabel } from "../../lib/noteLabel";
-import { stalenessTone } from "../../lib/staleness";
 import { useReader } from "../../shell/reader";
 import { useToast } from "../../shell/Toasts";
 
@@ -140,11 +139,8 @@ function QuestionCard({ row }: { row: QuestionStrategicRow }) {
     mutationFn: (status: QuestionStatus) => setQuestionStatus(summary.slug, status),
     onError: (err) => toast(errorMessage(err), "attention"),
     onSuccess: (_data, status) => {
-      toast(
-        status === "answered"
-          ? `Answered: ${summary.question_text || summary.slug}.`
-          : `${summary.slug} is now ${status}.`,
-      );
+      const name = summary.question_text || summary.slug;
+      toast(status === "answered" ? `Answered: ${name}.` : `${name} is now ${status}.`);
       void client.invalidateQueries({ queryKey: ["list_questions"] });
     },
   });
@@ -198,7 +194,7 @@ function QuestionCard({ row }: { row: QuestionStrategicRow }) {
         </div>
       )}
 
-      <p className={`mt-2 text-xs ${stalenessTone(null)}`}>last touched {summary.updated}</p>
+      <p className="mt-2 text-xs text-ink-faint">last touched {summary.updated}</p>
     </article>
   );
 }

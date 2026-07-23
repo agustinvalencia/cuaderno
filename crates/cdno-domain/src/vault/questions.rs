@@ -22,6 +22,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
 
+use super::WriteOutcome;
 use crate::error::DomainError;
 use crate::frontmatter::{QuestionDomain, QuestionFrontmatter, QuestionStatus};
 use crate::note_type::NoteType;
@@ -143,11 +144,15 @@ impl Vault {
         at: NaiveDateTime,
         slug: &str,
         new_status: QuestionStatus,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, current) = self.resolve_question_by_slug(slug)?;
         if current.status == new_status {
-            return Ok(path);
+            // A silent no-op. Reported via `touched() == false` so a caller
+            // cannot journal an echo-suppression entry over a path this
+            // process never wrote (#315), and cannot claim a daily-log line
+            // that was never appended.
+            return Ok(WriteOutcome::noop(path));
         }
 
         let raw = self.store.read_file(&path)?;
@@ -161,9 +166,12 @@ impl Vault {
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
-        tx.commit()?;
+        // The commit's own touched set, so the daily note this staged is
+        // reported alongside the question — a caller reconstructing the
+        // paths by hand would miss it.
+        let touched = tx.commit()?;
 
-        Ok(path)
+        Ok(WriteOutcome::written(path, touched))
     }
 
     /// Every question with `status: active`, sorted by

@@ -21,7 +21,7 @@ use crate::events::VaultArea;
 use crate::state::AppState;
 use crate::with_vault::with_vault;
 
-use super::actions::record_and_emit;
+use super::actions::record_outcome_and_emit;
 
 use super::strategic::{QuestionStrategicRow, question_rows};
 
@@ -56,10 +56,20 @@ pub async fn set_question_status<R: tauri::Runtime>(
     status: QuestionStatus,
 ) -> Result<(), CmdError> {
     let now = Local::now().naive_local();
-    let path = with_vault(&state.vault(), move |vault| {
+    let outcome = with_vault(&state.vault(), move |vault| {
         vault.set_question_status(now, &slug, status)
     })
     .await??;
-    record_and_emit(&app, &state, vec![path], vec![VaultArea::Questions]);
+    // The domain's own touched set, not a reconstruction: the write also
+    // appends a was-now line to today's daily note, and a no-op touches
+    // nothing at all. Journalling paths this process never wrote would
+    // plant a false echo-suppression entry (#315); missing the daily one
+    // leaves the watcher to re-emit our own write as if it were external.
+    record_outcome_and_emit(
+        &app,
+        &state,
+        &outcome,
+        vec![VaultArea::Questions, VaultArea::Daily],
+    );
     Ok(())
 }

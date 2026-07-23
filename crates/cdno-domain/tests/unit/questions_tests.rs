@@ -455,3 +455,71 @@ fn question_not_found_lists_available_questions_sorted_across_domains() {
         "expected slug-sorted hint across domains, got: {msg}"
     );
 }
+
+#[test]
+fn set_question_status_reports_the_daily_note_it_wrote() {
+    // The write appends a was-now line to today's daily. A caller
+    // reconstructing the touched paths by hand would miss it — and the
+    // desktop uses that set both to suppress its own watcher echo and to
+    // refresh the daily-keyed views.
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_question(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            "Does sparse beat dense?",
+        )
+        .unwrap();
+
+    let outcome = vault
+        .set_question_status(
+            dt(2026, 5, 1, 14, 30),
+            "does-sparse-beat-dense",
+            QuestionStatus::Answered,
+        )
+        .expect("status change");
+
+    assert!(outcome.touched(), "a real change touched something");
+    let paths: Vec<String> = outcome.paths.iter().map(|p| p.to_string()).collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p.contains("does-sparse-beat-dense.md")),
+        "the question note: {paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|p| p == &daily_note_relpath(NaiveDate::from_ymd_opt(2026, 5, 1).unwrap())),
+        "and the daily note it logged to: {paths:?}"
+    );
+}
+
+#[test]
+fn set_question_status_reports_a_no_op_as_untouched() {
+    // Setting the status it already has writes nothing. Saying otherwise
+    // would have the desktop journal an echo-suppression entry over a path
+    // this process never wrote (#315).
+    let (vault, _store) = vault_with_seeded_store(&[]);
+    vault
+        .create_question(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            "Does sparse beat dense?",
+        )
+        .unwrap();
+
+    let outcome = vault
+        .set_question_status(
+            dt(2026, 5, 1, 14, 30),
+            "does-sparse-beat-dense",
+            QuestionStatus::Active,
+        )
+        .expect("no-op is not an error");
+
+    assert!(
+        !outcome.touched(),
+        "nothing was written: {:?}",
+        outcome.paths
+    );
+}
