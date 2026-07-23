@@ -30,7 +30,7 @@ function renderJuly(
     <MonthGrid
       year={2026}
       month={7}
-      noteDays={new Set(["2026-07-15"])}
+      marks={new Map([["2026-07-15", ["bg-accent-interactive"]]])}
       selectedDay={selectedDay}
       today={today}
       onSelectDay={onSelectDay}
@@ -125,7 +125,7 @@ test("a shorter month pads to the same six rows", () => {
     <MonthGrid
       year={2026}
       month={2}
-      noteDays={new Set()}
+      marks={new Map()}
       selectedDay={null}
       today={TODAY}
       onSelectDay={vi.fn()}
@@ -160,7 +160,7 @@ test("a month without today marks nothing", () => {
     <MonthGrid
       year={2026}
       month={8}
-      noteDays={new Set()}
+      marks={new Map()}
       selectedDay={null}
       today={TODAY}
       onSelectDay={vi.fn()}
@@ -174,7 +174,7 @@ test("has no axe violations", async () => {
     <MonthGrid
       year={2026}
       month={7}
-      noteDays={new Set(["2026-07-15"])}
+      marks={new Map([["2026-07-15", ["bg-accent-interactive"]]])}
       selectedDay={22}
       today={TODAY}
       onSelectDay={vi.fn()}
@@ -183,4 +183,46 @@ test("has no axe violations", async () => {
   expect(
     await axe(container, { rules: { "color-contrast": { enabled: false } } }),
   ).toHaveNoViolations();
+});
+
+/** The dot classes actually painted under a day cell. The accessible
+ * name branches on the mark count, so it matches whether or not a pixel
+ * is drawn — only the DOM answers "is there a dot, and what colour". */
+function dotsOn(name: RegExp | string): string[] {
+  const cell = screen.getByRole("button", { name });
+  return [...cell.querySelectorAll("span.rounded-full")].map((s) => s.className);
+}
+
+test("a marked day draws a dot in the colour its caller asked for", () => {
+  // The marks are `aria-hidden`, so every existing "marks a day"
+  // assertion reads the label — which is computed from the mark count and
+  // would pass with nothing painted at all.
+  renderJuly();
+  expect(dotsOn(/July 2026 15/).join(" ")).toContain("bg-accent-interactive");
+  expect(dotsOn(/July 2026 16/)).toHaveLength(0);
+});
+
+test("several marks on one day draw several dots, capped at three", () => {
+  // The reason `marks` is a map of class lists rather than a set of days:
+  // Commitments draws one context-coloured dot per promise falling on it.
+  // Past three the cell is a smudge, and a count is not what a grid is for.
+  render(
+    <MonthGrid
+      year={2026}
+      month={7}
+      marks={
+        new Map([
+          ["2026-07-06", ["bg-ctx-work", "bg-ctx-personal"]],
+          ["2026-07-07", ["bg-ctx-work", "bg-ctx-work", "bg-ctx-work", "bg-ctx-work"]],
+        ])
+      }
+      selectedDay={null}
+      today={TODAY}
+      onSelectDay={vi.fn()}
+    />,
+  );
+  const two = dotsOn(/July 2026 6/);
+  expect(two).toHaveLength(2);
+  expect(two[1]).toContain("bg-ctx-personal");
+  expect(dotsOn(/July 2026 7/)).toHaveLength(3);
 });

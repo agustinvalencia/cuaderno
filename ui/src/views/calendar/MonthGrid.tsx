@@ -48,22 +48,28 @@ const CELLS = 42;
 export default function MonthGrid({
   year,
   month,
-  noteDays,
+  marks,
   selectedDay,
   today,
+  markLabel = "has a note",
   onSelectDay,
 }: {
   /** Calendar year of the shown month. */
   year: number;
   /** Calendar month, 1..12. */
   month: number;
-  /** `YYYY-MM-DD` of every day that has a daily note.
+  /** `YYYY-MM-DD` -> the dot classes to draw under that day.
    *
-   * Full dates, not day-of-month numbers: collapsing to integers was
-   * correct for the shown month and meant the grid could never mark
-   * anything outside it, which is a floor this component should not have
-   * (#446). */
-  noteDays: Set<string>;
+   * A map rather than a set of note-bearing days, so the grid can serve
+   * more than one kind of mark: the Calendar draws one accent dot for a
+   * daily note, Commitments draws a context-coloured dot per promise
+   * falling on the day (#447). Full dates, not day-of-month numbers —
+   * collapsing to integers was correct for the shown month and meant the
+   * grid could never mark anything outside it (#446). */
+  marks: Map<string, string[]>;
+  /** What a marked day is called in its accessible name — the marks are
+   * `aria-hidden`, so this is the only way the state is announced. */
+  markLabel?: string;
   /** The selected day-of-month, or null when nothing is selected (e.g.
    * the shown month differs from the selection's month). */
   selectedDay: number | null;
@@ -143,7 +149,7 @@ export default function MonthGrid({
         {Array.from({ length: total }, (_unused, i) => {
           const day = i + 1;
           const iso = isoDay(year, month, day);
-          const hasNote = noteDays.has(iso);
+          const dots = marks.get(iso) ?? [];
           const isSelected = selectedDay === day;
           const isToday = iso === today;
           return (
@@ -156,7 +162,9 @@ export default function MonthGrid({
               aria-pressed={isSelected}
               // Today rides the name, not only the ring: an anchor a
               // screen reader cannot find is not an anchor.
-              aria-label={`${label} ${day}${isToday ? ", today" : ""}${hasNote ? ", has a note" : ""}`}
+              aria-label={`${label} ${day}${isToday ? ", today" : ""}${
+                dots.length > 0 ? `, ${markLabel}` : ""
+              }`}
               tabIndex={day === focusedDay ? 0 : -1}
               onClick={() => onSelectDay(isoDay(year, month, day))}
               // Two independent states, two independent marks: the
@@ -170,15 +178,16 @@ export default function MonthGrid({
               } ${isToday ? "ring-1 ring-inset ring-accent-interactive" : ""}`}
             >
               <span>{day}</span>
-              {/* A calm dot marks a note-bearing day — never red, and
-                  hidden from the a11y tree since the label already says
-                  "has a note". */}
-              <span
-                aria-hidden
-                className={`mt-0.5 h-1 w-1 rounded-full ${
-                  hasNote ? "bg-accent-interactive" : "bg-transparent"
-                }`}
-              />
+              {/* Calm dots — never red, and hidden from the a11y tree
+                  since the label already carries the state. A fixed-height
+                  row so a marked day is the same size as an unmarked one.
+                  Capped at three: past that the cell is a smudge, and the
+                  count is not what the grid is for. */}
+              <span aria-hidden className="mt-0.5 flex h-1 items-center gap-0.5">
+                {dots.slice(0, 3).map((dot, n) => (
+                  <span key={n} className={`h-1 w-1 rounded-full ${dot}`} />
+                ))}
+              </span>
             </button>
           );
         })}

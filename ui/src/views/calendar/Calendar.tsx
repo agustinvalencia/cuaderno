@@ -214,11 +214,10 @@ function CalendarBody({ today }: { today: string }) {
   const selectedDayInView =
     selYear === viewYear && selMonth === viewMonth ? selDay : null;
 
-  // Full ISO dates, passed through as the backend stamped them. They used
-  // to be collapsed to day-of-month integers and re-parsed on every
-  // render, which was correct for the shown month and meant the grid could
-  // never mark anything outside it.
-  const noteDays = new Set(monthDays.data ?? []);
+  // One accent dot per note-bearing day, keyed by the full ISO date the
+  // backend stamped. (The grid takes a class list per day so Commitments
+  // can draw context-coloured marks through the same component.)
+  const marks = new Map((monthDays.data ?? []).map((iso) => [iso, ["bg-accent-interactive"]]));
 
   const gridOpen = pinned || showPicker;
   const onToday = mode === "daily" && selectedDate === today;
@@ -316,7 +315,7 @@ function CalendarBody({ today }: { today: string }) {
         <MonthGrid
           year={viewYear}
           month={viewMonth}
-          noteDays={noteDays}
+          marks={marks}
           selectedDay={selectedDayInView}
           today={today}
           onSelectDay={selectDay}
