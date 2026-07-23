@@ -170,22 +170,42 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        // Strip the energy suffix from the QUERY as well as from each
-        // candidate. Every action the tool creates carries one, and both
-        // `list_actions` and the daily log carry the bullet verbatim — so
-        // the obvious query, the text the caller was just shown, arrives
-        // suffixed and would never match a candidate that had its suffix
-        // removed. Callers passing a bare phrase are unaffected.
-        let needle = strip_energy_suffix(query.trim()).to_lowercase();
+        // An exact match on the whole bullet wins outright. That is what
+        // the ambiguity picker sends back when the user chooses — and two
+        // bullets differing only by energy strip to the same phrase, so
+        // without this the pick would be ambiguous again and the dialog
+        // would reopen forever.
+        let exact = query.trim().to_lowercase();
+        let exact_matches: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| {
+                parse_open_action_text(line).is_some_and(|t| t.to_lowercase() == exact)
+            })
+            .map(|(i, _)| i)
+            .collect();
 
-        let mut matches: Vec<usize> = Vec::new();
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(text) = parse_open_action_text(line)
-                && strip_energy_suffix(text).to_lowercase().contains(&needle)
-            {
-                matches.push(i);
-            }
-        }
+        // Otherwise fall back to substring, with the energy suffix stripped
+        // from the QUERY as well as from each candidate. Every action the
+        // tool creates carries one, and both `list_actions` and the daily
+        // log carry the bullet verbatim — so the obvious query, the text
+        // the caller was just shown, arrives suffixed and would never match
+        // a candidate that had its suffix removed. A bare phrase is
+        // unaffected either way.
+        let matches: Vec<usize> = if exact_matches.len() == 1 {
+            exact_matches
+        } else {
+            let needle = strip_energy_suffix(query.trim()).to_lowercase();
+            lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| {
+                    parse_open_action_text(line)
+                        .is_some_and(|t| strip_energy_suffix(t).to_lowercase().contains(&needle))
+                })
+                .map(|(i, _)| i)
+                .collect()
+        };
 
         if matches.is_empty() {
             return Err(DomainError::ActionNotFound {
