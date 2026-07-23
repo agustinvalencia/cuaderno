@@ -74,16 +74,20 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "list_template_placeholders",
     "read_config",
     "read_config_model",
-    // A config reload re-reconciles against the new `ignore` globs, so the
-    // exclusion counts change in either direction — a glob added here
-    // evicts notes, one narrowed here restores them. Without this the
-    // notice would go stale on exactly the flow it recommends (#440).
-    "get_index_exclusions",
   ],
 };
 
 export function invalidateAreas(client: QueryClient, areas: VaultArea[]): void {
   const prefixes = new Set(areas.flatMap((area) => AREA_TO_PREFIXES[area] ?? []));
+  // The index-exclusion counts (#440) are area-independent: EVERY reconcile
+  // rewrites them, and the reconcile that matters most is the one nobody
+  // asked for — notes moved on disk into a folder an existing `ignore` glob
+  // already matches, which emits whatever area those notes live in (or none
+  // at all) and never `config`. Keying this off areas would mean the counts
+  // update in the backend and never reach the notice. It is a read of
+  // recorded state, not an index query, so refetching it on any change is
+  // cheap.
+  prefixes.add("get_index_exclusions");
   for (const prefix of prefixes) {
     void client.invalidateQueries({ queryKey: [prefix] });
   }

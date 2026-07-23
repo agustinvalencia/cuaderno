@@ -321,7 +321,7 @@ fn a_watcher_reconcile_records_what_it_excluded() {
         exclusions: Arc::new(ArcSwap::from_pointee(IndexExclusions::default())),
     };
 
-    assert!(run_reconcile(&deps));
+    assert!(run_reconcile(&deps).ok);
     let before = **deps.exclusions.load();
     assert_eq!(before.ignored, 0);
     assert_eq!(before.indexed, 12);
@@ -334,7 +334,12 @@ fn a_watcher_reconcile_records_what_it_excluded() {
         store.delete_file(&note_path("notes", n)).unwrap();
     }
 
-    assert!(run_reconcile(&deps));
+    let second = run_reconcile(&deps);
+    assert!(second.ok);
+    assert!(
+        second.exclusions_changed,
+        "a pass that evicts notes must report the change, so a quiet batch still emits"
+    );
     let after = **deps.exclusions.load();
     assert_eq!(after.ignored, 12, "every moved note is now excluded");
     assert_eq!(after.indexed, 0);

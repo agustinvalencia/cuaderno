@@ -23,8 +23,9 @@ pub const CAPTURE_SHOW: &str = "capture:show";
 /// path, which the frontend navigates the reader to.
 pub const OPEN_NOTE_DEEPLINK: &str = "deeplink:open-note";
 
-/// How many markdown files the startup reconciliation left out of the
-/// index, and why (#440).
+/// How many markdown files the most recent reconciliation left out of
+/// the index, and why (#440). Every pass rewrites it — the startup one,
+/// a config rebuild, and each of the watcher's.
 ///
 /// A file absent from the index is absent from search, lint and backlinks
 /// too, so the counts have to be reachable — the app previously logged
@@ -37,7 +38,7 @@ pub const OPEN_NOTE_DEEPLINK: &str = "deeplink:open-note";
 /// the user never sees is the failure being fixed.
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct IndexExclusions {
     /// Markdown excluded by the config `ignore` globs.
     pub ignored: usize,
