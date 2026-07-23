@@ -30,13 +30,15 @@ export default function IndexExclusionsBanner() {
   });
   const [dismissed, setDismissed] = useState(false);
 
-  // A dismissal covers the condition the user actually saw — how many notes
-  // the globs are excluding — so a genuinely different exclusion earns a
-  // fresh hearing. Keyed on `ignored` alone, never on the indexed or
-  // artefact counts: those drift with ordinary vault growth, so including
-  // them would resurrect a deliberately dismissed banner the next time an
-  // unrelated config edit triggered a re-reconcile.
-  const signature = data ? String(data.ignored) : null;
+  // A dismissal covers the *condition* — "your globs are excluding a
+  // disproportionate share" — not the numbers behind it. Keying on any
+  // count is wrong, and wrong in a way that bites hardest in the very vault
+  // this banner exists for: when a glob swallows a whole tree, every note
+  // written into that tree bumps `ignored` by one, so a count-keyed
+  // dismissal would pop the banner back up on each filing. The condition
+  // holds until the globs are actually fixed, and if it clears and later
+  // returns the flag flips back and the notice earns a fresh hearing.
+  const signature = data ? String(data.ignore_looks_over_broad) : null;
   const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
   if (dismissed && dismissedSignature !== signature) {
     setDismissed(false);

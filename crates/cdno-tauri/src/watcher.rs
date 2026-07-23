@@ -513,6 +513,23 @@ pub fn run_reconcile(deps: &WatcherDeps) -> ReconcileOutcome {
             // follow a config rebuild, and moving 200 notes under a folder
             // an existing glob matches would evict them from search, lint
             // and backlinks with nothing said.
+            //
+            // Unless the globs moved underneath us. A config rebuild can swap
+            // a fresh `IgnoreSet` in while this pass is still walking, and
+            // these counts were computed against the set loaded at entry — so
+            // publishing them would overwrite the rebuild's correct numbers
+            // with ones describing globs that are no longer in force, and the
+            // emit below would then push that stale value at the user. The
+            // rebuild's own counts are authoritative; drop ours. (The index
+            // itself can still be left mixed by the interleaving — that is
+            // #459, a pre-existing race this only declines to make visible.)
+            if !Arc::ptr_eq(&ignore, &deps.ignore.load_full()) {
+                tracing::debug!("ignore set swapped mid-reconcile; keeping the rebuild's counts");
+                return ReconcileOutcome {
+                    ok: true,
+                    exclusions_changed: false,
+                };
+            }
             let fresh = crate::events::IndexExclusions::from_report(&report);
             let previous = **deps.exclusions.load();
             deps.exclusions.store(Arc::new(fresh));

@@ -67,34 +67,69 @@ test("can be dismissed", async () => {
   expect(screen.queryByRole("status")).toBeNull();
 });
 
-test("a dismissal does not silence a different set of counts", async () => {
-  // A config reload changes the numbers in either direction. Dismissal
-  // covers the condition the user actually saw, not the banner forever —
-  // otherwise fixing one glob and introducing another would go unreported.
+test("a dismissal survives the counts drifting", async () => {
+  // In the vault this banner exists for, a glob swallows a whole tree — so
+  // every note written into that tree bumps `ignored` by one. A dismissal
+  // keyed on the count would pop the banner back up on each filing. It
+  // covers the condition, which has not changed.
   const exclusions = { ...OVER_BROAD };
   mockIPC((cmd) => {
     if (cmd === "get_index_exclusions") return exclusions;
     throw new Error(`unexpected command: ${cmd}`);
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const { rerender } = render(
+  const tree = () => (
     <QueryClientProvider client={client}>
       <IndexExclusionsBanner />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree());
 
   await screen.findByRole("status");
   fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
   expect(screen.queryByRole("status")).toBeNull();
 
-  // The counts move: a different over-broad glob now applies.
-  exclusions.ignored = 80;
+  // A note is filed under the over-broad glob; the count moves, the
+  // condition does not.
+  exclusions.ignored = 55;
+  exclusions.indexed = 161;
   await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
-  rerender(
+  rerender(tree());
+
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
+test("a dismissal lifts once the condition clears and returns", async () => {
+  // Fix the glob and the notice goes away on its own. Introduce a new
+  // over-broad one later and it has earned a fresh hearing.
+  const exclusions = { ...OVER_BROAD };
+  mockIPC((cmd) => {
+    if (cmd === "get_index_exclusions") return exclusions;
+    throw new Error(`unexpected command: ${cmd}`);
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = () => (
     <QueryClientProvider client={client}>
       <IndexExclusionsBanner />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree());
+
+  await screen.findByRole("status");
+  fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+
+  // The user narrows the glob: the condition clears.
+  exclusions.ignore_looks_over_broad = false;
+  exclusions.ignored = 1;
+  await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
+  rerender(tree());
+  expect(screen.queryByRole("status")).toBeNull();
+
+  // Later, a different over-broad glob appears.
+  exclusions.ignore_looks_over_broad = true;
+  exclusions.ignored = 80;
+  await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
+  rerender(tree());
 
   const notice = await screen.findByRole("status");
   expect(notice.textContent).toContain("80 of");
