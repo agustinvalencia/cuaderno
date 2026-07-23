@@ -766,11 +766,13 @@ impl From<cdno_domain::ProjectBacklinks> for ProjectBacklinksDto {
         // than that in one group is better explored via `search_notes`.
         // This `From` is MCP-only — Tauri maps `project_backlinks` itself
         // and keeps the full list.
-        let to_strings = |paths: Vec<cdno_core::path::VaultPath>| -> Vec<String> {
-            paths
-                .into_iter()
+        // Paths only: an agent resolves a note by path, and the domain
+        // already orders each group newest-first, so the cap now keeps the
+        // most recent backlinks rather than an arbitrary slice.
+        let to_strings = |refs: Vec<cdno_domain::BacklinkRef>| -> Vec<String> {
+            refs.into_iter()
                 .take(PROJECT_BACKLINKS_PER_GROUP_MAX)
-                .map(|p| p.to_string())
+                .map(|r| r.path.to_string())
                 .collect()
         };
         Self {

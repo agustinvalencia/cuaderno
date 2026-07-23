@@ -642,3 +642,90 @@ fn mtime_threshold_boundary_follows_the_injected_zone() {
     let utc_threshold = mtime_threshold_ns_in(today, 0, &chrono::Utc);
     assert!(utc_ns("2026-07-10T22:30:00Z") <= utc_threshold);
 }
+
+#[test]
+fn project_backlinks_carry_a_frontmatter_title_when_the_source_has_one() {
+    // The index's `title` is the frontmatter field, not the body H1 (the H1
+    // feeds the FTS row instead). Most RLM note types carry their name in
+    // the H1 and have no `title:` field, so this is `None` far more often
+    // than not — the renderer falls back to the path. Pinned here so the
+    // absence reads as a known shape rather than a bug.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n";
+    let titled = "---\ntype: zettel\ntitle: Sparse variants hold up\n---\n\n# Sparse\n\nSee [[projects/surrogate]].\n";
+    let untitled = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# Does it hold up?\n\n## Related Projects\n- [[projects/surrogate]]\n";
+    let (vault, _store) = vault_with(&[
+        ("projects/surrogate.md", project),
+        ("zettels/sparse.md", titled),
+        ("questions/research/holds-up.md", untitled),
+    ]);
+
+    let bl = vault.project_backlinks("surrogate").unwrap();
+
+    assert_eq!(bl.other.len(), 1, "the zettel lands in `other`: {bl:?}");
+    assert_eq!(
+        bl.other[0].title.as_deref(),
+        Some("Sparse variants hold up"),
+        "a frontmatter title is carried through"
+    );
+    assert_eq!(bl.questions.len(), 1, "{bl:?}");
+    assert_eq!(
+        bl.questions[0].title, None,
+        "a note whose name lives in its H1 has no frontmatter title"
+    );
+}
+
+#[test]
+fn project_backlinks_are_ordered_newest_first() {
+    // A project accrues backlinks for as long as it runs; the recent ones
+    // are the context a reader wants, so ordering is by mtime descending.
+    // Asserted against the returned mtimes rather than a hard-coded order,
+    // so the test proves the sort key without depending on how fast the
+    // store stamps three writes.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate\n";
+    let ev = |n: u32| {
+        format!(
+            "---\ntype: evidence\ncreated: 2026-05-0{n}\nsource: Note {n}\nportfolio: demo\norigin: \"[[projects/surrogate]]\"\n---\n\n# Note {n}\n"
+        )
+    };
+    let (e1, e2, e3) = (ev(1), ev(2), ev(3));
+    let (vault, _store) = vault_with(&[
+        ("projects/surrogate.md", project),
+        ("portfolios/demo/ev-1.md", &e1),
+        ("portfolios/demo/ev-2.md", &e2),
+        ("portfolios/demo/ev-3.md", &e3),
+    ]);
+
+    let bl = vault.project_backlinks("surrogate").unwrap();
+
+    assert_eq!(bl.evidence.len(), 3, "{bl:?}");
+    let mtimes: Vec<u64> = bl.evidence.iter().map(|r| r.modified_ns).collect();
+
+    // Without distinct mtimes the ordering claim is unfalsifiable — every
+    // sort key agrees when all the values are equal — so say so loudly
+    // rather than letting the assertion below pass vacuously.
+    let distinct: std::collections::HashSet<u64> = mtimes.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        3,
+        "the store must stamp distinct mtimes for this to test anything: {mtimes:?}"
+    );
+
+    let mut newest_first = mtimes.clone();
+    newest_first.sort_by(|a, b| b.cmp(a));
+    assert_eq!(mtimes, newest_first, "newest first: {mtimes:?}");
+
+    // And pin that it is the MTIME, not the path, that orders them: the
+    // paths here ascend (ev-1, ev-2, ev-3) while the newest was written
+    // last, so a path-descending sort would give a different answer.
+    let newest_path = bl
+        .evidence
+        .iter()
+        .max_by_key(|r| r.modified_ns)
+        .map(|r| r.path.to_string())
+        .unwrap();
+    assert_eq!(
+        bl.evidence[0].path.to_string(),
+        newest_path,
+        "the newest note leads, whatever its name sorts as"
+    );
+}

@@ -11,6 +11,8 @@ import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router";
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
+import type { BacklinkRow } from "../../api/bindings/BacklinkRow";
+import type { LogMentionView } from "../../api/bindings/LogMentionView";
 import type { ProjectDetail as ProjectDetailData } from "../../api/bindings/ProjectDetail";
 import {
   activateProject,
@@ -29,22 +31,59 @@ import {
 import AmbiguityPicker from "../../components/ambiguity/AmbiguityPicker";
 import { useAmbiguityResolver } from "../../components/ambiguity/useAmbiguityResolver";
 import Markdown from "../../components/markdown/Markdown";
+import { CappedList } from "../../components/ui/capped-list";
+import { noteLabel } from "../../lib/noteLabel";
 import { LogCard } from "../../components/ui/log-card";
 import { contextDotClass } from "../../lib/contexts";
 import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
-import { orderLogs, useLogOrder } from "../../lib/logOrder";
+import { orderLogs, useLogOrder, type LogOrder } from "../../lib/logOrder";
 import { LogOrderToggle } from "../../components/ui/log-order-toggle";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
 
+// How much of each accumulating section shows before the rest folds away.
+// Both grow for as long as the project runs; a handful is context, dozens
+// is a wall that pushes the state and the next actions off the screen.
+const BACKLINKS_SHOWN = 6;
+const LOG_MENTIONS_SHOWN = 5;
+
 /** The project map's note path for open-in-editor — parked maps live
  * under `_parked/`. */
 function projectPath(slug: string, parked: boolean): string {
   return parked ? `projects/_parked/${slug}.md` : `projects/${slug}.md`;
+}
+
+/** One mention as a timestamped card. */
+function logCard(mention: LogMentionView, index: number) {
+  return (
+    <div key={`${mention.date}-${mention.time}-${index}`} className="mb-1.5">
+      <LogCard date={shortDate(mention.date)} time={mention.time.slice(0, 5)}>
+        {mention.text}
+      </LogCard>
+    </div>
+  );
+}
+
+/** The mentions to show: most recent first *chosen*, then ordered for
+ * display.
+ *
+ * The cap and the sort are different questions and were briefly the same
+ * one: capping the display order meant "Recently in your logs" showed the
+ * five OLDEST mentions whenever the app-wide order was oldest-first. Pick
+ * by recency, then present in whichever direction the reader prefers.
+ */
+export function recentLogMentions(
+  mentions: LogMentionView[],
+  order: LogOrder,
+  limit = LOG_MENTIONS_SHOWN,
+): LogMentionView[] {
+  const newestFirst = orderLogs(mentions, "newest");
+  const kept = newestFirst.slice(0, Math.max(limit, 0));
+  return order === "newest" ? kept : [...kept].reverse();
 }
 
 /** Pull the body of a `## <heading>` section out of the map markdown,
@@ -78,7 +117,15 @@ export default function ProjectDetail() {
     );
   }
 
-  return <ProjectDetailBody slug={slug} data={data} />;
+  // Keyed on the slug so a project-to-project navigation REMOUNTS the body.
+  // Without it, react-query serves a cached project synchronously, the
+  // `isPending` branch never unmounts anything, and the body is reconciled
+  // with new props while keeping its state — an open Current State editor
+  // survives, its uncontrolled textarea still holds the previous project's
+  // text (a `defaultValue` only applies at mount), and Save writes that
+  // text onto the project now on screen. The sidebar's project links are on
+  // every view, so the route is a click away at all times.
+  return <ProjectDetailBody key={slug} slug={slug} data={data} />;
 }
 
 function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailData }) {
@@ -227,7 +274,10 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
     },
   });
 
-  const backlinkGroups: [string, string[]][] = [
+  // Pulled once: it seeds the editor and, now, renders as the section body.
+  const currentState = extractSection(data.body_markdown, "Current State");
+
+  const backlinkGroups: [string, BacklinkRow[]][] = [
     ["portfolios", data.backlinks.portfolios],
     ["questions", data.backlinks.questions],
     ["evidence", data.backlinks.evidence],
@@ -267,9 +317,22 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
 
       {/* Current State — inline editor (active projects only). */}
       <section aria-label="Current state" className="mt-8">
-        <SectionHeading>
-          Current state
-        </SectionHeading>
+        <div className="flex items-baseline justify-between gap-2">
+          <SectionHeading>Current state</SectionHeading>
+          {!parked && !editingState && (
+            // The edit affordance sits beside the heading rather than
+            // wrapping the prose. Wrapping it in a button nests the state's
+            // own wikilinks inside a control — invalid, and a click on one
+            // then bubbles into opening the editor as a side effect.
+            <button
+              type="button"
+              onClick={() => setEditingState(true)}
+              className="shrink-0 rounded px-1.5 py-0.5 text-xs text-accent-interactive hover:underline"
+            >
+              {currentState ? "Edit" : "Write one"}
+            </button>
+          )}
+        </div>
         {parked ? (
           <p className="mt-2 text-sm text-ink-muted">
             This project is parked. Activate it to edit its state.
@@ -285,7 +348,7 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           >
             <textarea
               ref={stateDraft}
-              defaultValue={extractSection(data.body_markdown, "Current State")}
+              defaultValue={currentState}
               rows={4}
               aria-label={`Current state of ${slug}`}
               className="w-full rounded border border-line bg-bg-base p-2 text-sm text-ink"
@@ -308,14 +371,18 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
             </div>
           </form>
         ) : (
-          <button
-            type="button"
-            onClick={() => setEditingState(true)}
-            aria-label={`Edit the current state of ${slug}`}
-            className="mt-2 block rounded text-left text-sm text-accent-interactive hover:underline"
-          >
-            Edit current state
-          </button>
+          // The state IS the answer to "where am I" — the one thing the map
+          // exists to tell you — so it is rendered, plainly, and its
+          // wikilinks stay live.
+          <div className="mt-2">
+            {currentState ? (
+              <Markdown body={currentState} onWikilink={onWikilink} />
+            ) : (
+              <p className="text-sm text-ink-muted">
+                No state written yet — say where this stands.
+              </p>
+            )}
+          </div>
         )}
       </section>
 
@@ -494,23 +561,26 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
           <SectionHeading>
             Linked from
           </SectionHeading>
-          {backlinkGroups.map(([group, paths]) =>
-            paths.length === 0 ? null : (
+          {backlinkGroups.map(([group, rows]) =>
+            rows.length === 0 ? null : (
               <div key={group} className="mt-2">
                 <p className="text-xs text-ink-faint">{group}</p>
-                <ul className="mt-1 space-y-0.5">
-                  {paths.map((path) => (
-                    <li key={path}>
+                <CappedList
+                  label={group}
+                  limit={BACKLINKS_SHOWN}
+                  items={rows.map((row) => (
+                    <div key={row.path}>
                       <button
                         type="button"
-                        onClick={() => openReader(path)}
-                        className="truncate text-left text-sm text-ink-muted hover:text-ink"
+                        onClick={() => openReader(row.path)}
+                        title={row.path}
+                        className="block w-full truncate text-left text-sm text-ink-muted hover:text-ink"
                       >
-                        {path}
+                        {noteLabel(row.path, row.title)}
                       </button>
-                    </li>
+                    </div>
                   ))}
-                </ul>
+                />
               </div>
             ),
           )}
@@ -524,16 +594,16 @@ function ProjectDetailBody({ slug, data }: { slug: string; data: ProjectDetailDa
             <SectionHeading>Recently in your logs</SectionHeading>
             <LogOrderToggle />
           </div>
-          <div className="mt-2 space-y-1.5">
-            {orderLogs(data.log_mentions, logOrder).map((mention, index) => (
-              <LogCard
-                key={`${mention.date}-${mention.time}-${index}`}
-                date={shortDate(mention.date)}
-                time={mention.time.slice(0, 5)}
-              >
-                {mention.text}
-              </LogCard>
-            ))}
+          <div className="mt-2">
+            <CappedList
+              label="log mentions"
+              items={orderLogs(data.log_mentions, logOrder).map(logCard)}
+              // The collapsed summary is the RECENT mentions, whichever way
+              // the reader has the list sorted — a prefix of an oldest-first
+              // list would be the five oldest, under a heading that says
+              // "recently".
+              collapsedItems={recentLogMentions(data.log_mentions, logOrder).map(logCard)}
+            />
           </div>
         </section>
       )}

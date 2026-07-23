@@ -6,6 +6,25 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The project view leads with the Current State.** The section previously held only an
+  "Edit current state" link — the prose itself appeared nowhere until you clicked, except
+  inside the verbatim map at the foot of the page. It is rendered now, and clicking it
+  opens the editor. "Where am I" is the question a project map exists to answer. (#441)
+- **A project detail page no longer carries an open editor to another project.** Moving
+  between two recently-visited projects reconciled the page rather than remounting it, so
+  an open Current State editor survived — and its textarea kept the *first* project's
+  text, since an uncontrolled field only takes its value at mount. Saving then wrote that
+  text onto the project now on screen, and logged the overwritten state to the daily as
+  if it had legitimately been superseded. The same carry-over affected the next-action and
+  waiting-on inputs. (#441)
+- **Backlinks and log mentions no longer run unbounded.** Both accumulate for as long as a
+  project runs, and past a handful they pushed the state, the next actions and the
+  blockers off the screen. Each shows a few with the true total one click away, expanding
+  in place. Backlink groups arrive newest-first — the recent references are the context a
+  reader wants — and read as the note's name rather than its full vault path. (#441)
+
 ### Added
 
 - **The desktop app says when your `ignore` globs are hiding notes.** Reconciliation

@@ -22,12 +22,12 @@ pub use lint::{LintIssue, LintReport, LintSeverity};
 pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
-    ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    ConfigDocument, ConfigSaveError, ConfigValidationError, DailyLogLine, DailyNoteView,
-    DailySection, InboxItem, LapsedHabit, MonthlyNoteView, MonthlySection, NormaliseReport,
-    OrientationContext, PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange,
-    ProjectSummary, QuestionBacklinks, QuestionSummary, SearchFilters, SearchResultEntry,
-    StewardshipSummary, StewardshipVariant, TemplateContent, TemplatePlaceholder,
-    TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry, Vault, WeeklyNoteView,
-    WeeklySection, WriteOutcome, validate_config_str,
+    ActionListEntry, AttachedAction, BacklinkRef, CommitmentEntry, CommitmentSource,
+    CompletedActionEntry, ConfigDocument, ConfigSaveError, ConfigValidationError, DailyLogLine,
+    DailyNoteView, DailySection, InboxItem, LapsedHabit, MonthlyNoteView, MonthlySection,
+    NormaliseReport, OrientationContext, PlaceholderSource, PortfolioSummary, ProjectBacklinks,
+    ProjectStateChange, ProjectSummary, QuestionBacklinks, QuestionSummary, SearchFilters,
+    SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplateContent,
+    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry, Vault,
+    WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
 };
