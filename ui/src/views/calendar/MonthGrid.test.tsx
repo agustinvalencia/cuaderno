@@ -30,7 +30,7 @@ function renderJuly(
     <MonthGrid
       year={2026}
       month={7}
-      noteDays={new Set(["2026-07-15"])}
+      marks={new Map([["2026-07-15", ["bg-accent-interactive"]]])}
       selectedDay={selectedDay}
       today={today}
       onSelectDay={onSelectDay}
@@ -125,7 +125,7 @@ test("a shorter month pads to the same six rows", () => {
     <MonthGrid
       year={2026}
       month={2}
-      noteDays={new Set()}
+      marks={new Map()}
       selectedDay={null}
       today={TODAY}
       onSelectDay={vi.fn()}
@@ -160,7 +160,7 @@ test("a month without today marks nothing", () => {
     <MonthGrid
       year={2026}
       month={8}
-      noteDays={new Set()}
+      marks={new Map()}
       selectedDay={null}
       today={TODAY}
       onSelectDay={vi.fn()}
@@ -174,7 +174,7 @@ test("has no axe violations", async () => {
     <MonthGrid
       year={2026}
       month={7}
-      noteDays={new Set(["2026-07-15"])}
+      marks={new Map([["2026-07-15", ["bg-accent-interactive"]]])}
       selectedDay={22}
       today={TODAY}
       onSelectDay={vi.fn()}

@@ -3,7 +3,7 @@
 // past-due wording without hoisting, the context filter, and the
 // completion buttons (present only where the source is completable).
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -75,14 +75,18 @@ afterEach(() => {
   clearMocks();
 });
 
-test("groups upcoming by month and collapses slipped-past by default", async () => {
+test("bands the near term, keeps months beyond it, and collapses slipped-past", async () => {
   mockIPC((cmd) => (cmd === "get_commitments" ? FIXTURE : undefined));
   renderView();
 
   await screen.findByText("Ship v1");
-  // Two month headers for the upcoming entries.
-  expect(screen.getByRole("heading", { name: "July" })).toBeDefined();
+  // today is Wednesday 15 Jul, so the week runs out on the 19th: the 20th
+  // and 25th are next week, and August is far enough to stay a month.
+  // Inside one month bucket, something due tomorrow and something due in
+  // 28 days used to sit together with no divider.
+  expect(screen.getByRole("heading", { name: "Next week" })).toBeDefined();
   expect(screen.getByRole("heading", { name: "August" })).toBeDefined();
+  expect(screen.queryByRole("heading", { name: "July" })).toBeNull();
 
   // The slipped-past group carries its count and is collapsed on load.
   const summary = screen.getByText("a few slipped past");
@@ -120,7 +124,7 @@ test("context chips filter the timeline client-side", async () => {
   renderView();
 
   await screen.findByText("Ship v1");
-  screen.getByRole("button", { name: "personal" }).click();
+  screen.getByRole("button", { name: "personal, 1" }).click();
 
   // Only the personal entry survives; the work/household ones drop.
   expect(await screen.findByText("Renew passport")).toBeDefined();
@@ -191,4 +195,84 @@ test("periodic and action-note rows carry no done button", async () => {
   expect(screen.queryByRole("button", { name: "Mark done: Water bill" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Mark done: Draft report" })).toBeNull();
   expect(screen.getByRole("button", { name: "Mark done: Ship v1" })).toBeDefined();
+});
+
+test("the horizon is stated, and changing it re-queries", async () => {
+  // 90 days used to be hardcoded into both the call and the query key, so
+  // it silently defined what "all your commitments" meant — a promise 100
+  // days out was invisible with no hint that it existed.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return cmd === "get_commitments" ? FIXTURE : undefined;
+  });
+  renderView();
+  await screen.findByText("Ship v1");
+  expect(calls.find((c) => c.cmd === "get_commitments")?.args).toMatchObject({ lookaheadDays: 90 });
+
+  const horizon = screen.getByLabelText("Looking ahead") as HTMLSelectElement;
+  expect(horizon.selectedOptions[0].textContent).toBe("3 months");
+  fireEvent.change(horizon, { target: { value: "0" } });
+
+  await waitFor(() =>
+    expect(
+      calls
+        .filter((c) => c.cmd === "get_commitments")
+        .map((c) => (c.args as { lookaheadDays: number }).lookaheadDays),
+    ).toContain(14),
+  );
+  expect(horizon.selectedOptions[0].textContent).toBe("2 weeks");
+});
+
+test("chips carry counts and clear in one move", async () => {
+  mockIPC((cmd) => (cmd === "get_commitments" ? FIXTURE : undefined));
+  renderView();
+  await screen.findByText("Ship v1");
+
+  expect(screen.getByRole("button", { name: "personal, 1" })).toBeDefined();
+  // A context nobody promised anything in gets no chip at all.
+  expect(screen.queryByRole("button", { name: /^legal/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "personal, 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+
+  expect(screen.getByText("Ship v1")).toBeDefined();
+  expect(screen.getByRole("button", { name: "personal, 1" }).getAttribute("aria-pressed")).toBe(
+    "false",
+  );
+});
+
+test("the month view places each promise on its day, and lists the day you choose", async () => {
+  // The same data read spatially: is the next fortnight clear, or is there
+  // a wall. A list answers that only if you read every line.
+  mockIPC((cmd) => (cmd === "get_commitments" ? FIXTURE : undefined));
+  renderView();
+  await screen.findByText("Ship v1");
+
+  fireEvent.click(screen.getByRole("button", { name: "Month" }));
+
+  // 20 July carries a commitment; 21 July does not.
+  const marked = await screen.findByRole("button", { name: /July 2026 20, has a commitment/ });
+  expect(screen.queryByRole("button", { name: /July 2026 21, has a commitment/ })).toBeNull();
+
+  fireEvent.click(marked);
+  const day = within(screen.getByRole("region", { name: "Commitments on the chosen day" }));
+  expect(day.getByText("Ship v1")).toBeDefined();
+  expect(day.queryByText("Renew passport")).toBeNull();
+});
+
+test("the month view honours the context filter", async () => {
+  mockIPC((cmd) => (cmd === "get_commitments" ? FIXTURE : undefined));
+  renderView();
+  await screen.findByText("Ship v1");
+  fireEvent.click(screen.getByRole("button", { name: "Month" }));
+  await screen.findByRole("button", { name: /July 2026 20, has a commitment/ });
+
+  fireEvent.click(screen.getByRole("button", { name: "personal, 1" }));
+
+  // Only the personal promise (25 Jul) keeps its mark; the work one on
+  // the 20th loses it.
+  expect(screen.getByRole("button", { name: /July 2026 25, has a commitment/ })).toBeDefined();
+  expect(screen.queryByRole("button", { name: /July 2026 20, has a commitment/ })).toBeNull();
 });

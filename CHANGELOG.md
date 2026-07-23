@@ -28,6 +28,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **Commitments answer "when", not just "what".** The window was a hardcoded 90 days baked
+  into the query, which silently defined what "all your commitments" meant — a promise 100
+  days out was invisible with no hint it existed. The horizon is now yours to set, from a
+  fortnight to everything, and it is stated rather than implied. The timeline bands the near
+  term into **This week** and **Next week** above the month sections, so something due
+  tomorrow no longer sits undivided beside something due in four weeks. A **Month** view puts
+  the same promises on a grid, one context-coloured dot per day, for the question a list
+  answers only if you read every line: is the next fortnight clear, or is there a wall.
+  Filter chips carry their counts and clear in one move. (#447)
+
 - **The Calendar keeps the month in view, and marks today.** The grid was collapsed by
   default and hid itself again the moment you chose a day, so the overview — the reason a
   calendar view exists — was a transient, two-click thing. On a window with room it is now a

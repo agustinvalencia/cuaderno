@@ -91,7 +91,16 @@ function removeEntry(view: CommitmentsView | undefined, key: string): Commitment
   return view ? { ...view, entries: view.entries.filter((e) => entryKey(e) !== key) } : view;
 }
 
-function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: boolean }) {
+function TimelineRow({
+  entry,
+  readOnly,
+  ambiguity,
+}: {
+  entry: CommitmentEntry;
+  readOnly: boolean;
+  /** The list's one resolver, passed down rather than made per row. */
+  ambiguity: ReturnType<typeof useAmbiguityResolver>;
+}) {
   const client = useQueryClient();
   const { toast } = useToast();
   const key = entryKey(entry);
@@ -102,7 +111,6 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
   // from here can come back ambiguous; the picker re-fires with the
   // exact name. (Standalone commitments complete by exact slug — never
   // ambiguous.)
-  const ambiguity = useAmbiguityResolver();
 
   // Optimistic removal across every cached lookahead window (the key
   // carries the days arg, so filter by prefix). Rolls back on error.
@@ -145,8 +153,13 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
         aria-hidden
         className={`h-2.5 w-2.5 shrink-0 rounded-full ${contextDotClass(entry.context)}`}
       />
-      <span className="min-w-0 flex-1 truncate text-sm text-ink">{entry.title}</span>
-      <OriginChip source={entry.source} />
+      {/* The title gets the room. The chip used to keep its full width
+          while the title truncated hard on a narrow window, which is the
+          wrong thing to lose first. */}
+      <span className="min-w-0 flex-[3] truncate text-sm text-ink">{entry.title}</span>
+      <span className="min-w-0 flex-1 truncate text-right">
+        <OriginChip source={entry.source} />
+      </span>
       <span className="shrink-0 text-xs text-ink-muted">
         {entry.is_overdue ? `planned for ${shortDate(entry.date)}` : shortDate(entry.date)}
       </span>
@@ -161,14 +174,49 @@ function TimelineRow({ entry, readOnly }: { entry: CommitmentEntry; readOnly: bo
           done
         </button>
       )}
-      <AmbiguityPicker
-        state={ambiguity.state}
-        resolving={ambiguity.resolving}
-        choose={ambiguity.choose}
-        close={ambiguity.close}
-      />
     </li>
   );
+}
+
+/** Days from `from` to `to`, both `YYYY-MM-DD`. Constructed at local
+ * midnight so a zone never shifts the count by one. */
+function daysBetween(from: string, to: string): number {
+  const a = new Date(`${from}T00:00:00`);
+  const b = new Date(`${to}T00:00:00`);
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+/** The Monday-first index of a date's weekday (0 = Monday). */
+function weekdayIndex(date: string): number {
+  return (new Date(`${date}T00:00:00`).getDay() + 6) % 7;
+}
+
+/** Split the upcoming entries into the two near bands and the rest.
+ *
+ * "What is bearing down on me, and when" is the question this view is
+ * asked, and a flat month bucket answers it only if you read every line:
+ * inside the current month, something due tomorrow and something due in
+ * 28 days sat together with no divider. This week and next week separate
+ * themselves; everything beyond keeps the month sections.
+ *
+ * Weeks are Monday-first, matching the vault's Monday-keyed weeks — so
+ * "this week" shrinks as the week goes on, which is the honest reading of
+ * how much room is left in it. */
+export function bandUpcoming(
+  entries: CommitmentEntry[],
+  today: string,
+): { thisWeek: CommitmentEntry[]; nextWeek: CommitmentEntry[]; later: CommitmentEntry[] } {
+  const daysLeftThisWeek = 6 - weekdayIndex(today);
+  const thisWeek: CommitmentEntry[] = [];
+  const nextWeek: CommitmentEntry[] = [];
+  const later: CommitmentEntry[] = [];
+  for (const entry of entries) {
+    const offset = daysBetween(today, entry.date);
+    if (offset <= daysLeftThisWeek) thisWeek.push(entry);
+    else if (offset <= daysLeftThisWeek + 7) nextWeek.push(entry);
+    else later.push(entry);
+  }
+  return { thisWeek, nextWeek, later };
 }
 
 export default function CommitmentsTimeline({
@@ -192,6 +240,10 @@ export default function CommitmentsTimeline({
 }) {
   // Empty active set means "all contexts" — a filter narrows, never
   // blanks by default.
+  // One resolver and one mounted picker for the whole list, rather than
+  // one per row — only one can ever be open.
+  const ambiguity = useAmbiguityResolver();
+
   const visible = filter.size === 0 ? entries : entries.filter((e) => filter.has(e.context));
 
   // Past-due entries (date < today) collapse into the top affordance;
@@ -200,9 +252,11 @@ export default function CommitmentsTimeline({
   const past = visible.filter((e) => e.is_overdue);
   const upcoming = visible.filter((e) => !e.is_overdue);
 
+  const { thisWeek, nextWeek, later } = bandUpcoming(upcoming, today);
+
   const thisYear = new Date(`${today}T00:00:00`).getFullYear();
   const months: { label: string; entries: CommitmentEntry[] }[] = [];
-  for (const entry of upcoming) {
+  for (const entry of later) {
     const label = monthLabel(entry.date, thisYear);
     const bucket = months.at(-1);
     if (bucket && bucket.label === label) {
@@ -214,6 +268,12 @@ export default function CommitmentsTimeline({
 
   return (
     <div className="mt-6 space-y-6">
+      <AmbiguityPicker
+        state={ambiguity.state}
+        resolving={ambiguity.resolving}
+        choose={ambiguity.choose}
+        close={ambiguity.close}
+      />
       {past.length > 0 && (
         // Collapsed by default (no `open` attribute) — the sanctioned
         // deviation from strict inline position (plan §1.3): grouped if
@@ -227,7 +287,12 @@ export default function CommitmentsTimeline({
           </summary>
           <ul className="mt-3 space-y-2">
             {past.map((entry) => (
-              <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />
+              <TimelineRow
+                key={entryKey(entry)}
+                entry={entry}
+                readOnly={readOnly}
+                ambiguity={ambiguity}
+              />
             ))}
           </ul>
         </details>
@@ -239,12 +304,38 @@ export default function CommitmentsTimeline({
         </p>
       )}
 
+      {[
+        { label: "This week", entries: thisWeek },
+        { label: "Next week", entries: nextWeek },
+      ].map((band) =>
+        band.entries.length === 0 ? null : (
+          <section key={band.label} aria-label={band.label}>
+            <SectionHeading as={monthHeading}>{band.label}</SectionHeading>
+            <ul className="mt-2 space-y-2">
+              {band.entries.map((entry) => (
+                <TimelineRow
+                  key={entryKey(entry)}
+                  entry={entry}
+                  readOnly={readOnly}
+                  ambiguity={ambiguity}
+                />
+              ))}
+            </ul>
+          </section>
+        ),
+      )}
+
       {months.map((month) => (
         <section key={month.label} aria-label={month.label}>
           <SectionHeading as={monthHeading}>{month.label}</SectionHeading>
           <ul className="mt-2 space-y-2">
             {month.entries.map((entry) => (
-              <TimelineRow key={entryKey(entry)} entry={entry} readOnly={readOnly} />
+              <TimelineRow
+                key={entryKey(entry)}
+                entry={entry}
+                readOnly={readOnly}
+                ambiguity={ambiguity}
+              />
             ))}
           </ul>
         </section>

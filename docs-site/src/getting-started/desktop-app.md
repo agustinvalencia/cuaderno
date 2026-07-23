@@ -82,9 +82,10 @@ with backlinks and recent log mentions kept to a few and the rest a click away. 
 cross-project list of next actions: a project rail with counts down the left, and a filter bar of
 context and energy chips plus a text filter across the top. Every chip carries its own count, and
 one of the energy chips is **untagged** — most bullets carry no `(deep|medium|light)` suffix, and
-they are work like any other. Filtering says how much it is hiding rather than just showing less. **Commitments** is a chronological timeline of everything
-promised — what someone else is counting on, as against what you merely decided to do
-(context-coloured, never red). **Stewardships** are the perpetual responsibilities; a stewardship's
+they are work like any other. Filtering says how much it is hiding rather than just showing less. **Commitments** is everything promised — what someone else is counting on, as
+against what you merely decided to do (context-coloured, never red). It reads as a timeline banded
+into **This week** / **Next week** / by month, or as a month grid with a dot per promise; the
+horizon is yours to set, from a fortnight up to everything. **Stewardships** are the perpetual responsibilities; a stewardship's
 detail draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
 columns, continuous measures (a weight, a pace) as lines, always in the context hue and never as a
 target to hit.
