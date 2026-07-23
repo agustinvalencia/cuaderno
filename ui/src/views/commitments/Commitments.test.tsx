@@ -276,3 +276,72 @@ test("the month view honours the context filter", async () => {
   expect(screen.getByRole("button", { name: /July 2026 25, has a commitment/ })).toBeDefined();
   expect(screen.queryByRole("button", { name: /July 2026 20, has a commitment/ })).toBeNull();
 });
+
+test("every horizon asks for its own window", async () => {
+  // Only the default and the shortest were exercised, so "everything"
+  // could silently have been the same 90-day ceiling the control exists
+  // to lift.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    return cmd === "get_commitments" ? FIXTURE : undefined;
+  });
+  renderView();
+  await screen.findByText("Ship v1");
+  const days = () =>
+    calls
+      .filter((c) => c.cmd === "get_commitments")
+      .map((c) => (c.args as { lookaheadDays: number }).lookaheadDays);
+  const asked = async (index: string, expected: number) => {
+    // Re-query each time: the select is controlled, so its value must be
+    // read back from the tree rather than held across a re-render.
+    fireEvent.change(screen.getByLabelText("Looking ahead"), { target: { value: index } });
+    await waitFor(() => expect(days()).toContain(expected));
+  };
+
+  await asked("1", 42);
+  await asked("3", 182);
+  await asked("4", 3650);
+  expect(
+    (screen.getByLabelText("Looking ahead") as HTMLSelectElement).selectedOptions[0].textContent,
+  ).toBe("everything");
+});
+
+test("an empty vault names the window it is empty over, in a sentence", async () => {
+  // The branch no fixture reached, which is how "in the next everything"
+  // got written.
+  mockIPC((cmd) =>
+    cmd === "get_commitments" ? { today: "2026-07-15", entries: [] } : undefined,
+  );
+  renderView();
+
+  expect(await screen.findByText("Nothing promised in the next 3 months.")).toBeDefined();
+
+  fireEvent.change(screen.getByLabelText("Looking ahead"), { target: { value: "4" } });
+  expect(
+    await screen.findByText("Nothing promised at any date you have recorded."),
+  ).toBeDefined();
+});
+
+test("the month view pages, and rolls the year over", async () => {
+  // Both month-view tests acted only on the month `today` lands in, so
+  // paging was never called and swapping the two buttons went unnoticed.
+  mockIPC((cmd) => (cmd === "get_commitments" ? FIXTURE : undefined));
+  renderView();
+  await screen.findByText("Ship v1");
+  fireEvent.click(screen.getByRole("button", { name: "Month" }));
+  await screen.findByRole("button", { name: /July 2026 20, has a commitment/ });
+
+  // Forward to August, where two of the fixture's promises live.
+  fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+  expect(screen.getByRole("button", { name: /August 2026 5, has a commitment/ })).toBeDefined();
+
+  // And on to January, over the year boundary.
+  for (let i = 0; i < 5; i += 1) {
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+  }
+  expect(screen.getByRole("button", { name: /January 2027 1$/ })).toBeDefined();
+
+  fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+  expect(screen.getByRole("button", { name: /December 2026 1$/ })).toBeDefined();
+});

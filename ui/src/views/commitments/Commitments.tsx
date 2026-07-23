@@ -29,14 +29,15 @@ import { CONTEXTS, contextDotClass, contextLabel } from "../../lib/contexts";
  * "all your commitments" meant: a promise 100 days out was invisible with
  * no hint that it existed. Now it is stated, and "everything" is
  * reachable. */
-const HORIZONS: { label: string; days: number }[] = [
-  { label: "2 weeks", days: 14 },
-  { label: "6 weeks", days: 42 },
-  { label: "3 months", days: 90 },
-  { label: "6 months", days: 182 },
+const HORIZONS: { label: string; days: number; empty: string }[] = [
+  { label: "2 weeks", days: 14, empty: "in the next 2 weeks" },
+  { label: "6 weeks", days: 42, empty: "in the next 6 weeks" },
+  { label: "3 months", days: 90, empty: "in the next 3 months" },
+  { label: "6 months", days: 182, empty: "in the next 6 months" },
   // Ten years stands in for "all": the backend takes a day count, and no
-  // vault holds a promise past it.
-  { label: "everything", days: 3650 },
+  // vault holds a promise past it. Its empty phrasing is its own — "in
+  // the next everything" is not a sentence.
+  { label: "everything", days: 3650, empty: "at any date you have recorded" },
 ];
 
 /** 3 months — the window this view has always had, now stated. */
@@ -50,6 +51,11 @@ export default function Commitments() {
   const { data, isPending, isError, error } = useQuery({
     queryKey: ["get_commitments", days],
     queryFn: () => getCommitments(days),
+    // Keep the window you were reading on screen while the new one
+    // loads. The horizon is part of the query key, so without this every
+    // change to it drops the view to "Reading the vault…" — taking the
+    // control you just used with it.
+    placeholderData: (previous) => previous,
   });
   // Multiple contexts can be active at once; an empty set means "all".
   const [filter, setFilter] = useState<Set<Context>>(new Set());
@@ -181,7 +187,7 @@ export default function Commitments() {
 
       {entries.length === 0 ? (
         <p className="mt-8 rounded border border-line bg-bg-surface p-6 text-ink-muted">
-          Nothing promised in the next {HORIZONS[horizon].label}.
+          Nothing promised {HORIZONS[horizon].empty}.
         </p>
       ) : mode === "month" ? (
         <MonthView entries={entries} today={data.today} filter={filter} />

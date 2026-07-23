@@ -36,7 +36,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   tomorrow no longer sits undivided beside something due in four weeks. A **Month** view puts
   the same promises on a grid, one context-coloured dot per day, for the question a list
   answers only if you read every line: is the next fortnight clear, or is there a wall.
-  Filter chips carry their counts and clear in one move. (#447)
+  Filter chips carry their counts and clear in one move, and changing the horizon keeps the
+  window you were reading on screen instead of blanking the view while the new one loads. (#447)
 
 - **The Calendar keeps the month in view, and marks today.** The grid was collapsed by
   default and hid itself again the moment you chose a day, so the overview — the reason a
