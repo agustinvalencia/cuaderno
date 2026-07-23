@@ -692,3 +692,29 @@ fn choosing_a_candidate_from_the_picker_resolves_it() {
         "the chosen one is gone: {content}"
     );
 }
+
+#[test]
+fn promote_resolves_the_exact_bullet_like_completion_does() {
+    // Completion and promotion are documented as disambiguating alike, and
+    // for a while they did not: promotion kept only the substring half, so
+    // two bullets differing by energy could never be told apart. Worse than
+    // an error — the picker handed back its own candidate, that
+    // re-ambiguated, and the dialog closed on itself. Neither bullet was
+    // promotable from the UI at all.
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Next Actions\n- [ ] Draft the methods section (deep)\n- [ ] Draft the methods section (light)\n";
+    let (vault, store) = vault_with(&[("projects/alpha.md", project)]);
+
+    vault
+        .promote_action(
+            dt(2026, 5, 2, 9, 30),
+            "alpha",
+            "Draft the methods section (light)",
+        )
+        .expect("the exact bullet resolves, as it does for completion");
+
+    let content = store.read_file(&vp("projects/alpha.md")).unwrap();
+    assert!(
+        content.contains("Draft the methods section (deep)"),
+        "the sibling survives: {content}"
+    );
+}

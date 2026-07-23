@@ -18,12 +18,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
-- **Completing an action accepts the text you were just shown.** Every action the tool
-  creates carries an energy suffix, and both the action list and the daily log carry the
-  bullet verbatim — but the matcher stripped that suffix from each candidate while leaving
-  it on the query, so the obvious query never matched. Marking an action done from the
-  Today page, the Actions list or a project map all passed the suffixed text; the query is
-  now stripped too, and a bare phrase still matches as before. (#442)
+- **Completing or promoting an action accepts the text you were just shown.** Every action
+  the tool creates carries an energy suffix, and the action list, the daily log and the
+  interactive picker all carry the bullet verbatim — but the matcher stripped that suffix
+  from each candidate while leaving it on the query, so the obvious query never matched.
+  Marking an action done from the Today page, the Actions list or a project map all passed
+  the suffixed text and all failed.
+
+  Matching now takes an **exact whole-bullet match first**, falling back to the previous
+  substring search with the suffix stripped from both sides. The exact pass is what lets
+  two bullets that differ only by their energy be told apart at all: previously the
+  ambiguity picker handed back its own candidate, that re-ambiguated, and the dialog closed
+  on itself — so neither bullet could be completed or promoted from the app. Completion and
+  promotion now share one resolver rather than two copies that had already drifted, and
+  `cdno action complete -i` / `promote -i` pass the picked bullet through verbatim instead
+  of pre-stripping it. A bare phrase typed by hand behaves as before. (#442)
 
 ### Changed
 

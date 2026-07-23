@@ -170,62 +170,7 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        // An exact match on the whole bullet wins outright. That is what
-        // the ambiguity picker sends back when the user chooses — and two
-        // bullets differing only by energy strip to the same phrase, so
-        // without this the pick would be ambiguous again and the dialog
-        // would reopen forever.
-        let exact = query.trim().to_lowercase();
-        let exact_matches: Vec<usize> = lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| {
-                parse_open_action_text(line).is_some_and(|t| t.to_lowercase() == exact)
-            })
-            .map(|(i, _)| i)
-            .collect();
-
-        // Otherwise fall back to substring, with the energy suffix stripped
-        // from the QUERY as well as from each candidate. Every action the
-        // tool creates carries one, and both `list_actions` and the daily
-        // log carry the bullet verbatim — so the obvious query, the text
-        // the caller was just shown, arrives suffixed and would never match
-        // a candidate that had its suffix removed. A bare phrase is
-        // unaffected either way.
-        let matches: Vec<usize> = if exact_matches.len() == 1 {
-            exact_matches
-        } else {
-            let needle = strip_energy_suffix(query.trim()).to_lowercase();
-            lines
-                .iter()
-                .enumerate()
-                .filter(|(_, line)| {
-                    parse_open_action_text(line)
-                        .is_some_and(|t| strip_energy_suffix(t).to_lowercase().contains(&needle))
-                })
-                .map(|(i, _)| i)
-                .collect()
-        };
-
-        if matches.is_empty() {
-            return Err(DomainError::ActionNotFound {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-            });
-        }
-        if matches.len() > 1 {
-            let candidates = matches
-                .iter()
-                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
-                .collect();
-            return Err(DomainError::AmbiguousAction {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-                candidates,
-            });
-        }
-
-        let removed_idx = matches[0];
+        let removed_idx = resolve_open_action(&lines, slug, query)?;
         let removed_full_text = parse_open_action_text(lines[removed_idx])
             .expect("matched line was previously parseable")
             .to_owned();
@@ -304,42 +249,7 @@ impl Vault {
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
-        // Strip the energy suffix from the QUERY as well as from each
-        // candidate. Every action the tool creates carries one, and both
-        // `list_actions` and the daily log carry the bullet verbatim — so
-        // the obvious query, the text the caller was just shown, arrives
-        // suffixed and would never match a candidate that had its suffix
-        // removed. Callers passing a bare phrase are unaffected.
-        let needle = strip_energy_suffix(query.trim()).to_lowercase();
-
-        // Find / disambiguate using the same rules as complete_action.
-        let mut matches: Vec<usize> = Vec::new();
-        for (i, line) in lines.iter().enumerate() {
-            if let Some(text) = parse_open_action_text(line)
-                && strip_energy_suffix(text).to_lowercase().contains(&needle)
-            {
-                matches.push(i);
-            }
-        }
-        if matches.is_empty() {
-            return Err(DomainError::ActionNotFound {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-            });
-        }
-        if matches.len() > 1 {
-            let candidates = matches
-                .iter()
-                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
-                .collect();
-            return Err(DomainError::AmbiguousAction {
-                slug: slug.to_owned(),
-                query: query.to_owned(),
-                candidates,
-            });
-        }
-
-        let bullet_idx = matches[0];
+        let bullet_idx = resolve_open_action(&lines, slug, query)?;
         let bullet_text = parse_open_action_text(lines[bullet_idx])
             .expect("matched line was previously parseable")
             .to_owned();
@@ -510,6 +420,67 @@ fn parse_open_action_text(line: &str) -> Option<&str> {
 
 /// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
 /// matching is case-sensitive because `add_action` always emits
+/// Find the one open action bullet `query` names, among `lines`.
+///
+/// Two rules, in order.
+///
+/// **An exact match on the whole bullet wins outright.** Every caller
+/// already holds the full text — `list_actions` returns it verbatim, the
+/// daily log records it verbatim, and the ambiguity picker hands back the
+/// candidate it was given — so the common path should be precise, not
+/// approximate. Without this, two bullets differing only by energy strip
+/// to the same phrase and the picker's own answer re-ambiguates, leaving
+/// the user unable to resolve their own choice.
+///
+/// **Otherwise, substring, with the energy suffix stripped from both
+/// sides.** Every action the tool creates carries a suffix, so a query
+/// echoing text the caller was shown arrives suffixed and would never
+/// match a candidate whose suffix had been removed. A bare phrase typed by
+/// hand is unaffected.
+///
+/// Shared by completion and promotion so the two cannot drift: they are
+/// documented as behaving alike, and for a while they did not.
+fn resolve_open_action(lines: &[&str], slug: &str, query: &str) -> Result<usize, DomainError> {
+    let trimmed = query.trim();
+    let exact = trimmed.to_lowercase();
+    let exact_matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| parse_open_action_text(line).is_some_and(|t| t.to_lowercase() == exact))
+        .map(|(i, _)| i)
+        .collect();
+    if exact_matches.len() == 1 {
+        return Ok(exact_matches[0]);
+    }
+
+    let needle = strip_energy_suffix(trimmed).to_lowercase();
+    let matches: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| {
+            parse_open_action_text(line)
+                .is_some_and(|t| strip_energy_suffix(t).to_lowercase().contains(&needle))
+        })
+        .map(|(i, _)| i)
+        .collect();
+
+    match matches.len() {
+        0 => Err(DomainError::ActionNotFound {
+            slug: slug.to_owned(),
+            query: query.to_owned(),
+        }),
+        1 => Ok(matches[0]),
+        _ => Err(DomainError::AmbiguousAction {
+            slug: slug.to_owned(),
+            query: query.to_owned(),
+            candidates: matches
+                .iter()
+                .map(|&i| parse_open_action_text(lines[i]).unwrap_or("").to_owned())
+                .collect(),
+        }),
+    }
+}
+
 /// lowercase.
 fn strip_energy_suffix(text: &str) -> &str {
     for suffix in [" (deep)", " (medium)", " (light)"] {
