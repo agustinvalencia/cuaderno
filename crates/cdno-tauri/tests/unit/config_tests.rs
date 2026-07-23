@@ -253,7 +253,7 @@ fn load_vault_and_ignore_builds_from_a_valid_config() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     let (vault, _ignore, _exclusions) =
-        load_vault_and_ignore(store, index, tmp.path()).expect("a valid config must build");
+        load_vault_and_ignore(store, index, tmp.path(), 0).expect("a valid config must build");
 
     let types = vault.list_templates().expect("list_templates");
     assert!(
@@ -424,8 +424,8 @@ fn load_vault_and_ignore_reconciles_a_pending_note_into_the_index() {
         "precondition: the note is not indexed before the rebuild"
     );
 
-    let (_vault, _ignore, _exclusions) =
-        load_vault_and_ignore(store, index.clone(), tmp.path()).expect("a valid config must build");
+    let (_vault, _ignore, _exclusions) = load_vault_and_ignore(store, index.clone(), tmp.path(), 0)
+        .expect("a valid config must build");
 
     assert!(
         index.find_by_path(&note).unwrap().is_some(),
@@ -444,7 +444,7 @@ fn load_vault_and_ignore_rejects_a_broken_config() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     assert!(
-        load_vault_and_ignore(store, index, tmp.path()).is_err(),
+        load_vault_and_ignore(store, index, tmp.path(), 0).is_err(),
         "a broken config must error, leaving nothing to swap"
     );
 }
@@ -690,13 +690,13 @@ fn a_reload_that_adds_an_over_broad_glob_reports_the_exclusions() {
     seed_portfolio_notes(&store, 9);
 
     let (_v, _i, before) =
-        load_vault_and_ignore(store.clone(), index.clone(), tmp.path()).expect("builds");
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
     assert_eq!(before.ignored, 0);
     assert!(!before.ignore_looks_over_broad);
 
     write_config_at(tmp.path(), "ignore = [\"portfolios/*/**\"]\n");
     let (_v, _i, after) =
-        load_vault_and_ignore(store.clone(), index.clone(), tmp.path()).expect("builds");
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
 
     assert_eq!(after.ignored, 10, "every portfolio note is excluded");
     assert_eq!(after.indexed, 0);
@@ -718,12 +718,12 @@ fn a_reload_that_narrows_the_glob_clears_the_exclusions() {
     seed_portfolio_notes(&store, 9);
 
     let (_v, _i, before) =
-        load_vault_and_ignore(store.clone(), index.clone(), tmp.path()).expect("builds");
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
     assert!(before.ignore_looks_over_broad);
 
     write_config_at(tmp.path(), "ignore = [\"portfolios/*/*/**\"]\n");
     let (_v, _i, after) =
-        load_vault_and_ignore(store.clone(), index.clone(), tmp.path()).expect("builds");
+        load_vault_and_ignore(store.clone(), index.clone(), tmp.path(), 0).expect("builds");
 
     assert_eq!(after.ignored, 0);
     assert_eq!(after.indexed, 10, "every note returns to the index");

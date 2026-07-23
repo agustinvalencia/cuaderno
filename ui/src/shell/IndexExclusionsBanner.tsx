@@ -30,15 +30,23 @@ export default function IndexExclusionsBanner() {
   });
   const [dismissed, setDismissed] = useState(false);
 
-  // A dismissal covers the *condition* — "your globs are excluding a
-  // disproportionate share" — not the numbers behind it. Keying on any
-  // count is wrong, and wrong in a way that bites hardest in the very vault
-  // this banner exists for: when a glob swallows a whole tree, every note
-  // written into that tree bumps `ignored` by one, so a count-keyed
-  // dismissal would pop the banner back up on each filing. The condition
-  // holds until the globs are actually fixed, and if it clears and later
-  // returns the flag flips back and the notice earns a fresh hearing.
-  const signature = data ? String(data.ignore_looks_over_broad) : null;
+  // What a dismissal covers, and what earns a fresh hearing.
+  //
+  // Not the counts: when a glob swallows a whole tree, every note filed
+  // into that tree moves them, so a count-keyed dismissal would pop the
+  // banner back up on each filing — in exactly the vault this exists for.
+  //
+  // Not the condition flag alone either: swapping one over-broad glob for
+  // another never shows a healthy state in between, so the flag stays
+  // `true` throughout and a dismissal would silence the notice for the rest
+  // of the session — including the case where the user's edit made things
+  // worse.
+  //
+  // The pairing is right. `config_generation` moves only when the config is
+  // rebuilt, which is the only thing that can change the globs, so a
+  // dismissal survives ordinary vault growth and lifts the moment the user
+  // touches the thing the notice asked them to touch.
+  const signature = data ? `${data.ignore_looks_over_broad}/${data.config_generation}` : null;
   const [dismissedSignature, setDismissedSignature] = useState<string | null>(null);
   if (dismissed && dismissedSignature !== signature) {
     setDismissed(false);

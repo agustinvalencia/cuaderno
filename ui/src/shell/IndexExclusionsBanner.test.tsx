@@ -11,6 +11,7 @@ const SILENT: IndexExclusions = {
   artefacts: 6,
   indexed: 160,
   ignore_looks_over_broad: false,
+  config_generation: 1,
 };
 
 const OVER_BROAD: IndexExclusions = {
@@ -18,6 +19,7 @@ const OVER_BROAD: IndexExclusions = {
   artefacts: 6,
   indexed: 161,
   ignore_looks_over_broad: true,
+  config_generation: 1,
 };
 
 function renderBanner(exclusions: IndexExclusions) {
@@ -118,9 +120,10 @@ test("a dismissal lifts once the condition clears and returns", async () => {
   await screen.findByRole("status");
   fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
 
-  // The user narrows the glob: the condition clears.
+  // The user narrows the glob: a config rebuild, so the generation moves.
   exclusions.ignore_looks_over_broad = false;
   exclusions.ignored = 1;
+  exclusions.config_generation = 2;
   await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
   rerender(tree());
   expect(screen.queryByRole("status")).toBeNull();
@@ -128,9 +131,43 @@ test("a dismissal lifts once the condition clears and returns", async () => {
   // Later, a different over-broad glob appears.
   exclusions.ignore_looks_over_broad = true;
   exclusions.ignored = 80;
+  exclusions.config_generation = 3;
   await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
   rerender(tree());
 
   const notice = await screen.findByRole("status");
   expect(notice.textContent).toContain("80 of");
+});
+
+test("a dismissal lifts when one bad glob is swapped for another", async () => {
+  // The condition flag never dips to false across a single config save that
+  // replaces `portfolios/*/**` with something still too broad. Keying on the
+  // flag alone would silence the notice for the rest of the session —
+  // including when the user's edit made the exclusion worse.
+  const exclusions = { ...OVER_BROAD };
+  mockIPC((cmd) => {
+    if (cmd === "get_index_exclusions") return exclusions;
+    throw new Error(`unexpected command: ${cmd}`);
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const tree = () => (
+    <QueryClientProvider client={client}>
+      <IndexExclusionsBanner />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(tree());
+
+  await screen.findByRole("status");
+  fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+  expect(screen.queryByRole("status")).toBeNull();
+
+  // One save, one rebuild: still over-broad, and now worse.
+  exclusions.ignored = 180;
+  exclusions.indexed = 35;
+  exclusions.config_generation = 2;
+  await client.invalidateQueries({ queryKey: ["get_index_exclusions"] });
+  rerender(tree());
+
+  const notice = await screen.findByRole("status");
+  expect(notice.textContent).toContain("180 of");
 });

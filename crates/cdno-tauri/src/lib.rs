@@ -90,7 +90,7 @@ fn init_with_vault(
     // previously discarded them, which is how an over-broad `ignore` glob
     // could evict every portfolio note and read as a broken view rather
     // than a misconfigured vault.
-    let exclusions = crate::events::IndexExclusions::from_report(&opened.report);
+    let exclusions = crate::events::IndexExclusions::from_report(&opened.report, 0);
     if exclusions.ignored + exclusions.artefacts > 0 {
         tracing::info!(
             ignored = exclusions.ignored,

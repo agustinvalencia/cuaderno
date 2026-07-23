@@ -461,6 +461,7 @@ pub fn load_vault_and_ignore(
     store: Arc<dyn VaultStore>,
     index: Arc<dyn VaultIndex>,
     root: &std::path::Path,
+    previous_generation: u32,
 ) -> Result<(Vault, IgnoreSet, crate::events::IndexExclusions), DomainError> {
     // A missing file falls back to the default config, matching
     // `open_vault`'s first-launch behaviour.
@@ -476,7 +477,10 @@ pub fn load_vault_and_ignore(
     // evicts notes from the index, and one narrowed here restores them
     // (#440). Dropping this report is what left the notice describing a
     // state that no longer existed.
-    let exclusions = crate::events::IndexExclusions::from_report(&report);
+    let exclusions = crate::events::IndexExclusions::from_report(
+        &report,
+        crate::events::IndexExclusions::next_generation(previous_generation),
+    );
     Ok((vault, ignore, exclusions))
 }
 
@@ -498,8 +502,13 @@ pub fn load_vault_and_ignore(
 /// calls this directly; the async command hops it onto the blocking pool.
 pub fn rebuild_and_swap<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), DomainError> {
     let state = app.state::<AppState>();
-    let (vault, ignore, exclusions) =
-        load_vault_and_ignore(state.store.clone(), state.index.clone(), &state.root)?;
+    let previous_generation = state.exclusions.load().config_generation;
+    let (vault, ignore, exclusions) = load_vault_and_ignore(
+        state.store.clone(),
+        state.index.clone(),
+        &state.root,
+        previous_generation,
+    )?;
     // All built successfully — only now swap, so a failure above leaves the
     // old handles live. The vault swaps first, then its matching ignore set,
     // then the counts describing it; an in-flight command holding an owned

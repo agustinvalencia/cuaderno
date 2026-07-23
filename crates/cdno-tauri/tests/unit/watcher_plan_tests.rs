@@ -348,3 +348,107 @@ fn a_watcher_reconcile_records_what_it_excluded() {
         "an eviction this size must raise the notice, config edit or not"
     );
 }
+
+/// A store that swaps the ignore set the moment reconciliation starts
+/// walking, modelling a config rebuild landing mid-pass.
+///
+/// This is the deterministic seam a review pointed out after I claimed the
+/// guard could only be tested by racing threads: `reconcile` calls
+/// `walk_dir` first, so a decorator here lands strictly between the
+/// matcher's load at entry and the check at exit — no threads, no timing.
+struct SwapOnWalk {
+    inner: Arc<dyn VaultStore>,
+    ignore: Arc<ArcSwap<IgnoreSet>>,
+    swap_to: IgnoreSet,
+}
+
+impl VaultStore for SwapOnWalk {
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, cdno_core::error::StoreError> {
+        self.ignore.store(Arc::new(self.swap_to.clone()));
+        self.inner.walk_dir(path)
+    }
+    fn read_file(&self, p: &VaultPath) -> Result<String, cdno_core::error::StoreError> {
+        self.inner.read_file(p)
+    }
+    fn read_bytes(&self, p: &VaultPath) -> Result<Vec<u8>, cdno_core::error::StoreError> {
+        self.inner.read_bytes(p)
+    }
+    fn write_file(&self, p: &VaultPath, c: &str) -> Result<(), cdno_core::error::StoreError> {
+        self.inner.write_file(p, c)
+    }
+    fn append_to_file(&self, p: &VaultPath, c: &str) -> Result<(), cdno_core::error::StoreError> {
+        self.inner.append_to_file(p, c)
+    }
+    fn move_file(&self, s: &VaultPath, d: &VaultPath) -> Result<(), cdno_core::error::StoreError> {
+        self.inner.move_file(s, d)
+    }
+    fn delete_file(&self, p: &VaultPath) -> Result<(), cdno_core::error::StoreError> {
+        self.inner.delete_file(p)
+    }
+    fn exists(&self, p: &VaultPath) -> Result<bool, cdno_core::error::StoreError> {
+        self.inner.exists(p)
+    }
+    fn list_dir(&self, p: &VaultPath) -> Result<Vec<VaultPath>, cdno_core::error::StoreError> {
+        self.inner.list_dir(p)
+    }
+    fn metadata(
+        &self,
+        p: &VaultPath,
+    ) -> Result<cdno_core::file_meta::FileMeta, cdno_core::error::StoreError> {
+        self.inner.metadata(p)
+    }
+    fn import_external(
+        &self,
+        s: &std::path::Path,
+        d: &VaultPath,
+    ) -> Result<(), cdno_core::error::StoreError> {
+        self.inner.import_external(s, d)
+    }
+}
+
+#[test]
+fn a_pass_whose_globs_were_swapped_underneath_it_does_not_publish() {
+    // A config rebuild lands while this pass is walking. Its counts describe
+    // globs no longer in force, so publishing them would overwrite the
+    // rebuild's correct numbers — and the quiet-batch emit would then push
+    // that stale value at the user, making a notice they just fixed return.
+    let inner: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    for n in 0..12 {
+        inner.write_file(&note_path("archive", n), NOTE).unwrap();
+    }
+    let ignore = Arc::new(ArcSwap::from_pointee(IgnoreSet::empty()));
+    let store: Arc<dyn VaultStore> = Arc::new(SwapOnWalk {
+        inner,
+        ignore: ignore.clone(),
+        swap_to: IgnoreSet::compile(&["archive/**".to_string()]).unwrap(),
+    });
+
+    // Stand in for the rebuild having already published its own counts.
+    let rebuild_counts = IndexExclusions {
+        ignored: 12,
+        artefacts: 0,
+        indexed: 0,
+        ignore_looks_over_broad: true,
+        config_generation: 7,
+    };
+    let deps = WatcherDeps {
+        store,
+        index: Arc::new(MemoryIndex::new()),
+        ignore,
+        exclusions: Arc::new(ArcSwap::from_pointee(rebuild_counts)),
+    };
+
+    let outcome = run_reconcile(&deps);
+
+    assert!(outcome.ok, "the pass itself succeeded");
+    assert!(
+        !outcome.exclusions_changed,
+        "a pass that raced a swap must not report a change, or the quiet \
+         batch emits and the banner shows counts for globs that are gone"
+    );
+    assert_eq!(
+        **deps.exclusions.load(),
+        rebuild_counts,
+        "the rebuild's counts are authoritative and must survive"
+    );
+}

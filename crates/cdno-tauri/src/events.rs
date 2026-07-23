@@ -50,6 +50,17 @@ pub struct IndexExclusions {
     /// Whether `ignored` is large enough to suggest an over-broad glob
     /// rather than deliberate housekeeping. See [`glob_looks_over_broad`].
     pub ignore_looks_over_broad: bool,
+    /// Bumped once per config rebuild, and only there.
+    ///
+    /// The notice is dismissible, and a dismissal has to survive ordinary
+    /// vault growth: in the very vault this exists for, a glob swallowing a
+    /// tree means every note filed into that tree changes the counts. But it
+    /// must NOT survive the user editing their globs — swapping one
+    /// over-broad pattern for another never shows an intermediate healthy
+    /// state, so a dismissal keyed on the condition alone would silence the
+    /// notice for the rest of the session. This counter is what the frontend
+    /// keys on: it moves when the globs might have, and not otherwise.
+    pub config_generation: u32,
 }
 
 /// The floor below which an `ignore` count is never worth a notice, however
@@ -72,15 +83,28 @@ pub fn glob_looks_over_broad(ignored: usize, total: usize) -> bool {
 }
 
 impl IndexExclusions {
-    /// Read the counts off a reconciliation report.
-    pub fn from_report(report: &cdno_core::reconcile::ReconciliationReport) -> Self {
+    /// Read the counts off a reconciliation report, carrying `generation`
+    /// through — a reconcile does not change the config, so only the
+    /// rebuild path advances it (see [`Self::next_generation`]).
+    pub fn from_report(
+        report: &cdno_core::reconcile::ReconciliationReport,
+        generation: u32,
+    ) -> Self {
         let total = report.scanned + report.ignored + report.artefacts;
         Self {
             ignored: report.ignored,
             artefacts: report.artefacts,
             indexed: report.scanned,
             ignore_looks_over_broad: glob_looks_over_broad(report.ignored, total),
+            config_generation: generation,
         }
+    }
+
+    /// The generation a config rebuild should publish under. Saturating, so
+    /// a very long session degrades to "stops advancing" rather than
+    /// wrapping to a value the frontend has already seen.
+    pub fn next_generation(previous: u32) -> u32 {
+        previous.saturating_add(1)
     }
 }
 

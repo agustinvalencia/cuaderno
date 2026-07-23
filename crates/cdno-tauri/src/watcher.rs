@@ -530,8 +530,11 @@ pub fn run_reconcile(deps: &WatcherDeps) -> ReconcileOutcome {
                     exclusions_changed: false,
                 };
             }
-            let fresh = crate::events::IndexExclusions::from_report(&report);
             let previous = **deps.exclusions.load();
+            // A reconcile never changes the config, so the generation rides
+            // through untouched — only a rebuild advances it.
+            let fresh =
+                crate::events::IndexExclusions::from_report(&report, previous.config_generation);
             deps.exclusions.store(Arc::new(fresh));
             ReconcileOutcome {
                 ok: true,

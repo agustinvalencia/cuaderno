@@ -130,7 +130,7 @@ fn artefacts_never_make_the_exclusions_look_over_broad() {
         artefacts: 90,
         ..Default::default()
     };
-    let exclusions = IndexExclusions::from_report(&report);
+    let exclusions = IndexExclusions::from_report(&report, 0);
 
     assert_eq!(exclusions.artefacts, 90);
     assert!(!exclusions.ignore_looks_over_broad);
@@ -147,7 +147,7 @@ fn the_share_is_measured_against_every_walked_markdown_file() {
         artefacts: 44,
         ..Default::default()
     };
-    let exclusions = IndexExclusions::from_report(&report);
+    let exclusions = IndexExclusions::from_report(&report, 0);
 
     assert_eq!(exclusions.indexed, 50);
     assert_eq!(exclusions.ignored, 6);
