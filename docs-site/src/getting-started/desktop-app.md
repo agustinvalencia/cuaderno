@@ -85,10 +85,13 @@ one of the energy chips is **untagged** — most bullets carry no `(deep|medium|
 they are work like any other. Filtering says how much it is hiding rather than just showing less. **Commitments** is everything promised — what someone else is counting on, as
 against what you merely decided to do (context-coloured, never red). It reads as a timeline banded
 into **This week** / **Next week** / by month, or as a month grid with a dot per promise; the
-horizon is yours to set, from a fortnight up to everything. **Stewardships** are the perpetual responsibilities; a stewardship's
-detail draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
+horizon is yours to set, from a fortnight up to everything. **Stewardships** are the perpetual responsibilities. They never
+complete, so the list shows status rather than progress: quietest first, with a count of how many
+have gone quiet and a filter down to just those, and freshness read as ink emphasis rather than a
+colour. Logging is one click from a row. A stewardship's detail leads with **Log entry** in its
+header and draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
 columns, continuous measures (a weight, a pace) as lines, always in the context hue and never as a
-target to hit.
+target to hit; charts sit two-up behind an activity filter.
 
 **Inquiry** is investigation. **Questions** is the important-questions list that sits above any one
 project, grouped into research and life, each showing what is pointed at it and each movable between
