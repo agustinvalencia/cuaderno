@@ -10,14 +10,14 @@
 // can tick, edit, reorder and remove. Markdown stays the source of
 // truth: what is saved is ordinary bullets, and a hand-written `## Wins`
 // section parses straight back into cards.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import type { WeeklyBundle } from "../../api/bindings/WeeklyBundle";
 import { errorMessage, saveWeeklySection } from "../../api/commands";
 import { CappedList } from "../../components/ui/capped-list";
 import { shortDate } from "../../lib/dates";
 import { useToast } from "../../shell/Toasts";
-import { parseWins, reorder, serialiseWins, type Win } from "./wins";
+import { parseWins, reorder, serialiseWins, type Win, type WinCard } from "./wins";
 
 /** How many candidates show before "show all". The old seed took the
  * first three log lines and dropped the rest silently. */
@@ -46,7 +46,12 @@ export default function WinsStep({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
-  const [wins, setWins] = useState<Win[]>(() => initialWins(bundle));
+  // A monotonic id per row, so React identity follows the win rather than
+  // its position. `useRef` rather than a counter in render, so an id is
+  // never reused across renders.
+  const nextId = useRef(0);
+  const mint = (win: Win): WinCard => ({ ...win, id: nextId.current++ });
+  const [wins, setWins] = useState<WinCard[]>(() => initialWins(bundle).map(mint));
   const candidates = candidatesFor(bundle);
   const taken = new Set(wins.map((w) => w.text));
 
@@ -60,8 +65,16 @@ export default function WinsStep({
   });
 
   function add(text: string) {
-    setWins((current) => [...current, { text, done: true, checkbox: true }]);
+    // A candidate from the week is a thing that happened, so it comes in
+    // ticked; a blank "add your own" is not yet anything, so it does not.
+    setWins((current) => [
+      ...current,
+      mint({ text, done: text !== "", checkbox: false }),
+    ]);
   }
+
+  // Blank rows are scaffolding, not wins — they do not get written.
+  const savable = wins.filter((w) => w.text.trim() !== "");
 
   /** What to call a win in an accessible name. A just-added blank one
    * has no text to name it by, and "Win: " reads as nothing at all. */
@@ -90,16 +103,18 @@ export default function WinsStep({
           <ul className="space-y-1.5">
             {wins.map((win, index) => (
               <li
-                key={index}
+                key={win.id}
                 className="flex items-center gap-2 rounded-md border border-line bg-bg-surface px-3 py-2"
               >
                 <input
                   type="checkbox"
                   checked={win.done}
                   aria-label={`Done: ${nameOf(win)}`}
-                  onChange={(event) =>
-                    update(index, { done: event.target.checked, checkbox: true })
-                  }
+                  // Only `done` moves here. Whether the bullet is written
+                  // as a checkbox is derived at serialise time from
+                  // `done || checkbox`, so unticking a plain win returns
+                  // it to a plain bullet.
+                  onChange={(event) => update(index, { done: event.target.checked })}
                   className="shrink-0 accent-[var(--color-accent-interactive)]"
                 />
                 {/* Editable in place. The old blob could only be edited
@@ -201,8 +216,8 @@ export default function WinsStep({
       <div className="mt-4">
         <button
           type="button"
-          disabled={save.isPending || wins.length === 0}
-          onClick={() => save.mutate(serialiseWins(wins))}
+          disabled={save.isPending || savable.length === 0}
+          onClick={() => save.mutate(serialiseWins(savable))}
           className="rounded border border-line px-3 py-1 text-sm text-ink hover:bg-bg-sunken disabled:opacity-50"
         >
           Save wins

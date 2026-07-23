@@ -72,11 +72,14 @@ const FIXTURE: WeeklyBundle = {
 
 /** mockIPC that serves the bundle and records every call so the tests
  * can assert the exact command + args the UI sends. */
-function mockWithCapture(): Array<{ cmd: string; args: unknown }> {
+function mockWithCapture(
+  overrides: Partial<WeeklyBundle["weekly"]> = {},
+): Array<{ cmd: string; args: unknown }> {
   const calls: Array<{ cmd: string; args: unknown }> = [];
+  const bundle = { ...FIXTURE, weekly: { ...FIXTURE.weekly, ...overrides } };
   mockIPC((cmd, args) => {
     calls.push({ cmd, args });
-    if (cmd === "get_weekly_bundle") return FIXTURE;
+    if (cmd === "get_weekly_bundle") return bundle;
     return undefined;
   });
   return calls;
@@ -332,7 +335,9 @@ test("a win can be removed, and the remaining ones are what save", async () => {
 
   await screen.findByText("Wins saved.");
   const save = calls.find((c) => c.cmd === "save_weekly_section");
-  expect(save?.args).toMatchObject({ content: "- [x] rested" });
+  // A win you typed yourself is plain, not a ticked checkbox — the
+  // removed candidate was the ticked one.
+  expect(save?.args).toMatchObject({ content: "- rested" });
 });
 
 test("wins reorder, and the order is what is written", async () => {
@@ -348,7 +353,7 @@ test("wins reorder, and the order is what is written", async () => {
 
   await screen.findByText("Wins saved.");
   const save = calls.find((c) => c.cmd === "save_weekly_section");
-  expect((save?.args as { content: string }).content.split("\n")[0]).toBe("- [x] rested");
+  expect((save?.args as { content: string }).content.split("\n")[0]).toBe("- rested");
 });
 
 test("the project scan links to the project and names its next action", async () => {
@@ -361,4 +366,52 @@ test("the project scan links to the project and names its next action", async ()
 
   const link = await screen.findByRole("link", { name: "alpha" });
   expect(link.getAttribute("href")).toBe("/projects/alpha");
+});
+
+test("a plain win ticked and unticked is written plain, not a checklist item", async () => {
+  // The checkbox is a property of the bullet; unticking a win that never
+  // had one must not convert a hand-written line into a checklist item.
+  const calls = mockWithCapture({ wins: "- shipped it" });
+  renderView();
+
+  await screen.findByRole("region", { name: "Your wins" });
+  const box = screen.getByLabelText("Done: shipped it") as HTMLInputElement;
+  fireEvent.click(box); // tick
+  fireEvent.click(screen.getByLabelText("Done: shipped it")); // untick
+  screen.getByRole("button", { name: "Save wins" }).click();
+
+  await screen.findByText("Wins saved.");
+  const save = calls.find((c) => c.cmd === "save_weekly_section");
+  expect(save?.args).toMatchObject({ content: "- shipped it" });
+});
+
+test("an all-blank wins list cannot be saved", async () => {
+  // "Add your own" makes an empty, unticked row; saving it would write a
+  // bare `- [x] ` bullet that reads back as a blank ticked card.
+  mockWithCapture();
+  renderView();
+  await screen.findByRole("region", { name: "Your wins" });
+
+  fireEvent.click(screen.getByRole("button", { name: "Add your own" }));
+  expect((screen.getByRole("button", { name: "Save wins" }) as HTMLButtonElement).disabled).toBe(
+    true,
+  );
+});
+
+test("reordering keeps focus on the win that moved, not the position", async () => {
+  // Positional keys would leave focus on whatever win slid into the old
+  // index, so the next keystroke acts on the wrong row.
+  mockWithCapture();
+  renderView();
+  await screen.findByRole("region", { name: "From your week" });
+  fireEvent.click(screen.getByRole("button", { name: /^Add: Completed: Wire the reader/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Add your own" }));
+  fireEvent.change(screen.getByLabelText("Win: new win"), { target: { value: "rested" } });
+
+  const up = screen.getByRole("button", { name: "Move up: rested" });
+  up.focus();
+  fireEvent.click(up);
+
+  // The button for "rested" is still the focused element after it moved.
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Move up: rested" }));
 });

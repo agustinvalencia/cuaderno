@@ -57,3 +57,28 @@ test("reorder moves an item, and refuses to move off either end", () => {
   expect(reorder(items, 2, 3)).toBe(items);
   expect(reorder(items, 1, 1)).toBe(items);
 });
+
+test("a plain line that looks like a checkbox survives the round trip", () => {
+  // A hand-written `[x] shipped it` with no dash is prose, kept plain —
+  // and must not come back as a phantom-ticked checkbox with the bracket
+  // eaten.
+  const wins = parseWins("[x] shipped it");
+  expect(wins).toEqual([{ text: "[x] shipped it", done: false, checkbox: false }]);
+  expect(parseWins(serialiseWins(wins))).toEqual(wins);
+});
+
+test("editing a plain win to start with a bracket token does not fake a checkbox", () => {
+  const edited = [{ text: "[ ] not really a checkbox", done: false, checkbox: false }];
+  const roundTripped = parseWins(serialiseWins(edited));
+  expect(roundTripped[0]).toEqual({
+    text: "[ ] not really a checkbox",
+    done: false,
+    checkbox: false,
+  });
+});
+
+test("a real checkbox is untouched by the escape", () => {
+  // The escape only applies to plain bullets; a genuine `- [x]` still
+  // round-trips as itself, no backslash.
+  expect(serialiseWins(parseWins("- [x] shipped it"))).toBe("- [x] shipped it");
+});

@@ -18,12 +18,25 @@ export interface Win {
   /** A `- [x]` bullet reads as done. Plain `-` bullets stay plain, so a
    * hand-written list is not silently converted into a checklist. */
   done: boolean;
-  /** Whether the source bullet carried a checkbox at all. A win parsed
-   * from a plain bullet is written back as one. */
+  /** Whether the *source* bullet carried a checkbox. Immutable across
+   * edits: a plain hand-written bullet stays plain, and only a tick (or
+   * a source checkbox) earns the `- [ ]` form on save — so ticking then
+   * unticking a plain win leaves it plain rather than converting a
+   * hand-written line into a checklist item. */
   checkbox: boolean;
 }
 
+/** A win as the editing UI holds it: a `Win` plus a stable identity, so a
+ * row's DOM node (and its focus) follows the win across a reorder rather
+ * than staying with the position a positional key would pin it to. */
+export interface WinCard extends Win {
+  id: number;
+}
+
 const BULLET = /^\s*[-*]\s+(?:\[( |x|X)\]\s+)?(.*)$/;
+
+/** A text that, left alone in a bullet, would read back as a checkbox. */
+const CHECKBOX_HEAD = /^\[( |x|X)\]\s/;
 
 /** Parse a `## Wins` body into cards.
  *
@@ -37,8 +50,12 @@ export function parseWins(markdown: string): Win[] {
     if (line.trim() === "") continue;
     const match = BULLET.exec(line);
     if (match) {
+      // A leading backslash is the escape serialiseWins writes so a
+      // plain win beginning with "[x] " does not masquerade as a
+      // checkbox; strip it back off here.
+      const text = match[2].replace(/^\\(?=\[( |x|X)\]\s)/, "").trim();
       wins.push({
-        text: match[2].trim(),
+        text,
         done: match[1] !== undefined && match[1].toLowerCase() === "x",
         checkbox: match[1] !== undefined,
       });
@@ -49,12 +66,23 @@ export function parseWins(markdown: string): Win[] {
   return wins;
 }
 
-/** Serialise cards back to the markdown that goes into the note. */
+/** Serialise cards back to the markdown that goes into the note.
+ *
+ * A plain win whose text happens to begin with `[x] ` (someone typed it,
+ * or edited a card to start that way) would re-parse as a checkbox on the
+ * next read — a phantom tick, and the bracket eaten. So a plain bullet
+ * whose text would be mistaken for a checkbox is written with the marker
+ * held off by a backslash, which `parseWins` unescapes. A round trip is
+ * lossless either way. */
 export function serialiseWins(wins: Win[]): string {
   return wins
     .map((win) => {
-      if (!win.checkbox) return `- ${win.text}`;
-      return `- [${win.done ? "x" : " "}] ${win.text}`;
+      // A checkbox is written when the source had one or the win is
+      // ticked — a tick needs somewhere to live. A plain, unticked win
+      // stays a plain bullet, its marker-like text escaped so it does
+      // not read back as a checkbox.
+      if (win.checkbox || win.done) return `- [${win.done ? "x" : " "}] ${win.text}`;
+      return `- ${CHECKBOX_HEAD.test(win.text) ? "\\" : ""}${win.text}`;
     })
     .join("\n");
 }
