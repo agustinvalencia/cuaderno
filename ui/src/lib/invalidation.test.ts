@@ -103,3 +103,16 @@ test("the questions view refreshes when a linking note changes", async () => {
   invalidateAreas(other, ["portfolios"]);
   expect(other.getQueryState(["list_questions"])?.isInvalidated).toBe(true);
 });
+
+test("the sidebar's slot count follows a config change (#444)", async () => {
+  // The cap the sidebar states is `max_active_projects`, read from the
+  // vault config and carried on the orientation bundle. Lower the cap in
+  // the config editor and the sidebar has to say so — otherwise the one
+  // number that made the rule legible is the one that goes stale.
+  const client = new QueryClient();
+  await seed(client, "get_orientation");
+
+  invalidateAreas(client, ["config"]);
+
+  expect(client.getQueryState(["get_orientation"])?.isInvalidated).toBe(true);
+});
