@@ -368,3 +368,58 @@ test("Back and Next walk the steps", async () => {
   const rail = within(screen.getByRole("navigation", { name: "Review steps" }));
   expect(rail.getByRole("button", { name: "Portfolios" }).getAttribute("aria-current")).toBe("step");
 });
+
+test("a partial save says what landed and what did not", async () => {
+  // The sections write in sequence, so a mid-batch failure must name the
+  // section that failed AND the ones already on disk — a bare error would
+  // leave the reader thinking nothing saved when Wins already did.
+  renderMonthly(BUNDLE, (cmd, args) => {
+    if (cmd === "save_monthly_section") {
+      const section = (args as { section: string }).section;
+      if (section === "themes") throw new Error("vault is read-only");
+      return undefined;
+    }
+    return undefined;
+  });
+  await goToStep("Focus");
+
+  fireEvent.change(screen.getByLabelText("Wins"), { target: { value: "shipped it" } });
+  fireEvent.change(screen.getByLabelText("Themes"), { target: { value: "steady" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save to the note" }));
+
+  const toast = await screen.findByText(/Saved wins, but themes failed/);
+  expect(toast.textContent).toContain("read-only");
+  // A failed batch is not "already saved".
+  expect(screen.queryByText(/already saved/)).toBeNull();
+});
+
+test("a focus draft survives a jump to another step and back", async () => {
+  // Every step stays mounted, so an unsaved draft must not be discarded
+  // by stepping away to check a panel and returning.
+  renderMonthly(BUNDLE);
+  await goToStep("Focus");
+  fireEvent.change(screen.getByLabelText("Wins"), { target: { value: "half-written" } });
+
+  await goToStep("Portfolios");
+  await goToStep("Focus");
+
+  expect((screen.getByLabelText("Wins") as HTMLTextAreaElement).value).toBe("half-written");
+});
+
+test("a visited read step earns its tick, and the softer stop line", async () => {
+  // Reaching a step counts as looking at it. Before, `completed` was
+  // populated only by the write step, so no read step ever ticked and
+  // the softer reassurance was unreachable dead code.
+  renderMonthly(BUNDLE);
+  const rail = within(await screen.findByRole("navigation", { name: "Review steps" }));
+
+  await goToStep("Portfolios");
+  await goToStep("Lookahead");
+
+  // Portfolios is now a visited, non-current step — the stepper ticks it
+  // (its button shows the checkmark, not its number).
+  expect(rail.getByRole("button", { name: "Portfolios" }).textContent).toContain("✓");
+  // And the softer line shows, never the write one.
+  expect(screen.getByText(/nothing here demands finishing/)).toBeDefined();
+  expect(screen.queryByText(/already saved/)).toBeNull();
+});

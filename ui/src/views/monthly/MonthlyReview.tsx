@@ -122,10 +122,22 @@ const WRITE_STEPS = new Set([5]);
 function MonthlyReviewBody({ data }: { data: StrategicBundle }) {
   const { label, ym } = monthOf(data.today);
   const [step, setStep] = useState(0);
-  const [completed, setCompleted] = useState<Set<number>>(new Set());
+  // Steps the reader has reached (any visit) or written (the focus step).
+  // The stepper ticks visited steps, and the softer stop line can appear
+  // once the reader has looked at anything — which, with reads never
+  // marking themselves before, it never could.
+  const [completed, setCompleted] = useState<Set<number>>(new Set([0]));
 
   function markComplete(index: number) {
     setCompleted((prev) => new Set(prev).add(index));
+  }
+
+  // Visiting a step counts as having looked at it. The write step still
+  // earns its tick through `onSaved`, since reaching it is not the same
+  // as having written the note.
+  function goTo(index: number) {
+    setStep(index);
+    if (!WRITE_STEPS.has(index)) markComplete(index);
   }
 
   const hasWritten = [...completed].some((i) => WRITE_STEPS.has(i));
@@ -143,7 +155,7 @@ function MonthlyReviewBody({ data }: { data: StrategicBundle }) {
           steps={STEPS}
           current={step}
           completed={completed}
-          onSelect={setStep}
+          onSelect={goTo}
           label="Review steps"
         />
       </div>
@@ -179,9 +191,21 @@ function MonthlyReviewBody({ data }: { data: StrategicBundle }) {
         </div>
       </section>
 
-      <StepperNav current={step} count={STEPS.length} onSelect={setStep} />
+      <StepperNav current={step} count={STEPS.length} onSelect={goTo} />
     </div>
   );
+}
+
+/** A save that failed mid-batch, carrying what did land so the reader is
+ * not told "nothing saved" when part of it is on disk. */
+class PartialSaveError extends Error {
+  constructor(
+    readonly section: string,
+    readonly saved: string[],
+    readonly detail: string,
+  ) {
+    super(detail);
+  }
 }
 
 /** The one write on the page: the review's artefact. Wins, Themes and
@@ -204,22 +228,41 @@ function FocusStep({
 
   const save = useMutation({
     mutationFn: async () => {
-      // Each section is its own compose/overwrite write; only the ones
-      // you filled in are touched, so a partial review leaves the rest
-      // of the note alone.
-      const writes: Promise<void>[] = [];
-      if (wins.trim()) writes.push(saveMonthlySection("wins", wins.trim(), month));
-      if (themes.trim()) writes.push(saveMonthlySection("themes", themes.trim(), month));
-      if (focus.trim()) writes.push(saveMonthlySection("next-months-focus", focus.trim(), month));
-      await Promise.all(writes);
-      return writes.length;
+      // Each section is its own compose/overwrite write, and they run in
+      // sequence rather than all at once: a `Promise.all` that rejects on
+      // the first failure would leave the note half-written with no word
+      // on which sections landed. Serial, so a failure names the section
+      // it stopped at and the ones before it are known-saved. Only the
+      // sections you filled in are touched — a partial review leaves the
+      // rest of the note alone.
+      const pending: [string, string][] = [];
+      if (wins.trim()) pending.push(["wins", wins.trim()]);
+      if (themes.trim()) pending.push(["themes", themes.trim()]);
+      if (focus.trim()) pending.push(["next-months-focus", focus.trim()]);
+      const done: string[] = [];
+      for (const [section, content] of pending) {
+        try {
+          await saveMonthlySection(section, content, month);
+          done.push(section);
+        } catch (error) {
+          throw new PartialSaveError(section, done, errorMessage(error));
+        }
+      }
+      return done.length;
     },
-    onError: (error) => toast(errorMessage(error), "attention"),
-    onSuccess: (written) => {
-      if (written === 0) {
-        toast("Nothing to save yet — fill in a section first.", "attention");
+    onError: (error) => {
+      if (error instanceof PartialSaveError && error.saved.length > 0) {
+        // Say what did land, so the reader is not left thinking nothing
+        // saved when in fact part of it is on disk.
+        toast(
+          `Saved ${error.saved.join(" and ")}, but ${error.section} failed: ${error.detail}`,
+          "attention",
+        );
         return;
       }
+      toast(errorMessage(error), "attention");
+    },
+    onSuccess: () => {
       toast(`Saved to ${monthLabel}'s note.`);
       onSaved();
     },
