@@ -533,7 +533,21 @@ fn attachment_target_exists(
     candidates
         .into_iter()
         .flatten()
-        .any(|vp| store.exists(&vp).unwrap_or(false))
+        .any(|vp| is_file(store, &vp))
+}
+
+/// Whether an exact vault path is a readable *file*, not a directory.
+///
+/// `store.exists` is true for a directory too (a folder prefix), so it
+/// would resolve a bare `![[assets]]` embed of a folder — over-resolution
+/// beyond "names an existing file". `read_bytes` is the trait's binary
+/// file-access path: it succeeds only for a real file and errors on a
+/// directory or an absent path, on both the memory and filesystem stores.
+/// (It reads the bytes, which is heavier than a stat, but this runs only
+/// for the handful of unresolved attachment references in a lint pass, and
+/// correctness beats a rare maintenance-time read.)
+fn is_file(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool {
+    store.read_bytes(path).is_ok()
 }
 
 /// Join `rel` onto `base`, resolving `.`/`..` lexically, and return a

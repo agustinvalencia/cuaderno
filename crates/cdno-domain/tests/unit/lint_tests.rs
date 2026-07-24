@@ -1825,3 +1825,71 @@ fn lint_still_flags_a_broken_plain_note_link() {
     assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
     assert!(broken[0].message.contains("[[archive]]"));
 }
+
+#[test]
+fn lint_does_not_resolve_an_embed_of_a_bare_folder() {
+    // "names an existing file" means a file, not a directory. A folder
+    // exists at the target, but there is no file by that name — the embed
+    // is meaningless and must warn, not be silently resolved by a folder
+    // prefix that `exists` would report as present.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[assets]]");
+    let vault = vault_with_notes(
+        &[("notes/note.md", &body), ("notes/assets/img.png", "PNG")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let messages = issue_messages(&report);
+    assert_eq!(messages.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        messages[0].contains("embedded file") && messages[0].contains("![[assets]]"),
+        "message: {}",
+        messages[0]
+    );
+}
+
+#[test]
+fn lint_resolves_a_parent_relative_embed() {
+    // A `../` segment is resolved lexically: a note in a subfolder can
+    // embed an attachment in its parent folder. This pins the pop —
+    // treating `..` as a literal path segment (which `VaultPath` would
+    // reject) or ignoring it would leave this legitimate embed unresolved.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[../shared.png]]");
+    let vault = vault_with_notes(
+        &[("notes/sub/note.md", &body), ("notes/shared.png", "PNG")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_clamps_a_dotdot_escape_at_the_vault_root() {
+    // The pops clamp at the root and the result is re-validated through
+    // `VaultPath`, so a target cannot climb above the vault. From the vault
+    // root the extra `..` are no-ops, and there is no such file, so it
+    // stays a warning — it never reaches the host filesystem.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[../../../nowhere.png]]");
+    let vault = vault_with_notes(&[("notes/note.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.issues.len(), 1, "issues: {:?}", report.issues);
+    assert!(report.issues[0].message.contains("embedded file"));
+}
+
+#[test]
+fn lint_refuses_a_rooted_embed_target() {
+    // An absolute/rooted target is not an in-vault asset; it yields no
+    // candidate and stays a warning even though `/note.md` names a real
+    // file relative to the vault root.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[/secret.png]]");
+    let vault = vault_with_notes(
+        &[("notes/note.md", &body), ("secret.png", "PNG")],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(report.issues.len(), 1, "issues: {:?}", report.issues);
+    assert!(report.issues[0].message.contains("embedded file"));
+}
