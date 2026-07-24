@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.32.1] - 2026-07-24
+
 ### Fixed
 
 - **Lint no longer reports every attachment embed as a broken wikilink.** A link or embed
