@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **Lint no longer reports every attachment embed as a broken wikilink.** A link or embed
+  pointing at an attachment — a pasted image, a filed PDF — was reported as broken, because
+  lint resolved targets only against the index and attachments are deliberately never
+  indexed. One meeting note with 54 pasted screenshots produced 54 warnings, all for files
+  present on disk, which is the whole signal-to-noise budget of `cdno lint` spent on links
+  that work. A target that names an existing file under the vault is now resolved against the
+  filesystem — relative to the linking note first (so it keeps working when the note sits
+  inside a grouping subfolder, not only at the portfolio root), then relative to the vault
+  root — before a link is called broken. A genuinely missing `![[embed]]` still warns, but
+  reads as a missing file rather than a link that "resolves to no note". (#452)
+
 ## [0.32.0] - 2026-07-23
 
 ### Added

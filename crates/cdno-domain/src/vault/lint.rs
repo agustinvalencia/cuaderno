@@ -256,16 +256,34 @@ impl Vault {
                 )),
             }
 
-            for link in resolve_wikilinks(extract_wikilinks(body), &path_set) {
-                if link.resolved_path.is_none() {
-                    issues.push(LintIssue::warning(
-                        path.clone(),
-                        format!(
-                            "broken wikilink `[[{}]]` resolves to no note",
-                            link.target_raw
-                        ),
-                    ));
+            // Resolve against the index first (notes), then the
+            // filesystem (attachments). An attachment — a pasted image, a
+            // filed PDF — is deliberately never indexed, so a link or
+            // embed pointing at one always fails the index resolution; a
+            // note with 54 screenshots would otherwise produce 54 warnings
+            // for files that are all present on disk (#452). `raws` is kept
+            // alongside the resolved entries (same order, 1:1) so the embed
+            // flag survives to the message.
+            let raws = extract_wikilinks(body);
+            for (raw, link) in raws.iter().zip(resolve_wikilinks(raws.clone(), &path_set)) {
+                if link.resolved_path.is_some() {
+                    continue;
                 }
+                // A target that names an existing file under the vault is
+                // resolved, note or not. Confined to targets that look
+                // like a file (an embed, or a target carrying an
+                // extension) so a genuinely broken plain `[[note]]` link
+                // is not masked by a folder that happens to share its name.
+                let looks_like_file = raw.is_embed || target_has_extension(&raw.target);
+                if looks_like_file && attachment_target_exists(&self.store, &path, &raw.target) {
+                    continue;
+                }
+                let message = if raw.is_embed {
+                    format!("embedded file `![[{}]]` is missing on disk", raw.target)
+                } else {
+                    format!("broken wikilink `[[{}]]` resolves to no note", raw.target)
+                };
+                issues.push(LintIssue::warning(path.clone(), message));
             }
         }
 
@@ -470,6 +488,87 @@ fn periodic_line_hint(line: &str) -> &'static str {
 /// The message still hedges ("orphaned attachment or stray file") rather
 /// than asserting the file *is* a detached artefact: an unowned
 /// non-markdown file could equally be something dropped in by hand.
+/// Whether a wikilink target's final segment carries a file extension —
+/// the sign it names an attachment (`folder/scan.pdf`) rather than a note
+/// (`projects/alpha`). Note stems never carry a `.`, so this cleanly
+/// separates the two without a filesystem probe.
+fn target_has_extension(target: &str) -> bool {
+    std::path::Path::new(target).extension().is_some()
+}
+
+/// Does a wikilink/embed target name a file that exists under the vault?
+///
+/// An attachment is never indexed, so a link to one always fails the
+/// index resolution; the fix is to fall back to the filesystem before
+/// declaring the link broken (#452). Two candidates are tried, in the
+/// order a human's link is most likely to mean:
+///
+/// 1. **Relative to the linking note's own folder** — the form a pasted
+///    Obsidian embed uses (`assets/img.png` beside the note), and the one
+///    that keeps working when the note sits inside a grouping subfolder
+///    rather than at the portfolio root (#454), since it never assumes a
+///    fixed `portfolios/<p>/` prefix.
+/// 2. **Relative to the vault root** — Obsidian's vault-absolute embed
+///    form.
+///
+/// `..`/`.` segments are normalised and can never escape the vault: a pop
+/// past the root is a no-op, and the result is re-validated through
+/// `VaultPath::new`, whose newtype guard is the confinement boundary. A
+/// target that still can't form a vault path (an absolute/rooted `src`)
+/// yields no candidate and stays unresolved.
+fn attachment_target_exists(
+    store: &Arc<dyn VaultStore>,
+    note_path: &VaultPath,
+    target: &str,
+) -> bool {
+    let note_dir = note_path
+        .as_path()
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    let candidates = [
+        resolve_under(&note_dir, target),
+        resolve_under(std::path::Path::new(""), target),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .any(|vp| is_file(store, &vp))
+}
+
+/// Whether an exact vault path is a readable *file*, not a directory.
+///
+/// `store.exists` is true for a directory too (a folder prefix), so it
+/// would resolve a bare `![[assets]]` embed of a folder — over-resolution
+/// beyond "names an existing file". `read_bytes` is the trait's binary
+/// file-access path: it succeeds only for a real file and errors on a
+/// directory or an absent path, on both the memory and filesystem stores.
+/// (It reads the bytes, which is heavier than a stat, but this runs only
+/// for the handful of unresolved attachment references in a lint pass, and
+/// correctness beats a rare maintenance-time read.)
+fn is_file(store: &Arc<dyn VaultStore>, path: &VaultPath) -> bool {
+    store.read_bytes(path).is_ok()
+}
+
+/// Join `rel` onto `base`, resolving `.`/`..` lexically, and return a
+/// vault path if the result stays inside the vault. A `..` that would pop
+/// past the root is clamped (a no-op), and a rooted/prefixed `rel` is
+/// refused — an absolute reference is not an in-vault asset.
+fn resolve_under(base: &std::path::Path, rel: &str) -> Option<VaultPath> {
+    let mut out = base.to_path_buf();
+    for component in std::path::Path::new(rel).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(segment) => out.push(segment),
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    VaultPath::new(out).ok()
+}
+
 fn orphan_artefact_issues(
     store: &Arc<dyn VaultStore>,
     notes: &HashSet<VaultPath>,
