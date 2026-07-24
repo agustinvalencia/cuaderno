@@ -1680,3 +1680,148 @@ fn a_note_at_the_portfolio_root_does_not_exempt_any_subfolder() {
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
 }
+
+// ---------------------------------------------------------------------
+// Attachment embeds and links (#452). An attachment — a pasted image, a
+// filed PDF — is deliberately never indexed, so a link or embed pointing
+// at one used to be reported as a broken wikilink. One meeting note with
+// 54 screenshots produced 54 warnings for files that are all on disk,
+// spending the whole signal-to-noise budget of `cdno lint` on links that
+// work. The fix resolves against the filesystem before declaring broken,
+// and distinguishes an embed's message from a link's.
+//
+// Neutral paths and a plain daily note isolate the resolution: the fix
+// is location-independent, and staying outside `portfolios/` keeps the
+// separate attachment-stub / orphan-artefact lints (which are what the
+// evidence workflow's own structure is checked by) out of the picture.
+// ---------------------------------------------------------------------
+
+/// A daily note (indexed, no required extras) whose body holds `{{embed}}`.
+const DAILY_EMBEDDING: &str = "---\ntype: daily\ntitle: Day\n---\n# Day\n\n{{embed}}\n";
+
+fn issue_messages(report: &cdno_domain::LintReport) -> Vec<String> {
+    report.issues.iter().map(|i| i.message.clone()).collect()
+}
+
+#[test]
+fn lint_resolves_an_embed_to_a_sibling_attachment() {
+    // The reported case: a note embeds a pasted screenshot that lives in a
+    // sibling assets folder. The image is on disk; lint must stay quiet.
+    let body = DAILY_EMBEDDING.replace(
+        "{{embed}}",
+        "![[2026-07-14-assets/Pasted image 20260714.png]]",
+    );
+    let vault = vault_with_notes(
+        &[
+            ("notes/2026-07-14-workshop.md", &body),
+            (
+                "notes/2026-07-14-assets/Pasted image 20260714.png",
+                "PNGDATA",
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.is_empty(),
+        "an on-disk embed should raise nothing: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_resolves_a_plain_link_to_an_attachment_by_extension() {
+    // Not only embeds: a plain `[[folder/scan.pdf]]` link to a filed
+    // document resolves the same way, because its target carries an
+    // extension.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "see [[assets/report.pdf]]");
+    let vault = vault_with_notes(
+        &[
+            ("notes/note.md", &body),
+            ("notes/assets/report.pdf", "%PDF"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_resolves_an_embed_from_inside_a_grouping_subfolder() {
+    // The #454 constraint: the note may sit inside a grouping subfolder,
+    // not at a folder root. Note-relative resolution handles that without
+    // assuming any fixed prefix depth.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[figures/plot.png]]");
+    let vault = vault_with_notes(
+        &[
+            ("notes/enc/experiment-1/run.md", &body),
+            ("notes/enc/experiment-1/figures/plot.png", "PNG"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_resolves_a_vault_relative_embed() {
+    // Obsidian's vault-absolute embed form: the target is relative to the
+    // vault root, not the note. It resolves through the second candidate.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[attachments/shared.png]]");
+    let vault = vault_with_notes(
+        &[
+            ("notes/deep/note.md", &body),
+            ("attachments/shared.png", "PNG"),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
+}
+
+#[test]
+fn lint_flags_a_missing_embed_as_a_missing_file_not_a_broken_note() {
+    // A genuinely-absent attachment is still worth a warning — but it
+    // reads as a missing file, not a link that "resolves to no note",
+    // because it was never meant to be a note.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "![[assets/gone.png]]");
+    let vault = vault_with_notes(&[("notes/note.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let messages = issue_messages(&report);
+    assert_eq!(messages.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        messages[0].contains("embedded file") && messages[0].contains("assets/gone.png"),
+        "message: {}",
+        messages[0]
+    );
+    assert!(
+        !messages[0].contains("resolves to no note"),
+        "a missing embed is not a broken note link: {}",
+        messages[0]
+    );
+}
+
+#[test]
+fn lint_still_flags_a_broken_plain_note_link() {
+    // The filesystem fallback must not mask a real broken note link. A
+    // plain `[[archive]]` with no extension is a note reference — even
+    // though an `archive/` folder exists on disk (an implicit directory
+    // holding another note), the extension guard keeps it out of the
+    // filesystem fallback, so a link to a folder that has no note by that
+    // name stays a warning.
+    let body = DAILY_EMBEDDING.replace("{{embed}}", "[[archive]]");
+    let vault = vault_with_notes(
+        &[("notes/note.md", &body), ("archive/old.md", PROJECT_FOO)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let broken = broken_link_issues(&report);
+    assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
+    assert!(broken[0].message.contains("[[archive]]"));
+}

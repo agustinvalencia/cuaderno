@@ -3,6 +3,12 @@
 Validate every indexed note and report frontmatter problems. Errors fail the command; warnings (such
 as broken wikilinks) are non-fatal unless `--strict` is given.
 
+A wikilink or embed that points at an **attachment** — a pasted image, a filed PDF — is not a broken
+link: attachments are never indexed, but the target is resolved against the filesystem (relative to
+the linking note, then to the vault root) before a link is called broken. Only a target that matches
+nothing at all is reported, and a missing `![[embed]]` reads as a missing file rather than a link
+that "resolves to no note".
+
 ```text
 cdno lint [OPTIONS]
 ```

@@ -151,6 +151,12 @@ pub struct WikilinkRaw {
     /// `[[target]]`; `Some` for `[[target|Display Name]]`. Empty
     /// labels (`[[target|]]`) are normalised to `None`.
     pub label: Option<String>,
+    /// Whether the source form was an Obsidian embed (`![[...]]`)
+    /// rather than a plain link (`[[...]]`). An embed transcludes a
+    /// note or displays an attachment inline; the distinction only
+    /// changes how a *failed* target reads — a missing embed is a
+    /// missing file, not a link that "resolves to no note".
+    pub is_embed: bool,
 }
 
 /// Extract every `[[target]]` and `[[target|label]]` wikilink from a
@@ -189,9 +195,14 @@ pub fn extract_wikilinks(body: &str) -> Vec<WikilinkRaw> {
                 None => (inner.trim().to_string(), None),
             };
             if !target.is_empty() {
+                // An `![[...]]` embed carries a `!` immediately before the
+                // opening `[[`. The scan above only advanced through ASCII
+                // `[`/`]`, so `start - 1` lands on a UTF-8 boundary.
+                let is_embed = start > 0 && body.as_bytes()[start - 1] == b'!';
                 links.push(WikilinkRaw {
                     target,
                     label: label.filter(|s| !s.is_empty()),
+                    is_embed,
                 });
             }
         }

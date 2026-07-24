@@ -132,6 +132,7 @@ fn extract_wikilinks_picks_up_a_simple_target() {
         vec![WikilinkRaw {
             target: "other-note".to_string(),
             label: None,
+            is_embed: false,
         }],
     );
 }
@@ -143,6 +144,7 @@ fn extract_wikilinks_separates_target_and_label() {
         vec![WikilinkRaw {
             target: "other-note".to_string(),
             label: Some("My Other Note".to_string()),
+            is_embed: false,
         }],
     );
 }
@@ -154,6 +156,7 @@ fn extract_wikilinks_normalises_empty_label_to_none() {
         vec![WikilinkRaw {
             target: "foo".to_string(),
             label: None,
+            is_embed: false,
         }],
     );
 }
@@ -247,6 +250,7 @@ fn extract_wikilinks_trims_whitespace_in_target_and_label() {
         vec![WikilinkRaw {
             target: "foo".to_string(),
             label: Some("Foo Label".to_string()),
+            is_embed: false,
         }],
     );
 }
@@ -260,6 +264,7 @@ fn resolve_picks_exact_path_match() {
         vec![WikilinkRaw {
             target: "projects/foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -274,6 +279,7 @@ fn resolve_picks_unique_basename_when_no_exact_match() {
         vec![WikilinkRaw {
             target: "foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -287,6 +293,7 @@ fn resolve_returns_none_when_basename_is_ambiguous() {
         vec![WikilinkRaw {
             target: "foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -300,6 +307,7 @@ fn resolve_returns_none_when_no_match_at_all() {
         vec![WikilinkRaw {
             target: "missing".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -317,6 +325,7 @@ fn resolve_qualified_target_falls_back_to_a_relocated_note() {
         vec![WikilinkRaw {
             target: "actions/characterise".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -335,6 +344,7 @@ fn resolve_qualified_target_is_none_when_last_segment_is_ambiguous() {
         vec![WikilinkRaw {
             target: "actions/foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -351,6 +361,7 @@ fn resolve_prefers_exact_path_over_last_segment_fallback() {
         vec![WikilinkRaw {
             target: "actions/foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -372,6 +383,7 @@ fn resolve_folder_target_to_its_index_note() {
         vec![WikilinkRaw {
             target: "portfolios/topology".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -394,6 +406,7 @@ fn resolve_folder_target_generalises_beyond_portfolios() {
         vec![WikilinkRaw {
             target: "stewardships/reading-group".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -412,6 +425,7 @@ fn resolve_prefers_flat_note_over_folder_index() {
         vec![WikilinkRaw {
             target: "notes/topology".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -431,6 +445,7 @@ fn resolve_prefers_folder_index_over_last_segment_fallback() {
         vec![WikilinkRaw {
             target: "portfolios/foo".to_string(),
             label: None,
+            is_embed: false,
         }],
         &vault,
     );
@@ -447,9 +462,35 @@ fn resolve_preserves_label_through_resolution() {
         vec![WikilinkRaw {
             target: "foo".to_string(),
             label: Some("My Foo".to_string()),
+            is_embed: false,
         }],
         &vault,
     );
     assert_eq!(got[0].label.as_deref(), Some("My Foo"));
     assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("notes/foo.md")));
+}
+
+#[test]
+fn extract_wikilinks_marks_an_embed() {
+    // `![[...]]` is an embed; the `!` immediately before the `[[` is the
+    // only difference from a plain link.
+    assert_eq!(
+        extract_wikilinks("![[assets/img.png]]"),
+        vec![WikilinkRaw {
+            target: "assets/img.png".to_string(),
+            label: None,
+            is_embed: true,
+        }],
+    );
+}
+
+#[test]
+fn extract_wikilinks_a_plain_link_is_not_an_embed() {
+    assert!(!extract_wikilinks("[[other-note]]")[0].is_embed);
+}
+
+#[test]
+fn extract_wikilinks_a_bang_not_touching_the_brackets_is_not_an_embed() {
+    // "no! [[note]]" — the `!` is punctuation, not an embed marker.
+    assert!(!extract_wikilinks("no! [[note]]")[0].is_embed);
 }

@@ -74,6 +74,9 @@ impl Vault {
         let raw = WikilinkRaw {
             target: target.to_owned(),
             label: None,
+            // Resolving a clicked target, not scanning source — the embed
+            // distinction is irrelevant to resolution and unused here.
+            is_embed: false,
         };
         // One-element batch: exactly one LinkEntry comes back.
         let resolved = resolve_wikilinks(vec![raw], &paths)
