@@ -33,7 +33,14 @@ ui/dist/
 crates/cdno-tauri/gen/
 ui/tsconfig.tsbuildinfo
 
-# SQLite runtime sidecars for the repo-root dev vault. Rewritten on every
-# open (WAL mode), so they churn or vanish on any `cdno` invocation.
+# The repo-root dev vault's runtime state. The SQLite index is a
+# rebuildable cache (markdown is the source of truth; startup
+# reconciliation rebuilds it), and the lock is per-process — both are
+# rewritten on any `cdno` invocation, so they only churn binary noise in
+# the diff and can accumulate fragments of whatever else was indexed
+# locally. The config and templates under `.cuaderno/` stay tracked;
+# these do not (#456).
+.cuaderno/index.db
 .cuaderno/index.db-shm
 .cuaderno/index.db-wal
+.cuaderno/.lock
