@@ -438,8 +438,8 @@ No acute issues.
 - Sleep before midnight — inconsistent
 
 ## Notes
-- Gym: SATS Linköping, membership #12345
-- GP: Dr Lindgren, Vårdcentralen Centrum
+- Gym: local gym, membership #00000
+- GP: Dr Example, Example Health Centre
 ```
 
 ### 5.7 Tracking Note
