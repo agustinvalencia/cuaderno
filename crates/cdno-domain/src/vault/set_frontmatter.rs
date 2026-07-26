@@ -249,8 +249,8 @@ fn is_reserved_key(note_type: &str, key: &str) -> bool {
 }
 
 /// Coerce the incoming `value` string into a `serde_json::Value` of the field's
-/// declared `ty`. `bool`/`int` parse strictly (a parse failure *is* the type
-/// mismatch); `string`/`date` carry the text verbatim for `check_value` to
+/// declared `ty`. `bool`/`int`/`float` parse strictly (a parse failure *is* the
+/// type mismatch); `string`/`date` carry the text verbatim for `check_value` to
 /// validate (enum membership, calendar-date validity).
 fn coerce_value(
     field: &str,
@@ -272,20 +272,33 @@ fn coerce_value(
             .parse::<i64>()
             .map(Value::from)
             .map_err(|_| invalid("is not a valid int")),
+        // `"inf"` and `"NaN"` both parse as `f64`, and a non-finite float has
+        // no JSON number to land in — `serde_json` turns it into `null`, which
+        // would silently write `weight: null` instead of erroring. Go through
+        // `Number::from_f64`, whose `None` arm is exactly the non-finite case,
+        // so the mismatch surfaces as an error like any other bad value.
+        FieldType::Float => value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .ok_or_else(|| invalid("is not a valid float")),
         FieldType::String | FieldType::Date => Ok(Value::String(value.to_owned())),
     }
 }
 
 /// Render a coerced scalar back to the frontmatter text for the field's
-/// declared type. `bool`/`int`/`date` are written **bare** (`meds: true`,
-/// `count: 3`, `when: 2026-07-09` — the date has already been validated as a
-/// real `YYYY-MM-DD`, so it is safe unquoted). A `string` (including an enum
-/// value) is written as a YAML-safe scalar via [`yaml_string_scalar`], so a
-/// bareword or a value carrying special characters is quoted rather than
-/// re-parsed as a non-string on the index rebuild.
+/// declared type. `bool`/`int`/`float`/`date` are written **bare** (`meds:
+/// true`, `count: 3`, `weight: 82.5`, `when: 2026-07-09` — the date has already
+/// been validated as a real `YYYY-MM-DD`, so it is safe unquoted). A `string`
+/// (including an enum value) is written as a YAML-safe scalar via
+/// [`yaml_string_scalar`], so a bareword or a value carrying special characters
+/// is quoted rather than re-parsed as a non-string on the index rebuild.
 fn write_scalar(value: &Value, ty: FieldType) -> String {
     match ty {
-        FieldType::Bool | FieldType::Int | FieldType::Date => display_value(value),
+        FieldType::Bool | FieldType::Int | FieldType::Float | FieldType::Date => {
+            display_value(value)
+        }
         FieldType::String => yaml_string_scalar(value),
     }
 }

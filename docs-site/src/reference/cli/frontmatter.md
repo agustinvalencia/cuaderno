@@ -24,7 +24,7 @@ cdno frontmatter set [OPTIONS] <NOTE> <KEY> <VALUE>
 |----------|-------------|
 | `<NOTE>` | The note to edit: `today`, a `YYYY-MM-DD` date (both resolve to the daily note), or a vault-relative note path (e.g. `projects/foo.md`). |
 | `<KEY>` | The frontmatter field to set. Must be declared `settable = true` under `[schemas.<type>.fields.<key>]`. |
-| `<VALUE>` | The new value, as a string. It is coerced to the field's declared `type` (`bool`/`int`/`string`/`date`) and checked against any `values` allowed-set. |
+| `<VALUE>` | The new value, as a string. It is coerced to the field's declared `type` (`bool`/`int`/`float`/`string`/`date`) and checked against any `values` allowed-set. |
 
 Takes only the [global options](overview.md#global-options). With `--json`,
 emits the `{ path, message }` write result.

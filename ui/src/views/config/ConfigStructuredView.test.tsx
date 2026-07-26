@@ -288,6 +288,49 @@ test("the allowed-values editor shows for a string field and hides for others", 
   });
 });
 
+test("a float field is selectable and its default keeps a fractional part", async () => {
+  // `float` (#480) exists in the type union, but a user can only declare one
+  // if the picker offers it and the default input stops rounding it away.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ type: "float", default: 82.5, values: null }));
+  renderView(draftStub());
+
+  const type = (await screen.findByLabelText("Type for stage")) as HTMLSelectElement;
+  expect(type.value).toBe("float");
+  expect(
+    within(type)
+      .getAllByRole("option")
+      .map((o) => (o as HTMLOptionElement).value),
+  ).toContain("float");
+
+  const input = screen.getByLabelText("Default for stage") as HTMLInputElement;
+  expect(input.type).toBe("number");
+  fireEvent.change(input, { target: { value: "3.5" } });
+  fireEvent.blur(input);
+
+  await waitFor(() => {
+    const call = calls.filter((c) => c.cmd === "config_set_schema_field").pop();
+    expect(call?.args).toMatchObject({ field: "stage", spec: { type: "float", default: 3.5 } });
+  });
+});
+
+test("an int field still rejects a fractional default", async () => {
+  // The float branch shares the int branch's input; the integer guard must
+  // survive that sharing.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, modelWithStage({ type: "int", default: 3, values: null }));
+  renderView(draftStub());
+
+  const input = (await screen.findByLabelText("Default for stage")) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "3.5" } });
+  fireEvent.blur(input);
+
+  await waitFor(() => {
+    const call = calls.filter((c) => c.cmd === "config_set_schema_field").pop();
+    expect(call?.args).toMatchObject({ field: "stage", spec: { type: "int", default: null } });
+  });
+});
+
 test("removing a schema field fires config_remove_schema_field", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);

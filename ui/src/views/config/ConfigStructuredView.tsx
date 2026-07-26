@@ -70,7 +70,7 @@ const BUILTIN_NOTE_TYPES = new Set([
   "inbox",
 ]);
 
-const FIELD_TYPES: FieldType[] = ["bool", "int", "string", "date"];
+const FIELD_TYPES: FieldType[] = ["bool", "int", "float", "string", "date"];
 
 /** A field spec with only its `type` set — the minimal shape a new field
  * declares; the surgical writer omits every absent key. */
@@ -566,7 +566,7 @@ function SchemaFieldRow({
 }
 
 /** The typed default input, driven by the field's `type`: a checkbox-like
- * tri-state select for `bool`, a number for `int`, a date picker for
+ * tri-state select for `bool`, a number for `int`/`float`, a date picker for
  * `date`, and text for `string`. An empty/none choice maps to `null` (no
  * default). */
 function DefaultInput({
@@ -601,7 +601,7 @@ function DefaultInput({
       </label>
     );
   }
-  if (type === "int") {
+  if (type === "int" || type === "float") {
     return (
       <CommitText
         label="Default"
@@ -613,7 +613,11 @@ function DefaultInput({
           const trimmed = raw.trim();
           if (trimmed === "") return onChange(null);
           const n = Number(trimmed);
-          onChange(Number.isInteger(n) ? n : null);
+          // `Number("")` is 0 and `Number("inf")` is NaN, so guard finiteness
+          // for both types; `float` additionally accepts a fractional part,
+          // which the server rejects on an `int` field.
+          if (!Number.isFinite(n)) return onChange(null);
+          onChange(type === "float" || Number.isInteger(n) ? n : null);
         }}
       />
     );

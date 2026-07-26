@@ -352,6 +352,54 @@ fn lint_warns_on_a_string_for_an_int_field() {
 }
 
 #[test]
+fn lint_passes_on_a_decimal_for_a_float_field() {
+    let body = "---\ntype: project\ntitle: P\nweight: 82.5\n---\n# Body\n";
+    let config = config_with_field("project", "weight", typed_field(FieldType::Float));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("weight")),
+        "a decimal value must not warn: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_passes_on_a_whole_number_for_a_float_field() {
+    // A round measurement is written `82`, which YAML parses as an integer.
+    // Warning on it would make a float field unusable on exactly the readings
+    // that happen to land on a whole number.
+    let body = "---\ntype: project\ntitle: P\nweight: 82\n---\n# Body\n";
+    let config = config_with_field("project", "weight", typed_field(FieldType::Float));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report.issues.iter().all(|i| !i.message.contains("weight")),
+        "a whole number must not warn against a float field: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_warns_on_a_string_for_a_float_field() {
+    let body = "---\ntype: project\ntitle: P\nweight: heavy\n---\n# Body\n";
+    let config = config_with_field("project", "weight", typed_field(FieldType::Float));
+    let vault = vault_with_notes(&[("projects/foo.md", body)], config);
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("weight") && i.message.contains("not a valid float")),
+        "a string must warn against a float field: {:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn lint_passes_on_a_correctly_formatted_date_field() {
     // A `YYYY-MM-DD` string that parses as a calendar date is accepted.
     let body = "---\ntype: project\ntitle: P\nsince: 2026-01-01\n---\n# Body\n";
