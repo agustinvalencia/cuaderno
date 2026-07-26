@@ -82,10 +82,15 @@ fn daily_config() -> VaultConfig {
         "note".to_owned(),
         field(FieldType::String, Some(true), None, None),
     );
-    // An `int` and a `date` to exercise the setter's own coercion paths.
+    // An `int`, a `float` and a `date` to exercise the setter's own coercion
+    // paths.
     schema.fields.insert(
         "count".to_owned(),
         field(FieldType::Int, Some(true), None, None),
+    );
+    schema.fields.insert(
+        "weight".to_owned(),
+        field(FieldType::Float, Some(true), None, None),
     );
     schema.fields.insert(
         "when".to_owned(),
@@ -111,6 +116,7 @@ workout: false\n\
 mood: ok\n\
 note: hi\n\
 count: 0\n\
+weight: 0\n\
 when: 2026-01-01\n\
 ---\n\
 \n\
@@ -409,6 +415,104 @@ fn a_valid_int_is_written_bare() {
         index_frontmatter(&index, &daily_path()).get("count"),
         Some(&serde_json::Value::from(3_i64)),
     );
+}
+
+#[test]
+fn a_valid_float_is_written_bare() {
+    let (vault, store, index) = seeded_vault();
+    vault
+        .set_frontmatter(moment(), "today", "weight", "82.5")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert!(raw.contains("weight: 82.5"), "float written bare: {raw}");
+    assert_eq!(
+        index_frontmatter(&index, &daily_path()).get("weight"),
+        Some(&serde_json::Value::from(82.5_f64)),
+    );
+}
+
+#[test]
+fn a_whole_number_is_accepted_for_a_float_field() {
+    // Coercion parses `"82"` as an f64, so it is written `82.0` — still a
+    // float, and `check_value` accepts either shape on the way back in.
+    let (vault, store, _index) = seeded_vault();
+    vault
+        .set_frontmatter(moment(), "today", "weight", "82")
+        .expect("set succeeds");
+
+    let raw = store.read_file(&daily_path()).unwrap();
+    assert!(raw.contains("weight: 82"), "float written bare: {raw}");
+}
+
+#[test]
+fn re_setting_a_float_to_the_whole_number_it_already_holds_is_a_no_op() {
+    // The note holds `weight: 0`, which indexes as a JSON integer, while
+    // coercion always produces a JSON float. Comparing those two shapes with
+    // plain equality would report a change that did not happen — rewriting the
+    // line to `0.0` and, on a logging field, stamping a phantom `0 → 0.0` into
+    // the append-only daily log.
+    let (vault, store, _index) = seeded_vault();
+    let before = store.read_file(&daily_path()).unwrap();
+
+    let outcome = vault
+        .set_frontmatter(moment(), "today", "weight", "0")
+        .expect("set succeeds");
+
+    assert!(!outcome.touched(), "a no-op must report nothing touched");
+    assert!(outcome.paths.is_empty());
+    assert_eq!(
+        store.read_file(&daily_path()).unwrap(),
+        before,
+        "the note must be untouched"
+    );
+}
+
+#[test]
+fn a_float_that_actually_changes_still_writes() {
+    // The numeric comparison must not swallow a real change.
+    let (vault, store, _index) = seeded_vault();
+    let outcome = vault
+        .set_frontmatter(moment(), "today", "weight", "0.5")
+        .expect("set succeeds");
+
+    assert!(!outcome.paths.is_empty(), "a real change must write");
+    assert!(
+        store
+            .read_file(&daily_path())
+            .unwrap()
+            .contains("weight: 0.5")
+    );
+}
+
+#[test]
+fn a_non_numeric_float_is_rejected() {
+    let (vault, _store, _index) = seeded_vault();
+    match vault.set_frontmatter(moment(), "today", "weight", "heavy") {
+        Err(DomainError::InvalidFieldValue { field, reason, .. }) => {
+            assert_eq!(field, "weight");
+            assert!(reason.contains("not a valid float"), "reason: {reason}");
+        }
+        other => panic!("expected InvalidFieldValue(weight), got {other:?}"),
+    }
+}
+
+#[test]
+fn a_non_finite_float_is_rejected_rather_than_nulled() {
+    // `"inf"`/`"NaN"` parse as f64 but have no JSON number, so an unguarded
+    // path would silently write `weight: null`. Both must error instead.
+    for value in ["inf", "-inf", "NaN"] {
+        let (vault, store, _index) = seeded_vault();
+        match vault.set_frontmatter(moment(), "today", "weight", value) {
+            Err(DomainError::InvalidFieldValue { field, .. }) => assert_eq!(field, "weight"),
+            other => panic!("expected InvalidFieldValue(weight) for `{value}`, got {other:?}"),
+        }
+        let raw = store.read_file(&daily_path()).unwrap();
+        assert!(
+            raw.contains("weight: 0"),
+            "the rejected write must leave the note untouched: {raw}"
+        );
+    }
 }
 
 #[test]

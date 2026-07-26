@@ -428,14 +428,79 @@ fn deny_unknown_fields_rejects_a_field_key_typo() {
 
 #[test]
 fn unknown_field_type_is_rejected_at_parse() {
-    // A future `float`/`datetime` fails loudly on an older cdno rather than
-    // being misparsed.
+    // A future `datetime` fails loudly on an older cdno rather than being
+    // misparsed. (`float` used to be this test's example; it became a real
+    // variant in #480.)
     let dir = TempDir::new().unwrap();
     write_config(
         dir.path(),
-        "[schemas.daily.fields.temp]\ntype = \"float\"\n",
+        "[schemas.daily.fields.seen_at]\ntype = \"datetime\"\n",
     );
     assert!(VaultConfig::load(dir.path()).is_err());
+}
+
+#[test]
+fn a_float_field_parses_and_validates() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[schemas.tracking.fields.weight]
+type = "float"
+default = 82.5
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let weight = &config.schema_for("tracking").unwrap().fields["weight"];
+    assert_eq!(weight.ty, FieldType::Float);
+    assert_eq!(weight.default, Some(toml::Value::Float(82.5)));
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn a_whole_number_default_on_a_float_field_is_accepted() {
+    // TOML parses a bare `82` as an integer, so rejecting integers here would
+    // make a round measurement undeclarable.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.tracking.fields.weight]\ntype = \"float\"\ndefault = 82\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_schemas().is_ok());
+}
+
+#[test]
+fn a_non_numeric_default_on_a_float_field_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[schemas.tracking.fields.weight]\ntype = \"float\"\ndefault = \"heavy\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let err = config.validate_schemas().unwrap_err().to_string();
+    assert!(
+        err.contains("is not a valid float"),
+        "message must name the type: {err}"
+    );
+}
+
+#[test]
+fn a_non_finite_default_on_a_float_field_is_rejected() {
+    // TOML has `nan`/`inf` literals. Nothing non-finite may reach an aggregate
+    // (#478), so it fails at vault-open rather than at first chart render.
+    for literal in ["nan", "inf", "-inf"] {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            &format!("[schemas.tracking.fields.weight]\ntype = \"float\"\ndefault = {literal}\n"),
+        );
+        let config = VaultConfig::load(dir.path()).unwrap();
+        assert!(
+            config.validate_schemas().is_err(),
+            "`{literal}` must be rejected as a float default"
+        );
+    }
 }
 
 #[test]

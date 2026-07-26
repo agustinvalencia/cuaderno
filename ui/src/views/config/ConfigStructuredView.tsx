@@ -70,7 +70,7 @@ const BUILTIN_NOTE_TYPES = new Set([
   "inbox",
 ]);
 
-const FIELD_TYPES: FieldType[] = ["bool", "int", "string", "date"];
+const FIELD_TYPES: FieldType[] = ["bool", "int", "float", "string", "date"];
 
 /** A field spec with only its `type` set — the minimal shape a new field
  * declares; the surgical writer omits every absent key. */
@@ -566,7 +566,7 @@ function SchemaFieldRow({
 }
 
 /** The typed default input, driven by the field's `type`: a checkbox-like
- * tri-state select for `bool`, a number for `int`, a date picker for
+ * tri-state select for `bool`, a number for `int`/`float`, a date picker for
  * `date`, and text for `string`. An empty/none choice maps to `null` (no
  * default). */
 function DefaultInput({
@@ -601,22 +601,8 @@ function DefaultInput({
       </label>
     );
   }
-  if (type === "int") {
-    return (
-      <CommitText
-        label="Default"
-        inputType="number"
-        ariaLabel={label}
-        value={value === null ? "" : String(value)}
-        placeholder="(no default)"
-        onCommit={(raw) => {
-          const trimmed = raw.trim();
-          if (trimmed === "") return onChange(null);
-          const n = Number(trimmed);
-          onChange(Number.isInteger(n) ? n : null);
-        }}
-      />
-    );
+  if (type === "int" || type === "float") {
+    return <NumericDefaultInput label={label} type={type} value={value} onChange={onChange} />;
   }
   return (
     <CommitText
@@ -626,6 +612,59 @@ function DefaultInput({
       value={value === null ? "" : String(value)}
       placeholder="(no default)"
       onCommit={(raw) => onChange(raw.trim() === "" ? null : raw)}
+    />
+  );
+}
+
+/** The default input for the two numeric types. Split out because it is the
+ * only branch that can REJECT what the user typed: a fractional value on an
+ * `int` field, or a non-finite one (`1e999`) on either. A rejection commits
+ * `null`, and when the field had no default that is a no-op write — the parsed
+ * model comes back byte-identical, so `CommitText` never re-seeds and the box
+ * would go on displaying a value the config does not have. Say so instead of
+ * discarding it silently. */
+function NumericDefaultInput({
+  label,
+  type,
+  value,
+  onChange,
+}: {
+  label: string;
+  type: "int" | "float";
+  value: string | number | boolean | null;
+  onChange: (next: string | number | boolean | null) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <CommitText
+      label="Default"
+      inputType="number"
+      ariaLabel={label}
+      value={value === null ? "" : String(value)}
+      placeholder="(no default)"
+      error={error}
+      onCommit={(raw) => {
+        const trimmed = raw.trim();
+        if (trimmed === "") {
+          setError(null);
+          return onChange(null);
+        }
+        const n = Number(trimmed);
+        // Defensive: a number input sanitises away most text that would parse
+        // non-finite, but Infinity has no server-side representation, so never
+        // hand it on. `int` additionally rejects a fractional part.
+        if (!Number.isFinite(n)) {
+          setError(`Not a valid ${type} — no default set`);
+          return onChange(null);
+        }
+        if (type === "int" && !Number.isInteger(n)) {
+          setError("Not a valid int — no default set");
+          return onChange(null);
+        }
+        setError(null);
+        onChange(n);
+      }}
     />
   );
 }

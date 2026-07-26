@@ -633,7 +633,8 @@ pub struct ProjectListDto {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct FieldSpecDto {
     pub name: String,
-    /// The declared type: `"bool"`, `"int"`, `"string"`, or `"date"`.
+    /// The declared type: `"bool"`, `"int"`, `"float"`, `"string"`, or
+    /// `"date"`.
     #[serde(rename = "type")]
     pub ty: String,
     pub required: bool,

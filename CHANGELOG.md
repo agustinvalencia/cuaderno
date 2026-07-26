@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **A schema field can be declared `float`.** `[schemas.<type>.fields.<name>]` offered
+  `bool`, `int`, `string` and `date`, and `int` rejects anything with a fractional part — so
+  a currency amount, a body measurement, a rate or a fractional duration could not be
+  declared at all, only left as undeclared frontmatter with no type-checking behind it.
+  `type = "float"` now declares one, `cdno lint` checks it, `cdno frontmatter set` writes it,
+  and the desktop Config form offers it in the type picker. A float field accepts a whole
+  number as well as a decimal — a round reading is written `82`, not `82.0`, and warning on
+  it would make the type unusable on exactly the readings that land on a whole number.
+  `nan`/`inf` are refused at vault-open rather than at first use. (#480)
+
 ## [0.32.1] - 2026-07-24
 
 ### Fixed

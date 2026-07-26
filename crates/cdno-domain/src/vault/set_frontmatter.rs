@@ -150,7 +150,7 @@ impl Vault {
         //    nothing (mirrors `update_project_state`). `paths` stays empty so
         //    the desktop echo journal skips it (#315).
         let old_value = fm.as_json().get(key).cloned();
-        if old_value.as_ref() == Some(&new_json) {
+        if is_unchanged(old_value.as_ref(), &new_json, spec.ty) {
             return Ok(WriteOutcome::noop(path));
         }
 
@@ -249,8 +249,8 @@ fn is_reserved_key(note_type: &str, key: &str) -> bool {
 }
 
 /// Coerce the incoming `value` string into a `serde_json::Value` of the field's
-/// declared `ty`. `bool`/`int` parse strictly (a parse failure *is* the type
-/// mismatch); `string`/`date` carry the text verbatim for `check_value` to
+/// declared `ty`. `bool`/`int`/`float` parse strictly (a parse failure *is* the
+/// type mismatch); `string`/`date` carry the text verbatim for `check_value` to
 /// validate (enum membership, calendar-date validity).
 fn coerce_value(
     field: &str,
@@ -272,20 +272,58 @@ fn coerce_value(
             .parse::<i64>()
             .map(Value::from)
             .map_err(|_| invalid("is not a valid int")),
+        // `"inf"` and `"NaN"` both parse as `f64`, and a non-finite float has
+        // no JSON number to land in — `serde_json` turns it into `null`, which
+        // would silently write `weight: null` instead of erroring. Go through
+        // `Number::from_f64`, whose `None` arm is exactly the non-finite case,
+        // so the mismatch surfaces as an error like any other bad value.
+        FieldType::Float => value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .ok_or_else(|| invalid("is not a valid float")),
         FieldType::String | FieldType::Date => Ok(Value::String(value.to_owned())),
     }
 }
 
+/// Whether the incoming value is the one the note already holds — the test
+/// behind the setter's silent no-op.
+///
+/// Every type but `float` compares by value equality. A `float` needs a
+/// numeric comparison instead, because the two sides reach here in different
+/// JSON shapes: a round reading is stored as the YAML integer `82` and indexes
+/// as a JSON integer, while [`coerce_value`] always produces a JSON float. The
+/// two are the same number but `serde_json::Number`'s `PartialEq` is
+/// variant-sensitive, so plain equality would report every re-set of a whole
+/// number as a change — rewriting the line to `82.0` and, on a
+/// `log_on_change` field, stamping a `82 → 82.0` line into the append-only
+/// daily log for a value that did not move.
+fn is_unchanged(old: Option<&Value>, new: &Value, ty: FieldType) -> bool {
+    match old {
+        None => false,
+        Some(old) if ty == FieldType::Float => match (old.as_f64(), new.as_f64()) {
+            (Some(old), Some(new)) => old == new,
+            // A non-numeric current value (the note is mistyped) is never
+            // "unchanged" — let the write through so the setter repairs it.
+            _ => false,
+        },
+        Some(old) => old == new,
+    }
+}
+
 /// Render a coerced scalar back to the frontmatter text for the field's
-/// declared type. `bool`/`int`/`date` are written **bare** (`meds: true`,
-/// `count: 3`, `when: 2026-07-09` — the date has already been validated as a
-/// real `YYYY-MM-DD`, so it is safe unquoted). A `string` (including an enum
-/// value) is written as a YAML-safe scalar via [`yaml_string_scalar`], so a
-/// bareword or a value carrying special characters is quoted rather than
-/// re-parsed as a non-string on the index rebuild.
+/// declared type. `bool`/`int`/`float`/`date` are written **bare** (`meds:
+/// true`, `count: 3`, `weight: 82.5`, `when: 2026-07-09` — the date has already
+/// been validated as a real `YYYY-MM-DD`, so it is safe unquoted). A `string`
+/// (including an enum value) is written as a YAML-safe scalar via
+/// [`yaml_string_scalar`], so a bareword or a value carrying special characters
+/// is quoted rather than re-parsed as a non-string on the index rebuild.
 fn write_scalar(value: &Value, ty: FieldType) -> String {
     match ty {
-        FieldType::Bool | FieldType::Int | FieldType::Date => display_value(value),
+        FieldType::Bool | FieldType::Int | FieldType::Float | FieldType::Date => {
+            display_value(value)
+        }
         FieldType::String => yaml_string_scalar(value),
     }
 }

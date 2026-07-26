@@ -184,6 +184,18 @@ fn set_schema_field_writes_scalar_defaults_by_type() {
         out.contains("default = false"),
         "bool default is a bare bool: {out}"
     );
+
+    let mut float_spec = field_spec(FieldType::Float);
+    float_spec.default = Some(toml::Value::Float(82.5));
+    let out = set_schema_field("", "tracking", "weight", &float_spec).expect("float");
+    assert!(
+        out.contains("type = \"float\""),
+        "float type is written: {out}"
+    );
+    assert!(
+        out.contains("default = 82.5"),
+        "float default keeps its fractional part: {out}"
+    );
 }
 
 #[test]

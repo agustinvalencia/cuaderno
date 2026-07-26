@@ -7,7 +7,7 @@
  * `string` constrained by [`FieldSpec::values`] rather than a distinct type.
  *
  * An unknown `type = "…"` is a hard deserialize error (serde rejects any value
- * outside these variants) — so a future `float`/`datetime` fails loudly on an
- * older `cdno` rather than being silently misparsed.
+ * outside these variants) — so a future `datetime` fails loudly on an older
+ * `cdno` rather than being silently misparsed.
  */
-export type FieldType = "bool" | "int" | "string" | "date";
+export type FieldType = "bool" | "int" | "float" | "string" | "date";

@@ -27,7 +27,7 @@ extra_required = []
 # Typed frontmatter fields for a built-in type. Recognised by the desktop
 # Templates editor and type-checked by `cdno lint`.
 [schemas.daily.fields.meds]
-type = "bool"                     # bool | int | string | date
+type = "bool"                     # bool | int | float | string | date
 default = false                  # static, type-checked against `type`
 
 [schemas.daily.fields.mood]
@@ -108,7 +108,7 @@ optionally a default and an allowed-value set). Four things consume it today:
 
 ```toml
 [schemas.daily.fields.meds]
-type = "bool"                     # bool | int | string | date
+type = "bool"                     # bool | int | float | string | date
 default = false                  # optional; static, type-checked against `type`
 settable = true                  # optional; allow `set_frontmatter` to write it (default false)
 log_on_change = true             # optional; stamp a daily-log line when it changes
@@ -122,7 +122,7 @@ required = false                 # optional; default false
 
 | Field key | Type | Default | Purpose |
 |-----------|------|---------|---------|
-| `type` | `"bool"` \| `"int"` \| `"string"` \| `"date"` | *(required)* | The field's scalar type. An unknown value is a hard load error. |
+| `type` | `"bool"` \| `"int"` \| `"float"` \| `"string"` \| `"date"` | *(required)* | The field's scalar type. An unknown value is a hard load error. |
 | `default` | matching `type` | — | A static default value, type-checked at load. **Populated at create** when a custom template references `{{<name>}}`. A `date` is a quoted `"YYYY-MM-DD"`. |
 | `required` | bool | `false` | Reserved for create-time enforcement (a later release); parsed now, but inert — it does not yet block creation. |
 | `values` | list of strings | — | An allowed-value constraint. Valid only on a `string` field. |
@@ -144,6 +144,10 @@ Notes and limits:
   variable, its value is collected via the prompt (from `--var`, an interactive prompt, or a static
   default), and the schema default is not used. This ensures a supplied answer is never discarded.
 - **No `enum` type** — model a closed set as a `string` with `values`.
+- **`int` and `float` are distinct** — `int` rejects anything with a fractional part, so a currency
+  amount, a measurement or a rate wants `float`. A `float` field accepts a whole number too (`82` and
+  `82.5` both validate), because a round reading is written without a decimal point. A non-finite
+  default (`nan`, `inf`) is a load error — those values have no meaning as data.
 - **List fields are reserved but not yet implemented** — a `list = true` is a load error today.
 - **Engine-owned keys are protected** — you can't declare a field named `type`, or a calendar type's
   own period key (`daily`→`date`, `weekly`→`week`, `monthly`→`month`); the vault refuses to open.

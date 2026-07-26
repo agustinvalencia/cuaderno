@@ -105,8 +105,9 @@ fn validate_rejects_an_unknown_field_type() {
     // An unknown `type` value is rejected by serde's `FieldType` enum at
     // `toml::from_str` — a distinct deserialise path from the
     // `deny_unknown_fields` unknown-KEY rejection, so it's worth its own
-    // case: the dry-run gate must reject a `type = "float"` a user typed.
-    let raw = "[schemas.daily.fields.weight]\ntype = \"float\"\n";
+    // case: the dry-run gate must reject a `type = "datetime"` a user typed.
+    // (`float` was this test's example until #480 made it a real variant.)
+    let raw = "[schemas.daily.fields.seen_at]\ntype = \"datetime\"\n";
     let err = validate_config_str(raw).expect_err("should reject an unknown field type");
     assert!(!err.message.is_empty());
 }

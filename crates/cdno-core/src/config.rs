@@ -106,8 +106,8 @@ pub enum StateOverflow {
 /// `string` constrained by [`FieldSpec::values`] rather than a distinct type.
 ///
 /// An unknown `type = "…"` is a hard deserialize error (serde rejects any value
-/// outside these variants) — so a future `float`/`datetime` fails loudly on an
-/// older `cdno` rather than being silently misparsed.
+/// outside these variants) — so a future `datetime` fails loudly on an older
+/// `cdno` rather than being silently misparsed.
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -115,6 +115,10 @@ pub enum StateOverflow {
 pub enum FieldType {
     Bool,
     Int,
+    /// A decimal number (`#480`). Distinct from `Int` because currency,
+    /// measurements and rates are fractional, and `Int` deliberately rejects
+    /// anything with a fractional part.
+    Float,
     String,
     Date,
 }
@@ -125,6 +129,7 @@ impl FieldType {
         match self {
             FieldType::Bool => "bool",
             FieldType::Int => "int",
+            FieldType::Float => "float",
             FieldType::String => "string",
             FieldType::Date => "date",
         }
@@ -212,19 +217,19 @@ impl FieldSpec {
 
     /// The static `default` rendered as the scalar string a template
     /// substitutes for `{{field}}` at create time (`#301` PR-B): a bool
-    /// `false` → `"false"`, an int → its digits, a `string`/`date` → its text.
-    /// Returns `None` when the field declares no default — the caller then
-    /// supplies the absent-value convention (the built-in templates render a
-    /// literal `null`, e.g. `action`'s `completed`/`blocker`).
+    /// `false` → `"false"`, an int or float → its digits, a `string`/`date` →
+    /// its text. Returns `None` when the field declares no default — the caller
+    /// then supplies the absent-value convention (the built-in templates render
+    /// a literal `null`, e.g. `action`'s `completed`/`blocker`).
     ///
-    /// `validate_schemas` has already rejected any float/array/table or
-    /// mistyped default before a note is ever created, so the non-scalar arms
-    /// are unreachable in practice; they stringify defensively rather than
-    /// panic.
+    /// `validate_schemas` has already rejected any array/table or mistyped
+    /// default before a note is ever created, so the non-scalar arms are
+    /// unreachable in practice; they stringify defensively rather than panic.
     pub fn default_template_value(&self) -> Option<String> {
         self.default.as_ref().map(|value| match value {
             toml::Value::String(s) => s.clone(),
             toml::Value::Integer(i) => i.to_string(),
+            toml::Value::Float(f) => f.to_string(),
             toml::Value::Boolean(b) => b.to_string(),
             // A `date` default is authored as a quoted `YYYY-MM-DD` string
             // (String arm above); a bare TOML date would be a Datetime, which
@@ -246,6 +251,11 @@ impl FieldSpec {
             // A YAML integer parses to a JSON i64/u64; a float (`is_f64`) is not
             // an int and is rejected.
             FieldType::Int => value.is_i64() || value.is_u64(),
+            // The integer arms are load-bearing, not leniency: a whole-number
+            // YAML float (`weight: 82`) parses to a JSON i64, so a field
+            // holding both `82` and `82.5` over time would otherwise fail on
+            // the whole-number readings alone.
+            FieldType::Float => value.is_f64() || value.is_i64() || value.is_u64(),
             FieldType::String => value.is_string(),
             // A date is carried as a `YYYY-MM-DD` string; it must both be a
             // string and parse as a calendar date.
@@ -560,6 +570,14 @@ fn default_mismatch(spec: &FieldSpec, default: &toml::Value) -> Option<String> {
     let type_ok = match spec.ty {
         FieldType::Bool => default.as_bool().is_some(),
         FieldType::Int => default.as_integer().is_some(),
+        // A whole-number default is authored as a bare `82`, which TOML parses
+        // as an integer — accepted for the same reason `check_value` accepts
+        // one. TOML also has `nan`/`inf` literals; a non-finite default is
+        // rejected here rather than at first use, because nothing non-finite
+        // may reach an aggregate (#478) and this file validates at vault-open.
+        FieldType::Float => {
+            default.as_float().is_some_and(f64::is_finite) || default.as_integer().is_some()
+        }
         FieldType::String => default.as_str().is_some(),
         // A date default is a quoted `YYYY-MM-DD` string that must parse as a
         // calendar date; static only (no "today").
