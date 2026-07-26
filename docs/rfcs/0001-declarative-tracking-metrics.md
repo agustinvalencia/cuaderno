@@ -27,6 +27,11 @@ a single universal rule**. Today every numeric column is summed. Summing is corr
 and wrong for everything else, which is why the current engine misreports account balances,
 body measurements, ratings, and per-item values alike.
 
+The central capability change is **grouping**: an entry that records several comparable items at
+once fans out into one independent series per item, so each can be followed over time on its own
+— spend per category, minutes per subject, progression per tracked item. §6.2 walks this through
+with a worked example.
+
 ---
 
 ## 2. Motivation
@@ -256,6 +261,12 @@ group_by = "category"      # one series per distinct value
 [tracking.spend.metrics.amount]
 type = "float"; aggregate = "sum"; unit = "EUR"; plot = "column"
 
+# The same figure, ungrouped: one daily total alongside the per-category
+# lines. `group_by` is overridable per metric -- see §6.2.
+[tracking.spend.metrics.day_total]
+type = "float"; derived = "amount"; aggregate = "sum"
+group_by = "none"; unit = "EUR"; plot = "line"
+
 # --- A LEVEL: the defect in §2.1, declared away ------------------------
 [tracking.savings]
 [tracking.savings.metrics.balance]
@@ -392,6 +403,10 @@ pub struct MetricSpec {
     pub aggregate: Aggregate,
     /// Expression over sibling numeric fields, applied per record.
     pub derived: Option<String>,
+    /// Overrides the activity's `group_by` for this metric alone.
+    /// `None` inherits it; `Some("none")` collapses across all records so
+    /// the metric yields one entry-level series (see §6.2).
+    pub group_by: Option<String>,
     pub unit: Option<String>,
     #[serde(default)]
     pub plot: PlotKind,
@@ -456,18 +471,104 @@ pub fn tracking_series_from_frontmatter(
 }
 ```
 
-Series are named `"<activity> · [<group> · ]<metric>"`. The UI's `activityOf` splits on the
-**first** `" · "` (`ui/src/views/stewardships/StewardshipDetail.tsx:38-40`), so a three-part
-name groups under the right activity with **no frontend change**.
+Series are named `"<activity> · [<group> · ]<metric>"`.
 
-For the spending example above, one entry yields:
+#### Two levels of aggregation
 
+This is the part most easily missed, so it is worth stating plainly:
+
+1. **Within an entry** — all records sharing a `group_by` value collapse to **one value per
+   metric**, using that metric's declared `aggregate`.
+2. **Across entries** — those collapsed values become **one point per date**. No aggregation
+   happens at this level; the series is simply the sequence of points.
+
+`group_by` therefore does not split *notes*. It splits *series*, and each note contributes at
+most one point to each series it touches.
+
+#### Worked example: independent series from one shared entry
+
+A common need is to follow one item's progress over time when every entry records several
+items together. Given this declaration:
+
+```toml
+[tracking.stability-routine]
+records  = "detail"
+group_by = "exercise"
+
+[tracking.stability-routine.metrics.kg]
+type = "float"; aggregate = "max"; unit = "kg"; plot = "line"
+[tracking.stability-routine.metrics.reps]
+type = "int";   aggregate = "sum"; plot = "none"
 ```
-spend · groceries · amount   -> 2026-07-25: 50.85   (42.10 + 8.75, summed)
-spend · transport · amount   -> 2026-07-25: 12.00
+
+and three entries a week apart:
+
+```yaml
+# 2026-07-06                  # 2026-07-13                  # 2026-07-20
+detail:                       detail:                       detail:
+  - {exercise: chest-press,     - {exercise: chest-press,     - {exercise: chest-press,
+     reps: 10, kg: 15}             reps: 10, kg: 17.5}           reps: 11, kg: 17.5}
+  - {exercise: chest-press,     - {exercise: chest-press,     - {exercise: face-pull,
+     reps: 8,  kg: 15}             reps: 9,  kg: 17.5}           reps: 15, kg: 27.5}
+  - {exercise: face-pull,       - {exercise: face-pull,       - {exercise: row,
+     reps: 15, kg: 25}             reps: 15, kg: 27.5}           reps: 12, kg: 30}
 ```
 
-and for savings, `savings · balance` takes the **last** reading rather than a running sum.
+three entries yield **five independent series**:
+
+| Series | 07-06 | 07-13 | 07-20 | Within-entry aggregate |
+|---|---|---|---|---|
+| `stability-routine · chest-press · kg` | 15 | 17.5 | 17.5 | `max` of that day's records |
+| `stability-routine · chest-press · reps` | 18 | 19 | 11 | `sum` — 10+8, 10+9, 11 |
+| `stability-routine · face-pull · kg` | 25 | 27.5 | 27.5 | `max` |
+| `stability-routine · face-pull · reps` | 15 | 15 | 15 | `sum` |
+| `stability-routine · row · kg` | — | — | 30 | first appears 07-20 |
+
+The first row is the case this design exists to serve: one item's progression over time,
+extracted from entries that each contain several items. The declared `max` is what makes it a
+progression rather than a sum of unrelated records.
+
+The same mechanism, other domains: `group_by = "category"` on spending gives one spend line per
+budget category; `group_by = "subject"` on practice gives minutes per subject; `group_by =
+"person"` on contact gives a cadence series per person.
+
+#### Missing values are gaps, not zeros
+
+- **A skipped item leaves a gap.** `row` has no point before 07-20 because it was not recorded
+  — not because its value was zero. Zero-filling would draw a false line up from the axis.
+- **A new value starts a new series automatically**, with no config change: `row` appears the
+  moment it appears in the data. This is the main advantage over promoting categories to
+  columns, which fixes the set at table-design time.
+
+#### Consequence for the UI — a second filter level is required
+
+The UI's `activityOf` splits on the **first** `" · "`
+(`ui/src/views/stewardships/StewardshipDetail.tsx:38-40`), so a three-part name groups under the
+correct activity with no frontend change to *grouping*. But **filtering** is a different matter:
+every series above collapses into one `stability-routine` chip, so eight grouped values × two
+plotted metrics is sixteen charts behind a single filter option — worse than the nine-chart
+problem §2.4 describes.
+
+`group_by` therefore requires a **second filter level keyed on the middle segment**. This is new
+frontend work, tracked in §9 Tier 2, not a free ride on the existing naming convention.
+
+#### Per-metric grouping override
+
+Grouping is declared per activity, but some metrics want the session total rather than the
+per-item split — a daily spend total alongside per-category lines, total practice minutes
+alongside per-subject ones. `group_by` is therefore overridable per metric:
+
+```toml
+[tracking.stability-routine.metrics.tonnage]
+type = "float"; derived = "reps * kg"; aggregate = "sum"
+group_by = "none"        # collapse across all records -> one series for the whole entry
+plot = "line"
+```
+
+An absent `group_by` on a metric inherits the activity's; `"none"` collapses it.
+
+For the earlier scalar cases nothing changes: `savings · balance` has no records to group and
+takes the **last** reading rather than a running sum.
 
 ### 6.3 DTO extension
 
@@ -640,6 +741,10 @@ be imported.
   path constant `paths.rs:74`); validate at vault-open.
 - Add the second exact-match arm to the watcher predicate (`watcher.rs:568`, `events.rs:231`).
 - Return the parsed schema from `get_stewardship_tracking` for agent discovery.
+- **A second filter level keyed on the group segment** of a series name — required by §6.2, not
+  optional. `group_by` multiplies series by the number of distinct grouped values, and the
+  existing activity-level chip cannot narrow within an activity
+  (`StewardshipDetail.tsx:38-40, 107`).
 - UI chart picker writing `plot` back via `config_edit`, replacing the ephemeral `activities`
   state (`StewardshipDetail.tsx:107`).
 - Merge mode for same-day entries (`tracking.rs:127`) — required by §7.5.
@@ -674,8 +779,14 @@ current design acquired its bias.
   `crates/cdno-domain/tests/unit/context_tests.rs:493` — one test per `Aggregate`, including a
   `last` metric where a sum would visibly compound, and a `mean` metric whose value does not
   change when a second entry is added the same day.
-- **Grouping**: a record activity with a repeated group value yields one series per distinct
-  value, with within-entry values aggregated before the point is emitted.
+- **Grouping** (§6.2): a record activity with a repeated group value yields one series per
+  distinct value, with within-entry values aggregated before the point is emitted. Assert the
+  worked example directly — a group appearing twice in one entry produces **one** point whose
+  value reflects that metric's aggregate, not two points.
+- **Gaps, not zeros**: a group absent from an entry emits no point for that date, and a group
+  first appearing mid-window starts its series there rather than being back-filled with zeros.
+- **Per-metric `group_by` override**: a metric declaring `group_by = "none"` under a grouped
+  activity yields a single entry-level series alongside the grouped ones.
 - **Cadence-only**: an activity declaring no metrics produces no series and no error, and still
   appears in the 12-week sparkline.
 - **Frontmatter round trip**, `crates/cdno-core/tests/unit/frontmatter_tests.rs`: a nested
