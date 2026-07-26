@@ -446,6 +446,46 @@ fn a_whole_number_is_accepted_for_a_float_field() {
 }
 
 #[test]
+fn re_setting_a_float_to_the_whole_number_it_already_holds_is_a_no_op() {
+    // The note holds `weight: 0`, which indexes as a JSON integer, while
+    // coercion always produces a JSON float. Comparing those two shapes with
+    // plain equality would report a change that did not happen — rewriting the
+    // line to `0.0` and, on a logging field, stamping a phantom `0 → 0.0` into
+    // the append-only daily log.
+    let (vault, store, _index) = seeded_vault();
+    let before = store.read_file(&daily_path()).unwrap();
+
+    let outcome = vault
+        .set_frontmatter(moment(), "today", "weight", "0")
+        .expect("set succeeds");
+
+    assert!(!outcome.touched(), "a no-op must report nothing touched");
+    assert!(outcome.paths.is_empty());
+    assert_eq!(
+        store.read_file(&daily_path()).unwrap(),
+        before,
+        "the note must be untouched"
+    );
+}
+
+#[test]
+fn a_float_that_actually_changes_still_writes() {
+    // The numeric comparison must not swallow a real change.
+    let (vault, store, _index) = seeded_vault();
+    let outcome = vault
+        .set_frontmatter(moment(), "today", "weight", "0.5")
+        .expect("set succeeds");
+
+    assert!(!outcome.paths.is_empty(), "a real change must write");
+    assert!(
+        store
+            .read_file(&daily_path())
+            .unwrap()
+            .contains("weight: 0.5")
+    );
+}
+
+#[test]
 fn a_non_numeric_float_is_rejected() {
     let (vault, _store, _index) = seeded_vault();
     match vault.set_frontmatter(moment(), "today", "weight", "heavy") {

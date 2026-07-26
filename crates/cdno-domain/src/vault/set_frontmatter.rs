@@ -150,7 +150,7 @@ impl Vault {
         //    nothing (mirrors `update_project_state`). `paths` stays empty so
         //    the desktop echo journal skips it (#315).
         let old_value = fm.as_json().get(key).cloned();
-        if old_value.as_ref() == Some(&new_json) {
+        if is_unchanged(old_value.as_ref(), &new_json, spec.ty) {
             return Ok(WriteOutcome::noop(path));
         }
 
@@ -284,6 +284,31 @@ fn coerce_value(
             .map(Value::Number)
             .ok_or_else(|| invalid("is not a valid float")),
         FieldType::String | FieldType::Date => Ok(Value::String(value.to_owned())),
+    }
+}
+
+/// Whether the incoming value is the one the note already holds — the test
+/// behind the setter's silent no-op.
+///
+/// Every type but `float` compares by value equality. A `float` needs a
+/// numeric comparison instead, because the two sides reach here in different
+/// JSON shapes: a round reading is stored as the YAML integer `82` and indexes
+/// as a JSON integer, while [`coerce_value`] always produces a JSON float. The
+/// two are the same number but `serde_json::Number`'s `PartialEq` is
+/// variant-sensitive, so plain equality would report every re-set of a whole
+/// number as a change — rewriting the line to `82.0` and, on a
+/// `log_on_change` field, stamping a `82 → 82.0` line into the append-only
+/// daily log for a value that did not move.
+fn is_unchanged(old: Option<&Value>, new: &Value, ty: FieldType) -> bool {
+    match old {
+        None => false,
+        Some(old) if ty == FieldType::Float => match (old.as_f64(), new.as_f64()) {
+            (Some(old), Some(new)) => old == new,
+            // A non-numeric current value (the note is mistyped) is never
+            // "unchanged" — let the write through so the setter repairs it.
+            _ => false,
+        },
+        Some(old) => old == new,
     }
 }
 

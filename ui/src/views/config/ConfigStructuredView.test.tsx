@@ -331,6 +331,29 @@ test("an int field still rejects a fractional default", async () => {
   });
 });
 
+test("a rejected numeric default says so instead of being dropped silently", async () => {
+  // A rejected entry commits `null`; when the field had no default that is a
+  // no-op write, so the parsed model comes back identical and the input never
+  // re-seeds — the box would keep showing a value the config does not have.
+  installMock([], modelWithStage({ type: "int", default: null, values: null }));
+  renderView(draftStub());
+
+  const input = (await screen.findByLabelText("Default for stage")) as HTMLInputElement;
+  fireEvent.change(input, { target: { value: "3.5" } });
+  fireEvent.blur(input);
+
+  expect(await screen.findByRole("status")).toHaveProperty(
+    "textContent",
+    "Not a valid int — no default set",
+  );
+
+  // A valid entry clears the message.
+  fireEvent.change(input, { target: { value: "3" } });
+  fireEvent.blur(input);
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+});
+
+
 test("removing a schema field fires config_remove_schema_field", async () => {
   const calls: Array<{ cmd: string; args: unknown }> = [];
   installMock(calls);

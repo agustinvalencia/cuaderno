@@ -602,25 +602,7 @@ function DefaultInput({
     );
   }
   if (type === "int" || type === "float") {
-    return (
-      <CommitText
-        label="Default"
-        inputType="number"
-        ariaLabel={label}
-        value={value === null ? "" : String(value)}
-        placeholder="(no default)"
-        onCommit={(raw) => {
-          const trimmed = raw.trim();
-          if (trimmed === "") return onChange(null);
-          const n = Number(trimmed);
-          // `Number("")` is 0 and `Number("inf")` is NaN, so guard finiteness
-          // for both types; `float` additionally accepts a fractional part,
-          // which the server rejects on an `int` field.
-          if (!Number.isFinite(n)) return onChange(null);
-          onChange(type === "float" || Number.isInteger(n) ? n : null);
-        }}
-      />
-    );
+    return <NumericDefaultInput label={label} type={type} value={value} onChange={onChange} />;
   }
   return (
     <CommitText
@@ -630,6 +612,59 @@ function DefaultInput({
       value={value === null ? "" : String(value)}
       placeholder="(no default)"
       onCommit={(raw) => onChange(raw.trim() === "" ? null : raw)}
+    />
+  );
+}
+
+/** The default input for the two numeric types. Split out because it is the
+ * only branch that can REJECT what the user typed: a fractional value on an
+ * `int` field, or a non-finite one (`1e999`) on either. A rejection commits
+ * `null`, and when the field had no default that is a no-op write — the parsed
+ * model comes back byte-identical, so `CommitText` never re-seeds and the box
+ * would go on displaying a value the config does not have. Say so instead of
+ * discarding it silently. */
+function NumericDefaultInput({
+  label,
+  type,
+  value,
+  onChange,
+}: {
+  label: string;
+  type: "int" | "float";
+  value: string | number | boolean | null;
+  onChange: (next: string | number | boolean | null) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <CommitText
+      label="Default"
+      inputType="number"
+      ariaLabel={label}
+      value={value === null ? "" : String(value)}
+      placeholder="(no default)"
+      error={error}
+      onCommit={(raw) => {
+        const trimmed = raw.trim();
+        if (trimmed === "") {
+          setError(null);
+          return onChange(null);
+        }
+        const n = Number(trimmed);
+        // Defensive: a number input sanitises away most text that would parse
+        // non-finite, but Infinity has no server-side representation, so never
+        // hand it on. `int` additionally rejects a fractional part.
+        if (!Number.isFinite(n)) {
+          setError(`Not a valid ${type} — no default set`);
+          return onChange(null);
+        }
+        if (type === "int" && !Number.isInteger(n)) {
+          setError("Not a valid int — no default set");
+          return onChange(null);
+        }
+        setError(null);
+        onChange(n);
+      }}
     />
   );
 }
