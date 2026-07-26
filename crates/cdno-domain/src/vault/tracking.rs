@@ -20,10 +20,12 @@ use std::collections::HashMap;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::template::{TemplateSource, VariableContext};
 
 use crate::error::DomainError;
+use crate::frontmatter::TrackingFrontmatter;
 use crate::note_type::NoteType;
 
 use super::Vault;
@@ -208,8 +210,18 @@ impl Vault {
         // substitution: it has no way to carry a record sequence.
         let body = match &draft.metrics {
             Some(metrics) if !metrics.is_empty() => {
+                check_no_identity_metrics(metrics)?;
                 self.check_declared_metrics(metrics)?;
-                merge_fields_into_frontmatter(&body, metrics)?
+                let merged = merge_fields_into_frontmatter(&body, metrics)?;
+                // The invariant, not just the denylist: whatever the merge
+                // produced must still parse as a tracking note. Committing one
+                // that does not would not merely corrupt this entry — every
+                // reader that scans all tracking notes (`list_tracking`,
+                // `list_stewardships`) parses before it filters, so one bad
+                // note fails the read for every stewardship in the vault.
+                let (fm, _rest) = Frontmatter::parse(&merged)?;
+                TrackingFrontmatter::try_from(fm)?;
+                merged
             }
             _ => body,
         };
@@ -244,9 +256,16 @@ impl Vault {
         &self,
         metrics: &serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), DomainError> {
+        // Gated on an explicit `fields` block, exactly as the lint value-check
+        // is (`lint.rs`). Without the gate, a legacy `extra_required` entry —
+        // which desugars to an untyped *string* spec and is documented as
+        // lint-only — would become a hard create-time rejection, so a vault
+        // that merely lists `weight` as required could not write `weight: 82.5`
+        // at all.
         let declared = self
             .config
             .schema_for(NoteType::Tracking.as_str())
+            .filter(|s| !s.fields.is_empty())
             .map(|s| s.declared_fields())
             .unwrap_or_default();
         for (key, value) in metrics {
@@ -265,6 +284,39 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// The frontmatter keys a tracking note is *identified* by: its type marker
+/// and the three fields `TrackingFrontmatter` requires. A metric may not name
+/// one of these.
+///
+/// They are the note's identity, not data about it, and the engine owns every
+/// one: `type` decides which queries see the note at all (and is re-derived
+/// from frontmatter on the next reconcile), `stewardship` and `activity` are
+/// what readers group by, and `date` is fixed by the filename — a metric
+/// rewriting it would leave the two disagreeing permanently.
+///
+/// `duration_min` and `routine` are deliberately absent: both are ordinary
+/// optional fields, and a duration is a perfectly good metric.
+///
+/// `set_frontmatter` refuses this same class through its own default-deny
+/// (declared *and* `settable = true`, then type-checked); this path needs its
+/// own guard because a metric key is caller-supplied and otherwise unchecked.
+const IDENTITY_KEYS: &[&str] = &["type", "stewardship", "activity", "date"];
+
+/// Reject a metrics payload naming a key that identifies the note.
+fn check_no_identity_metrics(
+    metrics: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DomainError> {
+    for key in metrics.keys() {
+        if IDENTITY_KEYS.contains(&key.as_str()) {
+            return Err(DomainError::ReservedSchemaField {
+                note_type: NoteType::Tracking.as_str().to_owned(),
+                field: key.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Reject a date far enough from today that it is almost certainly a typo.

@@ -63,7 +63,7 @@ cdno track swim --stewardship health --content "1500m, 28min"
   tonight — and without it the entry lands on the wrong day and the trend bends.
 
   ```bash
-  cdno track body --stewardship health --at 2026-04-06T08:00
+  cdno track body --stewardship health --at 2026-04-06
   ```
 
   Filing is always journalled to **today's** daily log, naming the day the entry describes, so a
@@ -101,7 +101,10 @@ detail:
 
 Declaring a metric under `[schemas.tracking.fields]` (see
 [Configuration](../reference/configuration.md)) gets it type-checked on the way in — a `float` for
-a measurement or an amount, an `int` for a count. Anything undeclared is written as given.
+a measurement or an amount, an `int` for a count. Anything undeclared is written as given, except
+the four keys that identify the note — `type`, `stewardship`, `activity`, `date` — which a metric
+may not name. They are the note's identity rather than data about it, and the engine owns them:
+`date` is fixed by the filename, and `activity` is what every reader groups by.
 
 Tracking entries are [append-only](../concepts/business-rules.md) — they're your historical record.
 Read them back over a window via the MCP `get_stewardship_tracking` tool, or with

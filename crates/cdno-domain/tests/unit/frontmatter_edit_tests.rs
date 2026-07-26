@@ -134,3 +134,127 @@ fn a_document_without_frontmatter_errors() {
         other => panic!("expected MissingSection(frontmatter), got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------
+// Untrusted keys and values (review findings on #494)
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_single_key_mapping_is_still_written_as_a_block() {
+    // Block-vs-inline follows the value's SHAPE, not whether its
+    // serialisation happens to fit on one line: `{"duration": 45}` serialises
+    // to `duration: 45`, which inlined would read `session: duration: 45` —
+    // invalid YAML, and the whole write dies on a scanner error.
+    let out = merge_fields_into_frontmatter(
+        NOTE,
+        &fields(serde_json::json!({"session": {"duration": 45}})),
+    )
+    .unwrap();
+
+    assert!(out.contains("session:\n  duration: 45\n"), "{out}");
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(fm.as_json()["session"]["duration"], serde_json::json!(45));
+}
+
+#[test]
+fn a_single_element_sequence_is_still_written_as_a_block() {
+    let out =
+        merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({"detail": [{"a": 1}]})))
+            .unwrap();
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(fm.as_json()["detail"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn an_empty_collection_stays_inline() {
+    // It has no block form; `key:\n  []` would be a needless second line.
+    for (value, expected) in [
+        (serde_json::json!([]), "detail: []"),
+        (serde_json::json!({}), "detail: {}"),
+    ] {
+        let out =
+            merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({"detail": value})))
+                .unwrap();
+        assert!(out.contains(expected), "expected `{expected}` in:\n{out}");
+        cdno_core::frontmatter::Frontmatter::parse(&out).expect("must parse");
+    }
+}
+
+#[test]
+fn a_key_needing_quotes_is_quoted_rather_than_reinterpreted() {
+    // The keys are caller-supplied. `#reps` interpolated raw is a YAML
+    // comment — the metric would vanish while the write reported success.
+    for key in ["#reps", "true", "a: b", "- dash"] {
+        let out =
+            merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({key: 10}))).unwrap();
+        let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out)
+            .unwrap_or_else(|e| panic!("`{key}` must produce parseable YAML: {e}\n{out}"));
+        assert_eq!(
+            fm.as_json().get(key),
+            Some(&serde_json::json!(10)),
+            "`{key}` must survive as its own key: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_key_carrying_a_line_break_is_refused() {
+    // Interpolating it would smuggle a second frontmatter line past the
+    // caller's own validation — a metric named `x: 1\nweight` writing a
+    // `weight` the schema check never saw.
+    match merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({"x: 1\nweight": "heavy"})))
+    {
+        Err(DomainError::UnrepresentableFrontmatterValue { field, .. }) => {
+            assert!(field.contains("weight"), "field: {field}")
+        }
+        other => panic!("expected UnrepresentableFrontmatterValue, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_block_scalar_is_refused_rather_than_orphaning_its_lines() {
+    // `notes: |` carries a non-empty inline value AND continues onto the next
+    // lines. Replacing it leaves them orphaned — which either breaks the
+    // document or, when they look like mapping entries, is silently absorbed
+    // into the replacement value.
+    let note =
+        "---\ntype: tracking\nnotes: |\n  warm-up\n  main set\ndate: 2026-04-06\n---\n\n# Body\n";
+    match merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "quick"}))) {
+        Err(DomainError::MultilineFrontmatterField(field)) => assert_eq!(field, "notes"),
+        other => panic!("expected MultilineFrontmatterField(notes), got {other:?}"),
+    }
+}
+
+#[test]
+fn a_crlf_document_is_merged_with_its_own_line_endings() {
+    // `Frontmatter::parse` accepts CRLF, so a merge that only understood LF
+    // would report "missing frontmatter" for a note the parser reads fine —
+    // and a user-authored template is exactly what arrives CRLF-terminated.
+    let note =
+        "---\r\ntype: tracking\r\nactivity: body\r\ndate: 2026-04-06\r\n---\r\n\r\n# Body\r\n";
+    let out =
+        merge_fields_into_frontmatter(note, &fields(serde_json::json!({"weight": 82.5}))).unwrap();
+
+    assert!(out.contains("weight: 82.5\r\n"), "{out:?}");
+    assert!(
+        !out.contains("weight: 82.5\n\r"),
+        "no mixed endings: {out:?}"
+    );
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(fm.as_json().get("weight"), Some(&serde_json::json!(82.5)));
+}
+
+#[test]
+fn a_quoted_existing_key_is_replaced_rather_than_duplicated() {
+    let note = "---\ntype: tracking\n\"weight\": 80\ndate: 2026-04-06\n---\n\n# Body\n";
+    let out =
+        merge_fields_into_frontmatter(note, &fields(serde_json::json!({"weight": 82.5}))).unwrap();
+
+    assert_eq!(
+        out.matches("weight").count(),
+        1,
+        "the existing key must be replaced, not duplicated: {out}"
+    );
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(fm.as_json().get("weight"), Some(&serde_json::json!(82.5)));
+}

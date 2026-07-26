@@ -600,3 +600,52 @@ fn log_on_change_on_a_project_note_writes_the_field_and_logs_to_today_daily() {
         "log is timestamped: {daily_raw}"
     );
 }
+
+#[test]
+fn the_setter_does_not_reach_into_a_nested_record_block() {
+    // Structured metrics (#481) made multi-line frontmatter reachable, and a
+    // record's own keys share names with top-level ones (`weight`, `minutes`).
+    // Matching an indented line would rewrite a key INSIDE the record and
+    // re-emit it at column zero — silently moving it out of the record, and
+    // leaving a duplicate top-level key the parser then rejects outright.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let note = "---\ntype: tracking\nstewardship: health\nactivity: gym\ndate: 2026-07-09\n\
+                weight: 80\ndetail:\n  - exercise: squat\n    weight: 100\n---\n\n# Gym\n";
+    let path = VaultPath::new("stewardships/health/tracking/2026-07-09-gym.md").unwrap();
+    store.write_file(&path, note).unwrap();
+
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "weight".to_owned(),
+        field(FieldType::Float, Some(true), None, None),
+    );
+    let mut config = VaultConfig::default();
+    config.schemas.insert("tracking".to_owned(), schema);
+    let (vault, _r) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), config).expect("Vault::new");
+
+    vault
+        .set_frontmatter(
+            moment(),
+            "stewardships/health/tracking/2026-07-09-gym.md",
+            "weight",
+            "83",
+        )
+        .expect("set succeeds");
+
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("weight: 83.0\ndetail:"),
+        "top-level set: {raw}"
+    );
+    assert!(
+        raw.contains("    weight: 100"),
+        "the record's own weight must be untouched: {raw}"
+    );
+    // And the note still parses, with the record intact.
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&raw).unwrap();
+    let json = fm.as_json();
+    assert_eq!(json["weight"], serde_json::json!(83.0));
+    assert_eq!(json["detail"][0]["weight"], serde_json::json!(100));
+}

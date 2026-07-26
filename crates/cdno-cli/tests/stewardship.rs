@@ -463,3 +463,48 @@ fn track_at_rejects_an_implausible_date() {
         "the message must name the window: {msg}"
     );
 }
+
+#[test]
+fn track_at_accepts_a_bare_date() {
+    // The flag's headline use case is a session whose time nobody wrote down;
+    // the domain keeps only the date, so demanding an invented `T00:00` would
+    // be a wart the use case walks straight into.
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 4, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: true,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("stewardship");
+
+    cdno_cli::commands::track::run(
+        dir.path(),
+        moment(2026, 4, 20, 9, 0),
+        Some(
+            NaiveDate::from_ymd_opt(2026, 4, 6)
+                .unwrap()
+                .and_time(NaiveTime::MIN),
+        ),
+        "gym".to_owned(),
+        Some("health".to_owned()),
+        None,
+        String::new(),
+        vec![],
+        true,
+        false,
+    )
+    .expect("track");
+
+    assert!(
+        dir.path()
+            .join("stewardships/health/tracking/2026-04-06-gym.md")
+            .exists()
+    );
+}

@@ -531,3 +531,87 @@ fn a_backdated_entry_logs_into_todays_note_naming_the_day_it_describes() {
         "backfilling must not scaffold a daily note for a day that never had one"
     );
 }
+
+#[test]
+fn a_metric_naming_an_identity_key_is_refused() {
+    // The severe case: these four keys identify the note, and every reader
+    // that scans tracking notes parses before it filters — so one entry whose
+    // `activity` is an integer fails the read for every stewardship in the
+    // vault, not just this one.
+    let (vault, _store) = health_vault();
+    for key in ["type", "stewardship", "activity", "date"] {
+        match vault.add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "gym")
+                .with_metrics(metrics(serde_json::json!({key: "hijacked"}))),
+        ) {
+            Err(DomainError::ReservedSchemaField { field, .. }) => assert_eq!(field, key),
+            other => panic!("expected ReservedSchemaField({key}), got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_refused_identity_metric_writes_nothing() {
+    let (vault, store) = health_vault();
+    let _ = vault.add_tracking_entry(
+        dt(2026, 4, 6, 19, 0),
+        TrackingEntryDraft::new("health", "gym")
+            .with_metrics(metrics(serde_json::json!({"activity": 5}))),
+    );
+    assert!(
+        !store
+            .exists(&vp("stewardships/health/tracking/2026-04-06-gym.md"))
+            .unwrap(),
+        "a rejected payload must leave no note behind"
+    );
+}
+
+#[test]
+fn an_optional_typed_field_is_still_writable_as_a_metric() {
+    // `duration_min` and `routine` are ordinary optional fields, not identity
+    // — and a duration is a perfectly good metric.
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "gym")
+                .with_metrics(metrics(serde_json::json!({"duration_min": 45}))),
+        )
+        .unwrap();
+
+    assert_eq!(
+        read_tracking_fm(&store, &outcome.primary).duration_min,
+        Some(45)
+    );
+}
+
+#[test]
+fn an_extra_required_only_schema_does_not_type_check_metrics() {
+    // `extra_required` desugars to an untyped *string* spec and is documented
+    // and implemented as lint-only (lint gates its value-check on a non-empty
+    // `fields` block). Without the same gate here, a vault that merely lists
+    // `weight` as required could not write `weight: 82.5` at all.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut config = VaultConfig::default();
+    config.schemas.insert(
+        "tracking".to_owned(),
+        cdno_core::config::SchemaExtension {
+            extra_required: vec!["weight".to_owned()],
+            ..Default::default()
+        },
+    );
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "body")
+                .with_metrics(metrics(serde_json::json!({"weight": 82.5}))),
+        )
+        .expect("a lint-only extra_required must not block a numeric metric");
+}

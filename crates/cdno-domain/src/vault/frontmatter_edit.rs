@@ -12,6 +12,11 @@
 //! (RFC 0001 §5.1). A nested value is emitted as an indented block under its
 //! key, which `normalise`'s `top_level_key` reads as continuation lines and
 //! therefore moves as one group.
+//!
+//! The caller's keys are untrusted — an agent supplies them — so both the key
+//! and the value go through the YAML emitter rather than being interpolated
+//! as text. Interpolating a key is how `{"x: 1\nweight": …}` would smuggle a
+//! second frontmatter line past the caller's own validation.
 
 use serde_json::Value;
 
@@ -31,11 +36,13 @@ use crate::error::DomainError;
 ///
 /// Errors:
 /// - [`DomainError::MissingSection`] — `raw` has no frontmatter block.
-/// - [`DomainError::MultilineFrontmatterField`] — the key is present and
-///   already carries a nested block. Replacing it means consuming an unknown
-///   number of continuation lines, and guessing wrong would silently drop or
-///   duplicate data; a freshly scaffolded note never has one, so this errors
-///   rather than guesses.
+/// - [`DomainError::MultilineFrontmatterField`] — the key is present and its
+///   value already spans lines. Replacing it means consuming an unknown number
+///   of continuation lines, and guessing wrong would silently drop or
+///   duplicate data; a freshly scaffolded note never has one.
+/// - [`DomainError::UnrepresentableFrontmatterValue`] — the key carries a line
+///   break (never a legitimate frontmatter key) or the value cannot be
+///   serialised as YAML.
 pub fn merge_fields_into_frontmatter(
     raw: &str,
     fields: &serde_json::Map<String, Value>,
@@ -44,81 +51,88 @@ pub fn merge_fields_into_frontmatter(
         return Ok(raw.to_owned());
     }
 
-    // Locate the frontmatter region: the opening `---\n` must be at the very
-    // start, and the closing `\n---` marks the end. Same bounds as
-    // `rewrite_field_in_frontmatter`, so the two agree on what "the block" is.
-    let opening = "---\n";
-    if !raw.starts_with(opening) {
+    // Locate the frontmatter region. `Frontmatter::parse` accepts both `\n`
+    // and `\r\n`, so a merge that only understood LF would report "missing
+    // frontmatter" for a note the parser reads fine — and a template file is
+    // exactly the sort of thing that arrives CRLF-terminated.
+    let (opening, newline) = if let Some(rest) = raw.strip_prefix("---\r\n") {
+        (raw.len() - rest.len(), "\r\n")
+    } else if let Some(rest) = raw.strip_prefix("---\n") {
+        (raw.len() - rest.len(), "\n")
+    } else {
         return Err(DomainError::MissingSection("frontmatter"));
-    }
-    let body_after_open = opening.len();
-    let closing_offset = raw[body_after_open..]
+    };
+    let closing_offset = raw[opening..]
         .find("\n---")
         .ok_or(DomainError::MissingSection("frontmatter"))?;
-    let yaml_end = body_after_open + closing_offset + 1; // include the trailing \n
-    let yaml = &raw[body_after_open..yaml_end];
+    let yaml_end = opening + closing_offset + 1; // include the trailing \n
+    let yaml = &raw[opening..yaml_end];
 
     let mut new_yaml = String::with_capacity(yaml.len() + 128);
-    let mut appended = Vec::new();
+    let mut replaced: Vec<&str> = Vec::new();
 
-    // First pass: replace in place any key the block already declares on one
-    // line. A key whose existing value spans lines is a hard error, so scan
-    // for that before writing anything.
+    // First pass: replace in place any key the block already declares whose
+    // value fits on one line. A key whose value spans lines is a hard error.
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
     for (i, line) in lines.iter().enumerate() {
-        match declared_key(line) {
-            Some(key) if fields.contains_key(key) => {
-                if continues_onto_next_line(line, lines.get(i + 1).copied()) {
-                    return Err(DomainError::MultilineFrontmatterField(key.to_owned()));
+        match declared_key(line).and_then(|k| fields.get_key_value(k)) {
+            Some((key, value)) => {
+                if continues_onto_next_line(lines.get(i + 1).copied()) {
+                    return Err(DomainError::MultilineFrontmatterField(key.clone()));
                 }
-                let value = &fields[key];
-                new_yaml.push_str(&render_field(key, value)?);
-                appended.push(key.to_owned());
+                new_yaml.push_str(&render_field(key, value, newline)?);
+                replaced.push(key);
             }
-            _ => new_yaml.push_str(line),
+            None => new_yaml.push_str(line),
         }
     }
 
     // Second pass: everything the block did not already declare goes at the
     // end, in the map's key order.
     for (key, value) in fields {
-        if !appended.iter().any(|k| k == key) {
-            new_yaml.push_str(&render_field(key, value)?);
+        if !replaced.contains(&key.as_str()) {
+            new_yaml.push_str(&render_field(key, value, newline)?);
         }
     }
 
     let mut result = String::with_capacity(raw.len() + new_yaml.len());
-    result.push_str(&raw[..body_after_open]);
+    result.push_str(&raw[..opening]);
     result.push_str(&new_yaml);
     result.push_str(&raw[yaml_end..]);
     Ok(result)
 }
 
-/// The top-level key a frontmatter line declares, or `None` for a
+/// The top-level YAML key a frontmatter line declares, or `None` for a
 /// continuation line (indented, a list item, blank, or without a colon).
 /// Mirrors `normalise::top_level_key` so the two passes agree on what counts
-/// as a key rather than drifting apart.
+/// as a key rather than drifting apart, with one addition: a quoted key is
+/// unwrapped, so `"weight": 82` is recognised as `weight` and replaced rather
+/// than appended a second time.
 fn declared_key(line: &str) -> Option<&str> {
     if line.starts_with(char::is_whitespace) {
         return None;
     }
     let key = line.split(':').next()?.trim_end();
-    if key.is_empty() || key.contains(char::is_whitespace) || !line.contains(':') {
+    let unquoted = key
+        .strip_prefix('"')
+        .and_then(|k| k.strip_suffix('"'))
+        .or_else(|| key.strip_prefix('\'').and_then(|k| k.strip_suffix('\'')))
+        .unwrap_or(key);
+    if unquoted.is_empty() || unquoted.contains(char::is_whitespace) || !line.contains(':') {
         return None;
     }
-    Some(key)
+    Some(unquoted)
 }
 
-/// Whether `line`'s value spills onto following lines — either the key has no
-/// inline value and the next line is indented (a nested block), or the next
-/// line is a `- ` sequence item belonging to it.
-fn continues_onto_next_line(line: &str, next: Option<&str>) -> bool {
-    let inline_value = line.split_once(':').map(|(_, v)| v.trim()).unwrap_or("");
-    if !inline_value.is_empty() {
-        return false; // `key: value` — self-contained
-    }
-    // `key:` with nothing after it: a nested block iff something indented or a
-    // sequence item follows.
+/// Whether the line *after* a key belongs to that key's value.
+///
+/// Decided from the following line alone, deliberately. Judging by the key's
+/// own inline value would miss every block scalar (`key: |`, `key: >`) and
+/// every wrapped or multi-line flow collection — all of which carry a
+/// non-empty inline value and still continue. Replacing one of those orphans
+/// its continuation lines, which either breaks the document or, worse, lets
+/// the orphaned text be absorbed into the replacement value.
+fn continues_onto_next_line(next: Option<&str>) -> bool {
     match next {
         Some(next) => {
             let trimmed = next.trim_start();
@@ -130,28 +144,47 @@ fn continues_onto_next_line(line: &str, next: Option<&str>) -> bool {
 }
 
 /// Render one `key: value` frontmatter entry, as one line for a scalar or an
-/// indented block for a nested value. Always ends with a newline.
-fn render_field(key: &str, value: &Value) -> Result<String, DomainError> {
-    let yaml =
-        serde_yaml::to_string(value).map_err(|e| DomainError::UnrepresentableFrontmatterValue {
+/// indented block for a non-empty sequence or mapping. Always ends with
+/// `newline`.
+fn render_field(key: &str, value: &Value, newline: &str) -> Result<String, DomainError> {
+    if key.contains('\n') || key.contains('\r') {
+        return Err(DomainError::UnrepresentableFrontmatterValue {
             field: key.to_owned(),
-            reason: e.to_string(),
-        })?;
+            reason: "a frontmatter key cannot contain a line break".to_owned(),
+        });
+    }
+    let unrepresentable = |e: serde_yaml::Error| DomainError::UnrepresentableFrontmatterValue {
+        field: key.to_owned(),
+        reason: e.to_string(),
+    };
+    // The key goes through the emitter too, so one needing quotes (`#reps`,
+    // `true`, `a: b`) is quoted rather than silently becoming a comment, a
+    // different key, or a second line.
+    let key_scalar = serde_yaml::to_string(&key)
+        .map_err(unrepresentable)?
+        .trim_end()
+        .to_owned();
+    let yaml = serde_yaml::to_string(value).map_err(unrepresentable)?;
     let yaml = yaml.trim_end_matches('\n');
 
-    // A scalar serialises to a single line; anything else (a sequence, a
-    // mapping) becomes a block indented two spaces under the bare key.
-    if !yaml.contains('\n') && !yaml.starts_with("- ") {
-        return Ok(format!("{key}: {yaml}\n"));
+    // Block-vs-inline is decided by the value's SHAPE, not by whether its
+    // serialisation happens to fit on one line: a single-key mapping
+    // serialises to `duration: 45`, which inlined would read
+    // `session: duration: 45` — invalid YAML. An empty collection has no
+    // block form and stays inline as `[]` / `{}`.
+    let nested = value.as_array().is_some_and(|a| !a.is_empty())
+        || value.as_object().is_some_and(|o| !o.is_empty());
+    if !nested {
+        return Ok(format!("{key_scalar}: {yaml}{newline}"));
     }
-    let mut out = format!("{key}:\n");
+    let mut out = format!("{key_scalar}:{newline}");
     for line in yaml.lines() {
         if line.is_empty() {
-            out.push('\n');
+            out.push_str(newline);
         } else {
             out.push_str("  ");
             out.push_str(line);
-            out.push('\n');
+            out.push_str(newline);
         }
     }
     Ok(out)
