@@ -36,6 +36,7 @@ mod config;
 mod context;
 mod custom_notes;
 mod daily;
+mod frontmatter_edit;
 mod index_entry;
 mod links;
 mod lint;
@@ -101,6 +102,7 @@ pub use stewardships::{StewardshipSummary, StewardshipVariant};
 pub use templating::{
     PlaceholderSource, TemplateContent, TemplatePlaceholder, TemplateSourceKind, TemplateSummary,
 };
+pub use tracking::TrackingEntryDraft;
 pub use weekly::{WeeklyNoteView, WeeklySection};
 pub use write_outcome::WriteOutcome;
 
@@ -109,6 +111,7 @@ pub use write_outcome::WriteOutcome;
 // `#[cfg(test)] mod tests` block in the source. External callers
 // other than tests should not depend on this — it's a domain-internal
 // frontmatter mutator.
+pub use frontmatter_edit::merge_fields_into_frontmatter;
 pub use projects::rewrite_field_in_frontmatter;
 
 /// Domain entry point. Owns the store, index, and config; hands out

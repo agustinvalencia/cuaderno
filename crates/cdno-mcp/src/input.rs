@@ -220,6 +220,17 @@ pub struct CreateTrackingEntryInput {
     /// otherwise creation fails with an "unresolved prompts" error.
     /// Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// Structured metrics merged into the entry's frontmatter, as a JSON
+    /// object. Each key becomes a frontmatter key: a scalar for a single
+    /// reading (`{"balance": 1240.5}`), or an array of flat records when one
+    /// entry holds several comparable items
+    /// (`{"detail": [{"subject": "harmony", "minutes": 25}]}`). A scalar whose
+    /// key is declared under `[schemas.tracking.fields]` is type-checked;
+    /// anything else is written as given. Omitted = none.
+    pub metrics: Option<serde_json::Value>,
+    /// ISO `YYYY-MM-DD` the entry describes. Omitted = today. Use it to record
+    /// a session after the fact; bounded to 50 years back and 1 year ahead.
+    pub date: Option<chrono::NaiveDate>,
 }
 
 /// Input for `read_daily_note` (GH #158). `date` defaults to today

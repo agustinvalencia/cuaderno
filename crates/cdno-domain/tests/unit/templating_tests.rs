@@ -8,6 +8,7 @@ use cdno_core::config::{CustomNoteType, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TrackingEntryDraft;
 use cdno_domain::frontmatter::Context;
 use cdno_domain::{PlaceholderSource, TemplateSource, TemplateSourceKind, Vault};
 use chrono::NaiveDate;
@@ -114,11 +115,9 @@ fn create_uses_a_custom_variant_template_override_from_the_store() {
     let path = vault
         .add_tracking_entry(
             today().and_hms_opt(19, 0, 0).unwrap(),
-            "health",
-            "gym",
-            None,
-            "Energy was good.",
+            TrackingEntryDraft::new("health", "gym").with_content("Energy was good."),
         )
+        .map(|(outcome, _)| outcome.primary)
         .expect("add tracking entry");
     let content = store.read_file(&path).unwrap();
 
@@ -627,8 +626,8 @@ fn file_evidence_with_vars_renders_a_prompted_variable() {
 }
 
 #[test]
-fn add_tracking_entry_with_vars_renders_a_prompted_variable_from_a_variant_template() {
-    // Covers both the tracking `*_with_vars` path AND variant resolution:
+fn add_tracking_entry_renders_a_prompted_variable_from_a_variant_template() {
+    // Covers both the tracking prompted-variable path AND variant resolution:
     // the prompt lives in `tracking-gym.md`, the variant the gym entry uses.
     let custom = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: {{activity}}\ndate: {{date}}\nticket: {{ticket}}\n---\n# {{activity_title}}\n";
     let config = config_with_prompt_vars(&[("ticket", "Ticket?")]);
@@ -648,16 +647,15 @@ fn add_tracking_entry_with_vars_renders_a_prompted_variable_from_a_variant_templ
         vec![("ticket".to_owned(), "Ticket?".to_owned())]
     );
     // ...and the create path renders the supplied value.
-    let (path, source) = vault
-        .add_tracking_entry_with_vars(
+    let (outcome, source) = vault
+        .add_tracking_entry(
             today().and_hms_opt(19, 0, 0).unwrap(),
-            "health",
-            "gym",
-            None,
-            "Good session.",
-            &prompted(&[("ticket", "GYM-1")]),
+            TrackingEntryDraft::new("health", "gym")
+                .with_content("Good session.")
+                .with_prompted(prompted(&[("ticket", "GYM-1")])),
         )
         .expect("tracking");
+    let path = outcome.primary;
     assert!(
         store.read_file(&path).unwrap().contains("ticket: GYM-1"),
         "tracking-variant prompted value should render"
@@ -689,8 +687,11 @@ fn add_tracking_entry_reports_the_resolved_template_source() {
     // No custom template → the generic built-in (the only case the hint fires).
     let (vault, _store) = vault_with(&[]);
     steward(&vault);
-    let (_p, source) = vault
-        .add_tracking_entry_with_vars(at, "health", "gym", None, "Session.", &prompted(&[]))
+    let (_outcome, source) = vault
+        .add_tracking_entry(
+            at,
+            TrackingEntryDraft::new("health", "gym").with_content("Session."),
+        )
         .expect("tracking");
     assert_eq!(source, TemplateSource::BuiltinDefault);
 
@@ -698,8 +699,11 @@ fn add_tracking_entry_reports_the_resolved_template_source() {
     let base = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: {{activity}}\ndate: {{date}}\n---\n# {{activity_title}}\n";
     let (vault, _store) = vault_with(&[(".cuaderno/templates/tracking.md", base)]);
     steward(&vault);
-    let (_p, source) = vault
-        .add_tracking_entry_with_vars(at, "health", "gym", None, "Session.", &prompted(&[]))
+    let (_outcome, source) = vault
+        .add_tracking_entry(
+            at,
+            TrackingEntryDraft::new("health", "gym").with_content("Session."),
+        )
         .expect("tracking");
     assert_eq!(source, TemplateSource::CustomBase);
 }
@@ -1157,11 +1161,11 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
         vault
             .add_tracking_entry(
                 today().and_hms_opt(19, 0, 0).unwrap(),
-                "health",
-                "gym",
-                Some("upper-body-a"),
-                "Session.",
+                TrackingEntryDraft::new("health", "gym")
+                    .with_routine("upper-body-a")
+                    .with_content("Session."),
             )
+            .map(|(outcome, _)| outcome.primary)
             .expect("tracking"),
         vault
             .create_commitment(

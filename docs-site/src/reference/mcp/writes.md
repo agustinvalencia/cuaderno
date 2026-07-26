@@ -36,7 +36,7 @@ rules as the CLI apply (append-only notes, auto-logged project state, the projec
 |------|--------|--------|
 | `create_commitment` | `title`, `due`, `context`, `project?`, `stewardship?`, `vars?` | Create a standalone commitment note. |
 | `complete_commitment` | `commitment` (slug) | Mark a commitment done and archive it. |
-| `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?` | File a tracking note under an expanded stewardship. |
+| `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?`, `metrics?`, `date?` | File a tracking note under an expanded stewardship. `metrics` is a JSON object merged into the entry's frontmatter — a scalar per reading (`{"balance": 1240.5}`), or an array of flat records when one entry holds several comparable items (`{"detail": [{"subject": "harmony", "minutes": 25}]}`); a scalar whose key is declared under `[schemas.tracking.fields]` is type-checked, and a key naming the note's identity (`type`, `stewardship`, `activity`, `date`) is refused. `date` files the entry for a past day (bounded to 50 years back, 1 year ahead). Either way the write is journalled to today's daily log. |
 
 ## Frontmatter
 

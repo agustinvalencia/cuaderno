@@ -218,8 +218,13 @@ pub fn rewrite_field_in_frontmatter(
     let mut new_yaml = String::with_capacity(yaml.len());
     let mut found = false;
     for line in yaml.split_inclusive('\n') {
-        let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with(&prefix_compact) || trimmed_start.starts_with(&prefix_spaced) {
+        // Top-level keys only. An indented line belongs to a nested value, and
+        // since #481 frontmatter can carry one — a record sequence whose rows
+        // have their own `weight:`/`minutes:` keys. Matching those would
+        // rewrite a key *inside* a record and re-emit it at column zero,
+        // silently moving it out of the record and, when the note also has a
+        // top-level key of that name, leaving a duplicate the parser rejects.
+        if line.starts_with(&prefix_compact) || line.starts_with(&prefix_spaced) {
             new_yaml.push_str(field);
             new_yaml.push_str(": ");
             new_yaml.push_str(new_value);

@@ -22,6 +22,7 @@ use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, V
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TrackingEntryDraft;
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
@@ -986,12 +987,20 @@ async fn get_stewardship_tracking_returns_entries_in_default_window() {
         // Within 90 days of today.
         let recent = chrono::Local::now().naive_local() - chrono::Duration::days(10);
         vault
-            .add_tracking_entry(recent, "health", "gym", None, "Felt strong")
+            .add_tracking_entry(
+                recent,
+                TrackingEntryDraft::new("health", "gym").with_content("Felt strong"),
+            )
+            .map(|(outcome, _)| outcome.primary)
             .unwrap();
         // 200 days ago — outside the default window.
         let old = chrono::Local::now().naive_local() - chrono::Duration::days(200);
         vault
-            .add_tracking_entry(old, "health", "gym", None, "Old session")
+            .add_tracking_entry(
+                old,
+                TrackingEntryDraft::new("health", "gym").with_content("Old session"),
+            )
+            .map(|(outcome, _)| outcome.primary)
             .unwrap();
     });
     let result = server
@@ -1029,11 +1038,13 @@ async fn get_stewardship_tracking_filters_by_activity() {
             .unwrap();
         let now = chrono::Local::now().naive_local() - chrono::Duration::days(5);
         vault
-            .add_tracking_entry(now, "health", "gym", None, "")
+            .add_tracking_entry(now, TrackingEntryDraft::new("health", "gym"))
+            .map(|(outcome, _)| outcome.primary)
             .unwrap();
         let now2 = chrono::Local::now().naive_local() - chrono::Duration::days(6);
         vault
-            .add_tracking_entry(now2, "health", "body", None, "")
+            .add_tracking_entry(now2, TrackingEntryDraft::new("health", "body"))
+            .map(|(outcome, _)| outcome.primary)
             .unwrap();
     });
     let result = server

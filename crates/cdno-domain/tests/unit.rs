@@ -7,6 +7,7 @@ mod unit {
     mod context_tests;
     mod custom_notes_tests;
     mod daily_tests;
+    mod frontmatter_edit_tests;
     mod frontmatter_tests;
     mod links_tests;
     mod lint_tests;

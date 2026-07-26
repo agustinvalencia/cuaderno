@@ -8,6 +8,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **A tracking entry can carry structured metrics, and can be filed for a day that has already
+  passed.** Recording lags the event more often than not — a statement reconciled at the weekend,
+  a balance read whenever the app happens to be open — and every surface stamped the entry with
+  the server's today, so a retrospective session landed on the wrong day and no historical data
+  could be imported at all. `cdno track --at <timestamp>` and the MCP tool's `date` now file the
+  entry for the day it describes. The write boundary refuses anything more than 50 years back or
+  a year ahead: an unbounded caller-supplied date combined with agent-written content means
+  history is writable, and a mistyped year would reshape a trend without saying so.
+
+  Alongside it, `create_tracking_entry` takes `metrics` — a JSON object merged into the entry's
+  frontmatter, either a scalar per reading or an array of flat records when one entry holds
+  several comparable items. Until now the only way to influence an entry's content was a map of
+  **strings** substituted into a template, which cannot carry a record array: indentation,
+  escaping and YAML validity were all the caller's problem. A scalar whose key is declared under
+  `[schemas.tracking.fields]` is type-checked on the way in. Filing is now journalled to today's
+  daily log either way, so a backfill stays visible in the record. (#481, #482, #475)
+
 - **A schema field can be declared `float`.** `[schemas.<type>.fields.<name>]` offered
   `bool`, `int`, `string` and `date`, and `int` rejects anything with a fractional part — so
   a currency amount, a body measurement, a rate or a fractional duration could not be

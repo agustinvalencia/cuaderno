@@ -419,3 +419,37 @@ fn normalise_handles_a_custom_and_builtin_note_in_one_pass() {
         vec!["type", "context", "status", "created"]
     );
 }
+
+#[test]
+fn a_record_sequence_survives_normalise_byte_for_byte() {
+    // Structured metrics (#481) are the first frontmatter values that span
+    // lines. `normalise` moves whole line-groups, and `top_level_key` treats
+    // an indented line or a `- ` item as a continuation — so the block must
+    // travel with its key rather than being torn apart or promoted.
+    let note = "---\ndate: 2026-04-06\nactivity: practice\ntype: tracking\ndetail:\n  - minutes: 25\n    subject: harmony\n  - minutes: 15\n    subject: sight-reading\n---\n\n# Practice\n";
+    let (vault, store) =
+        vault_with_notes(&[("stewardships/study/tracking/2026-04-06-practice.md", note)]);
+
+    vault.normalise_notes(false).expect("normalise");
+
+    let out = store
+        .read_file(&vp("stewardships/study/tracking/2026-04-06-practice.md"))
+        .unwrap();
+    assert!(
+        out.contains(
+            "detail:\n  - minutes: 25\n    subject: harmony\n  - minutes: 15\n    subject: sight-reading\n"
+        ),
+        "the record block must survive intact:\n{out}"
+    );
+    // And it still parses, with both records present.
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(
+        fm.as_json()
+            .get("detail")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}

@@ -58,6 +58,53 @@ cdno track swim --stewardship health --content "1500m, 28min"
   only when the resolved template has a `routine:` field (the `gym.md` example variant does; the
   generic default has none, so it no-ops there).
 - `--content` is optional; leave it empty and fill the entry's tables in afterward.
+- `--at` files the entry for a day that has already passed. Recording lags the event more often
+  than not — a statement reconciled at the weekend, a reading taken this morning and typed up
+  tonight — and without it the entry lands on the wrong day and the trend bends.
+
+  ```bash
+  cdno track body --stewardship health --at 2026-04-06
+  ```
+
+  Filing is always journalled to **today's** daily log, naming the day the entry describes, so a
+  backfill stays visible in the record rather than quietly appearing in the past. Dates more than
+  50 years back or a year ahead are refused — that far out is a typo, and a typo would reshape a
+  trend without saying so.
+
+### Numbers belong in frontmatter
+
+A number written into the body is prose; a number in frontmatter is data. An agent files them
+through the MCP `create_tracking_entry` tool's `metrics` parameter, and each key becomes a
+frontmatter key:
+
+```yaml
+---
+type: tracking
+stewardship: finances
+activity: savings
+date: 2026-07-25
+balance: 12480.50
+contributed: 400.00
+---
+```
+
+When one entry holds several comparable items — three subjects practised, four categories spent
+against — write a **sequence of flat records** rather than one key per item, so the same subject
+can recur within the entry:
+
+```yaml
+detail:
+  - { minutes: 25, subject: harmony }
+  - { minutes: 20, subject: harmony }
+  - { minutes: 15, subject: sight-reading }
+```
+
+Declaring a metric under `[schemas.tracking.fields]` (see
+[Configuration](../reference/configuration.md)) gets it type-checked on the way in — a `float` for
+a measurement or an amount, an `int` for a count. Anything undeclared is written as given, except
+the four keys that identify the note — `type`, `stewardship`, `activity`, `date` — which a metric
+may not name. They are the note's identity rather than data about it, and the engine owns them:
+`date` is fixed by the filename, and `activity` is what every reader groups by.
 
 Tracking entries are [append-only](../concepts/business-rules.md) — they're your historical record.
 Read them back over a window via the MCP `get_stewardship_tracking` tool, or with

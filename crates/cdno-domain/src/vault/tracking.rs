@@ -20,16 +20,98 @@ use std::collections::HashMap;
 use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::template::{TemplateSource, VariableContext};
 
 use crate::error::DomainError;
+use crate::frontmatter::TrackingFrontmatter;
 use crate::note_type::NoteType;
 
 use super::Vault;
+use super::frontmatter_edit::merge_fields_into_frontmatter;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
 use super::stewardships::StewardshipVariant;
+use super::write_outcome::WriteOutcome;
+
+/// How far from today a tracking entry may be dated. Backdating is the point
+/// (#482) — spending is reconciled from a statement days later, a balance is
+/// read whenever the app happens to be open — but an unbounded caller-supplied
+/// date combined with agent-written content means history is writable, and a
+/// mistaken or injected call can place points that silently reshape a trend.
+/// Fifty years back covers any realistic import; a year forward absorbs a
+/// deliberate future entry without admitting the mistyped `2062`.
+const BACKFILL_YEARS: i32 = 50;
+const LOOKAHEAD_YEARS: i32 = 1;
+
+/// The inputs for one tracking entry.
+///
+/// A params struct rather than more positional arguments: the write already
+/// carried six and `#[allow(clippy::too_many_arguments)]` with it, and the
+/// date and metrics would have made eight. Build one with
+/// [`new`](Self::new) and chain only the parts that apply.
+#[derive(Debug, Clone, Default)]
+pub struct TrackingEntryDraft {
+    /// Slug of the expanded stewardship the entry files under.
+    pub stewardship: String,
+    /// The activity, which also selects the template variant.
+    pub activity: String,
+    /// Bare slug of a routine doc; the domain wraps the wikilink.
+    pub routine: Option<String>,
+    /// Body of the entry's `## Notes` section.
+    pub content: String,
+    /// Values for the template's prompted variables (`[variables.prompt]`).
+    pub prompted: HashMap<String, String>,
+    /// The date the tracked thing happened. `None` means the write's `now`.
+    pub date: Option<NaiveDate>,
+    /// Structured metrics merged into the entry's frontmatter. Scalar values
+    /// are type-checked against `[schemas.tracking.fields]` where the vault
+    /// declares them; nested values (a record sequence) are written as given,
+    /// since the schema grammar cannot declare a list yet.
+    pub metrics: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+impl TrackingEntryDraft {
+    /// A draft with only the two required parts set.
+    pub fn new(stewardship: impl Into<String>, activity: impl Into<String>) -> Self {
+        Self {
+            stewardship: stewardship.into(),
+            activity: activity.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Set the `## Notes` body.
+    pub fn with_content(mut self, content: impl Into<String>) -> Self {
+        self.content = content.into();
+        self
+    }
+
+    /// Set the routine wikilink target (a bare slug).
+    pub fn with_routine(mut self, routine: impl Into<String>) -> Self {
+        self.routine = Some(routine.into());
+        self
+    }
+
+    /// Supply prompted-variable values for the resolved template.
+    pub fn with_prompted(mut self, prompted: HashMap<String, String>) -> Self {
+        self.prompted = prompted;
+        self
+    }
+
+    /// Date the entry at `date` rather than the write's `now`.
+    pub fn on(mut self, date: NaiveDate) -> Self {
+        self.date = Some(date);
+        self
+    }
+
+    /// Merge `metrics` into the entry's frontmatter.
+    pub fn with_metrics(mut self, metrics: serde_json::Map<String, serde_json::Value>) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+}
 
 impl Vault {
     /// File a tracking note under an expanded stewardship.
@@ -66,54 +148,36 @@ impl Vault {
     ///   not two silently-overwriting writes).
     pub fn add_tracking_entry(
         &self,
-        at: NaiveDateTime,
-        stewardship: &str,
-        activity: &str,
-        routine: Option<&str>,
-        content: &str,
-    ) -> Result<VaultPath, DomainError> {
-        self.add_tracking_entry_with_vars(
-            at,
-            stewardship,
-            activity,
-            routine,
-            content,
-            &HashMap::new(),
-        )
-        .map(|(path, _source)| path)
-    }
-
-    /// As [`add_tracking_entry`](Self::add_tracking_entry), with caller-supplied
-    /// prompted-variable values (`[variables.prompt]`, #238).
-    ///
-    /// Returns the written path plus the [`TemplateSource`] the entry was
-    /// rendered from, so a caller can react to the actual resolution — the
-    /// `cdno track` newcomer hint fires only for [`TemplateSource::BuiltinDefault`]
-    /// (the generic template) rather than re-deriving that from the filesystem.
-    #[allow(clippy::too_many_arguments)] // thin gather→create passthrough
-    pub fn add_tracking_entry_with_vars(
-        &self,
-        at: NaiveDateTime,
-        stewardship: &str,
-        activity: &str,
-        routine: Option<&str>,
-        content: &str,
-        prompted: &HashMap<String, String>,
-    ) -> Result<(VaultPath, TemplateSource), DomainError> {
+        now: NaiveDateTime,
+        draft: TrackingEntryDraft,
+    ) -> Result<(WriteOutcome, TemplateSource), DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let activity = activity.trim();
+        let activity = draft.activity.trim();
         if activity.is_empty() {
             return Err(DomainError::EmptyField { field: "activity" });
         }
         let activity_slug = slugify(activity);
+        let stewardship = draft.stewardship.as_str();
 
-        let routine = routine.map(str::trim).filter(|s| !s.is_empty());
+        let routine = draft
+            .routine
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         if let Some(r) = routine
             && (r.contains("[[") || r.contains("]]"))
         {
             return Err(DomainError::MalformedWikilink {
                 value: r.to_owned(),
             });
+        }
+
+        // The entry's date defaults to the write's own clock; an explicit one
+        // is bounded, because it is the parameter that lets a caller rewrite
+        // history.
+        let date = draft.date.unwrap_or_else(|| now.date());
+        if draft.date.is_some() {
+            check_plausible_date(date, now.date())?;
         }
 
         let (_dashboard_path, variant) = self.resolve_stewardship_with_variant(stewardship)?;
@@ -123,7 +187,6 @@ impl Vault {
             ));
         }
 
-        let date = at.date();
         let filename = format!("{}-{activity_slug}.md", date.format("%Y-%m-%d"));
         let path = VaultPath::new(format!("stewardships/{stewardship}/tracking/{filename}",))?;
         if self.store.exists(&path)? {
@@ -137,16 +200,167 @@ impl Vault {
             &activity_slug,
             date,
             routine,
-            content,
-            prompted,
+            &draft.content,
+            &draft.prompted,
         )?;
+
+        // Metrics land in the rendered note's frontmatter, validated against
+        // whatever `[schemas.tracking.fields]` declares. The merge is a
+        // separate step from rendering because a template is pure variable
+        // substitution: it has no way to carry a record sequence.
+        let body = match &draft.metrics {
+            Some(metrics) if !metrics.is_empty() => {
+                check_no_identity_metrics(metrics)?;
+                self.check_declared_metrics(metrics)?;
+                let merged = merge_fields_into_frontmatter(&body, metrics)?;
+                // The invariant, not just the denylist: whatever the merge
+                // produced must still parse as a tracking note. Committing one
+                // that does not would not merely corrupt this entry — every
+                // reader that scans all tracking notes (`list_tracking`,
+                // `list_stewardships`) parses before it filters, so one bad
+                // note fails the read for every stewardship in the vault.
+                let (fm, _rest) = Frontmatter::parse(&merged)?;
+                TrackingFrontmatter::try_from(fm)?;
+                merged
+            }
+            _ => body,
+        };
+
         let entry = build_index_entry_for(&path, &body, NoteType::Tracking.as_str())?;
 
         tx.write_file(path.clone(), body);
         tx.upsert_note(entry);
-        tx.commit()?;
 
-        Ok((path, source))
+        // Audit line in TODAY's log, not the entry's day. A backdated write is
+        // exactly the one worth being able to find later, and journalling it
+        // into the day it claims to describe would both hide it and scaffold a
+        // daily note for a day that never had one.
+        let log_entry = format_tracking_log_entry(&path, &activity_slug, date, now.date());
+        self.stage_daily_log(now, &log_entry, &mut tx)?;
+
+        let touched = tx.commit()?;
+        Ok((WriteOutcome::written(path, touched), source))
+    }
+
+    /// Type-check the scalar metrics a caller supplied against the vault's
+    /// `[schemas.tracking.fields]` declarations, using the same
+    /// [`FieldSpec::check_value`](cdno_core::config::FieldSpec::check_value)
+    /// the lint layer applies to a note already on disk.
+    ///
+    /// Undeclared keys pass: undeclared frontmatter is legal everywhere else
+    /// in the vault, and a per-activity declaration that could reject one does
+    /// not exist yet (#487). Nested values pass too — the schema grammar has
+    /// no list shape (`list = true` is still a load error), so a record
+    /// sequence has nothing to check against.
+    fn check_declared_metrics(
+        &self,
+        metrics: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), DomainError> {
+        // Gated on an explicit `fields` block, exactly as the lint value-check
+        // is (`lint.rs`). Without the gate, a legacy `extra_required` entry —
+        // which desugars to an untyped *string* spec and is documented as
+        // lint-only — would become a hard create-time rejection, so a vault
+        // that merely lists `weight` as required could not write `weight: 82.5`
+        // at all.
+        let declared = self
+            .config
+            .schema_for(NoteType::Tracking.as_str())
+            .filter(|s| !s.fields.is_empty())
+            .map(|s| s.declared_fields())
+            .unwrap_or_default();
+        for (key, value) in metrics {
+            if value.is_null() || value.is_array() || value.is_object() {
+                continue;
+            }
+            if let Some(spec) = declared.get(key.as_str())
+                && let Some(reason) = spec.check_value(value)
+            {
+                return Err(DomainError::InvalidFieldValue {
+                    note_type: NoteType::Tracking.as_str().to_owned(),
+                    field: key.clone(),
+                    reason,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The frontmatter keys a tracking note is *identified* by: its type marker
+/// and the three fields `TrackingFrontmatter` requires. A metric may not name
+/// one of these.
+///
+/// They are the note's identity, not data about it, and the engine owns every
+/// one: `type` decides which queries see the note at all (and is re-derived
+/// from frontmatter on the next reconcile), `stewardship` and `activity` are
+/// what readers group by, and `date` is fixed by the filename — a metric
+/// rewriting it would leave the two disagreeing permanently.
+///
+/// `duration_min` and `routine` are deliberately absent: both are ordinary
+/// optional fields, and a duration is a perfectly good metric.
+///
+/// `set_frontmatter` refuses this same class through its own default-deny
+/// (declared *and* `settable = true`, then type-checked); this path needs its
+/// own guard because a metric key is caller-supplied and otherwise unchecked.
+const IDENTITY_KEYS: &[&str] = &["type", "stewardship", "activity", "date"];
+
+/// Reject a metrics payload naming a key that identifies the note.
+fn check_no_identity_metrics(
+    metrics: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), DomainError> {
+    for key in metrics.keys() {
+        if IDENTITY_KEYS.contains(&key.as_str()) {
+            return Err(DomainError::ReservedSchemaField {
+                note_type: NoteType::Tracking.as_str().to_owned(),
+                field: key.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Reject a date far enough from today that it is almost certainly a typo.
+/// See [`BACKFILL_YEARS`] for why the bound exists at all.
+fn check_plausible_date(date: NaiveDate, today: NaiveDate) -> Result<(), DomainError> {
+    // `with_year` fails only on 29 February; stepping back a day first keeps
+    // the bound well-defined without pulling in a calendar-arithmetic crate.
+    let shift = |years: i32| -> NaiveDate {
+        let anchor = if today.month() == 2 && today.day() == 29 {
+            today - chrono::Duration::days(1)
+        } else {
+            today
+        };
+        anchor
+            .with_year(anchor.year() + years)
+            .unwrap_or(chrono::NaiveDate::MAX)
+    };
+    let earliest = shift(-BACKFILL_YEARS);
+    let latest = shift(LOOKAHEAD_YEARS);
+    if date < earliest || date > latest {
+        return Err(DomainError::ImplausibleDate {
+            date,
+            earliest,
+            latest,
+        });
+    }
+    Ok(())
+}
+
+/// The daily-log line recording a filed tracking entry. A backdated entry
+/// names the day it describes, so the log reads as "filed today, about then"
+/// rather than silently claiming the session happened now.
+fn format_tracking_log_entry(
+    path: &VaultPath,
+    activity: &str,
+    date: NaiveDate,
+    today: NaiveDate,
+) -> String {
+    let link = path.to_string();
+    let link = link.strip_suffix(".md").unwrap_or(&link);
+    if date == today {
+        format!("Tracked {activity}: [[{link}]]")
+    } else {
+        format!("Tracked {activity} for {date}: [[{link}]]")
     }
 }
 

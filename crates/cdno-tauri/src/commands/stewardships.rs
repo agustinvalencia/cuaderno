@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use chrono::{Local, NaiveDate, NaiveDateTime};
 
 use cdno_domain::vault::{StewardshipSummary, StewardshipVariant, TrackingSeries};
-use cdno_domain::{Context, Vault};
+use cdno_domain::{Context, TrackingEntryDraft, Vault};
 
 use crate::error::CmdError;
 use crate::events::VaultArea;
@@ -229,13 +229,13 @@ pub async fn get_tracking_template_fields(
 /// view's Log Entry form. `vars` carries the prompted-field values the
 /// form gathered from [`get_tracking_template_fields`].
 ///
-/// Unlike the project writes, `add_tracking_entry_with_vars` does **not**
-/// stage a daily-log line: the only file it touches is the new tracking
-/// note, so that single path is all we journal. Two user-fixable domain
-/// errors surface here as `Invalid` (via `From<DomainError>`): filing on
-/// a flat stewardship (`TrackingOnFlatStewardship`) and a same-day,
-/// same-activity duplicate (`AlreadyExists`) — both carry a good message
-/// the UI toasts verbatim.
+/// `add_tracking_entry` stages a daily-log line alongside the new note
+/// (#482), so the write touches two paths and both must be journalled —
+/// hence the `WriteOutcome`'s full `paths` rather than the single note.
+/// Two user-fixable domain errors surface here as `Invalid` (via
+/// `From<DomainError>`): filing on a flat stewardship
+/// (`TrackingOnFlatStewardship`) and a same-day, same-activity duplicate
+/// (`AlreadyExists`) — both carry a good message the UI toasts verbatim.
 #[tauri::command]
 pub async fn log_tracking_entry<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -247,19 +247,23 @@ pub async fn log_tracking_entry<R: tauri::Runtime>(
     vars: HashMap<String, String>,
 ) -> Result<(), CmdError> {
     let now: NaiveDateTime = Local::now().naive_local();
-    let path = with_vault(&state.vault(), move |vault| {
+    let paths = with_vault(&state.vault(), move |vault| {
+        let mut draft = TrackingEntryDraft::new(&stewardship, &activity)
+            .with_content(&content)
+            .with_prompted(vars);
+        if let Some(routine) = &routine {
+            draft = draft.with_routine(routine);
+        }
         vault
-            .add_tracking_entry_with_vars(
-                now,
-                &stewardship,
-                &activity,
-                routine.as_deref(),
-                &content,
-                &vars,
-            )
-            .map(|(path, _source)| path)
+            .add_tracking_entry(now, draft)
+            .map(|(outcome, _source)| outcome.paths)
     })
     .await??;
-    record_and_emit(&app, &state, vec![path], vec![VaultArea::Stewardships]);
+    record_and_emit(
+        &app,
+        &state,
+        paths,
+        vec![VaultArea::Stewardships, VaultArea::Daily],
+    );
     Ok(())
 }

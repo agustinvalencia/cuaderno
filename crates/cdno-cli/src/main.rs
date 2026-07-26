@@ -282,6 +282,13 @@ enum Commands {
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = cdno_cli::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// File the entry at a past (or near-future) day rather than today:
+        /// `YYYY-MM-DD`, or a full `YYYY-MM-DDTHH:MM[:SS]` (only the date is
+        /// kept). For a session recorded after the fact — a
+        /// statement reconciled days later, a reading taken this morning.
+        /// Only the date is kept. Bounded to 50 years back and 1 year ahead.
+        #[arg(long)]
+        at: Option<String>,
     },
 
     /// Manage standalone commitments: create and complete.
@@ -505,11 +512,14 @@ fn main() -> Result<()> {
             routine,
             content,
             var,
+            at,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            let at = at.as_deref().map(parse_timestamp_or_date).transpose()?;
             commands::track::run(
                 &root,
                 Local::now().naive_local(),
+                at,
                 activity,
                 stewardship,
                 routine,
@@ -587,4 +597,16 @@ fn parse_timestamp(s: &str) -> Result<NaiveDateTime> {
     NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M"))
         .with_context(|| format!("could not parse `{s}` as a timestamp"))
+}
+
+/// `--at` for a write that keeps only the date (`cdno track`). Accepts the
+/// full timestamp forms, plus a bare `YYYY-MM-DD` — which is the natural
+/// spelling for backfilling a session whose time nobody wrote down, and which
+/// the MCP sibling already takes. Requiring an invented `T00:00` that the
+/// domain then discards would be a wart the flag's own use case walks into.
+fn parse_timestamp_or_date(s: &str) -> Result<NaiveDateTime> {
+    if let Ok(date) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(date.and_time(chrono::NaiveTime::MIN));
+    }
+    parse_timestamp(s)
 }
