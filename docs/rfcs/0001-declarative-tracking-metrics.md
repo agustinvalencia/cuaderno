@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for discussion |
+| **Status** | Accepted — 2026-07-26 |
+| **Tracked by** | #478 (epic), #479–#491 |
 | **Affects** | `cdno-core`, `cdno-domain`, `cdno-mcp`, `cdno-tauri`, `ui` |
-| **Related** | #453 (stewardship line parsing), #461 (stewardship detail draft bug) |
+| **Related** | #453 (stewardship line parsing), #461 (stewardship detail draft bug), #492 (`as_json`, split out) |
 
 > **Authorship.** This RFC was produced collaboratively between the repository maintainer and
 > Claude (Anthropic), and synthesises a working session that began as a status review of
