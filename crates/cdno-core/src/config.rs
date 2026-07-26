@@ -341,8 +341,14 @@ pub struct MetricSpec {
     #[serde(default)]
     pub aggregate: Aggregate,
     /// Overrides the activity's `group_by`. `None` inherits it; `Some("none")`
-    /// collapses across every record, giving an entry-level total alongside
-    /// the grouped series.
+    /// collapses across every record into one entry-level series.
+    ///
+    /// Note this cannot yet give you a total *alongside* the grouped series
+    /// for the same field: a metric's map key is also the frontmatter field it
+    /// reads, so the same field cannot be declared twice under one activity. A
+    /// second metric under a different name only works if the records happen to
+    /// carry that field too. `derived` (`#484`) is what makes the pair
+    /// expressible.
     pub group_by: Option<String>,
     /// A display unit (`min`, `kg`, `EUR`). Carried through to the chart.
     pub unit: Option<String>,

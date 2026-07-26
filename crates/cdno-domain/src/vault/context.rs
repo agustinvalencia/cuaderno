@@ -701,8 +701,14 @@ impl Vault {
             for record in records_of(fm, spec) {
                 for (metric, mspec) in &spec.metrics {
                     // A grouped metric needs the group field to attribute the
-                    // record; a record missing it cannot belong to any series,
-                    // so it is skipped rather than lumped into an "other".
+                    // record. A record missing it is dropped for that metric:
+                    // it belongs to no series, and inventing an "uncategorised"
+                    // bucket would put a value the user did not categorise into
+                    // a series they did not declare. Note this is a different
+                    // case from the gap rule below — that one is about a date
+                    // on which a group was not recorded; this one discards a
+                    // value that WAS recorded, which is only right because
+                    // there is nowhere honest to put it.
                     let group = match mspec.group_field(spec) {
                         Some(field) => match group_key(record, field) {
                             Some(g) => Some(g),
@@ -1102,8 +1108,18 @@ fn date_field(fm: &serde_json::Value) -> Option<NaiveDate> {
 /// because `last` is the one aggregate that depends on it and no intra-day
 /// time is otherwise persisted (`date` is a `NaiveDate`; the write discards
 /// the time). Index iteration order must never be relied on for this:
-/// `list_by_type` orders by path. A record carrying an optional `time` field
-/// is the escape hatch, and sorts ahead of document order when present.
+/// `list_by_type` orders by path.
+///
+/// An optional per-record `time` is the escape hatch, and it is
+/// **all-or-nothing**: the records reorder only when *every* one of them
+/// carries a time that parses. A partial or unparseable set falls back to
+/// document order untouched.
+///
+/// That strictness is the point. Ordering on a mixture would have to invent a
+/// position for the untimed records, and any choice silently changes which
+/// reading `last` reports — one record scaffolded with `time: null` would
+/// reorder the entry around it. Falling back keeps the failure mode "the hatch
+/// did nothing" rather than "the hatch quietly picked a different number".
 fn records_of<'a>(
     fm: &'a serde_json::Value,
     spec: &cdno_core::config::TrackingSpec,
@@ -1115,16 +1131,33 @@ fn records_of<'a>(
         return Vec::new();
     };
     let mut records: Vec<&serde_json::Value> = array.iter().collect();
-    // A stable sort keyed on `time` leaves document order intact for the
-    // records that do not carry one, and for the common case where none do.
-    if records.iter().any(|r| r.get("time").is_some()) {
-        records.sort_by(|a, b| {
-            str_field(a, "time")
-                .unwrap_or("")
-                .cmp(str_field(b, "time").unwrap_or(""))
-        });
+
+    // Parse rather than compare the raw strings: `"18:00"` sorts before
+    // `"9:00"` lexicographically, so a level read morning-then-evening would
+    // report the morning reading as the day's last — exactly the
+    // never-was-true number this whole change exists to eliminate.
+    let times: Option<Vec<NaiveTime>> = records
+        .iter()
+        .map(|r| str_field(r, "time").and_then(parse_record_time))
+        .collect();
+    if let Some(times) = times {
+        let mut keyed: Vec<(NaiveTime, &serde_json::Value)> =
+            times.into_iter().zip(records.iter().copied()).collect();
+        // Stable, so records sharing a time keep their document order.
+        keyed.sort_by_key(|(time, _)| *time);
+        records = keyed.into_iter().map(|(_, record)| record).collect();
     }
     records
+}
+
+/// Parse a record's `time` field. Accepts 24-hour with or without seconds and
+/// 12-hour with a meridiem, since the field is hand-authored and nothing in
+/// the vault writes it.
+fn parse_record_time(raw: &str) -> Option<NaiveTime> {
+    let raw = raw.trim();
+    ["%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M:%S %p"]
+        .iter()
+        .find_map(|format| NaiveTime::parse_from_str(raw, format).ok())
 }
 
 /// The group a record belongs to, as a display string. A number or bool is
@@ -1147,11 +1180,17 @@ fn numeric_field(record: &serde_json::Value, metric: &str) -> Option<f64> {
 
 /// Collapse one cell's values to a single point.
 ///
-/// `max`/`min` use `total_cmp` rather than `partial_cmp().unwrap()`: the
-/// latter *panics* on a single NaN, which would turn one bad frontmatter value
-/// into a failed chart render and a failed MCP call. Values are filtered for
-/// finiteness before they get here, so this is belt and braces — but the
-/// panicking spelling is one refactor away from being reachable.
+/// `max`/`min` fold with [`f64::max`]/[`f64::min`], never
+/// `partial_cmp().unwrap()`, which *panics* on a single NaN — turning one bad
+/// frontmatter value into a failed chart render and a failed MCP call. Values
+/// are filtered for finiteness before they get here, so this is belt and
+/// braces, but the panicking spelling is one refactor away from being
+/// reachable.
+///
+/// Note `f64::max` rather than a `total_cmp`-keyed `max_by`: the two disagree
+/// on exactly the input this is about. `f64::max` returns the non-NaN operand,
+/// while `total_cmp` orders NaN as the greatest value and would propagate it
+/// into the series (and out as JSON `null`).
 fn reduce(values: &[f64], aggregate: Aggregate) -> f64 {
     match aggregate {
         Aggregate::Sum => values.iter().sum(),

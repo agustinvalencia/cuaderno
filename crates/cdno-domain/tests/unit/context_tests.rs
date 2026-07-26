@@ -1090,10 +1090,14 @@ fn a_repeated_group_value_in_one_entry_yields_one_point() {
 
 #[test]
 fn a_metric_can_override_the_activitys_grouping_to_none() {
-    // `group_by = "none"` collapses across records, giving an entry-level
-    // total alongside the grouped series.
-    let body =
-        "detail:\n  - {subject: harmony, minutes: 25}\n  - {subject: sight-reading, minutes: 15}\n";
+    // `group_by = "none"` collapses across records into one entry-level
+    // series, alongside the activity's grouped ones.
+    //
+    // Each record carries both `minutes` (grouped) and `total` (collapsed),
+    // because a metric's map key is also the frontmatter field it reads — the
+    // same field cannot be declared twice under one activity, so the pair
+    // needs two fields until `derived` (#484) can compute one.
+    let body = "detail:\n  - {subject: harmony, minutes: 25, total: 25}\n  - {subject: sight-reading, minutes: 15, total: 15}\n";
     let (vault, _store) = vault_with(&[(
         "stewardships/study/tracking/2026-07-06-practice.md",
         &tracking_fm_note("study", "practice", "2026-07-06", body),
@@ -1112,17 +1116,7 @@ fn a_metric_can_override_the_activitys_grouping_to_none() {
         .collect(),
     };
 
-    // `total` reads the same field name as the record's own key, so give the
-    // records a `total` to read.
-    let body = body.replace("minutes: 25", "minutes: 25, total: 25");
-    let body = body.replace("minutes: 15", "minutes: 15, total: 15");
-    let (vault2, _store2) = vault_with(&[(
-        "stewardships/study/tracking/2026-07-06-practice.md",
-        &tracking_fm_note("study", "practice", "2026-07-06", &body),
-    )]);
-    let _ = vault;
-
-    let series = vault2
+    let series = vault
         .tracking_series_from_frontmatter("study", &specs(&[("practice", spec)]))
         .unwrap();
 
@@ -1156,9 +1150,40 @@ fn last_resolves_to_document_order_and_a_time_field_reorders() {
             .collect(),
     };
 
+    // Unpadded and 12-hour spellings must order by the actual time, not
+    // lexicographically: `"18:00" < "9:00"` as raw strings, which would report
+    // the morning reading as the day's last — the never-was-true number this
+    // whole change exists to eliminate.
+    let unpadded =
+        "detail:\n  - {balance: 100, time: \"9:00\"}\n  - {balance: 200, time: \"18:00\"}\n";
+    let twelve_hour =
+        "detail:\n  - {balance: 100, time: \"9:00 AM\"}\n  - {balance: 200, time: \"10:00 AM\"}\n";
+    // Partial or unparseable times fall back to document order rather than
+    // hoisting the untimed records to the front and silently changing which
+    // reading wins. One record scaffolded `time: null` must not reorder the
+    // entry around it.
+    let partial = "detail:\n  - {balance: 100, time: \"09:00\"}\n  - {balance: 200}\n";
+    let null_time =
+        "detail:\n  - {balance: 100, time: \"09:00\"}\n  - {balance: 200, time: null}\n";
+    let unparseable =
+        "detail:\n  - {balance: 100, time: \"morning\"}\n  - {balance: 200, time: \"evening\"}\n";
+
     for (body, expected, why) in [
         (doc_order, 200.0, "document order"),
         (timed, 100.0, "a `time` field reorders"),
+        (unpadded, 200.0, "an unpadded hour orders by real time"),
+        (twelve_hour, 200.0, "a 12-hour spelling orders by real time"),
+        (
+            partial,
+            200.0,
+            "a partial time set falls back to document order",
+        ),
+        (null_time, 200.0, "a null time falls back to document order"),
+        (
+            unparseable,
+            200.0,
+            "an unparseable time falls back to document order",
+        ),
     ] {
         let (vault, _store) = vault_with(&[(
             "stewardships/finances/tracking/2026-07-06-savings.md",
