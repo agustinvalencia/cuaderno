@@ -1,6 +1,6 @@
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use crate::error::ConfigError;
@@ -277,6 +277,109 @@ impl FieldSpec {
         }
         None
     }
+}
+
+/// How a metric's values collapse to one point per date (`#483`).
+///
+/// The correctness fix at the heart of `#478`: every tracked quantity has a
+/// kind, and the kind decides the reduction. Summing is right for a total and
+/// wrong for everything else — it adds successive readings of a balance, and
+/// it grows a rating with how often you record it.
+///
+/// There is no `Count`. It would reduce record *presence* rather than a
+/// field's values, unlike every other arm, and the occurrence activity it
+/// would serve declares no metrics at all.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Aggregate {
+    /// Totals — an amount spent, pages read, minutes practised.
+    #[default]
+    Sum,
+    /// Levels — an account balance, a measurement. The reading itself, not
+    /// the running total of readings.
+    Last,
+    /// A high-water mark: a top set, a peak.
+    Max,
+    /// A low-water mark.
+    Min,
+    /// Rates and ratings — a score out of ten, perceived difficulty. A sum
+    /// would grow with how often you log rather than with the value.
+    Mean,
+}
+
+/// How a metric is drawn, when it is drawn at all (`#483`).
+///
+/// Presentation vocabulary, carried here for the same reason [`FieldType`] is
+/// — it is deserialised from config — but it is the one type in this crate
+/// that the crate neither parses for itself nor interprets; it flows through
+/// to the DTO. A deliberate exception to core's no-domain-knowledge contract.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlotKind {
+    /// Collected and queryable, but not drawn — the default, so declaring a
+    /// metric never changes the UI until you opt in.
+    #[default]
+    None,
+    Line,
+    Column,
+    Area,
+    Scatter,
+}
+
+/// One declared metric within a [`TrackingSpec`] (`#483`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MetricSpec {
+    /// The value's scalar type. Optional: a metric may be declared purely to
+    /// name its aggregate.
+    #[serde(rename = "type")]
+    pub ty: Option<FieldType>,
+    /// Declared per metric, not assumed globally — the whole point.
+    #[serde(default)]
+    pub aggregate: Aggregate,
+    /// Overrides the activity's `group_by`. `None` inherits it; `Some("none")`
+    /// collapses across every record, giving an entry-level total alongside
+    /// the grouped series.
+    pub group_by: Option<String>,
+    /// A display unit (`min`, `kg`, `EUR`). Carried through to the chart.
+    pub unit: Option<String>,
+    #[serde(default)]
+    pub plot: PlotKind,
+}
+
+impl MetricSpec {
+    /// The field this metric groups by, resolved against its activity.
+    /// `Some("none")` at either level means "do not group".
+    pub fn group_field<'a>(&'a self, activity: &'a TrackingSpec) -> Option<&'a str> {
+        let declared = self
+            .group_by
+            .as_deref()
+            .or(activity.group_by.as_deref())
+            .filter(|g| !g.is_empty())?;
+        (declared != "none").then_some(declared)
+    }
+}
+
+/// One activity's tracking contract — what its entries carry and how each
+/// metric reduces (`#483`). Keyed on activity, consistent with template
+/// resolution, which already discriminates on activity alone.
+///
+/// Reading these from `[tracking.<activity>]` in `config.toml` is `#487`;
+/// until then a caller supplies them directly.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TrackingSpec {
+    /// Frontmatter key holding repeated records. `None` means the metrics are
+    /// scalars read straight off the entry's frontmatter.
+    pub records: Option<String>,
+    /// Field to split series by — a category, a subject, a person.
+    pub group_by: Option<String>,
+    /// May be empty: a cadence-only activity declares no metrics and produces
+    /// no series, which is a complete and valid use.
+    #[serde(default)]
+    pub metrics: BTreeMap<String, MetricSpec>,
 }
 
 /// Per-type schema extension: `[schemas.<type>]`.

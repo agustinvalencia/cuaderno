@@ -31,6 +31,7 @@ use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 
 use std::collections::BTreeMap;
 
+use cdno_core::config::{Aggregate, TrackingSpec};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::{MarkdownDocument, extract_first_table};
@@ -651,6 +652,113 @@ impl Vault {
             .collect())
     }
 
+    /// Derive tracking series from **frontmatter**, reducing each metric by
+    /// its own declared [`Aggregate`] (`#483`).
+    ///
+    /// The successor to [`tracking_series`](Self::tracking_series), which
+    /// re-reads every file from disk, parses the first body table, and sums
+    /// every numeric column. Summing is right for a total and wrong for
+    /// everything else, and a column cannot be split by an entity — so this
+    /// reads the parsed frontmatter the index already holds (no
+    /// `store.read_file`), applies the metric's own reduction, and can fan one
+    /// entry out into a series per group value.
+    ///
+    /// `specs` is keyed by activity. An activity with no spec contributes
+    /// nothing here, and keeps working through the body-table engine
+    /// unchanged — declaring is opt-in and no migration is forced. An activity
+    /// whose spec declares no metrics is a complete, valid use (a cadence-only
+    /// occurrence) and likewise yields no series.
+    ///
+    /// Series names are formatted only at the end, as
+    /// `"<activity> · [<group> · ]<metric>"`. The accumulator is keyed on a
+    /// typed tuple rather than that string, because a group value may
+    /// legitimately contain the separator.
+    ///
+    /// A date a group was not recorded on produces **no point** — a gap, never
+    /// a zero, since zero-filling would draw a false line to the axis. A group
+    /// value appearing for the first time starts its own series there, with no
+    /// config change.
+    pub fn tracking_series_from_frontmatter(
+        &self,
+        stewardship: &str,
+        specs: &BTreeMap<String, TrackingSpec>,
+    ) -> Result<Vec<TrackingSeries>, DomainError> {
+        // Values are pushed in document order; `last` depends on it.
+        let mut acc: BTreeMap<SeriesKey, BTreeMap<NaiveDate, Vec<f64>>> = BTreeMap::new();
+
+        for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
+            let fm = &entry.frontmatter;
+            if str_field(fm, "stewardship") != Some(stewardship) {
+                continue;
+            }
+            let (Some(activity), Some(date)) = (str_field(fm, "activity"), date_field(fm)) else {
+                continue;
+            };
+            let Some(spec) = specs.get(activity) else {
+                continue;
+            };
+
+            for record in records_of(fm, spec) {
+                for (metric, mspec) in &spec.metrics {
+                    // A grouped metric needs the group field to attribute the
+                    // record; a record missing it cannot belong to any series,
+                    // so it is skipped rather than lumped into an "other".
+                    let group = match mspec.group_field(spec) {
+                        Some(field) => match group_key(record, field) {
+                            Some(g) => Some(g),
+                            None => continue,
+                        },
+                        None => None,
+                    };
+                    // Non-finite values are dropped: they poison a sum and
+                    // would serialise as JSON `null` downstream.
+                    let Some(value) = numeric_field(record, metric).filter(|v| v.is_finite())
+                    else {
+                        continue;
+                    };
+                    acc.entry(SeriesKey {
+                        activity: activity.to_owned(),
+                        group,
+                        metric: metric.clone(),
+                    })
+                    .or_default()
+                    .entry(date)
+                    .or_default()
+                    .push(value);
+                }
+            }
+        }
+
+        // One reduction per (series, date) cell. With today's one-entry-per-day
+        // guard the cell holds a single entry's records, so this is a
+        // within-entry collapse; once same-day entries merge (#488) the cell
+        // holds both and the same rule reduces across them. Merge widens what
+        // the cell contains rather than adding a second level.
+        let mut series: Vec<TrackingSeries> = acc
+            .into_iter()
+            .map(|(key, by_date)| {
+                let aggregate = specs
+                    .get(&key.activity)
+                    .and_then(|s| s.metrics.get(&key.metric))
+                    .map(|m| m.aggregate)
+                    .unwrap_or_default();
+                let points = by_date
+                    .into_iter()
+                    .map(|(date, values)| TrackingPoint {
+                        date,
+                        value: reduce(&values, aggregate),
+                    })
+                    .collect();
+                TrackingSeries {
+                    name: key.display_name(),
+                    points,
+                }
+            })
+            .collect();
+        series.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(series)
+    }
+
     /// What you are in the middle of, according to today's log.
     ///
     /// Starting an action writes `started [[slug]] - text` into the daily
@@ -942,4 +1050,114 @@ fn body_excerpt(body: &str) -> String {
         return out;
     }
     String::new()
+}
+
+/// Identifies one derived series (`#483`).
+///
+/// A typed tuple, never the formatted display name: a group value may
+/// legitimately contain the `·` used as the display separator, so keying on
+/// the rendered string would collide series that are genuinely distinct.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SeriesKey {
+    activity: String,
+    group: Option<String>,
+    metric: String,
+}
+
+impl SeriesKey {
+    /// `"<activity> · [<group> · ]<metric>"` — formatted once, at the end.
+    fn display_name(&self) -> String {
+        match &self.group {
+            Some(group) => format!(
+                "{activity} \u{b7} {group} \u{b7} {metric}",
+                activity = self.activity,
+                metric = self.metric
+            ),
+            None => format!(
+                "{activity} \u{b7} {metric}",
+                activity = self.activity,
+                metric = self.metric
+            ),
+        }
+    }
+}
+
+/// A string frontmatter field, or `None` when absent or not a string.
+fn str_field<'a>(fm: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    fm.get(key)?.as_str()
+}
+
+/// The entry's `date`, parsed from its `YYYY-MM-DD` frontmatter string.
+fn date_field(fm: &serde_json::Value) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(str_field(fm, "date")?, "%Y-%m-%d").ok()
+}
+
+/// The records one entry contributes, in the order they reduce.
+///
+/// A record activity yields its declared array; a scalar activity yields the
+/// frontmatter itself as a single pseudo-record, so both shapes go through the
+/// same loop.
+///
+/// Order is **document order** — the order the records appear in the file —
+/// because `last` is the one aggregate that depends on it and no intra-day
+/// time is otherwise persisted (`date` is a `NaiveDate`; the write discards
+/// the time). Index iteration order must never be relied on for this:
+/// `list_by_type` orders by path. A record carrying an optional `time` field
+/// is the escape hatch, and sorts ahead of document order when present.
+fn records_of<'a>(
+    fm: &'a serde_json::Value,
+    spec: &cdno_core::config::TrackingSpec,
+) -> Vec<&'a serde_json::Value> {
+    let Some(key) = spec.records.as_deref() else {
+        return vec![fm];
+    };
+    let Some(array) = fm.get(key).and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut records: Vec<&serde_json::Value> = array.iter().collect();
+    // A stable sort keyed on `time` leaves document order intact for the
+    // records that do not carry one, and for the common case where none do.
+    if records.iter().any(|r| r.get("time").is_some()) {
+        records.sort_by(|a, b| {
+            str_field(a, "time")
+                .unwrap_or("")
+                .cmp(str_field(b, "time").unwrap_or(""))
+        });
+    }
+    records
+}
+
+/// The group a record belongs to, as a display string. A number or bool is
+/// rendered rather than refused — a category may legitimately be `2026` or a
+/// flag — but a nested value is not a group.
+fn group_key(record: &serde_json::Value, field: &str) -> Option<String> {
+    match record.get(field)? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// A record's numeric value for `metric`. Accepts an integer as well as a
+/// float: a round reading is written without a decimal point.
+fn numeric_field(record: &serde_json::Value, metric: &str) -> Option<f64> {
+    record.get(metric)?.as_f64()
+}
+
+/// Collapse one cell's values to a single point.
+///
+/// `max`/`min` use `total_cmp` rather than `partial_cmp().unwrap()`: the
+/// latter *panics* on a single NaN, which would turn one bad frontmatter value
+/// into a failed chart render and a failed MCP call. Values are filtered for
+/// finiteness before they get here, so this is belt and braces — but the
+/// panicking spelling is one refactor away from being reachable.
+fn reduce(values: &[f64], aggregate: Aggregate) -> f64 {
+    match aggregate {
+        Aggregate::Sum => values.iter().sum(),
+        Aggregate::Mean => values.iter().sum::<f64>() / values.len() as f64,
+        Aggregate::Last => values.last().copied().unwrap_or_default(),
+        Aggregate::Max => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        Aggregate::Min => values.iter().copied().fold(f64::INFINITY, f64::min),
+    }
 }

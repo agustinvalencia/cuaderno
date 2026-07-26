@@ -822,3 +822,459 @@ fn the_energy_suffix_is_preserved_and_still_matches_on_completion() {
 
     assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
 }
+
+// ---------------------------------------------------------------------
+// tracking_series_from_frontmatter (#483)
+// ---------------------------------------------------------------------
+
+use cdno_core::config::{Aggregate, MetricSpec, TrackingSpec};
+use std::collections::BTreeMap;
+
+/// A tracking note whose frontmatter carries `extra` verbatim (scalars, or a
+/// `detail:` record block) rather than a body table.
+fn tracking_fm_note(stewardship: &str, activity: &str, date: &str, extra: &str) -> String {
+    format!(
+        "---\ntype: tracking\nstewardship: {stewardship}\nactivity: {activity}\ndate: {date}\n{extra}---\n\n# {activity} {date}\n"
+    )
+}
+
+fn metric(aggregate: Aggregate) -> MetricSpec {
+    MetricSpec {
+        aggregate,
+        ..Default::default()
+    }
+}
+
+fn grouped_metric(aggregate: Aggregate, group_by: Option<&str>) -> MetricSpec {
+    MetricSpec {
+        aggregate,
+        group_by: group_by.map(str::to_owned),
+        ..Default::default()
+    }
+}
+
+fn specs(entries: &[(&str, TrackingSpec)]) -> BTreeMap<String, TrackingSpec> {
+    entries
+        .iter()
+        .map(|(name, spec)| ((*name).to_owned(), spec.clone()))
+        .collect()
+}
+
+/// The RFC's `[tracking.practice]`: records under `detail`, grouped by
+/// `subject`, `minutes` summing and `focus` averaging over the same records.
+fn practice_spec() -> TrackingSpec {
+    TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: Some("subject".to_owned()),
+        metrics: [
+            ("minutes".to_owned(), metric(Aggregate::Sum)),
+            ("focus".to_owned(), metric(Aggregate::Mean)),
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+fn point_on(series: &cdno_domain::vault::TrackingSeries, date: NaiveDate) -> Option<f64> {
+    series
+        .points
+        .iter()
+        .find(|p| p.date == date)
+        .map(|p| p.value)
+}
+
+fn named<'a>(
+    series: &'a [cdno_domain::vault::TrackingSeries],
+    name: &str,
+) -> &'a cdno_domain::vault::TrackingSeries {
+    series
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("no series named `{name}`; got {:?}", names_of(series)))
+}
+
+fn names_of(series: &[cdno_domain::vault::TrackingSeries]) -> Vec<&str> {
+    series.iter().map(|s| s.name.as_str()).collect()
+}
+
+#[test]
+fn the_rfc_worked_example_yields_six_independent_series() {
+    // Three entries a week apart. `minutes` sums while `focus` averages over
+    // the SAME records, and each subject is followed independently — the two
+    // things the flat-table engine cannot do, both visible in one entry.
+    let w1 = "detail:\n  - {subject: harmony, minutes: 25, focus: 4}\n  - {subject: harmony, minutes: 20, focus: 3}\n  - {subject: sight-reading, minutes: 15, focus: 5}\n";
+    let w2 = "detail:\n  - {subject: harmony, minutes: 30, focus: 4}\n  - {subject: sight-reading, minutes: 20, focus: 4}\n";
+    let w3 = "detail:\n  - {subject: harmony, minutes: 35, focus: 5}\n  - {subject: ear-training, minutes: 10, focus: 3}\n";
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/study/tracking/2026-07-06-practice.md",
+            &tracking_fm_note("study", "practice", "2026-07-06", w1),
+        ),
+        (
+            "stewardships/study/tracking/2026-07-13-practice.md",
+            &tracking_fm_note("study", "practice", "2026-07-13", w2),
+        ),
+        (
+            "stewardships/study/tracking/2026-07-20-practice.md",
+            &tracking_fm_note("study", "practice", "2026-07-20", w3),
+        ),
+    ]);
+
+    let series = vault
+        .tracking_series_from_frontmatter("study", &specs(&[("practice", practice_spec())]))
+        .unwrap();
+
+    assert_eq!(series.len(), 6, "series: {:?}", names_of(&series));
+
+    let minutes = named(&series, "practice \u{b7} harmony \u{b7} minutes");
+    assert_eq!(point_on(minutes, ymd(2026, 7, 6)), Some(45.0), "25 + 20");
+    assert_eq!(point_on(minutes, ymd(2026, 7, 13)), Some(30.0));
+    assert_eq!(point_on(minutes, ymd(2026, 7, 20)), Some(35.0));
+
+    let focus = named(&series, "practice \u{b7} harmony \u{b7} focus");
+    assert_eq!(point_on(focus, ymd(2026, 7, 6)), Some(3.5), "(4 + 3) / 2");
+    assert_eq!(point_on(focus, ymd(2026, 7, 13)), Some(4.0));
+
+    // A skipped subject leaves a GAP, not a zero — zero-filling would draw a
+    // false line to the axis.
+    let sight = named(&series, "practice \u{b7} sight-reading \u{b7} minutes");
+    assert_eq!(sight.points.len(), 2);
+    assert_eq!(point_on(sight, ymd(2026, 7, 20)), None);
+
+    // A new value starts its own series the moment it appears, no config
+    // change — the main advantage over promoting categories to columns.
+    let ear = named(&series, "practice \u{b7} ear-training \u{b7} minutes");
+    assert_eq!(ear.points.len(), 1);
+    assert_eq!(point_on(ear, ymd(2026, 7, 20)), Some(10.0));
+}
+
+#[test]
+fn each_aggregate_reduces_its_own_way() {
+    // One entry, five metrics over the same three records, so the only thing
+    // that differs is the declared reduction.
+    let body = "detail:\n  - {v: 10}\n  - {v: 30}\n  - {v: 20}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/lab/tracking/2026-07-06-probe.md",
+        &tracking_fm_note("lab", "probe", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [("v".to_owned(), metric(Aggregate::Sum))]
+            .into_iter()
+            .collect(),
+    };
+
+    for (aggregate, expected) in [
+        (Aggregate::Sum, 60.0),
+        (Aggregate::Mean, 20.0),
+        (Aggregate::Last, 20.0),
+        (Aggregate::Max, 30.0),
+        (Aggregate::Min, 10.0),
+    ] {
+        let mut spec = spec.clone();
+        spec.metrics.insert("v".to_owned(), metric(aggregate));
+        let series = vault
+            .tracking_series_from_frontmatter("lab", &specs(&[("probe", spec)]))
+            .unwrap();
+        assert_eq!(
+            point_on(named(&series, "probe \u{b7} v"), ymd(2026, 7, 6)),
+            Some(expected),
+            "{aggregate:?} over [10, 30, 20]"
+        );
+    }
+}
+
+#[test]
+fn a_level_read_twice_does_not_compound() {
+    // The defect that motivates the epic: two readings of the same balance
+    // sum to a number that was never true. `last` reports the reading.
+    let body = "detail:\n  - {balance: 1200}\n  - {balance: 1240}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/finances/tracking/2026-07-06-savings.md",
+        &tracking_fm_note("finances", "savings", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [("balance".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("finances", &specs(&[("savings", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "savings \u{b7} balance"), ymd(2026, 7, 6)),
+        Some(1240.0),
+        "the last reading, not 2440"
+    );
+}
+
+#[test]
+fn a_mean_does_not_move_when_a_record_repeats_a_value() {
+    let body = "detail:\n  - {score: 8}\n  - {score: 8}\n  - {score: 8}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/lab/tracking/2026-07-06-probe.md",
+        &tracking_fm_note("lab", "probe", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [("score".to_owned(), metric(Aggregate::Mean))]
+            .into_iter()
+            .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("lab", &specs(&[("probe", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "probe \u{b7} score"), ymd(2026, 7, 6)),
+        Some(8.0),
+        "a rating must not grow with how often it is logged"
+    );
+}
+
+#[test]
+fn scalar_metrics_read_straight_off_the_frontmatter() {
+    // No `records` key: the entry itself is the one record.
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-body.md",
+            &tracking_fm_note("health", "body", "2026-07-06", "weight: 82.5\n"),
+        ),
+        (
+            "stewardships/health/tracking/2026-07-13-body.md",
+            &tracking_fm_note("health", "body", "2026-07-13", "weight: 82.0\n"),
+        ),
+    ]);
+    let spec = TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("weight".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("health", &specs(&[("body", spec)]))
+        .unwrap();
+    let weight = named(&series, "body \u{b7} weight");
+    assert_eq!(weight.points.len(), 2);
+    assert_eq!(weight.points[0].value, 82.5);
+    assert_eq!(weight.points[1].value, 82.0);
+}
+
+#[test]
+fn a_repeated_group_value_in_one_entry_yields_one_point() {
+    // `group_by` splits SERIES, not notes: each date contributes at most one
+    // point per series it touches.
+    let body = "detail:\n  - {subject: harmony, minutes: 25, focus: 4}\n  - {subject: harmony, minutes: 20, focus: 3}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/study/tracking/2026-07-06-practice.md",
+        &tracking_fm_note("study", "practice", "2026-07-06", body),
+    )]);
+
+    let series = vault
+        .tracking_series_from_frontmatter("study", &specs(&[("practice", practice_spec())]))
+        .unwrap();
+    assert_eq!(
+        named(&series, "practice \u{b7} harmony \u{b7} minutes")
+            .points
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn a_metric_can_override_the_activitys_grouping_to_none() {
+    // `group_by = "none"` collapses across records, giving an entry-level
+    // total alongside the grouped series.
+    let body =
+        "detail:\n  - {subject: harmony, minutes: 25}\n  - {subject: sight-reading, minutes: 15}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/study/tracking/2026-07-06-practice.md",
+        &tracking_fm_note("study", "practice", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: Some("subject".to_owned()),
+        metrics: [
+            ("minutes".to_owned(), grouped_metric(Aggregate::Sum, None)),
+            (
+                "total".to_owned(),
+                grouped_metric(Aggregate::Sum, Some("none")),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    // `total` reads the same field name as the record's own key, so give the
+    // records a `total` to read.
+    let body = body.replace("minutes: 25", "minutes: 25, total: 25");
+    let body = body.replace("minutes: 15", "minutes: 15, total: 15");
+    let (vault2, _store2) = vault_with(&[(
+        "stewardships/study/tracking/2026-07-06-practice.md",
+        &tracking_fm_note("study", "practice", "2026-07-06", &body),
+    )]);
+    let _ = vault;
+
+    let series = vault2
+        .tracking_series_from_frontmatter("study", &specs(&[("practice", spec)]))
+        .unwrap();
+
+    // Grouped: one series per subject. Ungrouped: one entry-level series.
+    assert_eq!(
+        point_on(
+            named(&series, "practice \u{b7} harmony \u{b7} minutes"),
+            ymd(2026, 7, 6)
+        ),
+        Some(25.0)
+    );
+    assert_eq!(
+        point_on(named(&series, "practice \u{b7} total"), ymd(2026, 7, 6)),
+        Some(40.0),
+        "collapsed across both records"
+    );
+}
+
+#[test]
+fn last_resolves_to_document_order_and_a_time_field_reorders() {
+    // `date` is a NaiveDate and the write discards the time, so nothing else
+    // persists intra-day order. Index iteration order must never be relied on.
+    let doc_order = "detail:\n  - {balance: 100}\n  - {balance: 200}\n";
+    let timed =
+        "detail:\n  - {balance: 100, time: \"18:00\"}\n  - {balance: 200, time: \"09:00\"}\n";
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [("balance".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    };
+
+    for (body, expected, why) in [
+        (doc_order, 200.0, "document order"),
+        (timed, 100.0, "a `time` field reorders"),
+    ] {
+        let (vault, _store) = vault_with(&[(
+            "stewardships/finances/tracking/2026-07-06-savings.md",
+            &tracking_fm_note("finances", "savings", "2026-07-06", body),
+        )]);
+        let series = vault
+            .tracking_series_from_frontmatter("finances", &specs(&[("savings", spec.clone())]))
+            .unwrap();
+        assert_eq!(
+            point_on(named(&series, "savings \u{b7} balance"), ymd(2026, 7, 6)),
+            Some(expected),
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn a_non_finite_value_is_skipped_rather_than_poisoning_the_reduction() {
+    // `.nan`/`.inf` parse as f64 and would poison a sum; a naive
+    // `partial_cmp().unwrap()` in max/min would panic outright.
+    let body = "detail:\n  - {v: 10}\n  - {v: .nan}\n  - {v: .inf}\n  - {v: 20}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/lab/tracking/2026-07-06-probe.md",
+        &tracking_fm_note("lab", "probe", "2026-07-06", body),
+    )]);
+
+    for (aggregate, expected) in [
+        (Aggregate::Sum, 30.0),
+        (Aggregate::Max, 20.0),
+        (Aggregate::Min, 10.0),
+    ] {
+        let spec = TrackingSpec {
+            records: Some("detail".to_owned()),
+            group_by: None,
+            metrics: [("v".to_owned(), metric(aggregate))].into_iter().collect(),
+        };
+        let series = vault
+            .tracking_series_from_frontmatter("lab", &specs(&[("probe", spec)]))
+            .unwrap();
+        assert_eq!(
+            point_on(named(&series, "probe \u{b7} v"), ymd(2026, 7, 6)),
+            Some(expected),
+            "{aggregate:?} must ignore the non-finite cells"
+        );
+    }
+}
+
+#[test]
+fn an_undeclared_activity_and_a_cadence_only_one_both_yield_no_series() {
+    // Declaring is opt-in: an activity with no spec keeps working through the
+    // body-table engine untouched. An activity declaring no metrics is a
+    // complete, valid use (an occurrence) and is not an error.
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/family/tracking/2026-07-06-call.md",
+            &tracking_fm_note("family", "call", "2026-07-06", "person: \"[[people/x]]\"\n"),
+        ),
+        (
+            "stewardships/family/tracking/2026-07-07-visit.md",
+            &tracking_fm_note("family", "visit", "2026-07-07", ""),
+        ),
+    ]);
+
+    let series = vault
+        .tracking_series_from_frontmatter("family", &specs(&[("call", TrackingSpec::default())]))
+        .unwrap();
+    assert!(series.is_empty(), "series: {:?}", names_of(&series));
+}
+
+#[test]
+fn series_derive_without_reading_a_single_file() {
+    // The point of moving to frontmatter: the index already holds it parsed,
+    // so a chart render costs no disk I/O. Proven by deleting the files after
+    // indexing and asking again.
+    let (vault, store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &tracking_fm_note("health", "body", "2026-07-06", "weight: 82.5\n"),
+    )]);
+    let spec = TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("weight".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    };
+
+    store
+        .delete_file(&vp("stewardships/health/tracking/2026-07-06-body.md"))
+        .unwrap();
+
+    let series = vault
+        .tracking_series_from_frontmatter("health", &specs(&[("body", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5)
+    );
+}
+
+#[test]
+fn a_group_value_containing_the_display_separator_stays_its_own_series() {
+    // The accumulator is keyed on a typed tuple, not the formatted name — a
+    // group value may legitimately contain the separator.
+    let body =
+        "detail:\n  - {subject: \"a \u{b7} b\", minutes: 10}\n  - {subject: a, minutes: 5}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/study/tracking/2026-07-06-practice.md",
+        &tracking_fm_note("study", "practice", "2026-07-06", body),
+    )]);
+
+    let series = vault
+        .tracking_series_from_frontmatter("study", &specs(&[("practice", practice_spec())]))
+        .unwrap();
+    let minutes: Vec<&str> = names_of(&series)
+        .into_iter()
+        .filter(|n| n.ends_with("minutes"))
+        .collect();
+    assert_eq!(minutes.len(), 2, "got {minutes:?}");
+}
