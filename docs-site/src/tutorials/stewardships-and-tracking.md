@@ -43,7 +43,7 @@ or `every N months`.
 
 For habits and metrics on an expanded stewardship, file a tracking note. The **activity** is
 positional and selects the template — a vault's `.cuaderno/templates/tracking-<activity>.md` if you
-have one, else a generic fallback. (Ready-made `gym`/`body`/`swim` variants live in the repo's
+have one, else a generic fallback. (Ready-made variants live in the repo's
 `examples/templates/tracking/`; see [Customising templates](templates-and-frontmatter.md#tracking-variants).)
 
 ```bash

@@ -1331,3 +1331,70 @@ fn a_record_field_named_time_is_data_not_an_ordering_key() {
         "document order must stand: set 2 is last, whatever its `time` says"
     );
 }
+
+#[test]
+fn tracking_series_sums_a_long_format_table_into_one_meaningless_number() {
+    // The shape the `body.md` example template used to ship (#479): one metric
+    // per row sharing a single `Value` column. The engine sums the column, so
+    // filling it in yields ONE series whose value is weight + waist + sleep —
+    // a number with no physical meaning.
+    //
+    // This is not a behaviour to fix here (summing a column is the documented
+    // contract, and correct for a rep sheet); it is the defect that makes the
+    // WIDE shape mandatory, pinned so the template can never quietly regress
+    // to long format without a test saying what that costs.
+    let long_format = "\n| Metric | Value |\n|--------|-------|\n| Weight | 78.4 |\n| Waist | 82 |\n| Sleep | 7.2 |\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-04-10-body.md",
+        &tracking_note("health", "body", "2026-04-10", long_format),
+    )]);
+
+    let series = vault.tracking_series("health").unwrap();
+    assert_eq!(
+        series.len(),
+        1,
+        "one column, so one series: {:?}",
+        series.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+    assert_eq!(series[0].name, "body \u{b7} Value");
+    assert_eq!(
+        series[0].points[0].value, 167.6,
+        "78.4 + 82 + 7.2 — three unrelated measurements added together"
+    );
+}
+
+#[test]
+fn tracking_series_gives_a_wide_table_one_series_per_metric() {
+    // The shape `body.md` ships now: one row, one column per metric, so each
+    // column is its own series carrying that metric's own value.
+    let wide = "\n| Weight (kg) | Waist (cm) | Sleep (h) |\n|-------------|------------|-----------|\n| 78.4 | 82 | 7.2 |\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-04-10-body.md",
+        &tracking_note("health", "body", "2026-04-10", wide),
+    )]);
+
+    let series = vault.tracking_series("health").unwrap();
+    let names: Vec<&str> = series.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec![
+            "body \u{b7} Sleep (h)",
+            "body \u{b7} Waist (cm)",
+            "body \u{b7} Weight (kg)"
+        ]
+    );
+    let value_of = |name: &str| {
+        series
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("no series `{name}`"))
+            .points[0]
+            .value
+    };
+    assert_eq!(
+        value_of("body \u{b7} Weight (kg)"),
+        78.4,
+        "each column carries its own metric's value, not a total"
+    );
+    assert_eq!(value_of("body \u{b7} Sleep (h)"), 7.2);
+}

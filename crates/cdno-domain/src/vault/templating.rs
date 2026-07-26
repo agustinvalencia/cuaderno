@@ -160,7 +160,7 @@ const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
 /// activity-specific variants. A vault supplies its own via
 /// `.cuaderno/templates/tracking-<activity>.md`, which the resolver picks up
 /// (slugify the activity → look up `tracking-<slug>` → fall back to generic).
-/// See `examples/templates/tracking/` for ready-made gym/body/swim variants.
+/// See `examples/templates/tracking/` for ready-made variants.
 fn builtin_defaults() -> HashMap<String, &'static str> {
     HashMap::from([
         ("project".to_owned(), PROJECT_TEMPLATE),
