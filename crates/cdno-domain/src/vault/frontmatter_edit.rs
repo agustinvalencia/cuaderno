@@ -143,16 +143,15 @@ fn continues_onto_next_line(next: Option<&str>) -> bool {
     }
 }
 
+/// The characters YAML treats as line breaks. `\n` and `\r` are the obvious
+/// two; U+2028 and U+2029 are breaks to the parser as well, and the emitter
+/// passes them through literally rather than escaping them.
+const YAML_LINE_BREAKS: [char; 4] = ['\n', '\r', '\u{2028}', '\u{2029}'];
+
 /// Render one `key: value` frontmatter entry, as one line for a scalar or an
 /// indented block for a non-empty sequence or mapping. Always ends with
 /// `newline`.
 fn render_field(key: &str, value: &Value, newline: &str) -> Result<String, DomainError> {
-    if key.contains('\n') || key.contains('\r') {
-        return Err(DomainError::UnrepresentableFrontmatterValue {
-            field: key.to_owned(),
-            reason: "a frontmatter key cannot contain a line break".to_owned(),
-        });
-    }
     let unrepresentable = |e: serde_yaml::Error| DomainError::UnrepresentableFrontmatterValue {
         field: key.to_owned(),
         reason: e.to_string(),
@@ -164,8 +163,31 @@ fn render_field(key: &str, value: &Value, newline: &str) -> Result<String, Domai
         .map_err(unrepresentable)?
         .trim_end()
         .to_owned();
+    // The key is spliced into implicit-key position, where a scalar spanning
+    // lines is not legal. Test the EMITTED scalar against YAML's full
+    // line-break set, not just `\n`: the emitter writes U+2028/U+2029 through
+    // literally (they are breaks to the parser, so the scalar is folded around
+    // them) while escaping NEL and tab, so an input-side `\n`/`\r` check would
+    // pass such a key through and hand the caller an unparseable block.
+    if key_scalar.contains(YAML_LINE_BREAKS) {
+        return Err(DomainError::UnrepresentableFrontmatterValue {
+            field: key.to_owned(),
+            reason: "a frontmatter key cannot contain a line break".to_owned(),
+        });
+    }
     let yaml = serde_yaml::to_string(value).map_err(unrepresentable)?;
     let yaml = yaml.trim_end_matches('\n');
+    // A string value carrying a newline is emitted as a multi-line literal
+    // block, so even the inline branch can be more than one physical line.
+    // Re-separate on the document's own ending, or a CRLF note ends up with
+    // LF-terminated lines in the middle of it. YAML normalises breaks back to
+    // `\n` on read, so the value round-trips unchanged.
+    let yaml = if newline == "\n" {
+        yaml.to_owned()
+    } else {
+        yaml.replace('\n', newline)
+    };
+    let yaml = yaml.as_str();
 
     // Block-vs-inline is decided by the value's SHAPE, not by whether its
     // serialisation happens to fit on one line: a single-key mapping

@@ -258,3 +258,52 @@ fn a_quoted_existing_key_is_replaced_rather_than_duplicated() {
     let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
     assert_eq!(fm.as_json().get("weight"), Some(&serde_json::json!(82.5)));
 }
+
+#[test]
+fn a_key_broken_by_a_unicode_line_separator_is_refused() {
+    // YAML counts U+2028/U+2029 as line breaks, and the emitter folds a key
+    // containing one across two physical lines — so an input-side `\n`/`\r`
+    // check passes it through and yields an unparseable block returned as Ok.
+    for key in ["a\u{2028}type", "a\u{2029}type", "\u{2028}"] {
+        match merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({key: "hijacked"}))) {
+            Err(DomainError::UnrepresentableFrontmatterValue { .. }) => {}
+            Ok(out) => panic!("`{key:?}` must be refused, got:\n{out}"),
+            other => panic!("expected UnrepresentableFrontmatterValue, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_multiline_string_in_a_crlf_document_keeps_crlf_throughout() {
+    // A string carrying a newline is emitted as a literal block, so even the
+    // inline branch spans lines. Splicing it verbatim would leave LF-separated
+    // lines inside an otherwise CRLF note.
+    let note =
+        "---\r\ntype: tracking\r\nactivity: body\r\ndate: 2026-04-06\r\n---\r\n\r\n# Body\r\n";
+    let out =
+        merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "line1\nline2"})))
+            .unwrap();
+
+    assert!(
+        !out.replace("\r\n", "").contains('\n'),
+        "no bare LF may survive in a CRLF document: {out:?}"
+    );
+    // And the value still round-trips — YAML normalises breaks back to `\n`.
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(
+        fm.as_json().get("notes"),
+        Some(&serde_json::json!("line1\nline2"))
+    );
+}
+
+#[test]
+fn a_multiline_string_round_trips_in_an_lf_document() {
+    let out =
+        merge_fields_into_frontmatter(NOTE, &fields(serde_json::json!({"notes": "line1\nline2"})))
+            .unwrap();
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(
+        fm.as_json().get("notes"),
+        Some(&serde_json::json!("line1\nline2"))
+    );
+}
