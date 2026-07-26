@@ -10,6 +10,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TrackingEntryDraft;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, StewardshipFrontmatter};
 use cdno_domain::recurrence::Recurrence;
@@ -357,13 +358,25 @@ fn list_stewardships_counts_tracking_and_reports_latest_date() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 10, 9, 0), "health", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 10, 9, 0),
+            TrackingEntryDraft::new("health", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 20, 9, 0), "health", "body", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 20, 9, 0),
+            TrackingEntryDraft::new("health", "body"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 15, 9, 0), "health", "swim", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 15, 9, 0),
+            TrackingEntryDraft::new("health", "swim"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
 
     let summaries = vault.list_stewardships(today()).unwrap();

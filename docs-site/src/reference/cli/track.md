@@ -22,6 +22,7 @@ cdno track [OPTIONS] <ACTIVITY>
 | `--stewardship <STEWARDSHIP>` | Stewardship slug. Defaults to the only expanded stewardship if there's exactly one; otherwise required. |
 | `--routine <ROUTINE>` | Bare slug of a routine doc — wrapped into `[[stewardships/<slug>/routines/<routine>]]` and substituted into the template's `routine:` field. Only takes effect when the resolved template has a `routine:` field; the generic default has none, so it silently no-ops there. |
 | `--content <CONTENT>` | Inline body. Optional; defaults to empty so you can fill in tables afterward. |
+| `--at <TIMESTAMP>` | File the entry at a past (or near-future) moment rather than now: `YYYY-MM-DDTHH:MM[:SS]`, the same spelling [`cdno log --at`](log.md) takes. For a session recorded after the fact — a statement reconciled days later, a reading taken this morning. Only the date is kept; the entry lands on that day and the daily-log line still goes into *today's* note, naming the day it describes. Bounded to 50 years back and 1 year ahead: an unbounded date makes history writable, and a mistyped year would silently reshape a trend. |
 | `--var <NAME=VALUE>` | Value for a custom tracking template's prompted variable ([`[variables.prompt]`](../configuration.md)). Repeatable. Prompts come from the activity's template (e.g. `tracking-gym`) when one exists. See [Prompted variables](../../tutorials/templates-and-frontmatter.md#prompted-variables). |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`

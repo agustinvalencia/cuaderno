@@ -16,7 +16,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 
-use cdno_domain::{StewardshipVariant, TemplateSource, Vault};
+use cdno_domain::{StewardshipVariant, TemplateSource, TrackingEntryDraft, Vault};
 
 use crate::bootstrap;
 use crate::prompt;
@@ -24,7 +24,8 @@ use crate::prompt;
 #[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 pub fn run(
     root: &Path,
-    at: NaiveDateTime,
+    now: NaiveDateTime,
+    at: Option<NaiveDateTime>,
     activity: String,
     stewardship: Option<String>,
     routine: Option<String>,
@@ -44,12 +45,12 @@ pub fn run(
     let mut prompted = false;
     let stewardship = match stewardship {
         Some(s) => s,
-        None => match default_expanded_stewardship(&vault, at)? {
+        None => match default_expanded_stewardship(&vault, now)? {
             Some(s) => s,
             None => {
                 if interactive {
                     prompted = true;
-                    prompt::prompt_expanded_stewardship(&vault, at.date())?
+                    prompt::prompt_expanded_stewardship(&vault, now.date())?
                 } else {
                     return Err(prompt::missing_flag("stewardship"));
                 }
@@ -82,16 +83,19 @@ pub fn run(
         return Ok(());
     }
 
-    let (path, source) = vault
-        .add_tracking_entry_with_vars(
-            at,
-            &stewardship,
-            &activity,
-            routine.as_deref(),
-            &content,
-            &template_vars,
-        )
+    let mut draft = TrackingEntryDraft::new(&stewardship, &activity)
+        .with_content(&content)
+        .with_prompted(template_vars);
+    if let Some(routine) = &routine {
+        draft = draft.with_routine(routine);
+    }
+    if let Some(at) = at {
+        draft = draft.on(at.date());
+    }
+    let (outcome, source) = vault
+        .add_tracking_entry(now, draft)
         .context("filing tracking entry")?;
+    let path = outcome.primary;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Tracked at {path}"))?;
 
     // Point-of-use nudge (#282): a one-time-ish discovery hint for the

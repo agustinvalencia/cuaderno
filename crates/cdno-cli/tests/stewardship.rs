@@ -255,6 +255,7 @@ fn track_writes_gym_note_under_expanded_stewardship() {
     track::run(
         dir.path(),
         moment(2026, 4, 6, 19, 0),
+        None,
         "gym".to_owned(),
         Some("health".to_owned()),
         Some("upper-body-a".to_owned()),
@@ -300,6 +301,7 @@ fn track_defaults_to_only_expanded_stewardship_when_unambiguous() {
     track::run(
         dir.path(),
         moment(2026, 4, 7, 9, 0),
+        None,
         "body".to_owned(),
         None,
         None,
@@ -324,6 +326,7 @@ fn track_errors_when_no_default_and_no_flag_in_non_interactive() {
     let err = track::run(
         dir.path(),
         moment(2026, 4, 7, 9, 0),
+        None,
         "gym".to_owned(),
         None,
         None,
@@ -355,6 +358,7 @@ fn track_errors_on_flat_stewardship_for_explicit_slug() {
     let err = track::run(
         dir.path(),
         moment(2026, 4, 7, 9, 0),
+        None,
         "gym".to_owned(),
         Some("finances".to_owned()),
         None,
@@ -368,5 +372,94 @@ fn track_errors_on_flat_stewardship_for_explicit_slug() {
     assert!(
         msg.contains("flat") || msg.contains("tracking"),
         "msg: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// track --at (#482)
+// ---------------------------------------------------------------------
+
+#[test]
+fn track_at_files_the_entry_on_the_given_day() {
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 4, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: true,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("stewardship");
+
+    track::run(
+        dir.path(),
+        moment(2026, 4, 20, 9, 0),
+        Some(moment(2026, 4, 6, 19, 0)),
+        "gym".to_owned(),
+        Some("health".to_owned()),
+        None,
+        String::new(),
+        vec![],
+        true,
+        false,
+    )
+    .expect("track");
+
+    assert!(
+        dir.path()
+            .join("stewardships/health/tracking/2026-04-06-gym.md")
+            .exists(),
+        "the entry must land on the day it describes"
+    );
+    // The audit line goes into the day the write happened, not the day it
+    // describes, so a backfill stays findable.
+    let today_log = fs::read_to_string(dir.path().join("journal/2026/daily/2026-04-20.md"))
+        .expect("today's daily note");
+    assert!(
+        today_log.contains("Tracked gym for 2026-04-06:"),
+        "daily log:\n{today_log}"
+    );
+}
+
+#[test]
+fn track_at_rejects_an_implausible_date() {
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 4, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: true,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("stewardship");
+
+    let err = track::run(
+        dir.path(),
+        moment(2026, 4, 20, 9, 0),
+        Some(moment(2062, 1, 1, 9, 0)),
+        "gym".to_owned(),
+        Some("health".to_owned()),
+        None,
+        String::new(),
+        vec![],
+        true,
+        false,
+    )
+    .expect_err("a far-future date must be rejected");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("outside the plausible range"),
+        "the message must name the window: {msg}"
     );
 }

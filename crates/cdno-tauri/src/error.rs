@@ -103,6 +103,9 @@ impl From<DomainError> for CmdError {
             | DomainError::MalformedWikilink { .. }
             | DomainError::MissingSection(_)
             | DomainError::MissingFrontmatterField(_)
+            | DomainError::MultilineFrontmatterField(_)
+            | DomainError::UnrepresentableFrontmatterValue { .. }
+            | DomainError::ImplausibleDate { .. }
             | DomainError::UnresolvedPrompts { .. }
             | DomainError::UnknownNoteType { .. }
             | DomainError::ReservedTypeName { .. }

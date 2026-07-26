@@ -95,6 +95,25 @@ pub enum DomainError {
     MissingFrontmatterField(String),
 
     #[error(
+        "frontmatter field '{0}' already carries a nested block \u{2014} replacing it would have to \
+         guess how many lines it spans; edit the note by hand instead"
+    )]
+    MultilineFrontmatterField(String),
+
+    #[error("frontmatter field '{field}' cannot be written as YAML: {reason}")]
+    UnrepresentableFrontmatterValue { field: String, reason: String },
+
+    #[error(
+        "date {date} is outside the plausible range {earliest}..={latest} \u{2014} an entry that far \
+         from today is almost always a typo, and backdating silently reshapes a trend"
+    )]
+    ImplausibleDate {
+        date: chrono::NaiveDate,
+        earliest: chrono::NaiveDate,
+        latest: chrono::NaiveDate,
+    },
+
+    #[error(
         "template '{note_type}' references prompted variable(s) {names:?} with no value \u{2014} \
          provide a value for each (the CLI `--var name=value` flag, the MCP `vars` parameter, or a \
          static default under [variables] in .cuaderno/config.toml)"

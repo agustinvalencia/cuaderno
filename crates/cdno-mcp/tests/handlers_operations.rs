@@ -704,6 +704,8 @@ async fn create_tracking_entry_writes_under_expanded_stewardship() {
 
     let result = server
         .create_tracking_entry(Parameters(CreateTrackingEntryInput {
+            metrics: None,
+            date: None,
             stewardship: "health".to_owned(),
             activity: "gym".to_owned(),
             routine: Some("upper-body-a".to_owned()),
@@ -733,6 +735,8 @@ async fn create_tracking_entry_errors_on_flat_stewardship() {
     });
     let err = server
         .create_tracking_entry(Parameters(CreateTrackingEntryInput {
+            metrics: None,
+            date: None,
             stewardship: "finances".to_owned(),
             activity: "gym".to_owned(),
             routine: None,
@@ -1802,4 +1806,74 @@ async fn set_frontmatter_errors_on_a_reserved_key() {
         }))
         .await;
     assert!(result.is_err(), "a reserved/undeclared key must error");
+}
+
+#[tokio::test]
+async fn create_tracking_entry_writes_structured_metrics_at_an_explicit_date() {
+    // The round trip an agent depends on: a record sequence plus a past date
+    // reach the note as nested frontmatter, filed on the day it describes.
+    let (server, store) = server_with(|vault, _s| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 10, 9, 0), "Study", Context::Personal)
+            .unwrap();
+    });
+
+    let result = server
+        .create_tracking_entry(Parameters(CreateTrackingEntryInput {
+            metrics: Some(serde_json::json!({
+                "detail": [
+                    {"subject": "harmony", "minutes": 25},
+                    {"subject": "sight-reading", "minutes": 15},
+                ]
+            })),
+            date: Some(chrono::NaiveDate::from_ymd_opt(2026, 4, 6).unwrap()),
+            stewardship: "study".to_owned(),
+            activity: "practice".to_owned(),
+            routine: None,
+            content: String::new(),
+            vars: None,
+        }))
+        .await
+        .expect("create_tracking_entry");
+
+    let path = decode_json(&result)["path"].as_str().unwrap().to_owned();
+    assert_eq!(path, "stewardships/study/tracking/2026-04-06-practice.md");
+    let raw = store.read_file(&vp(&path)).unwrap();
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&raw).unwrap();
+    let detail = fm.as_json();
+    let detail = detail
+        .get("detail")
+        .expect("detail key")
+        .as_array()
+        .unwrap();
+    assert_eq!(detail.len(), 2);
+    assert_eq!(detail[0]["subject"], serde_json::json!("harmony"));
+}
+
+#[tokio::test]
+async fn create_tracking_entry_rejects_a_non_object_metrics_payload() {
+    // Each key becomes a frontmatter key, so a bare array or scalar has no key
+    // to be written under — say so rather than failing deeper in the merge.
+    let (server, _store) = server_with(|vault, _s| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 10, 9, 0), "Health", Context::Personal)
+            .unwrap();
+    });
+
+    let err = server
+        .create_tracking_entry(Parameters(CreateTrackingEntryInput {
+            metrics: Some(serde_json::json!([1, 2, 3])),
+            date: None,
+            stewardship: "health".to_owned(),
+            activity: "gym".to_owned(),
+            routine: None,
+            content: String::new(),
+            vars: None,
+        }))
+        .await
+        .expect_err("a non-object metrics payload must be rejected");
+    assert!(
+        format!("{err:?}").contains("metrics"),
+        "the error must name the parameter: {err:?}"
+    );
 }

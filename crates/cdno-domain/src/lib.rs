@@ -28,6 +28,6 @@ pub use vault::{
     MonthlySection, NormaliseReport, OrientationContext, PlaceholderSource, PortfolioSummary,
     ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionBacklinks, QuestionSummary,
     SearchFilters, SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplateContent,
-    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry, Vault,
-    WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
+    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry,
+    TrackingEntryDraft, Vault, WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
 };

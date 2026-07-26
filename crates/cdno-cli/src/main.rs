@@ -282,6 +282,12 @@ enum Commands {
         /// (`[variables.prompt]`), repeatable: `--var name=value`.
         #[arg(long = "var", value_parser = cdno_cli::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// File the entry at a past (or near-future) moment rather than now:
+        /// `YYYY-MM-DDTHH:MM[:SS]`. For a session recorded after the fact — a
+        /// statement reconciled days later, a reading taken this morning.
+        /// Only the date is kept. Bounded to 50 years back and 1 year ahead.
+        #[arg(long)]
+        at: Option<String>,
     },
 
     /// Manage standalone commitments: create and complete.
@@ -505,11 +511,14 @@ fn main() -> Result<()> {
             routine,
             content,
             var,
+            at,
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            let at = at.as_deref().map(parse_timestamp).transpose()?;
             commands::track::run(
                 &root,
                 Local::now().naive_local(),
+                at,
                 activity,
                 stewardship,
                 routine,

@@ -9,7 +9,7 @@ use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
 use cdno_domain::frontmatter::{Context, EnergyLevel};
-use cdno_domain::{DailySection, MonthlySection, WeeklySection};
+use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
 use crate::dto::WriteResultDto;
 
@@ -385,27 +385,45 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Scaffold a tracking note under an expanded stewardship. `stewardship` must be the slug of an existing expanded stewardship — do not invent one (there is no generic `fitness`; gym sessions go under `gym`); on a miss the error lists the valid slugs. The `activity` selects the template: a vault's `.cuaderno/templates/tracking-<activity>.md` if present, else the built-in generic template (no activity-specific templates ship built-in). `routine` is the bare slug of a routine doc (e.g. `upper-body-a`); the server wraps it into the template's `routine:` wikilink, taking effect only when the resolved template has a `routine:` field. Returns the new path for the user to flesh out. NOTE: the entry is always dated TODAY (server date) — there is no date override, so never use this tool to backfill a past session; file retrospective entries by other means."
+        description = "File a tracking note under an expanded stewardship. `stewardship` must be the slug of an existing expanded stewardship — do not invent one (there is no generic `fitness`; gym sessions go under `gym`); on a miss the error lists the valid slugs. The `activity` selects the template: a vault's `.cuaderno/templates/tracking-<activity>.md` if present, else the built-in generic template (no activity-specific templates ship built-in). `routine` is the bare slug of a routine doc (e.g. `upper-body-a`); the server wraps it into the template's `routine:` wikilink, taking effect only when the resolved template has a `routine:` field. `metrics` writes the entry's numbers into frontmatter, where they are queryable — a scalar per reading (`{\"balance\": 1240.5}`), or an array of flat records when one entry holds several comparable items (`{\"detail\": [{\"subject\": \"harmony\", \"minutes\": 25}]}`); prefer it over prose in `content` for anything you would later want to total or chart. `date` files the entry for a past day, so a session recorded after the fact lands on the day it happened. Filing is journalled to today's daily log either way. Returns the new path."
     )]
     pub async fn create_tracking_entry(
         &self,
         Parameters(input): Parameters<CreateTrackingEntryInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let at = chrono::Local::now().naive_local();
-        let (path, _source) = self
+        let now = chrono::Local::now().naive_local();
+        // The payload must be a JSON *object* — each key becomes a frontmatter
+        // key. Reject anything else here rather than letting a bare array or
+        // scalar reach the merge with no key to write it under.
+        let metrics = match input.metrics {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::Object(map)) => Some(map),
+            Some(_) => {
+                return Err(invalid_argument(
+                    "metrics",
+                    "must be a JSON object mapping each metric name to its value",
+                ));
+            }
+        };
+        let (outcome, _source) = self
             .with_vault(move |vault| {
-                let vars = input.vars.unwrap_or_default();
-                vault.add_tracking_entry_with_vars(
-                    at,
-                    &input.stewardship,
-                    &input.activity,
-                    input.routine.as_deref(),
-                    &input.content,
-                    &vars,
-                )
+                let mut draft = TrackingEntryDraft::new(&input.stewardship, &input.activity)
+                    .with_content(&input.content)
+                    .with_prompted(input.vars.clone().unwrap_or_default());
+                if let Some(routine) = &input.routine {
+                    draft = draft.with_routine(routine);
+                }
+                if let Some(date) = input.date {
+                    draft = draft.on(date);
+                }
+                if let Some(metrics) = metrics {
+                    draft = draft.with_metrics(metrics);
+                }
+                vault.add_tracking_entry(now, draft)
             })
             .await?
             .map_err(into_mcp_error)?;
+        let path = outcome.primary;
         json_result(WriteResultDto::new(
             path.to_string(),
             format!("Tracked at {}", path),

@@ -10,6 +10,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::TrackingEntryDraft;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, TrackingFrontmatter};
@@ -73,11 +74,11 @@ fn add_tracking_uses_a_vault_variant_template_when_present() {
     let path = vault
         .add_tracking_entry(
             dt(2026, 4, 6, 19, 0),
-            "health",
-            "gym",
-            Some("upper-body-a"),
-            "Energy was good.",
+            TrackingEntryDraft::new("health", "gym")
+                .with_routine("upper-body-a")
+                .with_content("Energy was good."),
         )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-04-06-gym.md"));
@@ -104,7 +105,11 @@ fn add_tracking_falls_back_to_generic_without_a_variant_template() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let path = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "yoga", None, "Felt loose.")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "yoga").with_content("Felt loose."),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
 
     assert_eq!(path, vp("stewardships/health/tracking/2026-04-01-yoga.md"));
@@ -136,7 +141,11 @@ fn add_tracking_errors_on_empty_activity() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "  ", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "  "),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("empty activity should error");
     assert!(matches!(err, DomainError::EmptyField { field: "activity" }));
 }
@@ -145,7 +154,11 @@ fn add_tracking_errors_on_empty_activity() {
 fn add_tracking_errors_when_stewardship_missing() {
     let (vault, _store) = empty_vault();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "nonexistent", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("nonexistent", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("missing stewardship should error");
     assert!(matches!(err, DomainError::Store(StoreError::NotFound(_))));
 }
@@ -160,7 +173,11 @@ fn add_tracking_missing_stewardship_error_lists_available_slugs() {
         .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "fitness", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("fitness", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("invented slug should error");
     let DomainError::Store(StoreError::NotFound(msg)) = err else {
         panic!("expected NotFound, got {err:?}");
@@ -179,7 +196,11 @@ fn add_tracking_errors_on_flat_stewardship() {
         .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
         .unwrap();
     let err = vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "finances", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("finances", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("flat stewardship has no tracking subdir");
     assert!(matches!(err, DomainError::TrackingOnFlatStewardship(s) if s == "finances"));
 }
@@ -191,16 +212,18 @@ fn add_tracking_errors_on_same_day_same_activity_duplicate() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
     let err = vault
         .add_tracking_entry(
             dt(2026, 4, 1, 18, 0),
-            "health",
-            "gym",
-            None,
-            "evening session",
+            TrackingEntryDraft::new("health", "gym").with_content("evening session"),
         )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("duplicate slug should error");
     assert!(matches!(
         err,
@@ -217,11 +240,10 @@ fn add_tracking_errors_on_prewrapped_routine() {
     let err = vault
         .add_tracking_entry(
             dt(2026, 4, 6, 19, 0),
-            "health",
-            "gym",
-            Some("[[stewardships/health/routines/foo]]"),
-            "",
+            TrackingEntryDraft::new("health", "gym")
+                .with_routine("[[stewardships/health/routines/foo]]"),
         )
+        .map(|(outcome, _)| outcome.primary)
         .expect_err("pre-wrapped routine should error");
     assert!(matches!(err, DomainError::MalformedWikilink { .. }));
 }
@@ -236,13 +258,276 @@ fn add_tracking_indexes_as_tracking_type() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 1, 8, 0), "health", "gym", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "gym"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
     vault
-        .add_tracking_entry(dt(2026, 4, 2, 8, 0), "health", "body", None, "")
+        .add_tracking_entry(
+            dt(2026, 4, 2, 8, 0),
+            TrackingEntryDraft::new("health", "body"),
+        )
+        .map(|(outcome, _)| outcome.primary)
         .unwrap();
     let summaries = vault
         .list_stewardships(NaiveDate::from_ymd_opt(2026, 5, 1).unwrap())
         .unwrap();
     assert_eq!(summaries[0].tracking_count, 2);
+}
+
+// ---------------------------------------------------------------------
+// Structured metrics, backdating, and the audit line (#481, #482)
+// ---------------------------------------------------------------------
+
+/// The frontmatter of a filed entry as the index JSON sees it — the shape a
+/// query has to work with.
+fn frontmatter_json(store: &Arc<dyn VaultStore>, path: &VaultPath) -> serde_json::Value {
+    let raw = store.read_file(path).unwrap();
+    let (fm, _body) = Frontmatter::parse(&raw).unwrap();
+    fm.as_json()
+}
+
+fn metrics(pairs: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    match pairs {
+        serde_json::Value::Object(m) => m,
+        other => panic!("metrics fixture must be an object, got {other}"),
+    }
+}
+
+fn health_vault() -> (Vault, Arc<dyn VaultStore>) {
+    let (vault, store) = empty_vault();
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+    (vault, store)
+}
+
+#[test]
+fn scalar_metrics_land_in_frontmatter() {
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "body").with_metrics(metrics(
+                serde_json::json!({"weight": 82.5, "resting_hr": 54}),
+            )),
+        )
+        .unwrap();
+
+    let fm = frontmatter_json(&store, &outcome.primary);
+    assert_eq!(fm.get("weight"), Some(&serde_json::json!(82.5)));
+    assert_eq!(fm.get("resting_hr"), Some(&serde_json::json!(54)));
+    // The template's own keys survive the merge.
+    assert_eq!(fm.get("activity"), Some(&serde_json::json!("body")));
+}
+
+#[test]
+fn a_record_sequence_reaches_the_index_as_a_nested_array() {
+    // The shape that makes grouping possible: one entry, several comparable
+    // items, each a flat record.
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "practice").with_metrics(metrics(
+                serde_json::json!({
+                    "detail": [
+                        {"subject": "harmony", "minutes": 25, "focus": 4},
+                        {"subject": "sight-reading", "minutes": 15, "focus": 5},
+                    ]
+                }),
+            )),
+        )
+        .unwrap();
+
+    let fm = frontmatter_json(&store, &outcome.primary);
+    let detail = fm.get("detail").expect("detail key").as_array().unwrap();
+    assert_eq!(detail.len(), 2);
+    assert_eq!(detail[0]["subject"], serde_json::json!("harmony"));
+    assert_eq!(detail[1]["minutes"], serde_json::json!(15));
+    // The entry still parses as a tracking note — the merge must not disturb
+    // the typed fields the parse requires.
+    assert_eq!(
+        read_tracking_fm(&store, &outcome.primary).activity,
+        "practice"
+    );
+}
+
+#[test]
+fn a_metric_violating_a_declared_schema_errors_naming_the_field() {
+    let (store, index) = (
+        Arc::new(MemoryVaultStore::new()) as Arc<dyn VaultStore>,
+        Arc::new(MemoryIndex::new()) as Arc<dyn VaultIndex>,
+    );
+    let mut schema = cdno_core::config::SchemaExtension::default();
+    schema.fields.insert(
+        "weight".to_owned(),
+        cdno_core::config::FieldSpec {
+            ty: cdno_core::config::FieldType::Float,
+            default: None,
+            required: false,
+            values: None,
+            list: None,
+            settable: None,
+            log_on_change: None,
+        },
+    );
+    let mut config = VaultConfig::default();
+    config.schemas.insert("tracking".to_owned(), schema);
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .unwrap();
+
+    match vault.add_tracking_entry(
+        dt(2026, 4, 6, 19, 0),
+        TrackingEntryDraft::new("health", "body")
+            .with_metrics(metrics(serde_json::json!({"weight": "heavy"}))),
+    ) {
+        Err(DomainError::InvalidFieldValue { field, reason, .. }) => {
+            assert_eq!(field, "weight");
+            assert!(reason.contains("not a valid float"), "reason: {reason}");
+        }
+        other => panic!("expected InvalidFieldValue(weight), got {other:?}"),
+    }
+}
+
+#[test]
+fn an_undeclared_metric_is_written_as_given() {
+    // Undeclared frontmatter is legal everywhere else in the vault; a
+    // per-activity declaration that could reject one does not exist yet.
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "body")
+                .with_metrics(metrics(serde_json::json!({"whatever": "free text"}))),
+        )
+        .unwrap();
+
+    assert_eq!(
+        frontmatter_json(&store, &outcome.primary).get("whatever"),
+        Some(&serde_json::json!("free text"))
+    );
+}
+
+#[test]
+fn an_explicit_date_files_the_entry_on_that_day() {
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 20, 9, 0),
+            TrackingEntryDraft::new("health", "gym")
+                .on(NaiveDate::from_ymd_opt(2026, 4, 6).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.primary,
+        vp("stewardships/health/tracking/2026-04-06-gym.md")
+    );
+    // The note's own `date:` follows the entry, not the clock.
+    assert_eq!(
+        read_tracking_fm(&store, &outcome.primary).date,
+        NaiveDate::from_ymd_opt(2026, 4, 6).unwrap()
+    );
+}
+
+#[test]
+fn an_implausible_date_is_rejected_at_both_ends() {
+    let (vault, _store) = health_vault();
+    let now = dt(2026, 4, 20, 9, 0);
+    for date in [
+        NaiveDate::from_ymd_opt(2062, 1, 1).unwrap(), // a mistyped year, far ahead
+        NaiveDate::from_ymd_opt(1926, 1, 1).unwrap(), // absurdly far back
+    ] {
+        match vault.add_tracking_entry(now, TrackingEntryDraft::new("health", "gym").on(date)) {
+            Err(DomainError::ImplausibleDate {
+                date: reported,
+                earliest,
+                latest,
+            }) => {
+                assert_eq!(reported, date);
+                assert!(earliest < latest, "the window must be well-formed");
+            }
+            other => panic!("expected ImplausibleDate for {date}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_date_inside_the_window_is_accepted_at_both_ends() {
+    // The bound exists to catch a typo, not to block a real import or a
+    // deliberately future-dated entry.
+    let (vault, _store) = health_vault();
+    let now = dt(2026, 4, 20, 9, 0);
+    for (date, activity) in [
+        (NaiveDate::from_ymd_opt(1980, 6, 1).unwrap(), "gym"),
+        (NaiveDate::from_ymd_opt(2027, 1, 1).unwrap(), "swim"),
+    ] {
+        vault
+            .add_tracking_entry(now, TrackingEntryDraft::new("health", activity).on(date))
+            .unwrap_or_else(|e| panic!("{date} must be accepted, got {e:?}"));
+    }
+}
+
+#[test]
+fn filing_an_entry_stages_a_daily_log_line() {
+    let (vault, store) = health_vault();
+    let (outcome, _source) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 6, 19, 0),
+            TrackingEntryDraft::new("health", "gym"),
+        )
+        .unwrap();
+
+    let daily = VaultPath::new(cdno_core::paths::daily_note_relpath(
+        NaiveDate::from_ymd_opt(2026, 4, 6).unwrap(),
+    ))
+    .unwrap();
+    assert!(
+        outcome.paths.contains(&daily),
+        "the daily note must be in the touched set so the desktop journals it: {:?}",
+        outcome.paths
+    );
+    let log = store.read_file(&daily).unwrap();
+    assert!(
+        log.contains("Tracked gym: [[stewardships/health/tracking/2026-04-06-gym]]"),
+        "daily log:\n{log}"
+    );
+}
+
+#[test]
+fn a_backdated_entry_logs_into_todays_note_naming_the_day_it_describes() {
+    // The audit trail is the point of the bound: a write that reshapes a past
+    // trend must be findable from the day it was made, not buried in the day
+    // it claims to describe.
+    let (vault, store) = health_vault();
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 20, 9, 0),
+            TrackingEntryDraft::new("health", "gym")
+                .on(NaiveDate::from_ymd_opt(2026, 4, 6).unwrap()),
+        )
+        .unwrap();
+
+    let today = VaultPath::new(cdno_core::paths::daily_note_relpath(
+        NaiveDate::from_ymd_opt(2026, 4, 20).unwrap(),
+    ))
+    .unwrap();
+    let log = store.read_file(&today).unwrap();
+    assert!(
+        log.contains("Tracked gym for 2026-04-06:"),
+        "today's log must name the backdated day:\n{log}"
+    );
+    let backdated_daily = VaultPath::new(cdno_core::paths::daily_note_relpath(
+        NaiveDate::from_ymd_opt(2026, 4, 6).unwrap(),
+    ))
+    .unwrap();
+    assert!(
+        !store.exists(&backdated_daily).unwrap(),
+        "backfilling must not scaffold a daily note for a day that never had one"
+    );
 }
