@@ -957,6 +957,14 @@ pub struct TrackingMetricDto {
     /// Overrides the activity's `group_by`; `"none"` collapses across records.
     pub group_by: Option<String>,
     pub unit: Option<String>,
+    /// The expression this metric is computed from, when it is derived rather
+    /// than recorded (`#484`) — e.g. `"km * rate_per_km"`.
+    ///
+    /// Present means **do not write a field of this name**: the value is
+    /// computed from the operands, and one supplied under the metric's own
+    /// name is ignored. Without this marker a caller told to follow the
+    /// declared field names would write it and never be told it did nothing.
+    pub derived: Option<String>,
 }
 
 impl From<&cdno_core::config::TrackingSpec> for TrackingSpecDto {
@@ -976,6 +984,13 @@ impl From<&cdno_core::config::TrackingSpec> for TrackingSpecDto {
                         .unwrap_or_else(|| "sum".to_owned()),
                     group_by: m.group_by.clone(),
                     unit: m.unit.clone(),
+                    // `DerivedExpr` serialises to its source spelling, which
+                    // is the form a caller would recognise from config.
+                    derived: m.derived.as_ref().and_then(|e| {
+                        serde_json::to_value(e)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_owned))
+                    }),
                 })
                 .collect(),
         }

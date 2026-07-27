@@ -202,9 +202,58 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `type` | metric | `bool` \| `int` \| `float` \| `string` \| `date`. Optional. |
 | `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
 | `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |
+| `derived` | metric | An expression computing this metric from sibling fields, e.g. `"km * rate_per_km"`. Evaluated **per record, before aggregation**. Declare `type` on it and the vault refuses to open. |
 | `unit` | metric | Display unit (`min`, `kg`, `EUR`). Carried through to the chart and the MCP series. |
 | `label` | metric | Display name for the series, when the metric's key is not what you want on a chart (`resting_hr` → `Resting heart rate`). |
 | `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws; it does not yet decide **whether** the series is drawn — see the note below. |
+
+### Derived metrics
+
+Some tracked quantities are products of others — a cost from a rate and a distance, a load from a
+weight and a count. Rather than making whoever writes the entry pre-compute them, declare the
+expression:
+
+```toml
+[tracking.commute.metrics.km]
+aggregate = "sum"
+
+[tracking.commute.metrics.rate_per_km]
+aggregate = "last"
+
+[tracking.commute.metrics.cost]
+derived   = "km * rate_per_km"
+aggregate = "sum"
+unit      = "EUR"
+```
+
+It is evaluated **per record, then aggregated** — not derived from the aggregates. With two trips
+of 10 km at 0.50 and 20 km at 0.25, `cost` is 10.00; deriving from the totals would give a
+different, wrong number the moment the rate varies.
+
+The grammar is deliberately tiny — one binary operation, nothing else:
+
+```
+expr    := operand OP operand
+operand := field-name | number
+OP      := '+' | '-' | '*'
+```
+
+- **No `/`.** Division is the one operator that manufactures NaN and infinity, and those must
+  never reach an aggregate. Multiply by the reciprocal, or pre-compute the ratio.
+- **No parentheses, calls, chaining or recursion**, and no deriving from another derived metric.
+- **Field names** are letters, digits and `_`, not starting with a digit. Hyphens are excluded
+  because `a-b` would be indistinguishable from a subtraction.
+- **Numbers are plain decimal** — digits, an optional leading `-`, an optional `.`. Exponent
+  notation (`1e-3`) is not supported; write the value out in full.
+- **Every operand must name a metric the same activity declares.** A typo is a vault-open error
+  naming the field, rather than a silently empty chart. The cost of that requirement: an operand
+  that exists only to be multiplied — a rate, say — still becomes a metric of its own, and until
+  `plot` gates drawing it is charted alongside the result (today `plot` only chooses the mark, not
+  whether a series appears — see below).
+- **`type` must be omitted** — the output is numeric by construction, so declaring one can only
+  contradict it.
+- **A record missing an operand contributes nothing** — a gap, on the same rule as a plain metric.
+  So does a result that is not finite.
 
 Choosing the aggregate is the whole point, and it follows from what the number *is*:
 

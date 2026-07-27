@@ -760,10 +760,15 @@ impl Vault {
                         },
                         None => None,
                     };
-                    // Non-finite values are dropped: they poison a sum and
-                    // would serialise as JSON `null` downstream.
-                    let Some(value) = numeric_field(record, metric).filter(|v| v.is_finite())
-                    else {
+                    // A derived metric computes from sibling fields rather
+                    // than reading one of its own name. Either way, non-finite
+                    // values are dropped: they poison a sum and would
+                    // serialise as JSON `null` downstream.
+                    let value = match &mspec.derived {
+                        Some(expr) => expr.eval(|field| numeric_field(record, field)),
+                        None => numeric_field(record, metric),
+                    };
+                    let Some(value) = value.filter(|v| v.is_finite()) else {
                         continue;
                     };
                     acc.entry(SeriesKey {

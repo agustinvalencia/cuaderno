@@ -8,6 +8,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **A metric can be derived from its siblings.** Some tracked quantities are products of others —
+  a cost from a rate and a distance, a load from a weight and a count — and without this every
+  such figure has to be pre-computed by whoever writes the entry, which defeats the point of
+  declaring the shape. `derived = "km * rate_per_km"` computes it instead, **per record and then
+  aggregated**: deriving from the totals would give a different, wrong number the moment the rate
+  varies.
+
+  The grammar is one binary operation over sibling fields or numbers, and nothing else — no
+  parentheses, calls, chaining or recursion, and no new dependency (an expression crate would
+  bring a far wider grammar than is wanted on read-hot config, and one of them is
+  Turing-complete). It is parsed to a typed AST at config load rather than re-parsed per record.
+  `/` is refused with its reason: division is the one operator that manufactures NaN and infinity,
+  and those must never reach an aggregate. An operand naming a metric the activity does not
+  declare is a vault-open error naming the field, rather than a silently empty chart. (#484)
+
 - **Tracking series are readable over MCP, and carry what the declaration knows.** Asked whether
   something is trending up, an agent had to open and parse every tracking note itself — the
   largest gap in the tracking surface, and one that widens as a vault grows.
