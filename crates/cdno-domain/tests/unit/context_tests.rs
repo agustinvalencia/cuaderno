@@ -1398,3 +1398,119 @@ fn tracking_series_gives_a_wide_table_one_series_per_metric() {
     );
     assert_eq!(value_of("body \u{b7} Sleep (h)"), 7.2);
 }
+
+// ---------------------------------------------------------------------
+// tracking_series_with_specs — the precedence rule (#485)
+// ---------------------------------------------------------------------
+
+/// A note carrying BOTH a frontmatter metric and a legacy body table, which
+/// is the state a vault is in the moment it declares an activity it has been
+/// tracking with tables.
+fn note_with_both(stewardship: &str, activity: &str, date: &str) -> String {
+    format!(
+        "---\ntype: tracking\nstewardship: {stewardship}\nactivity: {activity}\ndate: {date}\nweight: 82.5\n---\n\n# {activity} {date}\n\n| Weight (kg) |\n|-------------|\n| 99          |\n"
+    )
+}
+
+fn weight_spec() -> TrackingSpec {
+    TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("weight".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+#[test]
+fn a_declared_activity_emits_the_frontmatter_series_only() {
+    // Concatenating both sources would emit two series for the same metric,
+    // and they DISAGREE — 82.5 from frontmatter against 99 summed from the
+    // table. The whole point of declaring is that the table's blanket sum was
+    // wrong, so the declaration wins outright.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} weight"]);
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5),
+        "the frontmatter value, not the table's 99"
+    );
+}
+
+#[test]
+fn an_undeclared_activity_still_comes_from_its_body_table() {
+    // No migration is forced: an activity nobody declared is served exactly
+    // as it was before any of this existed.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &BTreeMap::new())
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} Weight (kg)"), ymd(2026, 7, 6)),
+        Some(99.0)
+    );
+}
+
+#[test]
+fn a_stewardship_mixing_declared_and_undeclared_draws_each_from_its_own_source() {
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-body.md",
+            &note_with_both("health", "body", "2026-07-06"),
+        ),
+        (
+            "stewardships/health/tracking/2026-07-06-gym.md",
+            &note_with_both("health", "gym", "2026-07-06"),
+        ),
+    ]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    assert_eq!(
+        names_of(&series),
+        vec!["body \u{b7} weight", "gym \u{b7} Weight (kg)"],
+        "declared from frontmatter, undeclared from its table"
+    );
+}
+
+#[test]
+fn no_series_name_appears_twice() {
+    // The failure the rule exists to prevent: a silent duplicate under a
+    // colliding name, carrying two numbers that disagree.
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-body.md",
+            &note_with_both("health", "body", "2026-07-06"),
+        ),
+        (
+            "stewardships/health/tracking/2026-07-13-body.md",
+            &note_with_both("health", "body", "2026-07-13"),
+        ),
+    ]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    let mut names = names_of(&series);
+    let before = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(before, names.len(), "duplicate series name in {names:?}");
+}
