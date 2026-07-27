@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.33.1] - 2026-07-27
+
+### Fixed
+
+- **An external `config.toml` edit could be destroyed by an edit made in the desktop Config form.**
+  The form's edit queue captured the draft, awaited its surgical write command, then applied the
+  result unconditionally. If the file changed on disk during that await — you saved it in an
+  editor, or another tool wrote it — the draft ended up derived from the *old* file while the hash
+  advanced to the *new* one. The compare-and-swap that exists to catch exactly this then passed,
+  because the hash genuinely matched what was on disk, and saving wrote a document built from
+  content that had already been superseded. Your external edit was gone, with no conflict notice.
+
+  An edit computed from a base that has since moved is now abandoned rather than applied, and you
+  are told to redo it. Losing one in-flight form edit is the honest trade against silently
+  reverting a change made outside the app. The form's own state and the hash it saves against are
+  now guaranteed to describe the same base — an invariant the view previously rested on a remount
+  that had been removed. (#507)
+
 ## [0.33.0] - 2026-07-27
 
 ### Added
