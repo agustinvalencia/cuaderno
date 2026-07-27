@@ -1664,3 +1664,116 @@ fn a_body_table_series_declares_nothing() {
     assert_eq!(series[0].label, None);
     assert_eq!(series[0].mark, None);
 }
+
+#[test]
+fn a_derived_metric_computes_per_record_before_aggregation() {
+    // The order matters: derive per record, THEN reduce. Deriving from the
+    // aggregates instead would give sum(km) * last(rate) - a different, wrong
+    // number the moment the rate varies.
+    use cdno_core::config::DerivedExpr;
+    let body = "detail:\n  - {km: 10, rate_per_km: 0.5}\n  - {km: 20, rate_per_km: 0.25}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/finances/tracking/2026-07-06-commute.md",
+        &tracking_fm_note("finances", "commute", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [
+            ("km".to_owned(), metric(Aggregate::Sum)),
+            (
+                "cost".to_owned(),
+                MetricSpec {
+                    aggregate: Aggregate::Sum,
+                    derived: Some("km * rate_per_km".parse::<DerivedExpr>().unwrap()),
+                    ..Default::default()
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("finances", &specs(&[("commute", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "commute \u{b7} cost"), ymd(2026, 7, 6)),
+        Some(10.0),
+        "10*0.5 + 20*0.25 = 10, not sum(km) * some rate"
+    );
+    assert_eq!(
+        point_on(named(&series, "commute \u{b7} km"), ymd(2026, 7, 6)),
+        Some(30.0)
+    );
+}
+
+#[test]
+fn a_record_missing_a_derived_operand_is_a_gap_not_a_zero() {
+    // Same rule as a plain metric: no value for this record, so no
+    // contribution - zero-filling would pull the total down silently.
+    use cdno_core::config::DerivedExpr;
+    let body = "detail:\n  - {km: 10, rate_per_km: 0.5}\n  - {km: 20}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/finances/tracking/2026-07-06-commute.md",
+        &tracking_fm_note("finances", "commute", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [(
+            "cost".to_owned(),
+            MetricSpec {
+                aggregate: Aggregate::Sum,
+                derived: Some("km * rate_per_km".parse::<DerivedExpr>().unwrap()),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("finances", &specs(&[("commute", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "commute \u{b7} cost"), ymd(2026, 7, 6)),
+        Some(5.0),
+        "only the complete record contributes"
+    );
+}
+
+#[test]
+fn a_non_finite_derived_result_skips_its_record() {
+    // The overflow case: two finite operands whose product is not. It must
+    // not reach the reduction.
+    use cdno_core::config::DerivedExpr;
+    let body = "detail:\n  - {a: 1e308, b: 10}\n  - {a: 2, b: 3}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/lab/tracking/2026-07-06-probe.md",
+        &tracking_fm_note("lab", "probe", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [(
+            "product".to_owned(),
+            MetricSpec {
+                aggregate: Aggregate::Sum,
+                derived: Some("a * b".parse::<DerivedExpr>().unwrap()),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("lab", &specs(&[("probe", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "probe \u{b7} product"), ymd(2026, 7, 6)),
+        Some(6.0),
+        "the overflowing record is skipped, not propagated as inf"
+    );
+}

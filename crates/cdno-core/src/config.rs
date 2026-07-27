@@ -349,6 +349,217 @@ pub enum PlotKind {
     Scatter,
 }
 
+/// A binary operator in a [`DerivedExpr`] (`#484`).
+///
+/// Division is deliberately absent. It is the one operator that manufactures
+/// `NaN`/`Inf`, which the derivation has to keep out of its aggregates — and
+/// admitting it would mean defining division-by-zero as "skip the record",
+/// a rule better introduced deliberately than inherited.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DerivedOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+/// One side of a [`DerivedExpr`]: a sibling field, or a constant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DerivedOperand {
+    /// Names another declared metric of the same activity, read from the
+    /// record being reduced.
+    Field(String),
+    Literal(f64),
+}
+
+/// A `derived = "…"` expression, parsed to a typed AST at config load rather
+/// than kept as a string and re-parsed per record (`#484`).
+///
+/// The grammar is deliberately tiny — one binary operation, no recursion, no
+/// calls, no parentheses:
+///
+/// ```text
+/// expr    := operand OP operand
+/// operand := field-name | number
+/// OP      := '+' | '-' | '*'
+/// ```
+///
+/// A field name is `[A-Za-z_][A-Za-z0-9_]*`. Hyphens are excluded on purpose:
+/// `a-b` would be indistinguishable from a subtraction.
+///
+/// No expression crate backs this. `rhai` is Turing-complete, and
+/// `evalexpr`/`meval` bring calls and a far wider grammar than is wanted on
+/// read-hot config; the workspace has no such dependency and should not gain
+/// one for a single binary operation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DerivedExpr {
+    pub left: DerivedOperand,
+    pub op: DerivedOp,
+    pub right: DerivedOperand,
+}
+
+impl DerivedExpr {
+    /// The sibling fields this expression reads, for validation and for the
+    /// per-record evaluation.
+    pub fn fields(&self) -> Vec<&str> {
+        [&self.left, &self.right]
+            .into_iter()
+            .filter_map(|o| match o {
+                DerivedOperand::Field(name) => Some(name.as_str()),
+                DerivedOperand::Literal(_) => None,
+            })
+            .collect()
+    }
+
+    /// Evaluate against a record, given a lookup for its numeric fields.
+    ///
+    /// Returns `None` when an operand's field is absent or non-numeric, or
+    /// when the result is not finite — both mean "no value for this record",
+    /// which the derivation reads as a gap rather than a zero.
+    pub fn eval(&self, field: impl Fn(&str) -> Option<f64>) -> Option<f64> {
+        let value = |operand: &DerivedOperand| match operand {
+            DerivedOperand::Field(name) => field(name),
+            DerivedOperand::Literal(n) => Some(*n),
+        };
+        let (left, right) = (value(&self.left)?, value(&self.right)?);
+        let out = match self.op {
+            DerivedOp::Add => left + right,
+            DerivedOp::Sub => left - right,
+            DerivedOp::Mul => left * right,
+        };
+        out.is_finite().then_some(out)
+    }
+}
+
+impl std::str::FromStr for DerivedExpr {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let mut scan = Scanner {
+            rest: raw.trim_start(),
+        };
+        let left = scan.operand(raw)?;
+        let op = scan.operator(raw)?;
+        let right = scan.operand(raw)?;
+        if !scan.rest.trim().is_empty() {
+            return Err(format!(
+                "`{raw}` has more than one operation \u{2014} the grammar is a single \
+                 `operand OP operand`, with no parentheses, calls or chaining"
+            ));
+        }
+        Ok(DerivedExpr { left, op, right })
+    }
+}
+
+/// A hand-rolled scanner for the four-token grammar. Small enough that a
+/// dependency would cost more than it saves, and it keeps the error messages
+/// specific to this grammar rather than a general expression parser's.
+struct Scanner<'a> {
+    rest: &'a str,
+}
+
+impl<'a> Scanner<'a> {
+    fn skip_space(&mut self) {
+        self.rest = self.rest.trim_start();
+    }
+
+    fn operand(&mut self, raw: &str) -> Result<DerivedOperand, String> {
+        self.skip_space();
+        // A literal may lead with `-`; an operator never does, because it is
+        // only read between two operands.
+        let numeric_start = self
+            .rest
+            .starts_with(|c: char| c.is_ascii_digit() || c == '.')
+            || (self.rest.starts_with('-')
+                && self.rest[1..].starts_with(|c: char| c.is_ascii_digit() || c == '.'));
+        if numeric_start {
+            let end = self.rest[1..]
+                .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .map(|i| i + 1)
+                .unwrap_or(self.rest.len());
+            let (text, rest) = self.rest.split_at(end);
+            self.rest = rest;
+            return text
+                .parse::<f64>()
+                .ok()
+                .filter(|n| n.is_finite())
+                .map(DerivedOperand::Literal)
+                .ok_or_else(|| format!("`{raw}` has `{text}` where a number was expected"));
+        }
+        let end = self
+            .rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(self.rest.len());
+        let (name, rest) = self.rest.split_at(end);
+        if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) {
+            return Err(format!(
+                "`{raw}` is not `operand OP operand` \u{2014} an operand is a field name \
+                 (letters, digits and `_`, not starting with a digit) or a number"
+            ));
+        }
+        self.rest = rest;
+        Ok(DerivedOperand::Field(name.to_owned()))
+    }
+
+    fn operator(&mut self, raw: &str) -> Result<DerivedOp, String> {
+        self.skip_space();
+        let op = match self.rest.chars().next() {
+            Some('+') => DerivedOp::Add,
+            Some('-') => DerivedOp::Sub,
+            Some('*') => DerivedOp::Mul,
+            Some('/') => {
+                return Err(format!(
+                    "`{raw}` uses `/`, which is not supported: division is the one operator \
+                     that manufactures NaN and infinity, and those must never reach an \
+                     aggregate. Pre-compute the ratio, or multiply by its reciprocal"
+                ));
+            }
+            Some(other) => {
+                return Err(format!(
+                    "`{raw}` uses `{other}` where an operator was expected \u{2014} only `+`, \
+                     `-` and `*` are supported"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "`{raw}` is missing an operator \u{2014} the grammar is \
+                     `operand OP operand`"
+                ));
+            }
+        };
+        self.rest = &self.rest[1..];
+        Ok(op)
+    }
+}
+
+impl<'de> Deserialize<'de> for DerivedExpr {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for DerivedExpr {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let operand = |o: &DerivedOperand| match o {
+            DerivedOperand::Field(name) => name.clone(),
+            DerivedOperand::Literal(n) => n.to_string(),
+        };
+        let op = match self.op {
+            DerivedOp::Add => '+',
+            DerivedOp::Sub => '-',
+            DerivedOp::Mul => '*',
+        };
+        serializer.serialize_str(&format!(
+            "{} {op} {}",
+            operand(&self.left),
+            operand(&self.right)
+        ))
+    }
+}
+
 /// One declared metric within a [`TrackingSpec`] (`#483`).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -378,6 +589,14 @@ pub struct MetricSpec {
     pub label: Option<String>,
     #[serde(default)]
     pub plot: PlotKind,
+    /// An expression computing this metric from sibling fields, parsed to a
+    /// typed AST at load (`#484`). A metric declaring one reads no field of
+    /// its own name.
+    ///
+    /// `type` must be omitted alongside it: the output is numeric by
+    /// construction, so declaring one invites a silent contradiction
+    /// (`type = "int"` on a fractional expression).
+    pub derived: Option<DerivedExpr>,
     /// RESERVED for the time-reduction axis — month-over-month deltas,
     /// rollups, streaks. Parsed so the grammar is fixed now, but a value is a
     /// load error ("not yet implemented"), so adding the behaviour later is
@@ -594,6 +813,37 @@ impl VaultConfig {
                     return invalid(format!(
                         "{at} sets an empty `group_by` \u{2014} use `none` to collapse across records"
                     ));
+                }
+                if let Some(expr) = &mspec.derived {
+                    // A derived metric's output is numeric by construction, so
+                    // a declared `type` can only contradict it.
+                    if mspec.ty.is_some() {
+                        return invalid(format!(
+                            "{at} declares both `derived` and `type` \u{2014} a derived value is \
+                             numeric by construction, so `type` can only contradict it"
+                        ));
+                    }
+                    // Operands must name a sibling the activity declares, and
+                    // one reading a real field rather than another expression:
+                    // checking here is what makes a typo a vault-open error
+                    // instead of a silently empty chart.
+                    for field in expr.fields() {
+                        match spec.metrics.get(field) {
+                            Some(sibling) if sibling.derived.is_none() => {}
+                            Some(_) => {
+                                return invalid(format!(
+                                    "{at} derives from `{field}`, which is itself derived \u{2014} \
+                                     the grammar is one operation over plain fields"
+                                ));
+                            }
+                            None => {
+                                return invalid(format!(
+                                    "{at} derives from `{field}`, which `[tracking.{activity}]` \
+                                     does not declare as a metric"
+                                ));
+                            }
+                        }
+                    }
                 }
             }
         }
