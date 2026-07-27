@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use cdno_core::config::{
-    CustomNoteType, FieldSpec, IgnoreSet, SchemaExtension, VaultConfig, VaultMeta,
+    CustomNoteType, FieldSpec, IgnoreSet, PlotKind, SchemaExtension, VaultConfig, VaultMeta,
 };
 use cdno_core::config_edit;
 use cdno_core::index::VaultIndex;
@@ -300,6 +300,26 @@ pub async fn config_remove_schema_field(
 ) -> Result<String, CmdError> {
     Ok(config_edit::remove_schema_field(
         &content, &note_type, &field,
+    )?)
+}
+
+/// Set or remove the `plot` key within an existing
+/// `[tracking.<activity>.metrics.<metric>]` table in the draft, returning
+/// the new config string — the desktop's plot-kind picker (#490), on the
+/// Stewardship Detail trend charts. Pure — no write; the later
+/// `save_config` runs the same validate -> compare-and-swap -> write ->
+/// live-reload gate as every other config edit. `PlotKind::None` removes
+/// the key rather than writing it (`cdno_core::config_edit::set_metric_plot`
+/// docs the minimal-keys rule).
+#[tauri::command]
+pub async fn config_set_metric_plot(
+    content: String,
+    activity: String,
+    metric: String,
+    plot: PlotKind,
+) -> Result<String, CmdError> {
+    Ok(config_edit::set_metric_plot(
+        &content, &activity, &metric, plot,
     )?)
 }
 

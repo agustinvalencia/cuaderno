@@ -10,9 +10,10 @@
 //! `toml::to_string(&VaultConfig)` would re-serialise the whole document
 //! and *drop every comment and all ordering* — it fights the seam. So
 //! these functions edit the parsed `toml_edit::DocumentMut` in place,
-//! mutating only the one dotted table (`[note_types.<name>]` or
-//! `[schemas.<type>.fields.<field>]`) and returning the re-rendered
-//! string.
+//! mutating only the one dotted table (`[note_types.<name>]`,
+//! `[schemas.<type>.fields.<field>]`, or — since `#490` — a single key
+//! within `[tracking.<activity>.metrics.<metric>]`) and returning the
+//! re-rendered string.
 //!
 //! **No validation happens here.** These writers are deliberately dumb:
 //! they produce a candidate string, and the save gate
@@ -40,7 +41,7 @@
 
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::config::{CustomNoteType, FieldSpec};
+use crate::config::{CustomNoteType, FieldSpec, PlotKind};
 use crate::error::ConfigEditError;
 
 /// Parse a config buffer into an editable document, mapping a syntax
@@ -265,6 +266,69 @@ pub fn remove_schema_field(
     if let Some(fields) = fields {
         fields.remove(field);
     }
+    Ok(doc.to_string())
+}
+
+/// Set or remove the `plot` key within an existing
+/// `[tracking.<activity>.metrics.<metric>]` table — the ONE key the
+/// desktop's plot-kind picker controls (`#490`). Every other key on the
+/// metric (`type`, `aggregate`, `group_by`, `unit`, `label`, `derived`,
+/// `window`) is left untouched: unlike [`set_schema_field`]'s full-table
+/// stamp, the picker never models those keys, so writing them from its
+/// payload would either invent bogus defaults or silently drop a
+/// hand-authored value the picker knows nothing about. This is the
+/// narrowest possible edit — a single-key insert/remove into an existing
+/// table, closer in shape to [`set_variable`] than to [`set_schema_field`].
+///
+/// `PlotKind::None` is `MetricSpec::plot`'s own serde default — an
+/// undeclared `plot` already means "collected, not drawn" — so picking
+/// "none" REMOVES the key rather than writing `plot = "none"`, the same
+/// minimal-keys rule [`set_or_remove_true_flag`] follows for the setter
+/// flags. This also keeps "explicitly chose none" and "never declared a
+/// plot" indistinguishable on disk, which is correct: they mean the same
+/// thing.
+///
+/// `activity` and `metric` are expected to already be declared — the
+/// picker only ever offers this for a metric a chart is currently
+/// rendering, which by construction already has a
+/// `[tracking.<activity>.metrics.<metric>]` entry. If the file changed
+/// underneath since the draft was loaded (a concurrent hand-edit dropped
+/// the metric), [`table_entry`] would vivify empty ancestor tables rather
+/// than erroring here — that is harmless, because the candidate string
+/// this produces still has to clear the save gate's compare-and-swap on
+/// the hash read before this edit was made. This writer's job is only to
+/// produce the right candidate; authorising the write is the gate's job,
+/// not this function's.
+pub fn set_metric_plot(
+    content: &str,
+    activity: &str,
+    metric: &str,
+    plot: PlotKind,
+) -> Result<String, ConfigEditError> {
+    let mut doc = parse(content)?;
+    let tracking = table_entry(doc.as_table_mut(), "tracking", true)?;
+    let activity_table = table_entry(tracking, activity, true)?;
+    let metrics = table_entry(activity_table, "metrics", true)?;
+    let table = table_entry(metrics, metric, false)?;
+
+    match plot {
+        PlotKind::None => {
+            table.remove("plot");
+        }
+        PlotKind::Line => {
+            table.insert("plot", value("line"));
+        }
+        PlotKind::Column => {
+            table.insert("plot", value("column"));
+        }
+        PlotKind::Area => {
+            table.insert("plot", value("area"));
+        }
+        PlotKind::Scatter => {
+            table.insert("plot", value("scatter"));
+        }
+    }
+
     Ok(doc.to_string())
 }
 

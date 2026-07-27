@@ -18,6 +18,7 @@ import StewardshipDetail, {
   capSeries,
   DEFAULT_CHART_CAP,
   isDrawable,
+  metricKeyOf,
   metricsGatedSeries,
 } from "./StewardshipDetail";
 
@@ -220,6 +221,75 @@ const NAV_MOOD: StewardshipDetailData = {
     mark: null,
   })),
 };
+
+// A single DECLARED series (`mark: "line"`, backed by a real
+// `[tracking.gym.metrics.reps]` table) — the shape the plot-kind picker
+// (#490) needs: a body-table (`mark: null`) series has nothing to persist
+// a pick into, so the picker only ever appears here.
+const DECLARED: StewardshipDetailData = {
+  ...EXPANDED,
+  series: [
+    {
+      name: "gym · reps",
+      points: [
+        { date: "2026-07-01", value: 6 },
+        { date: "2026-07-05", value: 4 },
+      ],
+      unit: null,
+      label: null,
+      mark: "line",
+    },
+  ],
+};
+
+const CONFIG_TOML = '[tracking.gym.metrics.reps]\ntype = "int"\nplot = "line"\n';
+const CONFIG_HASH = "cafef00dcafef00d";
+
+/** How save_config should answer for the plot-kind picker's persist
+ * action: resolve with a new document, or reject with a tagged
+ * ConfigSaveError (mirrors Config.test.tsx's own SaveOutcome). */
+type SaveOutcome = { ok: true; content: string; hash: string } | { ok: false; error: unknown };
+
+/** Mounts DECLARED with the config commands the picker drives wired up:
+ * `read_config` serves the fixed baseline, `config_set_metric_plot`
+ * mimics the real surgical writer closely enough for these tests (swap or
+ * drop the `plot` line), and `save_config` answers per `opts.save`
+ * (defaulting to a success echoing the posted content/hash back). */
+function renderDeclaredWith(
+  opts: { calls?: Array<{ cmd: string; args: unknown }>; save?: SaveOutcome } = {},
+) {
+  const calls = opts.calls ?? [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return { content: CONFIG_TOML, hash: CONFIG_HASH };
+      case "config_set_metric_plot": {
+        const { plot } = args as { plot: string };
+        return plot === "none"
+          ? CONFIG_TOML.replace('plot = "line"\n', "")
+          : CONFIG_TOML.replace('plot = "line"', `plot = "${plot}"`);
+      }
+      case "validate_config":
+        return undefined;
+      case "save_config": {
+        if (opts.save === undefined) {
+          const { content, expectedHash } = args as { content: string; expectedHash: string };
+          return { content, hash: expectedHash };
+        }
+        if (opts.save.ok) return { content: opts.save.content, hash: opts.save.hash };
+        throw opts.save.error;
+      }
+      default:
+        return undefined;
+    }
+  });
+  return mountDetail(DECLARED);
+}
 
 const FLAT: StewardshipDetailData = {
   slug: "finances",
@@ -526,6 +596,131 @@ test('a series declared plot = "none" is not drawn; a body-table (mark: null) se
   expect(screen.queryByText("gym · Effort")).toBeNull();
 });
 
+// --- The plot-kind picker (#490): stages a change locally with immediate
+//     preview, writes nothing until an explicit action, and persists
+//     through the SAME validate -> compare-and-swap -> write -> live-reload
+//     gate every other config edit uses. ---
+
+test("a body-table series (mark: null) has no picker — there is nothing to persist a pick into", async () => {
+  renderDetail(MIXED);
+  await screen.findByRole("heading", { name: "Trends" });
+  expect(screen.queryByRole("combobox", { name: /Chart type for/ })).toBeNull();
+});
+
+test("changing the picker previews immediately, and writes nothing until the explicit action", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderDeclaredWith({ calls });
+
+  await screen.findByRole("heading", { name: "Trends" });
+  const figure = screen.getByText("gym · reps").closest("figure");
+  expect(figure?.getAttribute("data-chart-kind")).toBe("line");
+
+  const select = screen.getByRole("combobox", { name: "Chart type for gym · reps" });
+  fireEvent.change(select, { target: { value: "column" } });
+
+  // The preview updates without a save_config ever firing.
+  await waitFor(() => expect(figure?.getAttribute("data-chart-kind")).toBe("column"));
+  expect(calls.some((c) => c.cmd === "config_set_metric_plot")).toBe(true);
+  expect(calls.some((c) => c.cmd === "save_config")).toBe(false);
+});
+
+test('picking "none" dims the chart and states it will stop drawing, without removing it from the grid', async () => {
+  renderDeclaredWith();
+  await screen.findByRole("heading", { name: "Trends" });
+
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "none" },
+  });
+
+  expect(await screen.findByText(/Saving will stop drawing this chart/)).toBeDefined();
+  // Still in the grid — a picker change is a preview, not a removal.
+  expect(
+    within(screen.getByRole("group", { name: "Trend charts" })).getByText("gym · reps"),
+  ).toBeDefined();
+});
+
+test("the explicit action persists the staged pick through save_config, with the current hash", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderDeclaredWith({ calls });
+
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "column" },
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+
+  await waitFor(() => {
+    const saved = calls.find((c) => c.cmd === "save_config");
+    expect(saved?.args).toMatchObject({ expectedHash: CONFIG_HASH });
+  });
+  // The persist bar clears once the save lands.
+  await waitFor(() =>
+    expect(screen.queryByRole("group", { name: "Unsaved chart type changes" })).toBeNull(),
+  );
+});
+
+test("Discard reverts the staged pick without ever calling save_config", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  renderDeclaredWith({ calls });
+
+  await screen.findByRole("heading", { name: "Trends" });
+  const select = screen.getByRole("combobox", {
+    name: "Chart type for gym · reps",
+  }) as HTMLSelectElement;
+  fireEvent.change(select, { target: { value: "column" } });
+
+  fireEvent.click(await screen.findByRole("button", { name: "Discard chart type changes" }));
+
+  await waitFor(() =>
+    expect(screen.queryByRole("group", { name: "Unsaved chart type changes" })).toBeNull(),
+  );
+  expect(select.value).toBe("line");
+  expect(calls.some((c) => c.cmd === "save_config")).toBe(false);
+});
+
+test("a compare-and-swap conflict is surfaced with a reload, never silently clobbered", async () => {
+  renderDeclaredWith({ save: { ok: false, error: { kind: "conflict" } } });
+
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "column" },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+
+  await waitFor(() => {
+    const status = screen
+      .getAllByRole("status")
+      .find((n) => n.textContent?.includes("changed on disk"));
+    expect(status).toBeDefined();
+  });
+  expect(screen.getByRole("button", { name: "Reload" })).toBeDefined();
+});
+
+test("the picker has no axe violations while a change is staged, or while a conflict is surfaced", async () => {
+  const { container } = renderDeclaredWith();
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "none" },
+  });
+  await screen.findByRole("group", { name: "Unsaved chart type changes" });
+  expect(
+    await axe(container, { rules: { "color-contrast": { enabled: false } } }),
+  ).toHaveNoViolations();
+
+  cleanup();
+  const conflict = renderDeclaredWith({ save: { ok: false, error: { kind: "conflict" } } });
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "column" },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+  await screen.findByRole("button", { name: "Reload" });
+  expect(
+    await axe(conflict.container, { rules: { "color-contrast": { enabled: false } } }),
+  ).toHaveNoViolations();
+});
+
 test('a stewardship whose only series are all plot = "none" has no Trends pane', async () => {
   // Nothing survives the filter, so there is nothing to draw — the pane
   // should be absent, not an empty frame with a heading and no charts.
@@ -680,6 +875,15 @@ test('isDrawable suppresses only a literal "none" mark', () => {
   expect(isDrawable(series("gym · Sets", "line"))).toBe(true);
   expect(isDrawable(series("gym · Sets", "column"))).toBe(true);
   expect(isDrawable(series("gym · Sets", "none"))).toBe(false);
+});
+
+test("metricKeyOf recovers the raw config key from a series name, even across a grouped series", () => {
+  // The metric segment is always LAST, whether or not a group sits between
+  // it and the activity — see `metricKeyOf`'s own doc comment for why that
+  // holds even when a group value legitimately contains the separator.
+  expect(metricKeyOf("gym · reps")).toBe("reps");
+  expect(metricKeyOf("gym · upper-body · reps")).toBe("reps");
+  expect(metricKeyOf("weigh-in · weight")).toBe("weight");
 });
 
 test("metricsGatedSeries keeps one series per activity when metrics are off, and all of them when on", () => {

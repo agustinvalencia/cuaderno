@@ -4,10 +4,10 @@
 //! prove the string-in/string-out contract the Config form relies on — the
 //! save gate never sees a whole-document re-serialise.
 
-use cdno_core::config::{CustomNoteType, FieldSpec, FieldType};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, PlotKind};
 use cdno_core::config_edit::{
-    remove_note_type, remove_prompt_variable, remove_schema_field, remove_variable, set_note_type,
-    set_prompt_variable, set_schema_field, set_variable,
+    remove_note_type, remove_prompt_variable, remove_schema_field, remove_variable,
+    set_metric_plot, set_note_type, set_prompt_variable, set_schema_field, set_variable,
 };
 use cdno_core::error::ConfigEditError;
 
@@ -641,4 +641,184 @@ fn set_prompt_variable_round_trips_an_escaped_message() {
 
     let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
     assert_eq!(cfg.prompt_for_variable("topic"), Some(msg));
+}
+
+// --- `set_metric_plot` (#490): the desktop's plot-kind picker writer,
+//     the ONE key within `[tracking.<activity>.metrics.<metric>]` a
+//     trend-chart picker controls. ---
+
+#[test]
+fn set_metric_plot_writes_the_declared_kind() {
+    let out = set_metric_plot("", "gym", "reps", PlotKind::Column).expect("set plot");
+
+    assert!(out.contains("[tracking.gym.metrics.reps]"));
+    assert!(out.contains("plot = \"column\""));
+    // No bare intermediate headers leak — same implicit-ancestor rule as
+    // `set_schema_field`.
+    assert!(!out.contains("\n[tracking]\n"));
+    assert!(!out.contains("\n[tracking.gym]\n"));
+    assert!(!out.contains("\n[tracking.gym.metrics]\n"));
+
+    // Every non-`none` kind round-trips through the real config parser.
+    for (kind, text) in [
+        (PlotKind::Line, "line"),
+        (PlotKind::Area, "area"),
+        (PlotKind::Scatter, "scatter"),
+    ] {
+        let out = set_metric_plot("", "gym", "reps", kind).expect("set plot");
+        let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+        let mspec = &cfg.tracking["gym"].metrics["reps"];
+        assert_eq!(mspec.plot, kind, "declared `{text}` round-trips");
+    }
+}
+
+#[test]
+fn set_metric_plot_none_removes_the_key_rather_than_writing_it() {
+    // `PlotKind::None` is the struct default, so picking "none" removes the
+    // key entirely — matching the `set_or_remove_true_flag` minimal-keys
+    // rule elsewhere in this module.
+    let existing = "\
+[tracking.gym.metrics.reps]
+type = \"int\"
+plot = \"line\"
+";
+    let out = set_metric_plot(existing, "gym", "reps", PlotKind::None).expect("clear plot");
+
+    assert!(
+        !out.contains("plot"),
+        "an explicit `none` removes the key rather than writing it: {out}"
+    );
+    // The table (and its other key) survives.
+    assert!(out.contains("[tracking.gym.metrics.reps]"));
+    assert!(out.contains("type = \"int\""));
+    // It re-parses, and the default kicks in for the now-absent key.
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&out).expect("re-parses");
+    assert_eq!(cfg.tracking["gym"].metrics["reps"].plot, PlotKind::None);
+}
+
+#[test]
+fn set_metric_plot_none_on_an_already_undeclared_metric_is_a_noop() {
+    // Removing an absent key is a no-op — idempotent, like the other
+    // remove-shaped writers in this module.
+    let existing = "\
+[tracking.gym.metrics.reps]
+type = \"int\"
+";
+    let out = set_metric_plot(existing, "gym", "reps", PlotKind::None).expect("no-op clear");
+    assert_eq!(out, existing);
+}
+
+#[test]
+fn set_metric_plot_leaves_every_sibling_key_on_the_metric_untouched() {
+    // The picker only ever sees `plot` — every other key a hand-authored
+    // metric declares (`type`, `aggregate`, `group_by`, `unit`, `label`,
+    // `derived`, `window`) must survive an edit unchanged, unlike
+    // `set_schema_field`'s full-table stamp.
+    let existing = "\
+[tracking.gym.metrics.reps]
+type = \"int\"
+aggregate = \"sum\"
+group_by = \"exercise\"
+unit = \"reps\"
+label = \"Total reps\"
+plot = \"line\"
+";
+    let out = set_metric_plot(existing, "gym", "reps", PlotKind::Column).expect("set plot");
+
+    assert!(out.contains("plot = \"column\""));
+    assert!(!out.contains("plot = \"line\""));
+    for untouched in [
+        "type = \"int\"",
+        "aggregate = \"sum\"",
+        "group_by = \"exercise\"",
+        "unit = \"reps\"",
+        "label = \"Total reps\"",
+    ] {
+        assert!(out.contains(untouched), "`{untouched}` must survive: {out}");
+    }
+}
+
+#[test]
+fn set_metric_plot_edits_only_the_named_metric_leaving_siblings_byte_identical() {
+    // Three sibling metrics under one activity, plus an unrelated table and
+    // a comment; editing the MIDDLE metric must leave the other two, the
+    // comment, and the unrelated table untouched.
+    let three = "\
+# vault config
+[vault]
+name = \"Demo\"
+
+[tracking.gym.metrics.sets]
+type = \"int\"
+plot = \"column\"
+
+[tracking.gym.metrics.reps]
+type = \"int\"
+
+[tracking.gym.metrics.weight]
+type = \"float\"
+plot = \"line\"
+";
+    let out = set_metric_plot(three, "gym", "reps", PlotKind::Scatter).expect("edit middle");
+
+    assert!(out.contains("[tracking.gym.metrics.reps]\ntype = \"int\"\nplot = \"scatter\""));
+    // Neighbours and unrelated context survive verbatim.
+    assert!(out.contains("# vault config"));
+    assert!(out.contains("[vault]\nname = \"Demo\""));
+    assert!(out.contains("[tracking.gym.metrics.sets]\ntype = \"int\"\nplot = \"column\""));
+    assert!(out.contains("[tracking.gym.metrics.weight]\ntype = \"float\"\nplot = \"line\""));
+}
+
+#[test]
+fn set_metric_plot_leaves_sibling_activities_and_metrics_untouched() {
+    // A second activity, and a second metric on the SAME activity, both
+    // survive an edit to a third metric.
+    let existing = "\
+[tracking.gym.metrics.reps]
+type = \"int\"
+
+[tracking.gym.metrics.sets]
+type = \"int\"
+plot = \"column\"
+
+[tracking.weigh-in.metrics.weight]
+type = \"float\"
+plot = \"line\"
+";
+    let out = set_metric_plot(existing, "gym", "reps", PlotKind::Line).expect("edit reps");
+
+    assert!(out.contains("[tracking.gym.metrics.reps]\ntype = \"int\"\nplot = \"line\""));
+    assert!(out.contains("[tracking.gym.metrics.sets]\ntype = \"int\"\nplot = \"column\""));
+    assert!(out.contains("[tracking.weigh-in.metrics.weight]\ntype = \"float\"\nplot = \"line\""));
+}
+
+#[test]
+fn set_metric_plot_none_then_a_kind_round_trips() {
+    // Declaring a kind, clearing it, then declaring a (possibly different)
+    // kind again must land on exactly that kind, with no leftover key from
+    // the intermediate clear.
+    let declared = set_metric_plot("", "gym", "reps", PlotKind::Line).expect("declare");
+    let cleared = set_metric_plot(&declared, "gym", "reps", PlotKind::None).expect("clear");
+    let redeclared = set_metric_plot(&cleared, "gym", "reps", PlotKind::Column).expect("redeclare");
+
+    let cfg: cdno_core::config::VaultConfig = toml::from_str(&redeclared).expect("re-parses");
+    assert_eq!(cfg.tracking["gym"].metrics["reps"].plot, PlotKind::Column);
+}
+
+#[test]
+fn set_metric_plot_refuses_a_wrong_shaped_tracking_key() {
+    // `tracking` authored as a scalar, not a table — refused (NotATable),
+    // never clobbered, mirroring `a_wrong_shaped_key_is_refused_not_overwritten`.
+    let wrong = "tracking = 5\n";
+    let err = set_metric_plot(wrong, "gym", "reps", PlotKind::Line)
+        .expect_err("a scalar where a table is needed must be refused");
+    assert!(matches!(err, ConfigEditError::NotATable(_)));
+}
+
+#[test]
+fn set_metric_plot_reports_a_parse_error_not_a_clobber() {
+    let broken = "[tracking.gym.metrics.reps\ntype = \"int\"\n";
+    let err = set_metric_plot(broken, "gym", "reps", PlotKind::Line)
+        .expect_err("a broken buffer must not be silently rewritten");
+    assert!(matches!(err, ConfigEditError::Parse(_)));
 }

@@ -18,6 +18,7 @@ import type { InboxItem } from "./bindings/InboxItem";
 import type { NoteView } from "./bindings/NoteView";
 import type { NowView } from "./bindings/NowView";
 import type { OrientationView } from "./bindings/OrientationView";
+import type { PlotKind } from "./bindings/PlotKind";
 import type { PortfolioDetail } from "./bindings/PortfolioDetail";
 import type { PortfolioSummary } from "./bindings/PortfolioSummary";
 import type { QuestionStatus } from "./bindings/QuestionStatus";
@@ -544,6 +545,21 @@ export function configRemoveSchemaField(
   field: string,
 ): Promise<string> {
   return call("config_remove_schema_field", { content, noteType, field });
+}
+
+/** Set or remove the `plot` key on an existing
+ * `[tracking.<activity>.metrics.<metric>]` table in `content`; resolves to
+ * the new config string — the Stewardship Detail plot-kind picker's write
+ * (#490). `plot: "none"` removes the key rather than writing it (it is the
+ * metric's own default). Rust `activity`/`metric` are `activity`/`metric`
+ * on the wire (both already lowercase, no camelCase to translate). */
+export function configSetMetricPlot(
+  content: string,
+  activity: string,
+  metric: string,
+  plot: PlotKind,
+): Promise<string> {
+  return call("config_set_metric_plot", { content, activity, metric, plot });
 }
 
 /** Insert or replace a static template variable (`[variables].<name>`) in

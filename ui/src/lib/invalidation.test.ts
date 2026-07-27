@@ -116,3 +116,16 @@ test("the sidebar's slot count follows a config change (#444)", async () => {
 
   expect(client.getQueryState(["get_orientation"])?.isInvalidated).toBe(true);
 });
+
+test("an open Stewardship Detail refreshes on a config save (#490)", async () => {
+  // The plot-kind picker persists a metric's `plot` through the config save
+  // gate, not a stewardships-area write — so `get_stewardship_detail` must
+  // ride the `config` area too, or a saved pick would never reach the open
+  // chart pane.
+  const client = new QueryClient();
+  await seed(client, "get_stewardship_detail");
+
+  invalidateAreas(client, ["config"]);
+
+  expect(client.getQueryState(["get_stewardship_detail"])?.isInvalidated).toBe(true);
+});

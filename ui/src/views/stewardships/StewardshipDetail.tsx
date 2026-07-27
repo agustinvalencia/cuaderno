@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import type { PlotKind } from "../../api/bindings/PlotKind";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
 import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
 import {
@@ -20,6 +21,7 @@ import {
   resolveWikilink,
 } from "../../api/commands";
 import {
+  captionFor,
   markForSeries,
   SERIES_COLORS,
   TrendChart,
@@ -33,6 +35,7 @@ import { shortDate } from "../../lib/dates";
 import { ClampedText } from "../../components/ui/clamped-text";
 import { SectionHeading } from "../../components/ui/section-heading";
 import { useToast } from "../../shell/Toasts";
+import { usePlotKindDraft, type PlotKindDraft } from "./usePlotKindDraft";
 
 /** The activity a tracking series belongs to. Series are named
  * `"<activity> · <column>"`, and only the first separator splits them —
@@ -44,6 +47,20 @@ const SERIES_SEPARATOR = " \u00b7 ";
 export function activityOf(seriesName: string): string {
   const at = seriesName.indexOf(SERIES_SEPARATOR);
   return at === -1 ? seriesName : seriesName.slice(0, at);
+}
+
+/** The metric's raw config key — `[tracking.<activity>.metrics.<KEY>]` —
+ * recovered from a series name, for the plot-kind picker (#490). The metric
+ * segment is always the LAST one: `SeriesKey::display_name` (cdno-domain's
+ * `context.rs`) appends it once, verbatim, after an optional group segment,
+ * so taking the tail is safe even when a `group_by` value legitimately
+ * contains the separator (the group sits strictly before the metric, never
+ * after it). Only meaningful for a DECLARED series (`mark !== null`); an
+ * undeclared body-table series has no config key to recover, and the picker
+ * never calls this for one. */
+export function metricKeyOf(seriesName: string): string {
+  const parts = seriesName.split(SERIES_SEPARATOR);
+  return parts[parts.length - 1];
 }
 
 /** A series declared `plot = "none"` (#500) stays collected and queryable
@@ -202,6 +219,16 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   // with an activity that has nothing left to chart.
   const drawableSeries = data.series.filter(isDrawable);
   const showCharts = data.variant === "expanded" && drawableSeries.length > 0;
+  // The plot-kind picker's staging model (#490) — reads config.toml only
+  // when a declared (config-backed) series is actually drawable; an
+  // all-body-table stewardship, or one whose only declared series are
+  // `plot = "none"` (already filtered out of `drawableSeries` above and
+  // never rendered), never touches config.toml at all. `drawableSeries`
+  // rather than the further-narrowed `shownSeries` computed below: every
+  // step between the two only ever REMOVES series (the activity filter,
+  // the metrics gate, the cap), so this is a safe superset check that
+  // never under-enables while a picker could be showing.
+  const plotDraft = usePlotKindDraft(showCharts && drawableSeries.some((s) => s.mark !== null));
   // A series is named "<activity> · <column>" (composed in
   // `cdno-domain`'s `context.rs`), and the activity is what a reader
   // filters by. A gym stewardship tracking sets, reps and weight across
@@ -343,6 +370,10 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
               </div>
             )}
           </div>
+          {/* The plot-kind picker's staged-not-yet-saved state (#490): an
+              explicit, labelled action persists through the same gate
+              every other config edit uses — never a toggle side-effect. */}
+          <PlotDraftBar plotDraft={plotDraft} />
           {/* Two up rather than one long column. */}
           <div
             role="group"
@@ -350,15 +381,12 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
             className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-2"
           >
             {shownSeries.map((series, index) => (
-              // Count/volume series (all-integer values — reps, laps,
-              // sessions) read better as calm columns; continuous
-              // measures keep the line. The choice is cosmetic.
-              <TrendChart
+              <ChartCard
                 key={series.name}
                 series={series}
                 color={SERIES_COLORS[index % SERIES_COLORS.length]}
                 animate={!reducedMotion}
-                kind={markForSeries(series)}
+                plotDraft={plotDraft}
               />
             ))}
           </div>
@@ -448,6 +476,134 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
           ← all stewardships
         </Link>
       </p>
+    </div>
+  );
+}
+
+/** One chart plus its plot-kind picker (#490). The picker only appears for
+ * a DECLARED series (`mark !== null`) — an undeclared body-table series has
+ * no `[tracking.<activity>.metrics.<metric>]` entry to persist a pick into,
+ * so there is nothing for a picker to do. A staged pick previews
+ * immediately: `TrendChart`'s `kind` is derived from the staged value when
+ * one exists, falling back to the series' server-declared `mark` (the same
+ * `markForSeries` heuristic every other chart uses, fed a clone carrying
+ * the staged mark instead of the real one). Staging "none" does not remove
+ * the chart from the grid — it dims it and states the consequence, since a
+ * chart vanishing mid-pick would make it hard to change your mind and would
+ * ripple the activity filter/cap counts computed above for a change that
+ * has not been saved yet. */
+function ChartCard({
+  series,
+  color,
+  animate,
+  plotDraft,
+}: {
+  series: TrackingSeries;
+  color: string;
+  animate: boolean;
+  plotDraft: PlotKindDraft;
+}) {
+  const declared = series.mark !== null;
+  const activity = activityOf(series.name);
+  const metric = metricKeyOf(series.name);
+  const staged = declared ? plotDraft.stagedPlotFor(activity, metric) : null;
+  const effectivePlot = staged ?? series.mark;
+  const previewSeries = staged !== null ? { ...series, mark: staged } : series;
+  // Count/volume series (all-integer values — reps, laps, sessions) read
+  // better as calm columns; continuous measures keep the line. The choice
+  // is cosmetic for an undeclared series and a declared statement of intent
+  // for a declared one — `markForSeries` already encodes that precedence.
+  const kind = markForSeries(previewSeries);
+  // Only the transition INTO "none" needs the destructive notice — a series
+  // already committed `plot = "none"` is filtered out of the grid entirely
+  // before this component ever renders (`isDrawable`, above).
+  const willStopDrawing = declared && effectivePlot === "none";
+
+  return (
+    <div className={willStopDrawing ? "opacity-50" : undefined}>
+      <TrendChart series={series} color={color} animate={animate} kind={kind} />
+      {declared && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <select
+            aria-label={`Chart type for ${captionFor(series)}`}
+            value={effectivePlot ?? "line"}
+            onChange={(event) =>
+              plotDraft.setPlot(activity, metric, event.target.value as PlotKind)
+            }
+            className="rounded border border-line bg-bg-base px-1.5 py-0.5 text-xs text-ink"
+          >
+            <option value="line">Line</option>
+            <option value="column">Column</option>
+            <option value="area">Area</option>
+            <option value="scatter">Scatter</option>
+            <option value="none">None — stop drawing this chart</option>
+          </select>
+        </div>
+      )}
+      {willStopDrawing && (
+        <p role="status" className="mt-1 text-xs text-attention">
+          Saving will stop drawing this chart here — the data stays collected
+          and queryable over MCP, only the desktop view stops showing it.
+          Turning it back on is done from Config: once saved there is no chart
+          left here to pick from.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The plot-kind picker's persist bar (#490): appears only while a pick is
+ * staged, names how many, and offers the explicit, labelled action that
+ * runs the shared save gate — never a toggle side-effect. A compare-and-
+ * swap conflict (the file changed on disk since it was read) surfaces its
+ * own distinct notice with a reload, mirroring the Config view's
+ * `ConflictNotice` so the same failure reads the same way everywhere it
+ * can happen. */
+function PlotDraftBar({ plotDraft }: { plotDraft: PlotKindDraft }) {
+  if (plotDraft.conflict) {
+    return (
+      <p role="status" className="mt-3 text-xs text-attention">
+        The config changed on disk since it was opened — reload before saving
+        so your pick does not overwrite the newer version.{" "}
+        <button
+          type="button"
+          onClick={plotDraft.reloadFromDisk}
+          className="underline decoration-dotted underline-offset-2 hover:text-ink"
+        >
+          Reload
+        </button>
+      </p>
+    );
+  }
+  if (!plotDraft.dirty) return null;
+  return (
+    <div
+      role="group"
+      aria-label="Unsaved chart type changes"
+      className="mt-3 flex flex-wrap items-center gap-2 rounded border border-line bg-bg-surface px-3 py-2 text-xs"
+    >
+      <span className="text-ink-muted">
+        {plotDraft.stagedCount} chart type change{plotDraft.stagedCount === 1 ? "" : "s"} staged,
+        not yet saved.
+      </span>
+      {plotDraft.validation !== null && !plotDraft.validation.ok && (
+        <span className="text-attention">{plotDraft.validation.error.message}</span>
+      )}
+      <button
+        type="button"
+        onClick={plotDraft.persist}
+        disabled={plotDraft.saving}
+        className="rounded border border-line px-2 py-1 text-ink hover:bg-bg-sunken disabled:opacity-50"
+      >
+        Save chart type as default
+      </button>
+      <button
+        type="button"
+        onClick={plotDraft.discard}
+        className="rounded px-2 py-1 text-ink-muted hover:text-ink"
+      >
+        Discard chart type changes
+      </button>
     </div>
   );
 }
