@@ -1460,3 +1460,95 @@ async fn list_note_types_reports_builtins_and_custom_with_schemas() {
     assert_eq!(priority["required"], true);
     assert_eq!(priority["default"], "1");
 }
+
+#[tokio::test]
+async fn get_stewardship_tracking_returns_the_declared_contract() {
+    // Agent discovery (#487): the contract comes back with the entries, so a
+    // caller can learn the record key, the group field and each metric's
+    // aggregate before writing a payload — rather than guessing, or parsing
+    // `config.toml` itself. Same gap `list_note_types` closes for note types.
+    use cdno_core::config::{Aggregate, MetricSpec, TrackingSpec};
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut config = VaultConfig::default();
+    config.tracking.insert(
+        "practice".to_owned(),
+        TrackingSpec {
+            records: Some("detail".to_owned()),
+            group_by: Some("subject".to_owned()),
+            metrics: [
+                (
+                    "minutes".to_owned(),
+                    MetricSpec {
+                        ty: Some(FieldType::Int),
+                        aggregate: Aggregate::Sum,
+                        unit: Some("min".to_owned()),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    "focus".to_owned(),
+                    MetricSpec {
+                        aggregate: Aggregate::Mean,
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        },
+    );
+    let (vault, _r) = Vault::new(store, index, config).unwrap();
+    vault
+        .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Study", Context::Personal)
+        .unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "study".to_owned(),
+            activity: "practice".to_owned(),
+            period: None,
+        }))
+        .await
+        .expect("get_stewardship_tracking");
+
+    let value = decode_json(&result);
+    let spec = &value["spec"];
+    assert_eq!(spec["records"], "detail");
+    assert_eq!(spec["group_by"], "subject");
+    let metrics = spec["metrics"].as_array().unwrap();
+    assert_eq!(metrics.len(), 2, "{value}");
+    let focus = metrics.iter().find(|m| m["name"] == "focus").unwrap();
+    assert_eq!(
+        focus["aggregate"], "mean",
+        "the aggregate is what tells an agent a rating must not be summed"
+    );
+    let minutes = metrics.iter().find(|m| m["name"] == "minutes").unwrap();
+    assert_eq!(minutes["type"], "int");
+    assert_eq!(minutes["unit"], "min");
+}
+
+#[tokio::test]
+async fn get_stewardship_tracking_reports_an_undeclared_activity_as_such() {
+    // `None` rather than an empty contract: metrics are still writable as
+    // undeclared frontmatter, but nothing aggregates them, and an agent
+    // should be able to tell those apart.
+    let server = server_with(|vault| {
+        vault
+            .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Health", Context::Personal)
+            .unwrap();
+    });
+
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "health".to_owned(),
+            activity: "gym".to_owned(),
+            period: None,
+        }))
+        .await
+        .expect("get_stewardship_tracking");
+
+    assert!(decode_json(&result)["spec"].is_null());
+}

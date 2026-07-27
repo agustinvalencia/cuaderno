@@ -861,6 +861,67 @@ pub struct StewardshipTrackingDto {
     /// Tracking notes in the window, most-recent-first; ties broken
     /// by activity then path.
     pub entries: Vec<TrackingEntryDto>,
+    /// The activity's declared contract from `[tracking.<activity>]`, when
+    /// the vault has one (`#487`). Present so an agent can learn the record
+    /// key, the group field, and the metric names and their aggregates
+    /// *before* writing a `create_tracking_entry` payload, rather than
+    /// guessing or reading `config.toml` itself. `None` means the activity is
+    /// undeclared: metrics are still writable as undeclared frontmatter, but
+    /// nothing aggregates them.
+    pub spec: Option<TrackingSpecDto>,
+}
+
+/// One activity's declared tracking contract, for agent discovery (`#487`).
+/// Mirror of [`cdno_core::config::TrackingSpec`], flattened to strings so the
+/// wire shape carries no config types.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackingSpecDto {
+    /// Frontmatter key holding repeated records. `None` means the metrics are
+    /// scalars read straight off the entry's frontmatter.
+    pub records: Option<String>,
+    /// Record field the series split on — a category, a subject, a person.
+    pub group_by: Option<String>,
+    /// The declared metrics, sorted by name. Empty for a cadence-only
+    /// activity, which records occurrences and aggregates nothing.
+    pub metrics: Vec<TrackingMetricDto>,
+}
+
+/// One declared metric within a [`TrackingSpecDto`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackingMetricDto {
+    pub name: String,
+    /// The declared type (`"float"`, `"int"`, ...), when the metric names one.
+    #[serde(rename = "type")]
+    pub ty: Option<String>,
+    /// How the metric's values collapse to one point per date: `"sum"`,
+    /// `"last"`, `"max"`, `"min"` or `"mean"`.
+    pub aggregate: String,
+    /// Overrides the activity's `group_by`; `"none"` collapses across records.
+    pub group_by: Option<String>,
+    pub unit: Option<String>,
+}
+
+impl From<&cdno_core::config::TrackingSpec> for TrackingSpecDto {
+    fn from(spec: &cdno_core::config::TrackingSpec) -> Self {
+        TrackingSpecDto {
+            records: spec.records.clone(),
+            group_by: spec.group_by.clone(),
+            metrics: spec
+                .metrics
+                .iter()
+                .map(|(name, m)| TrackingMetricDto {
+                    name: name.clone(),
+                    ty: m.ty.map(|t| t.as_str().to_owned()),
+                    aggregate: serde_json::to_value(m.aggregate)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_else(|| "sum".to_owned()),
+                    group_by: m.group_by.clone(),
+                    unit: m.unit.clone(),
+                })
+                .collect(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------

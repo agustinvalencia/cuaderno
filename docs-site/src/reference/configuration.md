@@ -158,6 +158,59 @@ Notes and limits:
 - A malformed field declaration (unknown `type`, a mistyped key, `values` on a non-string, a
   `default` that doesn't type-check) fails at vault-open, like every other config error.
 
+## Tracking
+
+`[tracking.<activity>]` declares how an activity's numbers are read back. Without one, a tracking
+note's series come from the first table in its body, with each column summed — right for a rep
+sheet, wrong for a balance or a rating. Declaring an activity moves it to frontmatter, where each
+metric says how it collapses.
+
+```toml
+[tracking.practice]
+records  = "detail"        # frontmatter key holding repeated records
+group_by = "subject"       # one series per distinct value of this field
+
+[tracking.practice.metrics.minutes]
+type      = "int"
+aggregate = "sum"          # a TOTAL
+unit      = "min"
+plot      = "column"
+
+[tracking.practice.metrics.focus]
+aggregate = "mean"         # a RATING - a sum would grow with how often you log
+```
+
+| Key | Where | Purpose |
+|-----|-------|---------|
+| `records` | activity | Frontmatter key holding a sequence of flat records. Omit for plain scalars read straight off the entry. |
+| `group_by` | activity | Record field the series split on — a category, a subject, a person. One series per distinct value. |
+| `type` | metric | `bool` \| `int` \| `float` \| `string` \| `date`. Optional. |
+| `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
+| `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |
+| `unit` | metric | Display unit (`min`, `kg`, `EUR`). |
+| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`, so declaring a metric never changes what is drawn until you opt in. |
+
+Choosing the aggregate is the whole point, and it follows from what the number *is*:
+
+| Kind | Examples | Aggregate |
+|------|----------|-----------|
+| Total | amount spent, pages read, minutes practised | `sum` |
+| Level | account balance, a measurement, a top set | `last`, `max` |
+| Rate or rating | a score out of ten, perceived difficulty | `mean` |
+
+Notes and limits:
+
+- **An absent `[tracking]` section is not an error** — an undeclared activity keeps being served
+  from its body table, so nothing forces a migration.
+- **Declaring is checked at vault-open**, not at first chart render: an unknown `aggregate`, a
+  mistyped key, or a blank `records`/`group_by` fails when the vault is opened, naming the key.
+- **An activity may declare no metrics at all.** That is a complete use — recording that something
+  happened, with nothing to aggregate.
+- **`window` is reserved** for a future time-reduction axis (month-over-month deltas, rollups) and
+  is a load error today, so adding the behaviour later is not a breaking change.
+- **A declared activity's body table is no longer read** once its frontmatter yields a series, so
+  the same metric can never appear twice under two disagreeing numbers.
+
 ## Templates
 
 Templates live in `.cuaderno/templates/` and are pure variable substitution. `cdno init` writes one

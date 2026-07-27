@@ -1,4 +1,4 @@
-use cdno_core::config::{StateOverflow, VaultConfig};
+use cdno_core::config::{Aggregate, PlotKind, StateOverflow, VaultConfig};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -649,4 +649,128 @@ required = true
         declared["owner"].required,
         "the explicit required=true block wins over the lint-only desugar"
     );
+}
+
+// ---------------------------------------------------------------------
+// [tracking.<activity>] (#487)
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_tracking_section_parses_into_specs() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[tracking.practice]
+records  = "detail"
+group_by = "subject"
+
+[tracking.practice.metrics.minutes]
+type      = "int"
+aggregate = "sum"
+unit      = "min"
+plot      = "column"
+
+[tracking.practice.metrics.focus]
+aggregate = "mean"
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let spec = config.tracking.get("practice").expect("practice declared");
+    assert_eq!(spec.records.as_deref(), Some("detail"));
+    assert_eq!(spec.group_by.as_deref(), Some("subject"));
+
+    let minutes = &spec.metrics["minutes"];
+    assert_eq!(minutes.ty, Some(FieldType::Int));
+    assert_eq!(minutes.aggregate, Aggregate::Sum);
+    assert_eq!(minutes.unit.as_deref(), Some("min"));
+    assert_eq!(minutes.plot, PlotKind::Column);
+
+    // An omitted aggregate defaults to `sum`; an omitted plot to `none`, so
+    // declaring a metric never draws anything until you opt in.
+    let focus = &spec.metrics["focus"];
+    assert_eq!(focus.aggregate, Aggregate::Mean);
+    assert_eq!(focus.plot, PlotKind::None);
+    assert!(config.validate_tracking().is_ok());
+}
+
+#[test]
+fn an_absent_tracking_section_is_not_an_error() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Demo\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.tracking.is_empty());
+    assert!(config.validate_tracking().is_ok());
+}
+
+#[test]
+fn a_cadence_only_activity_declares_no_metrics_and_is_valid() {
+    // Recording that something happened, with nothing to aggregate, is a
+    // complete use — not a half-finished declaration.
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[tracking.call]\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.tracking["call"].metrics.is_empty());
+    assert!(config.validate_tracking().is_ok());
+}
+
+#[test]
+fn an_unknown_aggregate_is_rejected_at_parse() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[tracking.practice.metrics.minutes]\naggregate = \"median\"\n",
+    );
+    assert!(VaultConfig::load(dir.path()).is_err());
+}
+
+#[test]
+fn a_mistyped_metric_key_is_rejected_at_parse() {
+    // `deny_unknown_fields`: a typo must fail loudly rather than be a
+    // silently-ignored no-op that leaves the metric summing.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[tracking.practice.metrics.minutes]\nagregate = \"mean\"\n",
+    );
+    assert!(VaultConfig::load(dir.path()).is_err());
+}
+
+#[test]
+fn a_window_key_is_rejected_as_reserved() {
+    // Reserved for the time-reduction axis. Parsed so the grammar is fixed
+    // now, rejected so adding the behaviour later is not a breaking change.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[tracking.practice.metrics.minutes]\nwindow = \"month\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let err = config.validate_tracking().unwrap_err().to_string();
+    assert!(err.contains("window"), "message must name the key: {err}");
+    assert!(
+        err.contains("not yet implemented"),
+        "message must say why: {err}"
+    );
+}
+
+#[test]
+fn a_blank_records_or_group_by_is_rejected() {
+    for (body, expected) in [
+        ("[tracking.practice]\nrecords = \"\"\n", "records"),
+        ("[tracking.practice]\ngroup_by = \"\"\n", "group_by"),
+        (
+            "[tracking.practice.metrics.minutes]\ngroup_by = \"\"\n",
+            "group_by",
+        ),
+    ] {
+        let dir = TempDir::new().unwrap();
+        write_config(dir.path(), body);
+        let config = VaultConfig::load(dir.path()).unwrap();
+        let err = config.validate_tracking().unwrap_err().to_string();
+        assert!(
+            err.contains(expected),
+            "message must name the key `{expected}`: {err}"
+        );
+    }
 }
