@@ -861,6 +861,15 @@ pub struct StewardshipTrackingDto {
     /// Tracking notes in the window, most-recent-first; ties broken
     /// by activity then path.
     pub entries: Vec<TrackingEntryDto>,
+    /// Aggregated numeric series for the stewardship, one per
+    /// `(activity, [group,] metric)` that ever carries a number (`#486`).
+    ///
+    /// Without this an agent asked "is this trending up?" has to open and
+    /// parse every tracking note itself, which gets worse as the vault grows.
+    /// Series span the stewardship rather than the requested window: a trend
+    /// read over a slice of its own history is a different question from the
+    /// entries, which the window does bound.
+    pub series: Vec<TrackingSeriesDto>,
     /// The activity's declared contract from `[tracking.<activity>]`, when
     /// the vault has one (`#487`). Present so an agent can learn the record
     /// key, the group field, and the metric names and their aggregates
@@ -869,6 +878,55 @@ pub struct StewardshipTrackingDto {
     /// undeclared: metrics are still writable as undeclared frontmatter, but
     /// nothing aggregates them.
     pub spec: Option<TrackingSpecDto>,
+}
+
+/// One aggregated numeric series (`#486`). Mirror of
+/// [`cdno_domain::vault::TrackingSeries`], with the chart mark lowered to a
+/// string so the wire shape carries no config types.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackingSeriesDto {
+    /// `"<activity> · [<group> · ]<metric>"`.
+    pub name: String,
+    /// A declared display name, when the metric sets one.
+    pub label: Option<String>,
+    /// The declared unit (`min`, `kg`, `EUR`).
+    pub unit: Option<String>,
+    /// The declared chart mark (`line`, `column`, ...), or `none`. Absent for
+    /// a body-table series, which has no declaration behind it.
+    pub mark: Option<String>,
+    /// One point per date, already reduced by the metric's own aggregate —
+    /// so a `mean` metric is an average here, not a total.
+    pub points: Vec<TrackingPointDto>,
+}
+
+/// One dated value in a [`TrackingSeriesDto`].
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct TrackingPointDto {
+    pub date: NaiveDate,
+    pub value: f64,
+}
+
+impl From<cdno_domain::vault::TrackingSeries> for TrackingSeriesDto {
+    fn from(series: cdno_domain::vault::TrackingSeries) -> Self {
+        TrackingSeriesDto {
+            name: series.name,
+            label: series.label,
+            unit: series.unit,
+            mark: series.mark.and_then(|m| {
+                serde_json::to_value(m)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_owned))
+            }),
+            points: series
+                .points
+                .into_iter()
+                .map(|p| TrackingPointDto {
+                    date: p.date,
+                    value: p.value,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// One activity's declared tracking contract, for agent discovery (`#487`).

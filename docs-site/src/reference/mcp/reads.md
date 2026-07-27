@@ -10,7 +10,7 @@ anything. Inputs marked optional may be omitted.
 | `get_portfolio_contents` | `portfolio` (slug) | Portfolio metadata plus its evidence inventory. |
 | `get_weekly_context` | `date?` (any day in the week) | The weekly note's sections (Wins, Challenges, One Improvement, This Week's Goal). |
 | `get_monthly_context` | `date?` | Monthly context for a strategic scan. |
-| `get_stewardship_tracking` | `stewardship`, `activity`, `period?` (e.g. `30d`, `6m`) | Tracking entries for a stewardship/activity over a window, plus the activity's declared contract in `spec` (record key, group field, and each metric's type, unit and aggregate) when the vault declares one under [`[tracking.<activity>]`](../configuration.md#tracking). `spec` is null for an undeclared activity. |
+| `get_stewardship_tracking` | `stewardship`, `activity`, `period?` (e.g. `30d`, `6m`) | Tracking entries for a stewardship/activity over a window, plus the activity's declared contract in `spec` (record key, group field, and each metric's type, unit and aggregate) when the vault declares one under [`[tracking.<activity>]`](../configuration.md#tracking). `spec` is null for an undeclared activity. Also returns `series`: this activity's numeric trends, one per `(group, metric)` it declares, each point already reduced by that metric's own aggregate, scoped and windowed by the same `activity` and `period` as the entries. |
 | `get_active_questions` | `domain?` (`research`\|`life`) | Active question notes, optionally filtered by domain. |
 | `get_commitments` | `lookahead_weeks?` (default 2) | The aggregated commitments view; overdue always included. |
 | `list_projects` | — | All projects (active + parked) with summaries. |

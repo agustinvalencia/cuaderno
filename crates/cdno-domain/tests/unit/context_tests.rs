@@ -1613,3 +1613,54 @@ fn an_undeclared_vault_falls_back_to_the_body_table() {
     let series = vault.tracking_series_declared("health").unwrap();
     assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
 }
+
+#[test]
+fn a_declared_series_carries_its_unit_label_and_mark() {
+    // The declaration knows things the series name cannot express, and the
+    // consumer should not have to guess them back.
+    use cdno_core::config::PlotKind;
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &tracking_fm_note("health", "body", "2026-07-06", "weight: 82.5\n"),
+    )]);
+    let spec = TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [(
+            "weight".to_owned(),
+            MetricSpec {
+                aggregate: Aggregate::Last,
+                unit: Some("kg".to_owned()),
+                label: Some("Body weight".to_owned()),
+                plot: PlotKind::Line,
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("health", &specs(&[("body", spec)]))
+        .unwrap();
+    let weight = named(&series, "body \u{b7} weight");
+    assert_eq!(weight.unit.as_deref(), Some("kg"));
+    assert_eq!(weight.label.as_deref(), Some("Body weight"));
+    assert_eq!(weight.mark, Some(PlotKind::Line));
+}
+
+#[test]
+fn a_body_table_series_declares_nothing() {
+    // Nothing stands behind a table column but its header, so the consumer's
+    // own heuristic is all it ever had.
+    let body = "\n| Weight (kg) |\n|-------------|\n| 82.5        |\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &tracking_note("health", "body", "2026-07-06", body),
+    )]);
+
+    let series = vault.tracking_series("health").unwrap();
+    assert_eq!(series[0].unit, None);
+    assert_eq!(series[0].label, None);
+    assert_eq!(series[0].mark, None);
+}

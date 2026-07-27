@@ -202,8 +202,9 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `type` | metric | `bool` \| `int` \| `float` \| `string` \| `date`. Optional. |
 | `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
 | `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |
-| `unit` | metric | Display unit (`min`, `kg`, `EUR`). |
-| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. **Parsed but not yet consumed** — see the note below. |
+| `unit` | metric | Display unit (`min`, `kg`, `EUR`). Carried through to the chart and the MCP series. |
+| `label` | metric | Display name for the series, when the metric's key is not what you want on a chart (`resting_hr` → `Resting heart rate`). |
+| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws; it does not yet decide **whether** the series is drawn — see the note below. |
 
 Choosing the aggregate is the whole point, and it follows from what the number *is*:
 
@@ -225,10 +226,12 @@ Notes and limits:
   is a load error today, so adding the behaviour later is not a breaking change.
 - **A declared activity's body table is no longer read** once its frontmatter yields a series, so
   the same metric can never appear twice under two disagreeing numbers.
-- **`plot` is parsed but not yet honoured.** Nothing reads it: a declared metric's series is
-  emitted whatever it says, and the desktop draws every series it is handed. So declaring an
-  activity *does* change what is drawn today — its frontmatter series replace its body-table ones,
-  which is the point of declaring, but it is not the opt-in `plot = "none"` implies. Wiring it is
+- **`plot` chooses the mark, not yet whether to draw.** A declared `line`/`column` is used as the
+  chart's mark (an `area` or `scatter` resolves to the closest of the two the chart draws). What it
+  does *not* yet do is suppress a series: a metric declared `plot = "none"` is still emitted and
+  still drawn, with the mark chosen by the fallback heuristic. So declaring an activity *does*
+  change what is drawn today — its frontmatter series replace its body-table ones, which is the
+  point of declaring, but it is not the opt-in `plot = "none"` implies. Wiring that half is
   tracked separately.
 
 ## Templates

@@ -31,10 +31,30 @@ export type ChartKind = "line" | "column";
  * series whose every value is integer-valued reads as a count/volume
  * (reps, laps, sessions) and draws as a calm column; any fractional
  * value (a weight, a pace, a duration) keeps the line. This carries no
- * domain knowledge — `TrackingSeries` deliberately does not infer column
- * semantics — so a misclassification is purely cosmetic. An empty series
- * has nothing to classify and falls back to the line. */
+ * domain knowledge, so a misclassification is purely cosmetic. An empty
+ * series has nothing to classify and falls back to the line.
+ *
+ * Since #486 this is the FALLBACK: a series carrying a declared `mark` uses
+ * it instead. */
+/** The chart's caption: the metric's declared display name when it has one,
+ * else the generated series name, with the declared unit appended. A metric
+ * key is written for the data (`resting_hr`), not for a reader. */
+export function captionFor(series: TrackingSeries): string {
+  const name = series.label ?? series.name;
+  return series.unit ? `${name} (${series.unit})` : name;
+}
+
 export function markForSeries(series: TrackingSeries): ChartKind {
+  // A declared mark wins: the vault said what this metric IS, which beats any
+  // signal read off its values. `none` is not a mark - it says "not drawn"
+  // rather than "draw it flat" - so it falls through to the heuristic for now
+  // (gating on it is #500), as does an undeclared body-table series.
+  if (series.mark === "line" || series.mark === "column") return series.mark;
+  if (series.mark === "area" || series.mark === "scatter") {
+    // Declared, but this chart draws two marks. Honour the closest: a scatter
+    // reads as discrete points, an area as a filled line.
+    return series.mark === "scatter" ? "column" : "line";
+  }
   return series.points.length > 0 && series.points.every((p) => Number.isInteger(p.value))
     ? "column"
     : "line";
@@ -137,7 +157,7 @@ export function TrendChart({
 
   return (
     <figure data-chart-kind={kind}>
-      <figcaption className="text-xs text-ink-muted">{series.name}</figcaption>
+      <figcaption className="text-xs text-ink-muted">{captionFor(series)}</figcaption>
       <div className="mt-1 h-40">
         <ResponsiveContainer width="100%" height="100%">
           {kind === "column" ? (
