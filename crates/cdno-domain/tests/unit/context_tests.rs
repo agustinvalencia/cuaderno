@@ -1491,18 +1491,13 @@ fn a_stewardship_mixing_declared_and_undeclared_draws_each_from_its_own_source()
 
 #[test]
 fn no_series_name_appears_twice() {
-    // The failure the rule exists to prevent: a silent duplicate under a
-    // colliding name, carrying two numbers that disagree.
-    let (vault, _store) = vault_with(&[
-        (
-            "stewardships/health/tracking/2026-07-06-body.md",
-            &note_with_both("health", "body", "2026-07-06"),
-        ),
-        (
-            "stewardships/health/tracking/2026-07-13-body.md",
-            &note_with_both("health", "body", "2026-07-13"),
-        ),
-    ]);
+    // The failure the rule exists to prevent, set up so it can actually
+    // happen: the table's column header is spelled exactly like the declared
+    // metric, so without the rule both sources emit `body · weight` and the
+    // response carries two points for one name that disagree (82.5 and 99).
+    let colliding = "---\ntype: tracking\nstewardship: health\nactivity: body\ndate: 2026-07-06\nweight: 82.5\n---\n\n# body\n\n| weight |\n|--------|\n| 99     |\n";
+    let (vault, _store) =
+        vault_with(&[("stewardships/health/tracking/2026-07-06-body.md", colliding)]);
 
     let series = vault
         .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
@@ -1513,4 +1508,66 @@ fn no_series_name_appears_twice() {
     names.sort_unstable();
     names.dedup();
     assert_eq!(before, names.len(), "duplicate series name in {names:?}");
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5),
+        "and the surviving one is the frontmatter value"
+    );
+}
+
+#[test]
+fn declaring_an_activity_does_not_blank_it_in_another_stewardship() {
+    // Specs are keyed on activity alone, so a declaration reaches every
+    // stewardship. Suppressing on the DECLARED set would take `walk` away from
+    // `dog` — whose notes carry no `distance` — and put nothing in its place,
+    // silently emptying a chart that was working. Suppression keys on what the
+    // frontmatter side actually produced, so `dog` keeps its table series.
+    let health_walk = "---\ntype: tracking\nstewardship: health\nactivity: walk\ndate: 2026-07-06\ndistance: 4.2\n---\n\n# walk\n";
+    let dog_walk = "---\ntype: tracking\nstewardship: dog\nactivity: walk\ndate: 2026-07-06\n---\n\n# walk\n\n| Minutes |\n|---------|\n| 45      |\n";
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-walk.md",
+            health_walk,
+        ),
+        ("stewardships/dog/tracking/2026-07-06-walk.md", dog_walk),
+    ]);
+    let walk_spec = TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("distance".to_owned(), metric(Aggregate::Sum))]
+            .into_iter()
+            .collect(),
+    };
+    let specs = specs(&[("walk", walk_spec)]);
+
+    let health = vault.tracking_series_with_specs("health", &specs).unwrap();
+    assert_eq!(names_of(&health), vec!["walk \u{b7} distance"]);
+
+    let dog = vault.tracking_series_with_specs("dog", &specs).unwrap();
+    assert_eq!(
+        names_of(&dog),
+        vec!["walk \u{b7} Minutes"],
+        "an undeclared stewardship's chart must not vanish"
+    );
+    assert_eq!(
+        point_on(named(&dog, "walk \u{b7} Minutes"), ymd(2026, 7, 6)),
+        Some(45.0)
+    );
+}
+
+#[test]
+fn a_cadence_only_declaration_leaves_the_body_table_alone() {
+    // An activity declaring no metrics is a complete, valid use (an
+    // occurrence). Its frontmatter side yields nothing, so there is no
+    // duplicate to prevent and no reason to take its table away.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", TrackingSpec::default())]))
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
 }
