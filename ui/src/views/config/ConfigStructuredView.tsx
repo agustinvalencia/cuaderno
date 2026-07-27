@@ -107,25 +107,107 @@ export default function ConfigStructuredView({ cfg }: { cfg: ConfigDraft }) {
   // command) and its rewrite would silently drop the first edit's table.
   // Instead the queue threads the true accumulated string through
   // `draftRef`, advanced synchronously as each command resolves, so every
-  // edit builds on the previous one. External reseeds — a conflict reload
-  // changing the on-disk hash, or a toggle back from Raw — remount this
-  // view (the `key={hash}` on ConfigView, and the Raw/Form ternary), giving
-  // a fresh `draftRef` seeded from the current draft; so the ref is never
-  // stale against the shared draft while the view is mounted.
+  // edit builds on the previous one. Toggling back to Raw remounts this
+  // view (the Form/Raw ternary swaps element types), which seeds a fresh
+  // `draftRef` from the then-current draft.
+  //
+  // INVARIANT (#507): the content this queue hands to `cfg.setDraft` and
+  // the hash the next Save will compare-and-swap against must always
+  // describe the SAME on-disk base. A whole-table surgical command rewrites
+  // EVERY form-controlled key of the table it targets, computed from
+  // whatever base it was handed — so if that base is superseded by the
+  // time the command resolves, publishing the result would silently revert
+  // an external change to a sibling key of that same table. Recomputing
+  // the payload against the fresh base would fix that, but `make` closes
+  // over form state captured before the base moved, and this queue has no
+  // way to blindly redo that capture. So the invariant is upheld by
+  // REFUSING to publish an edit computed from a superseded base, never by
+  // replaying it: an earlier version of this fix rebased by re-running
+  // `make` against the fresh base, which silently reverted a sibling-key
+  // edit for exactly the reason above and was replaced by this.
+  //
+  // Detecting "superseded" needs a live `{draft, hash}` pair that is
+  // correct at the exact instant a queued command resolves — not a value
+  // sampled at render time (a promise continuation runs after further
+  // renders happen) and not a ref mirrored into place by ITS OWN
+  // `useEffect` (React 19 schedules a passive effect's resulting state
+  // update as a separate Scheduler task from the effect itself, so a
+  // mirror-via-effect lags the state it mirrors by a full extra render
+  // cycle — long enough for a command to resolve inside that gap and pass
+  // a check that reads it; `useLayoutEffect` narrows the window, it does
+  // not close it). `cfg.live` is `useConfigDraft`'s OWN ref, written
+  // synchronously at every point it changes `draft`/`hash` (adoption, save
+  // success, setDraft) rather than mirrored after the fact — reading
+  // `cfg.live.current` here has no such gap. `baseHashRef` tracks the hash
+  // `draftRef`'s content is actually built on.
+  //
+  // After each surgical command resolves: if `cfg.live.current.hash` still
+  // matches `baseHashRef`, the base held throughout and the result is safe
+  // to publish — advance both refs together (BEFORE the next queued edit
+  // reads them, which is what makes successive rapid edits compose instead
+  // of clobber) and hand the result to `cfg.setDraft`. If it does not
+  // match, the base moved mid-edit: abandon the result, realign both refs
+  // onto the live pair so the NEXT edit builds on the current base, and
+  // raise the same conflict notice a save-time compare-and-swap failure
+  // raises — the user is told the config changed on disk and this edit was
+  // not applied, and can redo it against what is now on screen.
+  //
+  // A resolved (or rejected) command also checks `mountedRef`: toggling to
+  // Raw unmounts this view without cancelling whatever command was still
+  // in flight, and a continuation that runs after that publishes nothing —
+  // there is no `draftRef`, notice, or draft left that this view instance
+  // still owns a coherent view of.
   const draftRef = useRef(cfg.draft);
+  const baseHashRef = useRef(cfg.hash);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const applyEdit = (make: (content: string) => Promise<string>) => {
     queueRef.current = queueRef.current.then(async () => {
+      const base = draftRef.current;
+      const baseHash = baseHashRef.current;
       try {
-        const next = await make(draftRef.current);
-        // Advance the ref BEFORE the next queued edit reads it — this is
-        // what makes successive rapid edits compose instead of clobber.
+        const next = await make(base);
+        if (!mountedRef.current) return;
+        const live = cfg.live.current;
+        if (live.hash !== baseHash) {
+          // The base moved mid-edit (#507): `next` was computed from
+          // `base`, which the live pair no longer matches, so publishing it
+          // would silently revert whatever changed underneath it. Abandon
+          // it and realign onto the live pair so the next edit builds on
+          // the current base.
+          //
+          // Deliberately NOT the `conflict` banner. That one says "reload
+          // before saving so your edit does not overwrite the newer
+          // version" — but the base can only have moved via the
+          // adopt-while-clean path, so by now the form already shows the
+          // newer version and the abandoned edit is gone. There is nothing
+          // to reload and no edit at risk, so the banner would name a
+          // danger that has passed and ask for an action that does
+          // nothing. The toast says what actually happened.
+          draftRef.current = live.draft;
+          baseHashRef.current = live.hash;
+          toast(
+            "The config changed on disk while this edit was applying, so it was not applied — please redo it.",
+            "attention",
+          );
+          return;
+        }
+        // `next` was computed from `base`, and `base` is still paired with
+        // `baseHash` — the invariant above holds, so it is safe to advance
+        // both trackers together and publish the result.
         draftRef.current = next;
+        baseHashRef.current = baseHash;
         cfg.setDraft(next);
       } catch (err) {
+        if (!mountedRef.current) return;
         // A failure (e.g. the draft was hand-broken into invalid TOML in
-        // Raw) is a calm toast, never a crash. The ref is not advanced, so
-        // the next edit retries from the last good draft.
+        // Raw) is a calm toast, never a crash. The refs are not advanced,
+        // so the next edit retries from the last good draft.
         toast(errorMessage(err), "attention");
       }
     });

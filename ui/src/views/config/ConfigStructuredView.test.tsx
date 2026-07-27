@@ -9,15 +9,17 @@ import { afterEach, expect, test, vi } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
 import type { NamedValue } from "../../api/bindings/NamedValue";
+import { readConfig } from "../../api/commands";
 import { ToastProvider } from "../../shell/Toasts";
 import ConfigStructuredView from "./ConfigStructuredView";
-import type { ConfigDraft } from "./useConfigDraft";
+import { useConfigDraft, type ConfigDraft } from "./useConfigDraft";
 
 expect.extend(matchers);
 declare module "vitest" {
@@ -108,6 +110,10 @@ function draftStub(overrides: Partial<ConfigDraft> = {}): ConfigDraft {
     setDraft: vi.fn(),
     baseline: DRAFT,
     hash: "deadbeefdeadbeef",
+    // A stub's `live` never moves on its own — none of the plain
+    // `draftStub()` tests race an external change, so a fixed ref matching
+    // the fixed `draft`/`hash` above is all they need.
+    live: { current: { draft: DRAFT, hash: "deadbeefdeadbeef" } },
     dirty: false,
     validation: null,
     conflict: false,
@@ -250,6 +256,191 @@ test("rapid successive edits serialise: the second builds on the first's result"
   expect(seen[1]).toBe(`${DRAFT}#1`);
   // And the final draft carries BOTH edits, in order.
   expect(cfg.setDraft).toHaveBeenLastCalledWith(`${DRAFT}#1#2`);
+});
+
+// --- #507: an external on-disk change racing an in-flight Form edit ---
+//
+// The bug lives in the gap between `useConfigDraft`'s live state and this
+// view's own `draftRef`, so a `cfg` prop that never itself changes (every
+// other test's `draftStub()`) cannot reproduce it — nothing moves under
+// the view for it to notice. These tests wire up a REAL `useConfigDraft`
+// around a real `read_config` query, the way `StewardshipDetail.test.tsx`
+// drives the analogous #490 race, so a `client.refetchQueries` stands in
+// for the filesystem watcher's invalidation.
+
+/** Mirrors `Config.tsx`'s `ConfigPanel`/`ConfigView` split: the query gates
+ * the whole tree, so `useConfigDraft` — and, inside it, `ConfigStructuredView`'s
+ * own `draftRef`/`baseHashRef` — are only ever constructed once, from the
+ * REAL loaded document. Calling `useConfigDraft` unconditionally with an
+ * empty placeholder (as `usePlotKindDraft` does, of necessity — it is a
+ * hook, not a component, so it has no early return available before its
+ * own hook calls) would seed both refs from "" on this view's first mount,
+ * one render before the doc actually arrives — the opposite of what this
+ * test needs to reproduce the race honestly. */
+function ConfigStructuredHarness() {
+  const read = useQuery({ queryKey: ["read_config"], queryFn: readConfig });
+  if (!read.isSuccess) return null;
+  return <ConfigStructuredHarnessLoaded doc={read.data} />;
+}
+
+function ConfigStructuredHarnessLoaded({ doc }: { doc: ConfigDocument }) {
+  const cfg = useConfigDraft(doc);
+  return <ConfigStructuredView cfg={cfg} />;
+}
+
+function renderHarness() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <main>
+          <ConfigStructuredHarness />
+        </main>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  return { ...result, client };
+}
+
+/** MODEL, but with the vault name stamped so a test can `findByText` its
+ * way to proof that a given on-disk generation has round-tripped all the
+ * way through: adopted into `useConfigDraft`'s state, re-rendered down to
+ * this view, and re-parsed by the `["parse_config_model", cfg.draft]`
+ * query. `client.refetchQueries` resolving is not that proof by itself —
+ * react-query's own notification of subscribers, and the cascade of
+ * renders/effects it triggers, is not guaranteed to have fully settled the
+ * instant the returned promise does (see the tests below, which need the
+ * settled state before racing a deferred command against it). */
+function modelStamped(label: string): ConfigModel {
+  return { ...MODEL, vault: { ...MODEL.vault, name: label } };
+}
+
+test("an external config.toml change landing mid-edit means the edit is not applied, and the user is told", async () => {
+  // The exact sequence #507 describes: a Form edit's surgical command is
+  // still in flight when the watcher-driven refetch adopts an external
+  // on-disk change. Nothing here is dirty yet (THIS edit has not landed —
+  // that only happens once its command resolves), so `useConfigDraft`'s
+  // "adopt an on-disk change while clean" effect adopts it exactly as it
+  // would for a real filesystem watcher tick.
+  let onDisk = { content: DRAFT, hash: "hash-a" };
+  const noteTypeCalls: string[] = [];
+  let resolveFirstCommand: ((value: string) => void) | undefined;
+  const firstCommand = new Promise<string>((resolve) => {
+    resolveFirstCommand = resolve;
+  });
+
+  mockIPC((cmd, args) => {
+    if (cmd === "read_config") return onDisk;
+    if (cmd === "parse_config_model") {
+      const content = (args as { content: string }).content;
+      return content.includes("external hand-edit") ? modelStamped("After the edit") : MODEL;
+    }
+    if (cmd === "config_set_note_type") {
+      const content = (args as { content: string }).content;
+      noteTypeCalls.push(content);
+      // Held open until the test resolves it below — standing in for the
+      // real IPC round trip the reseed races.
+      return firstCommand;
+    }
+    return undefined;
+  });
+
+  const { client } = renderHarness();
+  fireEvent.click(await screen.findByLabelText("Append-only"));
+  await waitFor(() => expect(noteTypeCalls.length).toBe(1));
+
+  // The external hand-edit lands...
+  onDisk = { content: `# external hand-edit\n${DRAFT}`, hash: "hash-b" };
+  await act(() => client.refetchQueries({ queryKey: ["read_config"] }));
+  // ...and is adopted: wait for the stamped model to actually render,
+  // proving the adoption has propagated all the way through — not just
+  // that `refetchQueries`'s own promise settled (see `modelStamped`).
+  await screen.findByText("After the edit");
+
+  // Only now does the first command resolve — with a result computed from
+  // the OLD, pre-reseed content.
+  resolveFirstCommand?.(`${DRAFT}#stale-result`);
+
+  // The load-bearing assertion: the fix must neither publish that stale
+  // result nor retry it — it abandons the edit outright and tells the user
+  // plainly. Exactly one config_set_note_type call ever fires.
+  await screen.findByText(/changed on disk while this edit was applying/i);
+  expect(noteTypeCalls.length).toBe(1);
+
+  // The external content survives in the draft: the vault name shown is
+  // still the externally-stamped one (never regressed by the stale write
+  // being re-parsed), and the note type still shows its on-disk, un-toggled
+  // value — this edit never landed anywhere.
+  expect(screen.getByText("After the edit")).toBeDefined();
+  const appendOnly = screen.getByLabelText("Append-only") as HTMLInputElement;
+  expect(appendOnly.checked).toBe(false);
+});
+
+// A third test was attempted here to resolve the stale command WITHOUT
+// awaiting a settled render first, to exercise the exact window the fix
+// above closes (`useConfigDraft`'s adoption effect has advanced `cfg.hash`
+// but nothing downstream has re-rendered yet) rather than skip past it via
+// `findByText`. It could not be made to do that deterministically:
+//
+// Five timing strategies were tried against BOTH this fix and a scratch
+// pre-fix build (a `cfgRef`-style cross-component mirror `useEffect`,
+// single-shot, in place of `cfg.live`) — resolving inside the same `act()`
+// flush as the reseed, immediately after `act()` returns, after one
+// `act()`-wrapped macrotask tick, after a full `findByText` settle, and
+// resolving unwrapped from `act()` entirely (chained straight onto
+// `refetchQueries`'s own promise, for a genuine, test-unmediated microtask
+// race). All five produced IDENTICAL outcomes for both implementations:
+// either both wrongly published the stale result (nothing had propagated
+// from the refetch yet — a real but different, pre-existing race the
+// "adopt only while clean" design already tolerates, since a later Save's
+// own compare-and-swap catches it) or both correctly refused. There was no
+// timing at which the two implementations diverged.
+//
+// This is consistent with `act()`'s documented job: it drains passive
+// effects in a loop until none remain, which collapses a mirror effect and
+// the state update that triggered it into the same flush — the two-commit
+// gap `cfg.live` closes is not something `act()`-mediated testing (with or
+// without `act()` itself, since even the unwrapped case never observed a
+// mid-flush moment) can hold open long enough to observe. Reproducing it
+// would need either patching React internals to pause between commits, or
+// running against a real browser event loop outside vitest/jsdom — both
+// out of scope here. Left unimplemented rather than shipping a test whose
+// name claims this coverage without actually exercising it.
+
+test("a continuation resolving after this view unmounts publishes nothing", async () => {
+  // Toggling to Raw (or the Settings dialog closing) unmounts this view
+  // without cancelling whatever surgical command was still in flight — the
+  // continuation runs anyway once it resolves. It must not touch
+  // `cfg.setDraft` or raise a conflict for a view no longer on screen.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let resolveCommand: ((value: string) => void) | undefined;
+  const command = new Promise<string>((resolve) => {
+    resolveCommand = resolve;
+  });
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "parse_config_model") return MODEL;
+    if (cmd === "config_set_note_type") return command;
+    return undefined;
+  });
+
+  const cfg = draftStub();
+  const { unmount } = renderView(cfg);
+
+  fireEvent.click(await screen.findByLabelText("Append-only"));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "config_set_note_type")).toBe(true));
+
+  unmount();
+
+  // Resolve well after unmount, giving the continuation every opportunity
+  // to run before asserting it did nothing.
+  await act(async () => {
+    resolveCommand?.(NEW_DRAFT);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(cfg.setDraft).not.toHaveBeenCalled();
+  expect(cfg.setDraft).not.toHaveBeenCalled();
 });
 
 test("removing a note type fires config_remove_note_type", async () => {
