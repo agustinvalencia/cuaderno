@@ -35,6 +35,20 @@ type = "string"
 values = ["low", "ok", "good"]   # allowed values (a string constraint)
 default = "ok"
 
+# How an activity's tracked numbers are read back. Each metric declares how
+# it collapses to one point per date; without a declaration the activity's
+# series come from its body table, with each column summed.
+[tracking.practice]
+records  = "detail"               # frontmatter key holding repeated records
+group_by = "subject"              # one series per distinct value
+
+[tracking.practice.metrics.minutes]
+aggregate = "sum"                 # a TOTAL
+unit      = "min"
+
+[tracking.practice.metrics.focus]
+aggregate = "mean"                # a RATING; sum would grow with how often you log
+
 # Static template variables — resolve in any custom template ({{author}}).
 [variables]
 author = "A. Researcher"
@@ -53,6 +67,7 @@ collaborators = "Who are the collaborators?"
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. See [Ignore globs](#ignore-globs). |
 | `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that **built-in** note type, enforced by `cdno lint`. |
 | `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for a built-in note type (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor, type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
+| `tracking.<activity>` | table | — | Declares how an activity's tracked numbers are read back (`records`, `group_by`, and a `metrics.<name>` table per metric). Without one, the activity's series come from its body table with each column summed. See [Tracking](#tracking). |
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
 | `variables.prompt.<name>` | string | — | Prompted template variable; the value is the prompt text. Gathered at creation from `--var name=value`, an interactive prompt, or a static `[variables]` default; errors if none supplies it. |
@@ -188,7 +203,7 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
 | `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |
 | `unit` | metric | Display unit (`min`, `kg`, `EUR`). |
-| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`, so declaring a metric never changes what is drawn until you opt in. |
+| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. **Parsed but not yet consumed** — see the note below. |
 
 Choosing the aggregate is the whole point, and it follows from what the number *is*:
 
@@ -210,6 +225,11 @@ Notes and limits:
   is a load error today, so adding the behaviour later is not a breaking change.
 - **A declared activity's body table is no longer read** once its frontmatter yields a series, so
   the same metric can never appear twice under two disagreeing numbers.
+- **`plot` is parsed but not yet honoured.** Nothing reads it: a declared metric's series is
+  emitted whatever it says, and the desktop draws every series it is handed. So declaring an
+  activity *does* change what is drawn today — its frontmatter series replace its body-table ones,
+  which is the point of declaring, but it is not the opt-in `plot = "none"` implies. Wiring it is
+  tracked separately.
 
 ## Templates
 

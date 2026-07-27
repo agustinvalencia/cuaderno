@@ -248,8 +248,9 @@ impl Vault {
     /// the lint layer applies to a note already on disk.
     ///
     /// Undeclared keys pass: undeclared frontmatter is legal everywhere else
-    /// in the vault, and a per-activity declaration that could reject one does
-    /// not exist yet (#487). Nested values pass too — the schema grammar has
+    /// in the vault, and `[tracking.<activity>]` declares how a metric
+    /// *reduces* rather than which keys an entry may carry. Nested values pass
+    /// too — the schema grammar has
     /// no list shape (`list = true` is still a load error), so a record
     /// sequence has nothing to check against.
     fn check_declared_metrics(

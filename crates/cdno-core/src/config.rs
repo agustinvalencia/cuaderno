@@ -321,6 +321,11 @@ pub enum Aggregate {
 
 /// How a metric is drawn, when it is drawn at all (`#483`).
 ///
+/// **Parsed but not yet consumed** (`#500`): the derivation emits a series for
+/// every declared metric regardless, and the desktop draws every series it is
+/// given. Declaring an activity therefore does change what is drawn today —
+/// its frontmatter series replace its body-table ones.
+///
 /// Presentation vocabulary, carried here for the same reason [`FieldType`] is
 /// — it is deserialised from config — but it is the one type in this crate
 /// that the crate neither parses for itself nor interprets; it flows through
@@ -330,8 +335,10 @@ pub enum Aggregate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlotKind {
-    /// Collected and queryable, but not drawn — the default, so declaring a
-    /// metric never changes the UI until you opt in.
+    /// Collected and queryable, but not drawn.
+    ///
+    /// NOT YET HONOURED: nothing reads this field, so a declared metric's
+    /// series is emitted and drawn whatever it says. Wiring it is `#500`.
     #[default]
     None,
     Line,
@@ -544,7 +551,7 @@ impl VaultConfig {
     /// - a blank `records` / `group_by` / metric name, which would silently
     ///   read nothing rather than erroring at derivation time.
     pub fn validate_tracking(&self) -> Result<(), ConfigError> {
-        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidSchema(msg));
+        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidTracking(msg));
         for (activity, spec) in &self.tracking {
             let at = format!("`[tracking.{activity}]`");
             if activity.trim().is_empty() {
