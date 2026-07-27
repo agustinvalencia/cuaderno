@@ -5,7 +5,7 @@
 import { expect, test } from "vitest";
 import type { PlotKind } from "../../api/bindings/PlotKind";
 import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
-import { markForSeries } from "./TrendChart";
+import { captionFor, markForSeries } from "./TrendChart";
 
 function series(...values: number[]): TrackingSeries {
   return {
@@ -60,4 +60,15 @@ test("`none` falls through to the heuristic rather than picking a mark", () => {
   // then a series that reaches the chart is drawn by the heuristic.
   expect(markForSeries(declared("none", 6, 4, 9))).toBe("column");
   expect(markForSeries(declared("none", 6, 4.5))).toBe("line");
+});
+
+test("the caption prefers a declared label and appends a declared unit", () => {
+  // A metric key is written for the data (`resting_hr`), not for a reader.
+  const base = series(60, 58);
+  expect(captionFor(base)).toBe("test");
+  expect(captionFor({ ...base, unit: "bpm" })).toBe("test (bpm)");
+  expect(captionFor({ ...base, label: "Resting heart rate" })).toBe("Resting heart rate");
+  expect(captionFor({ ...base, label: "Resting heart rate", unit: "bpm" })).toBe(
+    "Resting heart rate (bpm)",
+  );
 });

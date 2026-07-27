@@ -321,7 +321,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Structured tracking data for a stewardship's activity (gym sessions, body measurements, swim sets, ...) for trend analysis. `activity` filters to the named activity slug per design \u{00a7}11. `period` is a lookback like `30d`, `4w`, `6m`, `1y`; defaults to `90d` when omitted. Calendar-aware: months and years subtract via chrono rather than rough day counts. When the vault declares a contract for the activity under `[tracking.<activity>]`, it comes back in `spec` \u{2014} the frontmatter key holding repeated records, the field the series split on, and each metric's type, unit and aggregate. READ IT BEFORE WRITING: the aggregate is what says whether a number totals, averages, or is a level where only the latest reading counts, and `create_tracking_entry`'s `metrics` should follow the declared field names. A null `spec` means the activity is undeclared \u{2014} metrics are still writable as undeclared frontmatter, but nothing aggregates them. `series` carries the stewardship's numeric trends, one per `(activity, [group,] metric)`, each point ALREADY REDUCED by that metric's own aggregate \u{2014} so a `mean` metric is an average, not a total. Read it to answer whether something is trending up, instead of opening and parsing the entries yourself. Series span the stewardship's whole history rather than `period`, which bounds only `entries`."
+        description = "Structured tracking data for a stewardship's activity (gym sessions, body measurements, swim sets, ...) for trend analysis. `activity` filters to the named activity slug per design \u{00a7}11. `period` is a lookback like `30d`, `4w`, `6m`, `1y`; defaults to `90d` when omitted. Calendar-aware: months and years subtract via chrono rather than rough day counts. When the vault declares a contract for the activity under `[tracking.<activity>]`, it comes back in `spec` \u{2014} the frontmatter key holding repeated records, the field the series split on, and each metric's type, unit and aggregate. READ IT BEFORE WRITING: the aggregate is what says whether a number totals, averages, or is a level where only the latest reading counts, and `create_tracking_entry`'s `metrics` should follow the declared field names. A null `spec` means the activity is undeclared \u{2014} metrics are still writable as undeclared frontmatter, but nothing aggregates them. `series` carries this activity's numeric trends, one per `(group, metric)` it declares, each point ALREADY REDUCED by that metric's own aggregate \u{2014} so a `mean` metric is an average, not a total. Read it to answer whether something is trending up, instead of opening and parsing the entries yourself. Scoped and windowed by the same `activity` and `period` as `entries`; ask for a longer `period` to see further back."
     )]
     pub async fn get_stewardship_tracking(
         &self,
@@ -339,7 +339,21 @@ impl CuadernoServer {
         let (entries, series, spec) = self
             .with_vault(move |vault| {
                 let entries = vault.list_tracking(&stewardship, Some(&activity), from, today)?;
-                let series = vault.tracking_series_declared(&stewardship)?;
+                // Scoped and windowed exactly like `entries`. Series used to
+                // span the stewardship's whole history and every activity,
+                // which made the response grow without bound with nothing the
+                // caller could pass to shrink it - a quick 7-day check on one
+                // activity still paid for years of every other one.
+                let series = vault
+                    .tracking_series_declared(&stewardship)?
+                    .into_iter()
+                    .filter(|s| s.name.starts_with(&format!("{activity} \u{b7} ")))
+                    .map(|mut s| {
+                        s.points.retain(|p| p.date >= from && p.date <= today);
+                        s
+                    })
+                    .filter(|s| !s.points.is_empty())
+                    .collect::<Vec<_>>();
                 // Read the contract inside the same closure: it is borrowed
                 // from the vault's config, so it has to be converted to the
                 // owned wire shape before the borrow ends.

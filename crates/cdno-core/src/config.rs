@@ -321,10 +321,11 @@ pub enum Aggregate {
 
 /// How a metric is drawn, when it is drawn at all (`#483`).
 ///
-/// **Parsed but not yet consumed** (`#500`): the derivation emits a series for
-/// every declared metric regardless, and the desktop draws every series it is
-/// given. Declaring an activity therefore does change what is drawn today —
-/// its frontmatter series replace its body-table ones.
+/// Chooses the **mark** a series is drawn with (`#486`). It does not yet gate
+/// **whether** it is drawn (`#500`): the derivation emits a series for every
+/// declared metric regardless, and the desktop draws every series it is given.
+/// So declaring an activity does change what is drawn today — its frontmatter
+/// series replace its body-table ones.
 ///
 /// Presentation vocabulary, carried here for the same reason [`FieldType`] is
 /// — it is deserialised from config — but it is the one type in this crate
@@ -337,8 +338,9 @@ pub enum Aggregate {
 pub enum PlotKind {
     /// Collected and queryable, but not drawn.
     ///
-    /// NOT YET HONOURED: nothing reads this field, so a declared metric's
-    /// series is emitted and drawn whatever it says. Wiring it is `#500`.
+    /// The "not drawn" half is NOT YET HONOURED (`#500`): a declared metric's
+    /// series is still emitted and still drawn. It reads as "no mark
+    /// declared", so the consumer falls back to its own heuristic.
     #[default]
     None,
     Line,

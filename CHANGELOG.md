@@ -16,10 +16,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   than a total. Series span the stewardship's whole history; the `period` argument bounds only the
   entries, since a trend read over a slice of its own history answers a different question.
 
+  Series are scoped and windowed by the same `activity` and `period` as the entries. An earlier
+  draft returned the stewardship's whole history for every activity, which grew without bound with
+  nothing the caller could pass to shrink it — a quick seven-day check on one activity still paid
+  for years of every other one.
+
   A series also carries the metric's declared `unit`, an optional display `label`, and its chart
   `mark`. The desktop's column-vs-line choice was inferred from whether every value happened to be
   an integer — a deliberately non-semantic guess; a declared mark now wins and the guess is the
-  fallback, which is all an undeclared body-table series ever had. (#486)
+  fallback, which is all an undeclared body-table series ever had. A chart's caption uses the
+  declared label in place of the metric key and appends the unit, since a key like `resting_hr` is
+  written for the data rather than for a reader. (#486)
 
 ### Changed
 

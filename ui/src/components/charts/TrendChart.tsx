@@ -36,6 +36,14 @@ export type ChartKind = "line" | "column";
  *
  * Since #486 this is the FALLBACK: a series carrying a declared `mark` uses
  * it instead. */
+/** The chart's caption: the metric's declared display name when it has one,
+ * else the generated series name, with the declared unit appended. A metric
+ * key is written for the data (`resting_hr`), not for a reader. */
+export function captionFor(series: TrackingSeries): string {
+  const name = series.label ?? series.name;
+  return series.unit ? `${name} (${series.unit})` : name;
+}
+
 export function markForSeries(series: TrackingSeries): ChartKind {
   // A declared mark wins: the vault said what this metric IS, which beats any
   // signal read off its values. `none` is not a mark - it says "not drawn"
@@ -149,7 +157,7 @@ export function TrendChart({
 
   return (
     <figure data-chart-kind={kind}>
-      <figcaption className="text-xs text-ink-muted">{series.name}</figcaption>
+      <figcaption className="text-xs text-ink-muted">{captionFor(series)}</figcaption>
       <div className="mt-1 h-40">
         <ResponsiveContainer width="100%" height="100%">
           {kind === "column" ? (
