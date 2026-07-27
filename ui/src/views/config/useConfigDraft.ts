@@ -50,6 +50,24 @@ export interface ConfigDraft {
   save: () => void;
   /** Whether a save is in flight (disables Save). */
   saving: boolean;
+  /** Persist an explicit content/hash pair through the SAME validate ->
+   * compare-and-swap -> write -> live-reload gate `save` uses, bypassing
+   * this hook's live `draft`/`hash` state entirely.
+   *
+   * `save()`'s no-arg form re-reads `hash` from whatever this hook's
+   * state holds AT THE MOMENT it is called — fine for a direct editor
+   * binding (there is no gap between "the user looks at the draft" and
+   * "the user presses Save"), but wrong for a caller that first has to do
+   * its own async work (e.g. the plot-kind picker composing several
+   * surgical edits) between capturing a base and actually saving it: the
+   * "adopt an on-disk change while clean" effect can advance `hash`
+   * during that gap while the caller's composed content still reflects
+   * the OLD base, and the mismatched pair would pass the compare-and-swap
+   * and silently clobber the newer file. Passing an explicit
+   * `(content, hash)` pair captured together, synchronously, before any
+   * of that async work starts keeps the two in step, so a genuine
+   * concurrent edit is caught as a conflict instead. */
+  saveContent: (content: string, hash: string) => Promise<void>;
   /** Dry-run the backend validation against the current draft, now. */
   check: () => void;
   /** Whether an explicit Check is in flight. */
@@ -131,7 +149,8 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
   });
 
   const save = useMutation({
-    mutationFn: (content: string) => saveConfig(content, hash),
+    mutationFn: ({ content, hash: expectedHash }: { content: string; hash: string }) =>
+      saveConfig(content, expectedHash),
     onSuccess: (saved) => {
       // The saved content + fresh hash become the new baseline, so the
       // editor is clean again and the next save's compare-and-swap uses
@@ -190,8 +209,14 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
     dirty,
     validation,
     conflict,
-    save: () => save.mutate(draft),
+    save: () => save.mutate({ content: draft, hash }),
     saving: save.isPending,
+    // `mutateAsync` re-throws the same tagged `ConfigSaveError` the
+    // mutation's own `onError` above already used to set `validation` /
+    // `conflict` — the caller awaits this only to learn success vs
+    // failure, not to re-decode the error itself.
+    saveContent: (content, expectedHash) =>
+      save.mutateAsync({ content, hash: expectedHash }).then(() => undefined),
     check: () => check.mutate(),
     checking: check.isPending,
     reloadFromDisk,

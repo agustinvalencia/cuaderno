@@ -1,0 +1,229 @@
+// The plot-kind picker's staging model (#490) — a Stewardship Detail trend
+// chart previews a plot-kind change locally and persists it only through
+// an explicit action routed through the SAME validate -> compare-and-swap
+// -> write -> live-reload gate every other config edit uses. This hook
+// composes two pieces that already exist rather than adding a new write
+// path: `useConfigDraft` (the shared draft/baseline/save/conflict model
+// the Config view's raw and structured editors both bind to) and the
+// surgical `config_set_metric_plot` command (a single-key sibling of
+// `config_set_schema_field`, part of #365's family of comment-preserving
+// edits).
+//
+// `staged` is the ONLY source of truth for what has been picked but not
+// yet saved. A picker change updates it synchronously, with no IPC and no
+// side effect on the shared draft — that used to not be true, and it was
+// a bug (see the redesign note below). `staged` is keyed by an encoding of
+// (activity, metric) that cannot collide (`metricKey`, below) rather than
+// by series name: a grouped metric fans out into one series per group
+// value, but `plot` is declared once per metric — so every one of those
+// series must preview and persist the SAME pick, never diverge per group.
+//
+// REDESIGN (post-review): the previous version had `setPlot` capture the
+// shared draft, await `config_set_metric_plot`, then write the result back
+// unconditionally. If `useConfigDraft`'s "adopt an on-disk change while
+// clean" effect ran during that await — which it does whenever the
+// filesystem watcher sees an external `config.toml` edit land while
+// nothing here is dirty, which was ALWAYS true pre-persist under the old
+// model too — the draft that got written back was derived from the OLD
+// file while `hash` had already moved on to the NEW one. The save's
+// compare-and-swap then compared the NEW hash against the NEW on-disk
+// file, passed, and silently overwrote the user's external edit.
+//
+// The fix makes staging synchronous and side-effect-free (no window for
+// the draft to go stale mid-pick) and touches the draft exactly once, at
+// persist: `persist()` reads `cfg.draft`/`cfg.hash` together, synchronously,
+// as its base, composes every staged pick against that base, and hands the
+// result to `cfg.saveContent` with the SAME hash the base was read
+// against. A concurrent external edit landing anywhere in that window now
+// makes the compare-and-swap fail for the right reason — a caught
+// conflict — instead of silently succeeding against a moved hash.
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
+import type { PlotKind } from "../../api/bindings/PlotKind";
+import {
+  configSetMetricPlot,
+  CuadernoError,
+  errorMessage,
+  readConfig,
+  type ValidationResult,
+} from "../../api/commands";
+import { useToast } from "../../shell/Toasts";
+import { useConfigDraft } from "../config/useConfigDraft";
+
+/** A doc standing in for the not-yet-loaded config. `useConfigDraft`
+ * self-heals the moment the real read lands — its own "adopt an on-disk
+ * change while clean" effect fires as soon as `doc.content`/`doc.hash`
+ * change — so this hook can call it unconditionally rather than delay the
+ * hook call (which React disallows) until the query resolves. */
+const EMPTY_DOC: ConfigDocument = { content: "", hash: "" };
+
+/** A collision-free key for (activity, metric): both are free text drawn
+ * from tracking-note frontmatter (activity names, field names) and either
+ * can legitimately contain a space, so a naively space-joined key let
+ * `("morning run", "pace")` and `("morning", "run pace")` collide into one
+ * staged entry — picking a plot kind for one silently applied it to (and
+ * clobbered the preview of) the other. `JSON.stringify` of the pair
+ * encodes the boundary between the two strings explicitly, so no value
+ * either can hold produces the same key as a different pair. */
+function metricKey(activity: string, metric: string): string {
+  return JSON.stringify([activity, metric]);
+}
+
+/** The inverse of `metricKey` — recovers the (activity, metric) pair to
+ * feed `config_set_metric_plot` when composing the persisted draft. */
+function decodeMetricKey(key: string): { activity: string; metric: string } {
+  const [activity, metric] = JSON.parse(key) as [string, string];
+  return { activity, metric };
+}
+
+export interface PlotKindDraft {
+  /** The staged pick for one metric, or `null` when nothing is staged for
+   * it — render the series' server-declared `mark` instead. */
+  stagedPlotFor: (activity: string, metric: string) => PlotKind | null;
+  /** Stage a pick for `activity`/`metric`: updates the preview immediately.
+   * Synchronous and side-effect free — no IPC, no write to the shared
+   * config draft. Nothing is queued; the pick lives only in local state
+   * until `persist` composes it into a save. */
+  setPlot: (activity: string, metric: string, plot: PlotKind) => void;
+  /** Whether anything is staged — the gate the persist bar and its Save
+   * action are shown/enabled on. */
+  dirty: boolean;
+  /** How many metrics currently carry a staged pick, for the persist bar's
+   * copy. */
+  stagedCount: number;
+  /** Persist every staged pick through the shared save gate (validate ->
+   * compare-and-swap -> write -> live-reload). Composes from `cfg.draft`
+   * as it stands at the moment this is called — not a value captured
+   * earlier — and saves against the hash that same draft was read with,
+   * so a concurrent external edit is caught as a conflict rather than
+   * silently overwritten. No-op while nothing is staged or a persist is
+   * already in flight. */
+  persist: () => void;
+  /** Whether a persist is in flight. Also covers the compose phase (the
+   * `config_set_metric_plot` round trips persist makes before the final
+   * save), not just the save itself — a pick made mid-compose would
+   * either be silently dropped (if persist already read `staged`) or
+   * change what gets saved out from under the user, so the picker stays
+   * disabled for the whole operation, not just its last leg. */
+  saving: boolean;
+  /** The last validation outcome from a save attempt (null before the
+   * first one), or a debounced dry-run against the CURRENT on-disk
+   * config's own validity — that check runs against `cfg.draft`, which
+   * staging never touches, so in practice this only turns non-null via a
+   * save's own result. Defensive: the surgical writer only ever touches
+   * one controlled key, so this should not normally fail. */
+  validation: ValidationResult | null;
+  /** Set when the persist was refused because the file changed on disk
+   * since it was read — the same compare-and-swap conflict `useConfigDraft`
+   * surfaces everywhere else in the app. */
+  conflict: boolean;
+  /** Re-read the on-disk config, discarding every staged pick — the
+   * recovery from a conflict. */
+  reloadFromDisk: () => void;
+  /** Discard every staged pick without a network round trip. Nothing else
+   * to revert: staging never touched the shared draft in the first place. */
+  discard: () => void;
+  /** Whether the picker may be used at all right now. */
+  pickerDisabled: boolean;
+  /** A short, accessible reason the picker is disabled, or `null` when it
+   * is not. A greyed-out control alone tells a sighted user something is
+   * wrong but not what — this is read via `aria-describedby` so a screen
+   * reader gets the same "why". */
+  pickerDisabledReason: string | null;
+}
+
+/** `enabled` gates the underlying `read_config` fetch: a stewardship with
+ * no declared (config-backed) series has nothing a picker could persist,
+ * so the caller passes `false` and this never reads the config at all. */
+export function usePlotKindDraft(enabled: boolean): PlotKindDraft {
+  const { toast } = useToast();
+  // Shares its query key with the Config view, so a Settings-dialog visit
+  // in the same session warms (or is warmed by) this read instead of
+  // double-fetching.
+  const read = useQuery({
+    queryKey: ["read_config"],
+    queryFn: readConfig,
+    enabled,
+  });
+  const cfg = useConfigDraft(read.data ?? EMPTY_DOC);
+
+  const [staged, setStaged] = useState<Map<string, PlotKind>>(new Map());
+
+  function setPlot(activity: string, metric: string, plot: PlotKind) {
+    setStaged((prev) => new Map(prev).set(metricKey(activity, metric), plot));
+  }
+
+  const persistMutation = useMutation({
+    mutationFn: async () => {
+      // Read together, synchronously, before any `await` below — this is
+      // the pair the redesign note above depends on: whatever `cfg.draft`
+      // and `cfg.hash` hold AT THIS INSTANT are guaranteed to belong to
+      // the same on-disk version (they only ever move together, via
+      // `useConfigDraft`'s own "adopt while clean" effect or a prior
+      // save), so composing against `baseDraft` and saving against
+      // `baseHash` keeps that pairing intact all the way to the write,
+      // regardless of how long the compose loop below takes.
+      const baseDraft = cfg.draft;
+      const baseHash = cfg.hash;
+      let composed = baseDraft;
+      for (const [key, plot] of staged) {
+        const { activity, metric } = decodeMetricKey(key);
+        composed = await configSetMetricPlot(composed, activity, metric, plot);
+      }
+      await cfg.saveContent(composed, baseHash);
+    },
+    onSuccess: () => setStaged(new Map()),
+    onError: (err) => {
+      // A `saveContent` rejection is already surfaced by `useConfigDraft`
+      // itself (it set `validation` or `conflict`, or toasted an
+      // "internal" failure, before re-throwing) — nothing more to do here.
+      // Only a `CuadernoError` from the compose loop's own
+      // `config_set_metric_plot` calls needs handling at this level, since
+      // that failure never reaches `useConfigDraft` at all. Staged picks
+      // are kept either way, so the user can retry once the cause (a
+      // reload for a conflict, a fixed edit for validation) is resolved.
+      if (err instanceof CuadernoError) {
+        toast(errorMessage(err), "attention");
+      }
+    },
+  });
+
+  function persist() {
+    if (staged.size === 0 || persistMutation.isPending) return;
+    persistMutation.mutate();
+  }
+
+  function discard() {
+    setStaged(new Map());
+  }
+
+  function reloadFromDisk() {
+    cfg.reloadFromDisk();
+    setStaged(new Map());
+  }
+
+  const pickerDisabled = !read.isSuccess || persistMutation.isPending;
+  const pickerDisabledReason = read.isError
+    ? "The config could not be read, so the chart type cannot be changed here."
+    : !read.isSuccess
+      ? "Reading the config…"
+      : persistMutation.isPending
+        ? "Saving the chart type…"
+        : null;
+
+  return {
+    stagedPlotFor: (activity, metric) => staged.get(metricKey(activity, metric)) ?? null,
+    setPlot,
+    dirty: staged.size > 0,
+    stagedCount: staged.size,
+    persist,
+    saving: persistMutation.isPending,
+    validation: cfg.validation,
+    conflict: cfg.conflict,
+    reloadFromDisk,
+    discard,
+    pickerDisabled,
+    pickerDisabledReason,
+  };
+}

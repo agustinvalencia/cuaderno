@@ -460,6 +460,7 @@ pub fn run() {
             commands::config::config_remove_note_type,
             commands::config::config_set_schema_field,
             commands::config::config_remove_schema_field,
+            commands::config::config_set_metric_plot,
             commands::config::config_set_variable,
             commands::config::config_remove_variable,
             commands::config::config_set_prompt_variable,

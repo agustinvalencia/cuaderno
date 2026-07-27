@@ -80,7 +80,11 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
   // save) refreshes all three. The Config view (#365) reads both the
   // raw document and the structured projection, so an external
   // config.toml edit refreshes both the raw editor's baseline and the
-  // structured panel.
+  // structured panel. `get_stewardship_detail` rides this area too
+  // (#490): its series carry a metric's declared `plot`, which the
+  // Stewardship Detail plot-kind picker persists through THIS gate, so
+  // a save must refresh the chart pane the same way a tracking-log
+  // write already does via the `stewardships` area below.
   config: [
     "get_orientation",
     "get_tracking_template_fields",
@@ -89,6 +93,7 @@ const AREA_TO_PREFIXES: Record<VaultArea, string[]> = {
     "list_template_placeholders",
     "read_config",
     "read_config_model",
+    "get_stewardship_detail",
   ],
 };
 
