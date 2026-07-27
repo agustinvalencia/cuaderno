@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
+import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
 import {
   errorMessage,
   getStewardshipDetail,
@@ -26,6 +27,7 @@ import {
 } from "../../components/charts/TrendChart";
 import Markdown from "../../components/markdown/Markdown";
 import { contextDotClass } from "../../lib/contexts";
+import { useMetrics } from "../../lib/metrics";
 import { useReader } from "../../shell/reader";
 import { shortDate } from "../../lib/dates";
 import { ClampedText } from "../../components/ui/clamped-text";
@@ -35,9 +37,81 @@ import { useToast } from "../../shell/Toasts";
 /** The activity a tracking series belongs to. Series are named
  * `"<activity> · <column>"`, and only the first separator splits them —
  * a column header may contain one. */
+/** The separator the domain formats a series name with:
+ * `activity · [group · ]metric`. */
+const SERIES_SEPARATOR = " \u00b7 ";
+
 export function activityOf(seriesName: string): string {
-  const at = seriesName.indexOf(" \u00b7 ");
+  const at = seriesName.indexOf(SERIES_SEPARATOR);
   return at === -1 ? seriesName : seriesName.slice(0, at);
+}
+
+/** A series declared `plot = "none"` (#500) stays collected and queryable
+ * over MCP but is not drawn in the desktop \u2014 declaring an activity is an
+ * explicit act, and is allowed to change what is drawn. This is a literal
+ * `"none"`, not the absence of a declaration: a body-table series carries
+ * `mark: null` and must still draw, so it is deliberately not filtered
+ * here. Keeping the check this narrow is what keeps #485's body-table
+ * suppression untouched \u2014 that rule keys on the frontmatter derivation's
+ * full produced set, not on anything this filters out afterwards. */
+export function isDrawable(series: TrackingSeries): boolean {
+  return series.mark !== "none";
+}
+
+/** Series beyond an activity's first are the dense detail #489 decided
+ * should sit behind `useMetrics()` \u2014 per-category lines, mean-aggregated
+ * ratings \u2014 while a single calm status trend per activity keeps the
+ * "status, not goals" exemption the toggle already grants trend charts.
+ * "First" means first in `series` as given: callers that care which
+ * series reads as the status trend must order it there before calling
+ * this. Exported standalone so the rule is unit-testable without
+ * rendering a chart. */
+export function metricsGatedSeries(
+  series: TrackingSeries[],
+  metricsOn: boolean,
+): TrackingSeries[] {
+  if (metricsOn) return series;
+  // Which one survives matters. Series arrive name-sorted, so taking the
+  // plain first would leave a grouped activity represented by whichever
+  // category sorts earliest — one slice of it standing in for the whole,
+  // which is not a status read. An UNGROUPED series is the activity's own
+  // number (its name is `activity · metric`, with no group segment), so
+  // prefer one of those when the activity has one and fall back to the
+  // first otherwise.
+  const isUngrouped = (name: string) => name.split(SERIES_SEPARATOR).length === 2;
+  const chosen = new Map<string, TrackingSeries>();
+  for (const s of series) {
+    const activity = activityOf(s.name);
+    const current = chosen.get(activity);
+    if (!current || (!isUngrouped(current.name) && isUngrouped(s.name))) {
+      chosen.set(activity, s);
+    }
+  }
+  // Preserve the incoming order rather than the Map's insertion order, so
+  // the gated list reads the same way the ungated one does.
+  const keep = new Set(chosen.values());
+  return series.filter((s) => keep.has(s));
+}
+
+// Six is two full rows of the Trends grid's two-up (`lg`) layout \u2014 a
+// browsable first screenful with no scroll, versus the "nine charts in one
+// column, roughly 1600px of scroll" #489 named as the problem. It is a cap,
+// not a second filter: unlike the activity chips or the metrics gate above,
+// this bounds the count outright, so a grouped metric that fans out to a new
+// chart per category (#483) cannot grow the default view on its own.
+export const DEFAULT_CHART_CAP = 6;
+
+/** Cap a series list to `cap`, reporting how many were left off so the
+ * caller's "show all" control can say so. Applied last, after both filters
+ * above \u2014 capping a set that already excludes undrawable and
+ * metrics-gated series never hides something a reader could not have seen
+ * anyway. */
+export function capSeries(
+  series: TrackingSeries[],
+  cap: number,
+): { shown: TrackingSeries[]; hiddenCount: number } {
+  if (series.length <= cap) return { shown: series, hiddenCount: 0 };
+  return { shown: series.slice(0, cap), hiddenCount: series.length - cap };
 }
 
 /** The stewardship's on-disk note path for open-in-editor: expanded
@@ -103,10 +177,21 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   // "log" link arrives with `?log=1` so logging is one click from there.
   const [logOpen, setLogOpen] = useState(search.get("log") === "1");
   // Which activities to chart. Empty means all — a filter narrows, it
-  // never blanks.
+  // never blanks. Ephemeral by design (#489): it resets on navigation
+  // along with every other piece of state in this component, and that is
+  // correct — persistent hiding is out-of-sight-out-of-mind.
   const [activities, setActivities] = useState<Set<string>>(new Set());
+  // The cap's reveal state — same ephemeral treatment as the activity
+  // filter above, for the same reason.
+  const [showAllCharts, setShowAllCharts] = useState(false);
+  const metricsOn = useMetrics();
 
-  const showCharts = data.variant === "expanded" && data.series.length > 0;
+  // A `plot = "none"` series is collected and queryable over MCP (#500)
+  // but not drawn here — filtered first so it never counts towards an
+  // activity's "first" series below, and never inflates the chip list
+  // with an activity that has nothing left to chart.
+  const drawableSeries = data.series.filter(isDrawable);
+  const showCharts = data.variant === "expanded" && drawableSeries.length > 0;
   // A series is named "<activity> · <column>" (composed in
   // `cdno-domain`'s `context.rs`), and the activity is what a reader
   // filters by. A gym stewardship tracking sets, reps and weight across
@@ -118,11 +203,20 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   // labelled the chip "morning", and two activities sharing a first word
   // collapsed into one chip — which took the filter away entirely, since
   // it only appears when there is more than one.
-  const chartActivities = [...new Set(data.series.map((s) => activityOf(s.name)))];
-  const shownSeries =
+  const chartActivities = [...new Set(drawableSeries.map((s) => activityOf(s.name)))];
+  const activityFilteredSeries =
     activities.size === 0
-      ? data.series
-      : data.series.filter((s) => activities.has(activityOf(s.name)));
+      ? drawableSeries
+      : drawableSeries.filter((s) => activities.has(activityOf(s.name)));
+  // #489: at most one series per activity is always visible; every further
+  // series for that same activity needs metrics on. Then cap what survives
+  // — "show all" reveals the rest without a second round-trip, by simply
+  // raising the cap to the full length.
+  const gatedSeries = metricsGatedSeries(activityFilteredSeries, metricsOn);
+  const { shown: shownSeries, hiddenCount } = capSeries(
+    gatedSeries,
+    showAllCharts ? gatedSeries.length : DEFAULT_CHART_CAP,
+  );
   // Wikilinks in the dashboard body resolve to typed navigation or open
   // the linked note in the shell reader (mirrors ProjectDetail).
   async function onWikilink(target: string) {
@@ -248,6 +342,24 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
               />
             ))}
           </div>
+          {/* Explicit reveal for what the cap held back (#489). One toggle,
+              not a pair: `hiddenCount` is only ever nonzero while
+              collapsed, since "show all" raises the cap to the full
+              length — so this and the collapsed count never disagree. The
+              label states what it is hiding rather than leaving that to be
+              discovered. */}
+          {(hiddenCount > 0 || (showAllCharts && gatedSeries.length > DEFAULT_CHART_CAP)) && (
+            <button
+              type="button"
+              onClick={() => setShowAllCharts((shown) => !shown)}
+              aria-expanded={showAllCharts}
+              className="mt-3 rounded border border-line px-3 py-1 text-xs text-ink-muted hover:text-ink"
+            >
+              {showAllCharts
+                ? "Show fewer charts"
+                : `Show ${hiddenCount} more ${hiddenCount === 1 ? "chart" : "charts"}`}
+            </button>
+          )}
         </section>
       )}
 

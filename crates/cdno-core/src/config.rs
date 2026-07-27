@@ -321,11 +321,12 @@ pub enum Aggregate {
 
 /// How a metric is drawn, when it is drawn at all (`#483`).
 ///
-/// Chooses the **mark** a series is drawn with (`#486`). It does not yet gate
-/// **whether** it is drawn (`#500`): the derivation emits a series for every
-/// declared metric regardless, and the desktop draws every series it is given.
-/// So declaring an activity does change what is drawn today — its frontmatter
-/// series replace its body-table ones.
+/// Chooses the **mark** a series is drawn with (`#486`) and, since `#500`,
+/// gates **whether** the desktop draws it: the derivation still emits a
+/// series for every declared metric regardless of `plot` — so `#485`'s
+/// body-table suppression keeps keying on the full produced set — but the
+/// desktop filters `None` out of the chart pane at the presentation
+/// boundary. The series stays collected and queryable over MCP either way.
 ///
 /// Presentation vocabulary, carried here for the same reason [`FieldType`] is
 /// — it is deserialised from config — but it is the one type in this crate
@@ -338,9 +339,11 @@ pub enum Aggregate {
 pub enum PlotKind {
     /// Collected and queryable, but not drawn.
     ///
-    /// The "not drawn" half is NOT YET HONOURED (`#500`): a declared metric's
-    /// series is still emitted and still drawn. It reads as "no mark
-    /// declared", so the consumer falls back to its own heuristic.
+    /// The default for a declared metric that names no `plot`. The desktop
+    /// (`#500`) honours this by leaving the series out of the chart pane
+    /// entirely, rather than falling back to its own mark heuristic — that
+    /// fallback is reserved for a series with no declaration behind it at
+    /// all (an undeclared body-table column).
     #[default]
     None,
     Line,
