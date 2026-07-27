@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-27
+
 ### Added
 
 - **A metric can be derived from its siblings.** Some tracked quantities are products of others —
@@ -42,60 +44,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   fallback, which is all an undeclared body-table series ever had. A chart's caption uses the
   declared label in place of the metric key and appends the unit, since a key like `resting_hr` is
   written for the data rather than for a reader. (#486)
-
-### Changed
-
-- **A second tracking entry for the same activity and date merges instead of erroring.** The
-  duplicate guard's rationale was right — logging an activity twice in a day should be one note,
-  not two silently-overwriting writes — but the merge it implied was never built, so the second
-  write simply failed. Several domains are naturally multi-occurrence: spending happens through
-  the day, contact more than once, practice splits morning and evening, and for agent-driven
-  logging a day recorded in two passes is ordinary. Content is appended and metrics folded in.
-
-  Merging is not blind concatenation, because the guard being removed was the only thing
-  preventing a double-write. A record carrying a stable `id` **replaces** the record with that
-  `id`, so re-applying a payload is idempotent; a record without one **appends**, so re-running an
-  import that omits ids double-counts every summed metric — documented at both surfaces rather
-  than left to be discovered. Scalars are last-write-wins, but replacing a record set with a
-  non-record value is refused rather than silently discarding the day's entries. A merged day still
-  reduces to one point per series: the two passes share a cell and the metric's own aggregate
-  reduces across both. (#488)
-
-- **A metric declared `plot = "none"` no longer draws in the desktop.** `MetricSpec.plot` was
-  parsed and documented but nothing read it: the derivation emitted a series for every declared
-  metric regardless, and the desktop drew every series it was given, choosing the mark by an
-  integer-vs-fractional heuristic whenever nothing else was declared. Declaring an activity is an
-  explicit act, and is allowed to change what is drawn — but `plot = "none"` (the default for a
-  declared metric that names no mark) should mean collected and queryable, not drawn. It now does:
-  the filter lives at the presentation boundary, not in the derivation, so the derivation still
-  emits every declared metric's series regardless of its `plot` and a declared-but-unplotted
-  activity's body table stays suppressed rather than reappearing (#485's rule is unchanged). (#500)
-
-- **Trend charts cap at six, with an explicit "show all", and dense per-activity detail now sits
-  behind the metrics toggle.** A grouped metric (#483) fans out to one chart per distinct value,
-  and that count grows on its own as new categories, subjects or people appear — a gym
-  stewardship tracking three activities across three metrics was already nine charts in one
-  column, roughly 1600px of scroll with no way to narrow it. The desktop now draws at most six
-  series before offering a "show all" that states how many more there are, so the default view
-  cannot grow without bound. Within that, the "status, not goals" exemption `useMetrics()` already
-  gave trend charts is narrowed to one series per activity: a single calm status trend stays
-  always visible, and every further series for the same activity — per-category lines,
-  mean-aggregated ratings — now needs metrics on, closer to the quantitative graphics the toggle
-  exists to hide. The ephemeral activity filter is unchanged: it still resets on navigation, which
-  is correct behaviour, not a bug. (#489)
-
-### Fixed
-
-- **The shipped `body` tracking template produced one meaningless number.** It was long-format —
-  one metric per row sharing a single `Value` column — and the trend engine sums each column, so
-  filling it in yielded a single series whose value was weight + waist + sleep added together. It
-  is now wide: one row, one column per metric, so each metric becomes its own series carrying its
-  own value. The example README states the wide-vs-long rule and why it matters, which was
-  previously discoverable only by reading a Rust doc comment, and the example set gains a
-  `spending` and a `reading` variant — tracking is domain-neutral, but three fitness templates
-  taught otherwise. (#479)
-
-### Added
 
 - **Tracking series can be derived from frontmatter, each metric reduced by its own declared
   rule.** The existing engine parses the first table in a tracking note's body and *sums every
@@ -167,6 +115,58 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   number as well as a decimal — a round reading is written `82`, not `82.0`, and warning on
   it would make the type unusable on exactly the readings that land on a whole number.
   `nan`/`inf` are refused at vault-open rather than at first use. (#480)
+
+### Changed
+
+- **A second tracking entry for the same activity and date merges instead of erroring.** The
+  duplicate guard's rationale was right — logging an activity twice in a day should be one note,
+  not two silently-overwriting writes — but the merge it implied was never built, so the second
+  write simply failed. Several domains are naturally multi-occurrence: spending happens through
+  the day, contact more than once, practice splits morning and evening, and for agent-driven
+  logging a day recorded in two passes is ordinary. Content is appended and metrics folded in.
+
+  Merging is not blind concatenation, because the guard being removed was the only thing
+  preventing a double-write. A record carrying a stable `id` **replaces** the record with that
+  `id`, so re-applying a payload is idempotent; a record without one **appends**, so re-running an
+  import that omits ids double-counts every summed metric — documented at both surfaces rather
+  than left to be discovered. Scalars are last-write-wins, but replacing a record set with a
+  non-record value is refused rather than silently discarding the day's entries. A merged day still
+  reduces to one point per series: the two passes share a cell and the metric's own aggregate
+  reduces across both. (#488)
+
+- **A metric declared `plot = "none"` no longer draws in the desktop.** `MetricSpec.plot` was
+  parsed and documented but nothing read it: the derivation emitted a series for every declared
+  metric regardless, and the desktop drew every series it was given, choosing the mark by an
+  integer-vs-fractional heuristic whenever nothing else was declared. Declaring an activity is an
+  explicit act, and is allowed to change what is drawn — but `plot = "none"` (the default for a
+  declared metric that names no mark) should mean collected and queryable, not drawn. It now does:
+  the filter lives at the presentation boundary, not in the derivation, so the derivation still
+  emits every declared metric's series regardless of its `plot` and a declared-but-unplotted
+  activity's body table stays suppressed rather than reappearing (#485's rule is unchanged). (#500)
+
+- **Trend charts cap at six, with an explicit "show all", and dense per-activity detail now sits
+  behind the metrics toggle.** A grouped metric (#483) fans out to one chart per distinct value,
+  and that count grows on its own as new categories, subjects or people appear — a gym
+  stewardship tracking three activities across three metrics was already nine charts in one
+  column, roughly 1600px of scroll with no way to narrow it. The desktop now draws at most six
+  series before offering a "show all" that states how many more there are, so the default view
+  cannot grow without bound. Within that, the "status, not goals" exemption `useMetrics()` already
+  gave trend charts is narrowed to one series per activity: a single calm status trend stays
+  always visible, and every further series for the same activity — per-category lines,
+  mean-aggregated ratings — now needs metrics on, closer to the quantitative graphics the toggle
+  exists to hide. The ephemeral activity filter is unchanged: it still resets on navigation, which
+  is correct behaviour, not a bug. (#489)
+
+### Fixed
+
+- **The shipped `body` tracking template produced one meaningless number.** It was long-format —
+  one metric per row sharing a single `Value` column — and the trend engine sums each column, so
+  filling it in yielded a single series whose value was weight + waist + sleep added together. It
+  is now wide: one row, one column per metric, so each metric becomes its own series carrying its
+  own value. The example README states the wide-vs-long rule and why it matters, which was
+  previously discoverable only by reading a Rust doc comment, and the example set gains a
+  `spending` and a `reading` variant — tracking is domain-neutral, but three fitness templates
+  taught otherwise. (#479)
 
 ## [0.32.1] - 2026-07-24
 
