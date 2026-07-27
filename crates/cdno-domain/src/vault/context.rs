@@ -1110,16 +1110,24 @@ fn date_field(fm: &serde_json::Value) -> Option<NaiveDate> {
 /// the time). Index iteration order must never be relied on for this:
 /// `list_by_type` orders by path.
 ///
-/// An optional per-record `time` is the escape hatch, and it is
+/// An optional per-record `at` is the escape hatch, and it is
 /// **all-or-nothing**: the records reorder only when *every* one of them
-/// carries a time that parses. A partial or unparseable set falls back to
+/// carries an `at` that parses. A partial or unparseable set falls back to
 /// document order untouched.
 ///
 /// That strictness is the point. Ordering on a mixture would have to invent a
-/// position for the untimed records, and any choice silently changes which
-/// reading `last` reports — one record scaffolded with `time: null` would
+/// position for the unstamped records, and any choice silently changes which
+/// reading `last` reports — one record scaffolded with `at: null` would
 /// reorder the entry around it. Falling back keeps the failure mode "the hatch
 /// did nothing" rather than "the hatch quietly picked a different number".
+///
+/// The key is `at`, not `time`, and the difference matters: `time` is a
+/// plausible *metric* name — a swim split, a lap time, a rest interval, and
+/// the repo's own swim template has a `Time` column meaning duration — and a
+/// duration like `1:35` parses perfectly well as a clock time. Reserving
+/// `time` would silently order a record set by one of its own measurements.
+/// `at` matches the vocabulary the write surfaces already use (`cdno log
+/// --at`, `cdno track --at`) for when something happened.
 fn records_of<'a>(
     fm: &'a serde_json::Value,
     spec: &cdno_core::config::TrackingSpec,
@@ -1138,7 +1146,7 @@ fn records_of<'a>(
     // never-was-true number this whole change exists to eliminate.
     let times: Option<Vec<NaiveTime>> = records
         .iter()
-        .map(|r| str_field(r, "time").and_then(parse_record_time))
+        .map(|r| str_field(r, RECORD_TIME_KEY).and_then(parse_record_time))
         .collect();
     if let Some(times) = times {
         let mut keyed: Vec<(NaiveTime, &serde_json::Value)> =
@@ -1150,7 +1158,11 @@ fn records_of<'a>(
     records
 }
 
-/// Parse a record's `time` field. Accepts 24-hour with or without seconds and
+/// The per-record key that orders a record set. See [`records_of`] for why it
+/// is `at` rather than `time`.
+const RECORD_TIME_KEY: &str = "at";
+
+/// Parse a record's `at` field. Accepts 24-hour with or without seconds and
 /// 12-hour with a meridiem, since the field is hand-authored and nothing in
 /// the vault writes it.
 fn parse_record_time(raw: &str) -> Option<NaiveTime> {

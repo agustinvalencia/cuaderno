@@ -20,7 +20,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   was not recorded on produces no point rather than a zero, since zero-filling would draw a
   false line to the axis, and a value appearing for the first time starts its own series with
   no configuration change. Undeclared activities are untouched and keep working exactly as
-  before. (#483)
+  before.
+
+  A `last` metric reduces to the last record in the entry, which is the order the records appear
+  in the file — nothing else persists intra-day order, since an entry's date carries no time. When
+  records are appended out of order, giving every one of them an `at` field sorts them by it;
+  it is all-or-nothing, so a missing or unparseable `at` leaves the file's own order standing
+  rather than quietly picking a different reading. (#483)
 
 - **A tracking entry can carry structured metrics, and can be filed for a day that has already
   passed.** Recording lags the event more often than not — a statement reconciled at the weekend,

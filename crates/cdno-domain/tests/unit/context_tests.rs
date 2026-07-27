@@ -1140,8 +1140,7 @@ fn last_resolves_to_document_order_and_a_time_field_reorders() {
     // `date` is a NaiveDate and the write discards the time, so nothing else
     // persists intra-day order. Index iteration order must never be relied on.
     let doc_order = "detail:\n  - {balance: 100}\n  - {balance: 200}\n";
-    let timed =
-        "detail:\n  - {balance: 100, time: \"18:00\"}\n  - {balance: 200, time: \"09:00\"}\n";
+    let timed = "detail:\n  - {balance: 100, at: \"18:00\"}\n  - {balance: 200, at: \"09:00\"}\n";
     let spec = TrackingSpec {
         records: Some("detail".to_owned()),
         group_by: None,
@@ -1154,35 +1153,33 @@ fn last_resolves_to_document_order_and_a_time_field_reorders() {
     // lexicographically: `"18:00" < "9:00"` as raw strings, which would report
     // the morning reading as the day's last — the never-was-true number this
     // whole change exists to eliminate.
-    let unpadded =
-        "detail:\n  - {balance: 100, time: \"9:00\"}\n  - {balance: 200, time: \"18:00\"}\n";
+    let unpadded = "detail:\n  - {balance: 100, at: \"9:00\"}\n  - {balance: 200, at: \"18:00\"}\n";
     let twelve_hour =
-        "detail:\n  - {balance: 100, time: \"9:00 AM\"}\n  - {balance: 200, time: \"10:00 AM\"}\n";
+        "detail:\n  - {balance: 100, at: \"9:00 AM\"}\n  - {balance: 200, at: \"10:00 AM\"}\n";
     // Partial or unparseable times fall back to document order rather than
     // hoisting the untimed records to the front and silently changing which
-    // reading wins. One record scaffolded `time: null` must not reorder the
+    // reading wins. One record scaffolded `at: null` must not reorder the
     // entry around it.
-    let partial = "detail:\n  - {balance: 100, time: \"09:00\"}\n  - {balance: 200}\n";
-    let null_time =
-        "detail:\n  - {balance: 100, time: \"09:00\"}\n  - {balance: 200, time: null}\n";
+    let partial = "detail:\n  - {balance: 100, at: \"09:00\"}\n  - {balance: 200}\n";
+    let null_time = "detail:\n  - {balance: 100, at: \"09:00\"}\n  - {balance: 200, at: null}\n";
     let unparseable =
-        "detail:\n  - {balance: 100, time: \"morning\"}\n  - {balance: 200, time: \"evening\"}\n";
+        "detail:\n  - {balance: 100, at: \"morning\"}\n  - {balance: 200, at: \"evening\"}\n";
 
     for (body, expected, why) in [
         (doc_order, 200.0, "document order"),
-        (timed, 100.0, "a `time` field reorders"),
+        (timed, 100.0, "an `at` field reorders"),
         (unpadded, 200.0, "an unpadded hour orders by real time"),
         (twelve_hour, 200.0, "a 12-hour spelling orders by real time"),
         (
             partial,
             200.0,
-            "a partial time set falls back to document order",
+            "a partial `at` set falls back to document order",
         ),
-        (null_time, 200.0, "a null time falls back to document order"),
+        (null_time, 200.0, "a null `at` falls back to document order"),
         (
             unparseable,
             200.0,
-            "an unparseable time falls back to document order",
+            "an unparseable `at` falls back to document order",
         ),
     ] {
         let (vault, _store) = vault_with(&[(
@@ -1302,4 +1299,35 @@ fn a_group_value_containing_the_display_separator_stays_its_own_series() {
         .filter(|n| n.ends_with("minutes"))
         .collect();
     assert_eq!(minutes.len(), 2, "got {minutes:?}");
+}
+
+#[test]
+fn a_record_field_named_time_is_data_not_an_ordering_key() {
+    // `time` is a plausible METRIC name — a swim split, a lap time, a rest
+    // interval; the repo's own swim template has a `Time` column meaning
+    // duration — and a duration like "1:35" parses perfectly well as a clock
+    // time. Reserving `time` would order a record set by one of its own
+    // measurements and report the wrong reading for `last`.
+    let body =
+        "detail:\n  - {set: 1, rest: 30, time: \"1:35\"}\n  - {set: 2, rest: 45, time: \"1:32\"}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-swim.md",
+        &tracking_fm_note("health", "swim", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [("rest".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("health", &specs(&[("swim", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(named(&series, "swim \u{b7} rest"), ymd(2026, 7, 6)),
+        Some(45.0),
+        "document order must stand: set 2 is last, whatever its `time` says"
+    );
 }
