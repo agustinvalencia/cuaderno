@@ -31,7 +31,7 @@ use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cdno_core::config::{Aggregate, TrackingSpec};
+use cdno_core::config::{Aggregate, PlotKind, TrackingSpec};
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::{MarkdownDocument, extract_first_table};
@@ -146,6 +146,15 @@ pub struct TrackingSeries {
     /// One point per tracking note that had a numeric value in the
     /// column, sorted by date.
     pub points: Vec<TrackingPoint>,
+    /// The declared unit (`min`, `kg`, `EUR`), when the metric names one.
+    /// `None` for a body-table series, which has no declaration behind it.
+    pub unit: Option<String>,
+    /// A declared display name. A consumer falls back to [`name`](Self::name).
+    pub label: Option<String>,
+    /// The declared chart mark. `None` leaves the choice to the consumer's
+    /// own heuristic — which is all a body-table series ever had, since
+    /// nothing declares its semantics.
+    pub mark: Option<PlotKind>,
 }
 
 /// One dated value in a [`TrackingSeries`].
@@ -660,7 +669,15 @@ impl Vault {
             .into_iter()
             .map(|(name, mut points)| {
                 points.sort_by_key(|p| p.date);
-                TrackingSeries { name, points }
+                TrackingSeries {
+                    name,
+                    points,
+                    // A body-table series has no declaration behind it: the
+                    // column header is all the engine knows.
+                    unit: None,
+                    label: None,
+                    mark: None,
+                }
             })
             .collect())
     }
@@ -774,11 +791,10 @@ impl Vault {
         let mut series: Vec<TrackingSeries> = acc
             .into_iter()
             .map(|(key, by_date)| {
-                let aggregate = specs
+                let mspec = specs
                     .get(&key.activity)
-                    .and_then(|s| s.metrics.get(&key.metric))
-                    .map(|m| m.aggregate)
-                    .unwrap_or_default();
+                    .and_then(|s| s.metrics.get(&key.metric));
+                let aggregate = mspec.map(|m| m.aggregate).unwrap_or_default();
                 let points = by_date
                     .into_iter()
                     .map(|(date, values)| TrackingPoint {
@@ -789,6 +805,9 @@ impl Vault {
                 TrackingSeries {
                     name: key.display_name(),
                     points,
+                    unit: mspec.and_then(|m| m.unit.clone()),
+                    label: mspec.and_then(|m| m.label.clone()),
+                    mark: mspec.map(|m| m.plot),
                 }
             })
             .collect();

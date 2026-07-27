@@ -6,6 +6,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Tracking series are readable over MCP, and carry what the declaration knows.** Asked whether
+  something is trending up, an agent had to open and parse every tracking note itself — the
+  largest gap in the tracking surface, and one that widens as a vault grows.
+  `get_stewardship_tracking` now returns a `series` block alongside its entries, each point
+  already reduced by that metric's own aggregate, so a `mean` metric reads as an average rather
+  than a total. Series span the stewardship's whole history; the `period` argument bounds only the
+  entries, since a trend read over a slice of its own history answers a different question.
+
+  A series also carries the metric's declared `unit`, an optional display `label`, and its chart
+  `mark`. The desktop's column-vs-line choice was inferred from whether every value happened to be
+  an integer — a deliberately non-semantic guess; a declared mark now wins and the guess is the
+  fallback, which is all an undeclared body-table series ever had. (#486)
+
 ### Changed
 
 - **A second tracking entry for the same activity and date merges instead of erroring.** The

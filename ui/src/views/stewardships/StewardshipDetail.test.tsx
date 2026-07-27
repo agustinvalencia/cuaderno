@@ -24,6 +24,9 @@ const EXPANDED: StewardshipDetailData = {
         { date: "2026-07-01", value: 6 },
         { date: "2026-07-05", value: 4 },
       ],
+      unit: null,
+      label: null,
+      mark: null,
     },
   ],
   recent: [
@@ -55,6 +58,9 @@ const MIXED: StewardshipDetailData = {
         { date: "2026-07-01", value: 6 },
         { date: "2026-07-05", value: 4 },
       ],
+      unit: null,
+      label: null,
+      mark: null,
     },
     {
       name: "weigh-in · Weight (kg)",
@@ -62,6 +68,9 @@ const MIXED: StewardshipDetailData = {
         { date: "2026-07-01", value: 78.4 },
         { date: "2026-07-05", value: 77.9 },
       ],
+      unit: null,
+      label: null,
+      mark: null,
     },
   ],
   recent: [],
@@ -320,8 +329,8 @@ test("an activity with a space in it keeps its whole name", async () => {
   renderDetail({
     ...MIXED,
     series: [
-      { name: "morning run · Sets", points: [{ date: "2026-07-01", value: 3 }] },
-      { name: "morning swim · Laps", points: [{ date: "2026-07-02", value: 20 }] },
+      { name: "morning run · Sets", points: [{ date: "2026-07-01", value: 3 }], unit: null, label: null, mark: null },
+      { name: "morning swim · Laps", points: [{ date: "2026-07-02", value: 20 }], unit: null, label: null, mark: null },
     ],
   });
   await screen.findByRole("heading", { name: "Trends" });

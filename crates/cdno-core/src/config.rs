@@ -370,6 +370,10 @@ pub struct MetricSpec {
     pub group_by: Option<String>,
     /// A display unit (`min`, `kg`, `EUR`). Carried through to the chart.
     pub unit: Option<String>,
+    /// A display name for the series, when the metric's key is not what you
+    /// want on a chart (`resting_hr` -> `Resting heart rate`). Carried through
+    /// to the DTO; a consumer falls back to the generated series name.
+    pub label: Option<String>,
     #[serde(default)]
     pub plot: PlotKind,
     /// RESERVED for the time-reduction axis — month-over-month deltas,

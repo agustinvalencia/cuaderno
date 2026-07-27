@@ -1552,3 +1552,70 @@ async fn get_stewardship_tracking_reports_an_undeclared_activity_as_such() {
 
     assert!(decode_json(&result)["spec"].is_null());
 }
+
+#[tokio::test]
+async fn get_stewardship_tracking_returns_aggregated_series() {
+    // The largest agent-facing gap this closes: asked "is this trending up?",
+    // an agent had to open and parse every tracking note itself. The points
+    // arrive already reduced by each metric's own aggregate.
+    use cdno_core::config::{Aggregate, MetricSpec, TrackingSpec};
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut config = VaultConfig::default();
+    config.tracking.insert(
+        "body".to_owned(),
+        TrackingSpec {
+            records: None,
+            group_by: None,
+            metrics: [(
+                "weight".to_owned(),
+                MetricSpec {
+                    aggregate: Aggregate::Last,
+                    unit: Some("kg".to_owned()),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    );
+    // Seed before opening the vault: `Vault::new` reconciles the index from
+    // the store, and a note written afterwards is invisible to it.
+    for (day, weight) in [(6, 82.5), (13, 82.0)] {
+        store
+            .write_file(
+                &VaultPath::new(format!(
+                    "stewardships/health/tracking/2026-07-{day:02}-body.md"
+                ))
+                .unwrap(),
+                &format!(
+                    "---\ntype: tracking\nstewardship: health\nactivity: body\ndate: 2026-07-{day:02}\nweight: {weight}\n---\n\n# body\n"
+                ),
+            )
+            .unwrap();
+    }
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "health".to_owned(),
+            activity: "body".to_owned(),
+            period: None,
+        }))
+        .await
+        .expect("get_stewardship_tracking");
+
+    let value = decode_json(&result);
+    let series = value["series"].as_array().expect("series block");
+    let weight = series
+        .iter()
+        .find(|s| s["name"] == "body \u{b7} weight")
+        .unwrap_or_else(|| panic!("no weight series in {value}"));
+    assert_eq!(weight["unit"], "kg", "the declared unit travels");
+    let points = weight["points"].as_array().unwrap();
+    assert_eq!(points.len(), 2);
+    assert_eq!(points[0]["value"], 82.5);
+    assert_eq!(points[1]["value"], 82.0);
+}

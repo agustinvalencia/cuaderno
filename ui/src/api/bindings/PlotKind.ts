@@ -3,6 +3,11 @@
 /**
  * How a metric is drawn, when it is drawn at all (`#483`).
  *
+ * **Parsed but not yet consumed** (`#500`): the derivation emits a series for
+ * every declared metric regardless, and the desktop draws every series it is
+ * given. Declaring an activity therefore does change what is drawn today —
+ * its frontmatter series replace its body-table ones.
+ *
  * Presentation vocabulary, carried here for the same reason [`FieldType`] is
  * — it is deserialised from config — but it is the one type in this crate
  * that the crate neither parses for itself nor interprets; it flows through

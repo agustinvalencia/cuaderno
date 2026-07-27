@@ -202,7 +202,8 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `type` | metric | `bool` \| `int` \| `float` \| `string` \| `date`. Optional. |
 | `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
 | `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |
-| `unit` | metric | Display unit (`min`, `kg`, `EUR`). |
+| `unit` | metric | Display unit (`min`, `kg`, `EUR`). Carried through to the chart and the MCP series. |
+| `label` | metric | Display name for the series, when the metric's key is not what you want on a chart (`resting_hr` → `Resting heart rate`). |
 | `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. **Parsed but not yet consumed** — see the note below. |
 
 Choosing the aggregate is the whole point, and it follows from what the number *is*:
