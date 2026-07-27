@@ -13,7 +13,7 @@
 //! file is picked up automatically, else the activity falls back to the
 //! generic template. The user fleshes out the table or notes after the file
 //! is created — this op writes the scaffold and gets out of the way.
-//! (Ready-made gym/body/swim variants live in `examples/templates/tracking/`.)
+//! (Ready-made variants live in `examples/templates/tracking/`.)
 
 use std::collections::HashMap;
 

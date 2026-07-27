@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **The shipped `body` tracking template produced one meaningless number.** It was long-format —
+  one metric per row sharing a single `Value` column — and the trend engine sums each column, so
+  filling it in yielded a single series whose value was weight + waist + sleep added together. It
+  is now wide: one row, one column per metric, so each metric becomes its own series carrying its
+  own value. The example README states the wide-vs-long rule and why it matters, which was
+  previously discoverable only by reading a Rust doc comment, and the example set gains a
+  `spending` and a `reading` variant — tracking is domain-neutral, but three fitness templates
+  taught otherwise. (#479)
+
 ### Added
 
 - **Tracking series can be derived from frontmatter, each metric reduced by its own declared
