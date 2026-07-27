@@ -3,11 +3,12 @@
 /**
  * How a metric is drawn, when it is drawn at all (`#483`).
  *
- * Chooses the **mark** a series is drawn with (`#486`). It does not yet gate
- * **whether** it is drawn (`#500`): the derivation emits a series for every
- * declared metric regardless, and the desktop draws every series it is given.
- * So declaring an activity does change what is drawn today — its frontmatter
- * series replace its body-table ones.
+ * Chooses the **mark** a series is drawn with (`#486`) and, since `#500`,
+ * gates **whether** the desktop draws it: the derivation still emits a
+ * series for every declared metric regardless of `plot` — so `#485`'s
+ * body-table suppression keeps keying on the full produced set — but the
+ * desktop filters `None` out of the chart pane at the presentation
+ * boundary. The series stays collected and queryable over MCP either way.
  *
  * Presentation vocabulary, carried here for the same reason [`FieldType`] is
  * — it is deserialised from config — but it is the one type in this crate

@@ -205,7 +205,7 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `derived` | metric | An expression computing this metric from sibling fields, e.g. `"km * rate_per_km"`. Evaluated **per record, before aggregation**. Declare `type` on it and the vault refuses to open. |
 | `unit` | metric | Display unit (`min`, `kg`, `EUR`). Carried through to the chart and the MCP series. |
 | `label` | metric | Display name for the series, when the metric's key is not what you want on a chart (`resting_hr` → `Resting heart rate`). |
-| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws; it does not yet decide **whether** the series is drawn — see the note below. |
+| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws, and whether the desktop draws it at all — see the note below. |
 
 ### Derived metrics
 
@@ -247,9 +247,9 @@ OP      := '+' | '-' | '*'
   notation (`1e-3`) is not supported; write the value out in full.
 - **Every operand must name a metric the same activity declares.** A typo is a vault-open error
   naming the field, rather than a silently empty chart. The cost of that requirement: an operand
-  that exists only to be multiplied — a rate, say — still becomes a metric of its own, and until
-  `plot` gates drawing it is charted alongside the result (today `plot` only chooses the mark, not
-  whether a series appears — see below).
+  that exists only to be multiplied — a rate, say — still becomes a metric of its own. Leave its
+  `plot` undeclared (the default) and the desktop will not chart it alongside the result — see
+  below.
 - **`type` must be omitted** — the output is numeric by construction, so declaring one can only
   contradict it.
 - **A record missing an operand contributes nothing** — a gap, on the same rule as a plain metric.
@@ -274,14 +274,16 @@ Notes and limits:
 - **`window` is reserved** for a future time-reduction axis (month-over-month deltas, rollups) and
   is a load error today, so adding the behaviour later is not a breaking change.
 - **A declared activity's body table is no longer read** once its frontmatter yields a series, so
-  the same metric can never appear twice under two disagreeing numbers.
-- **`plot` chooses the mark, not yet whether to draw.** A declared `line`/`column` is used as the
-  chart's mark (an `area` or `scatter` resolves to the closest of the two the chart draws). What it
-  does *not* yet do is suppress a series: a metric declared `plot = "none"` is still emitted and
-  still drawn, with the mark chosen by the fallback heuristic. So declaring an activity *does*
-  change what is drawn today — its frontmatter series replace its body-table ones, which is the
-  point of declaring, but it is not the opt-in `plot = "none"` implies. Wiring that half is
-  tracked separately.
+  the same metric can never appear twice under two disagreeing numbers. This rule is unconditional
+  — it keys on the frontmatter derivation's full produced set, not on what any individual metric's
+  `plot` says, so a declared-but-unplotted metric still suppresses its body-table equivalent.
+- **`plot` chooses the mark, and gates whether the desktop draws it.** A declared `line`/`column`
+  is used as the chart's mark (an `area` or `scatter` resolves to the closest of the two the chart
+  draws). `plot = "none"` — the default for a declared metric that names no mark — is still
+  emitted and still queryable over MCP, but the desktop leaves it out of the chart pane. Declaring
+  an activity is an explicit act, and is allowed to change what is drawn: its frontmatter series
+  replace its body-table ones (the rule above, unaffected by this), and only the metrics that opt
+  into a mark are charted.
 
 ## Templates
 

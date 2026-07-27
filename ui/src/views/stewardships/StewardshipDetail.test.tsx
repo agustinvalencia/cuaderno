@@ -1,15 +1,50 @@
 // Stewardship Detail: charts appear only for an expanded stewardship
 // with series; a flat one has no charts pane; recent entries open the
 // reader; the log form submits with the template-derived vars.
-import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeAll, expect, test } from "vitest";
+import * as matchers from "vitest-axe/matchers";
+import { axe } from "vitest-axe";
+import type { AxeMatchers } from "vitest-axe";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
+import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
+import { setShowMetrics } from "../../lib/metrics";
 import { ReaderProvider } from "../../shell/reader";
 import { ToastProvider } from "../../shell/Toasts";
-import StewardshipDetail from "./StewardshipDetail";
+import StewardshipDetail, {
+  capSeries,
+  DEFAULT_CHART_CAP,
+  isDrawable,
+  metricsGatedSeries,
+} from "./StewardshipDetail";
+
+expect.extend(matchers);
+declare module "vitest" {
+  interface Assertion<T = any> extends AxeMatchers {}
+  interface AsymmetricMatchersContaining extends AxeMatchers {}
+}
+
+// The metrics toggle persists via localStorage; jsdom's here doesn't work
+// (mirrors NoteContent.test.tsx).
+beforeAll(() => {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, String(v)),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size;
+      },
+    },
+    configurable: true,
+  });
+});
 
 const EXPANDED: StewardshipDetailData = {
   slug: "health",
@@ -77,6 +112,115 @@ const MIXED: StewardshipDetailData = {
   tracking_count: 4,
 };
 
+// A declared `plot = "none"` series alongside an undeclared body-table one,
+// both for the same activity — isolates #500's mark filter from #489's
+// metrics gate, since only one of the two survives the filter and gating
+// then has nothing left to narrow.
+const NONE_AND_TABLE: StewardshipDetailData = {
+  ...EXPANDED,
+  series: [
+    {
+      name: "gym · Sets",
+      points: [{ date: "2026-07-01", value: 6 }],
+      unit: null,
+      label: null,
+      mark: null,
+    },
+    {
+      name: "gym · Effort",
+      points: [{ date: "2026-07-01", value: 7 }],
+      unit: null,
+      label: null,
+      mark: "none",
+    },
+  ],
+};
+
+// An expanded stewardship whose only series are all declared `plot =
+// "none"` — nothing left to draw, so the Trends pane should not appear at
+// all rather than render empty.
+const ALL_NONE: StewardshipDetailData = {
+  ...EXPANDED,
+  series: [
+    {
+      name: "gym · Effort",
+      points: [{ date: "2026-07-01", value: 7 }],
+      unit: null,
+      label: null,
+      mark: "none",
+    },
+  ],
+};
+
+// Two series for the SAME activity — the shape #489's metrics gate acts
+// on: one always-visible status trend, one further series that needs
+// metrics on.
+const MULTI_METRIC: StewardshipDetailData = {
+  ...EXPANDED,
+  series: [
+    {
+      name: "gym · Sets",
+      points: [{ date: "2026-07-01", value: 6 }],
+      unit: null,
+      label: null,
+      mark: null,
+    },
+    {
+      name: "gym · Reps",
+      points: [{ date: "2026-07-01", value: 40 }],
+      unit: null,
+      label: null,
+      mark: null,
+    },
+  ],
+};
+
+// Eight distinct activities, one series each, so the cap is the only thing
+// under test — metrics gating never removes anything from a single-series
+// activity.
+const MANY_ACTIVITIES: StewardshipDetailData = {
+  ...EXPANDED,
+  series: Array.from({ length: 8 }, (_, i) => ({
+    name: `activity-${i + 1} · Sets`,
+    points: [{ date: "2026-07-01", value: i + 1 }],
+    unit: null,
+    label: null,
+    mark: null,
+  })),
+};
+
+// Two full stewardships, keyed by slug, each linking to the other — the
+// vehicle for driving a REAL in-app navigation between them rather than two
+// separate mounts. That distinction matters: a fresh mount always starts
+// clean regardless of the bug, so only a navigation that changes `:slug`
+// on an already-mounted, already-cached route exercises the reconcile-not-
+// remount path the fix (`key={slug}`) is for.
+const NAV_HEALTH: StewardshipDetailData = {
+  ...MANY_ACTIVITIES,
+  slug: "health",
+  name: "Health",
+  body_markdown: "## Current Status\nSee also [[mood]].",
+};
+
+const NAV_MOOD: StewardshipDetailData = {
+  ...EXPANDED,
+  slug: "mood",
+  name: "Mood",
+  body_markdown: "## Current Status\nSee also [[health]].",
+  recent: [],
+  tracking_count: 0,
+  // 7 activities, one fewer than NAV_HEALTH's 8, so each stewardship's
+  // "N more" reveal button reads distinctly and a leaked cap state is
+  // unmistakable rather than a coincidental match.
+  series: Array.from({ length: 7 }, (_, i) => ({
+    name: `activity-${i + 1} · Sets`,
+    points: [{ date: "2026-07-01", value: i + 1 }],
+    unit: null,
+    label: null,
+    mark: null,
+  })),
+};
+
 const FLAT: StewardshipDetailData = {
   slug: "finances",
   name: "Finances",
@@ -140,6 +284,9 @@ function mountDetail(fixture: StewardshipDetailData, at?: string) {
 afterEach(() => {
   cleanup();
   clearMocks();
+  // The metrics store is module-global; reset so ordering between tests
+  // cannot leak an "on" toggle into a test that assumes the default off.
+  setShowMetrics(false);
 });
 
 test("an expanded stewardship with series shows the charts pane", async () => {
@@ -366,4 +513,240 @@ test("charts can be narrowed to one activity", async () => {
   const charts = within(screen.getByRole("group", { name: "Trend charts" }));
   expect(charts.getByText(/weigh-in/)).toBeDefined();
   expect(charts.queryByText(/gym/)).toBeNull();
+});
+
+test('a series declared plot = "none" is not drawn; a body-table (mark: null) series still is', async () => {
+  // #500: declaring is an explicit act and is allowed to change what is
+  // drawn, but only the literal "none" is suppressed — an undeclared
+  // body-table series (mark: null) is not the same thing and must keep
+  // drawing.
+  renderDetail(NONE_AND_TABLE);
+  await screen.findByRole("heading", { name: "Trends" });
+  expect(screen.getByText("gym · Sets")).toBeDefined();
+  expect(screen.queryByText("gym · Effort")).toBeNull();
+});
+
+test('a stewardship whose only series are all plot = "none" has no Trends pane', async () => {
+  // Nothing survives the filter, so there is nothing to draw — the pane
+  // should be absent, not an empty frame with a heading and no charts.
+  renderDetail(ALL_NONE);
+  await screen.findByText("Health");
+  expect(screen.queryByRole("region", { name: "Trends" })).toBeNull();
+});
+
+test("with metrics off, only the first series per activity renders; with metrics on, all do", async () => {
+  // #489: a single always-visible status trend per activity, every
+  // further series for that activity behind useMetrics().
+  renderDetail(MULTI_METRIC);
+  await screen.findByRole("heading", { name: "Trends" });
+  expect(screen.getByText("gym · Sets")).toBeDefined();
+  expect(screen.queryByText("gym · Reps")).toBeNull();
+
+  act(() => setShowMetrics(true));
+  expect(await screen.findByText("gym · Reps")).toBeDefined();
+});
+
+test('beyond the cap, the extra series are hidden until "show all" is used, and the control says how many are hidden', async () => {
+  const { container } = renderDetail(MANY_ACTIVITIES);
+  await screen.findByRole("heading", { name: "Trends" });
+  // DEFAULT_CHART_CAP is 6 of the 8 series the fixture declares, so 2 are
+  // hidden — the count the control states below.
+  expect(container.querySelectorAll("[data-chart-kind]")).toHaveLength(DEFAULT_CHART_CAP);
+
+  const reveal = screen.getByRole("button", { name: "Show 2 more charts" });
+  fireEvent.click(reveal);
+
+  expect(container.querySelectorAll("[data-chart-kind]")).toHaveLength(8);
+  expect(screen.getByRole("button", { name: "Show fewer charts" })).toBeDefined();
+});
+
+test("has no axe violations, with the cap's control both collapsed and revealed", async () => {
+  const { container } = renderDetail(MANY_ACTIVITIES);
+  await screen.findByRole("heading", { name: "Trends" });
+  expect(
+    await axe(container, { rules: { "color-contrast": { enabled: false } } }),
+  ).toHaveNoViolations();
+
+  fireEvent.click(screen.getByRole("button", { name: "Show 2 more charts" }));
+  expect(
+    await axe(container, { rules: { "color-contrast": { enabled: false } } }),
+  ).toHaveNoViolations();
+});
+
+test("navigating from one stewardship to another resets the chip selection and the expanded cap", async () => {
+  mockIPC((cmd, args) => {
+    if (cmd === "get_stewardship_detail") {
+      const { slug } = args as { slug: string };
+      return slug === "mood" ? NAV_MOOD : NAV_HEALTH;
+    }
+    if (cmd === "resolve_wikilink") {
+      const { target } = args as { target: string };
+      return target === "mood"
+        ? { path: "stewardships/mood.md", note_type: "stewardship" }
+        : { path: "stewardships/health.md", note_type: "stewardship" };
+    }
+    return undefined;
+  });
+  mountDetail(NAV_HEALTH);
+
+  // Visit mood once so it is cached going forward — the route change back
+  // to health below then reconciles the cached query instead of showing
+  // the "Reading the vault…" interstitial, which is exactly what a
+  // `:slug`-only route change does when the destination is already warm.
+  await screen.findByText("mood");
+  fireEvent.click(screen.getByText("mood"));
+  await screen.findByRole("heading", { name: "Mood" });
+
+  // On mood: reveal the capped charts and narrow to one activity — state
+  // that must NOT ride along to the next stewardship.
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.click(screen.getByRole("button", { name: "Show 1 more chart" }));
+  expect(screen.getByRole("button", { name: "Show fewer charts" })).toBeDefined();
+  const moodFilter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  fireEvent.click(moodFilter.getByRole("button", { name: "activity-1" }));
+  expect(moodFilter.getByRole("button", { name: "activity-1" }).getAttribute("aria-pressed")).toBe(
+    "true",
+  );
+
+  // Health is already cached from the initial mount — this route change
+  // only swaps `:slug`, the exact reconcile-not-remount path a stewardship-
+  // to-stewardship navigation takes.
+  fireEvent.click(screen.getByText("health"));
+  await screen.findByRole("heading", { name: "Health" });
+
+  // Health's own state, not mood's leftovers: the cap starts collapsed
+  // again (2 of 8 hidden, not "Show fewer charts") and no chip is pressed.
+  expect(await screen.findByRole("button", { name: "Show 2 more charts" })).toBeDefined();
+  const healthFilter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  expect(
+    healthFilter.getByRole("button", { name: "activity-1" }).getAttribute("aria-pressed"),
+  ).toBe("false");
+});
+
+test("a stale activity selection does not strand the Trends grid empty", async () => {
+  // A config edit setting `plot = "none"` on the selected activity, seen
+  // through a watcher-driven refetch, is what this reproduces — the
+  // component never unmounts, so a stale `activities` selection would
+  // otherwise survive the refetch and filter the grid down to nothing
+  // under a heading that still says "Trends". A log submission's own
+  // invalidate-and-refetch (`onLogged` in the component) is the easiest
+  // mounted refetch to drive without a real filesystem watcher.
+  let weighInDropped = false;
+  mockIPC((cmd) => {
+    if (cmd === "get_stewardship_detail") {
+      return weighInDropped
+        ? { ...MIXED, series: [MIXED.series[0], { ...MIXED.series[1], mark: "none" }] }
+        : MIXED;
+    }
+    if (cmd === "get_tracking_template_fields") return [];
+    if (cmd === "log_tracking_entry") {
+      weighInDropped = true;
+      return undefined;
+    }
+    return undefined;
+  });
+  mountDetail(MIXED);
+
+  await screen.findByRole("heading", { name: "Trends" });
+  const filter = within(screen.getByRole("group", { name: "Filter charts by activity" }));
+  fireEvent.click(filter.getByRole("button", { name: "weigh-in" }));
+  expect(
+    within(screen.getByRole("group", { name: "Trend charts" })).getByText(/weigh-in/),
+  ).toBeDefined();
+
+  fireEvent.click(screen.getByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.click(screen.getByRole("button", { name: "Log it" }));
+  await waitFor(() => expect(screen.queryByLabelText("Activity")).toBeNull());
+
+  // weigh-in dropped out, leaving one activity — no chip row left to
+  // un-press — and the surviving series draws instead of an empty grid.
+  await waitFor(() =>
+    expect(screen.queryByRole("group", { name: "Filter charts by activity" })).toBeNull(),
+  );
+  expect(
+    within(screen.getByRole("group", { name: "Trend charts" })).getByText("gym · Sets"),
+  ).toBeDefined();
+});
+
+// Pure functions, unit-tested without rendering a single chart.
+
+function series(name: string, mark: TrackingSeries["mark"] = null): TrackingSeries {
+  return { name, points: [{ date: "2026-07-01", value: 1 }], unit: null, label: null, mark };
+}
+
+test('isDrawable suppresses only a literal "none" mark', () => {
+  expect(isDrawable(series("gym · Sets", null))).toBe(true);
+  expect(isDrawable(series("gym · Sets", "line"))).toBe(true);
+  expect(isDrawable(series("gym · Sets", "column"))).toBe(true);
+  expect(isDrawable(series("gym · Sets", "none"))).toBe(false);
+});
+
+test("metricsGatedSeries keeps one series per activity when metrics are off, and all of them when on", () => {
+  const input = [series("gym · Sets"), series("gym · Reps"), series("weigh-in · Weight (kg)")];
+
+  expect(metricsGatedSeries(input, false).map((s) => s.name)).toEqual([
+    "gym · Sets",
+    "weigh-in · Weight (kg)",
+  ]);
+  expect(metricsGatedSeries(input, true)).toEqual(input);
+});
+
+test("metricsGatedSeries preserves order and treats input order as which series is \"first\"", () => {
+  const input = [series("gym · Reps"), series("gym · Sets")];
+  // "Reps" is first here, so it is the one kept — the caller decides
+  // which series is the status trend by what order it hands over.
+  expect(metricsGatedSeries(input, false).map((s) => s.name)).toEqual(["gym · Reps"]);
+});
+
+test("capSeries leaves a list at or under the cap untouched", () => {
+  const input = [series("a · x"), series("b · x"), series("c · x")];
+  expect(capSeries(input, 6)).toEqual({ shown: input, hiddenCount: 0 });
+  expect(capSeries(input, 3)).toEqual({ shown: input, hiddenCount: 0 });
+});
+
+test("capSeries truncates beyond the cap and reports how many were left off", () => {
+  const input = Array.from({ length: 8 }, (_, i) => series(`activity-${i} · Sets`));
+  const capped = capSeries(input, DEFAULT_CHART_CAP);
+  expect(capped.shown).toHaveLength(DEFAULT_CHART_CAP);
+  expect(capped.shown).toEqual(input.slice(0, DEFAULT_CHART_CAP));
+  expect(capped.hiddenCount).toBe(2);
+});
+
+test("the always-on series for a grouped activity is its ungrouped one", () => {
+  // Series arrive name-sorted, so taking the plain first would leave a
+  // grouped activity represented by whichever category sorts earliest - one
+  // slice standing in for the whole, which is not a status read.
+  const s = (name: string): TrackingSeries => ({
+    name,
+    points: [{ date: "2026-07-01", value: 1 }],
+    unit: null,
+    label: null,
+    mark: null,
+  });
+  const series = [
+    s("practice · ear-training · minutes"),
+    s("practice · harmony · minutes"),
+    s("practice · minutes"),
+  ];
+
+  const gated = metricsGatedSeries(series, false);
+  expect(gated.map((g) => g.name)).toEqual(["practice · minutes"]);
+  // And with metrics on, everything is back, in the order it arrived.
+  expect(metricsGatedSeries(series, true)).toHaveLength(3);
+});
+
+test("an activity with only grouped series still keeps one", () => {
+  const s = (name: string): TrackingSeries => ({
+    name,
+    points: [{ date: "2026-07-01", value: 1 }],
+    unit: null,
+    label: null,
+    mark: null,
+  });
+  const series = [s("spending · food · amount"), s("spending · transport · amount")];
+
+  expect(metricsGatedSeries(series, false).map((g) => g.name)).toEqual([
+    "spending · food · amount",
+  ]);
 });

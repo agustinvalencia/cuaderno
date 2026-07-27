@@ -61,6 +61,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   reduces to one point per series: the two passes share a cell and the metric's own aggregate
   reduces across both. (#488)
 
+- **A metric declared `plot = "none"` no longer draws in the desktop.** `MetricSpec.plot` was
+  parsed and documented but nothing read it: the derivation emitted a series for every declared
+  metric regardless, and the desktop drew every series it was given, choosing the mark by an
+  integer-vs-fractional heuristic whenever nothing else was declared. Declaring an activity is an
+  explicit act, and is allowed to change what is drawn — but `plot = "none"` (the default for a
+  declared metric that names no mark) should mean collected and queryable, not drawn. It now does:
+  the filter lives at the presentation boundary, not in the derivation, so the derivation still
+  emits every declared metric's series regardless of its `plot` and a declared-but-unplotted
+  activity's body table stays suppressed rather than reappearing (#485's rule is unchanged). (#500)
+
+- **Trend charts cap at six, with an explicit "show all", and dense per-activity detail now sits
+  behind the metrics toggle.** A grouped metric (#483) fans out to one chart per distinct value,
+  and that count grows on its own as new categories, subjects or people appear — a gym
+  stewardship tracking three activities across three metrics was already nine charts in one
+  column, roughly 1600px of scroll with no way to narrow it. The desktop now draws at most six
+  series before offering a "show all" that states how many more there are, so the default view
+  cannot grow without bound. Within that, the "status, not goals" exemption `useMetrics()` already
+  gave trend charts is narrowed to one series per activity: a single calm status trend stays
+  always visible, and every further series for the same activity — per-category lines,
+  mean-aggregated ratings — now needs metrics on, closer to the quantitative graphics the toggle
+  exists to hide. The ephemeral activity filter is unchanged: it still resets on navigation, which
+  is correct behaviour, not a bug. (#489)
+
 ### Fixed
 
 - **The shipped `body` tracking template produced one meaningless number.** It was long-format —

@@ -46,9 +46,10 @@ export function captionFor(series: TrackingSeries): string {
 
 export function markForSeries(series: TrackingSeries): ChartKind {
   // A declared mark wins: the vault said what this metric IS, which beats any
-  // signal read off its values. `none` is not a mark - it says "not drawn"
-  // rather than "draw it flat" - so it falls through to the heuristic for now
-  // (gating on it is #500), as does an undeclared body-table series.
+  // signal read off its values. `none` is not a mark - it says "not drawn" -
+  // so the caller (StewardshipDetail, #500) filters those series out before
+  // a mark is ever chosen for them; this fallback only exists for a caller
+  // that does not, and behaves the same as an undeclared body-table series.
   if (series.mark === "line" || series.mark === "column") return series.mark;
   if (series.mark === "area" || series.mark === "scatter") {
     // Declared, but this chart draws two marks. Honour the closest: a scatter
