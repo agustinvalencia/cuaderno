@@ -62,10 +62,14 @@ export function isDrawable(series: TrackingSeries): boolean {
  * should sit behind `useMetrics()` \u2014 per-category lines, mean-aggregated
  * ratings \u2014 while a single calm status trend per activity keeps the
  * "status, not goals" exemption the toggle already grants trend charts.
- * "First" means first in `series` as given: callers that care which
- * series reads as the status trend must order it there before calling
- * this. Exported standalone so the rule is unit-testable without
- * rendering a chart. */
+ * The one kept is the activity's UNGROUPED series \u2014 a name with exactly
+ * one `SERIES_SEPARATOR` (`activity \u00b7 metric`, no group segment) \u2014
+ * because a grouped series is one category standing in for the whole
+ * activity, which is not a status read. Only when an activity has no
+ * ungrouped series does order in `series` decide, so a caller that cares
+ * which grouped series reads as the status trend must order it first.
+ * Exported standalone so the rule is unit-testable without rendering a
+ * chart. */
 export function metricsGatedSeries(
   series: TrackingSeries[],
   metricsOn: boolean,
@@ -159,7 +163,13 @@ export default function StewardshipDetail() {
     );
   }
 
-  return <StewardshipDetailBody slug={slug} data={data} />;
+  // Keyed on `slug`: a route change from `/stewardships/a` to
+  // `/stewardships/b` only changes this param, and React reconciles the
+  // existing element rather than remounting it — so without a key distinct
+  // per stewardship, the previous stewardship's chip selection and
+  // expanded-cap state would leak into the next one instead of resetting,
+  // contrary to what the comments below (and #489) say ephemeral means.
+  return <StewardshipDetailBody key={slug} slug={slug} data={data} />;
 }
 
 function StewardshipDetailBody({ slug, data }: { slug: string; data: StewardshipDetailData }) {
@@ -204,10 +214,20 @@ function StewardshipDetailBody({ slug, data }: { slug: string; data: Stewardship
   // collapsed into one chip — which took the filter away entirely, since
   // it only appears when there is more than one.
   const chartActivities = [...new Set(drawableSeries.map((s) => activityOf(s.name)))];
+  // `activities` can go stale without a navigation to reset it (the `key`
+  // on the body only resets on a slug change): a config edit setting
+  // `plot = "none"` drops an activity mid-session, the watcher refetches
+  // while this component stays mounted, and a selection naming that
+  // activity survives. Intersect with what is actually here before
+  // filtering, and treat an empty result as no filter at all — a selection
+  // that, once intersected, names nothing that exists is a stale selection,
+  // not a request for an empty page, so it must not strand the grid empty
+  // under a Trends heading that still shows.
+  const liveActivities = new Set([...activities].filter((a) => chartActivities.includes(a)));
   const activityFilteredSeries =
-    activities.size === 0
+    liveActivities.size === 0
       ? drawableSeries
-      : drawableSeries.filter((s) => activities.has(activityOf(s.name)));
+      : drawableSeries.filter((s) => liveActivities.has(activityOf(s.name)));
   // #489: at most one series per activity is always visible; every further
   // series for that same activity needs metrics on. Then cap what survives
   // — "show all" reveals the rest without a second round-trip, by simply
