@@ -8,7 +8,7 @@
 // The backend stays the single source of truth for validity — this hook
 // only renders what validate_config / save_config report. An invalid
 // draft is a normal editing state (attention tier, never red).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
 import type { ConfigSaveError } from "../../api/bindings/ConfigSaveError";
@@ -38,6 +38,22 @@ export interface ConfigDraft {
   baseline: string;
   /** The content hash the next save echoes back for its compare-and-swap. */
   hash: string;
+  /** The `{draft, hash}` pair this hook currently considers live, as a
+   * ref written SYNCHRONOUSLY at every point it changes them (adoption,
+   * save success, setDraft) — never mirrored into place by a `useEffect`
+   * that copies `draft`/`hash` state into a ref after the fact. React 19
+   * schedules a passive effect's resulting state update as a separate
+   * Scheduler task from the effect itself, so a mirror-via-effect can lag
+   * the state it mirrors by a full extra render cycle — long enough for a
+   * promise continuation elsewhere to resolve inside that gap and read the
+   * stale value. `live` closes that gap: its identity (the ref object
+   * itself) is stable across renders even though `draft`/`hash` as plain
+   * values are re-snapshotted on every one, so a caller that resolves a
+   * promise long after the render that started it — the structured Config
+   * form's edit queue, deciding whether the base it edited against is
+   * still current — reads `live.current` and always sees the true value,
+   * with no render dependency. Read-only for every caller but this hook. */
+  live: { readonly current: { readonly draft: string; readonly hash: string } };
   /** Whether the draft diverges from the baseline (enables Save). */
   dirty: boolean;
   /** The last validation outcome (null until first checked). */
@@ -46,6 +62,14 @@ export interface ConfigDraft {
    * the editor (a compare-and-swap conflict) — a distinct reload-first
    * state. */
   conflict: boolean;
+  /** Raise the SAME conflict notice a save-time compare-and-swap failure
+   * raises, for a caller that detects a moved base itself before ever
+   * reaching Save — the structured form's edit queue, when a queued
+   * surgical edit resolves against a base `live` shows has since moved.
+   * That edit is abandoned rather than published (replaying it would
+   * silently revert whatever changed on disk), and this routes the "config
+   * changed on disk" notice through the one recovery path (this notice
+   * plus `reloadFromDisk`) that already exists, rather than a second one. */
   /** Persist the current draft through the backend save gate. */
   save: () => void;
   /** Whether a save is in flight (disables Save). */
@@ -89,6 +113,15 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
   const [draft, setDraftState] = useState(doc.content);
   const [hash, setHash] = useState(doc.hash);
 
+  // `live` mirrors `draft`/`hash` for a caller that needs the true current
+  // pair at some arbitrary later instant (a promise continuation), rather
+  // than the value React state held at the render that started it. Written
+  // synchronously at every call site below that changes `draft`/`hash` —
+  // in the SAME synchronous step as the `setState` calls, not a separate
+  // effect that copies state into the ref afterwards. See the `live` field
+  // doc above for why that distinction is the whole point.
+  const liveRef = useRef({ draft: doc.content, hash: doc.hash });
+
   // The last validation outcome (null until the draft is first checked).
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   // Set when a save is rejected because the file changed on disk under the
@@ -101,6 +134,7 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
   // next save (or reload) re-establish state.
   function setDraft(next: string) {
     setDraftState(next);
+    liveRef.current = { draft: next, hash: liveRef.current.hash };
     if (conflict) setConflict(false);
   }
 
@@ -123,6 +157,10 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
     setDraftState(doc.content);
     setHash(doc.hash);
     setValidation(null);
+    // Synchronous with the state writes above — not a follow-up effect —
+    // so `liveRef` is correct the instant this effect body finishes
+    // running, with no wait for the resulting re-render to commit.
+    liveRef.current = { draft: doc.content, hash: doc.hash };
   }, [doc.content, doc.hash, dirty, conflict, baseline, hash]);
 
   // Debounced pre-save validation: after the draft settles, dry-run the
@@ -160,6 +198,7 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
       setHash(saved.hash);
       setConflict(false);
       setValidation({ ok: true });
+      liveRef.current = { draft: saved.content, hash: saved.hash };
       toast("Saved and applied.");
     },
     onError: (err) => {
@@ -198,6 +237,7 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
         setHash(fresh.hash);
         setConflict(false);
         setValidation(null);
+        liveRef.current = { draft: fresh.content, hash: fresh.hash };
       });
   }
 
@@ -206,6 +246,7 @@ export function useConfigDraft(doc: ConfigDocument): ConfigDraft {
     setDraft,
     baseline,
     hash,
+    live: liveRef,
     dirty,
     validation,
     conflict,

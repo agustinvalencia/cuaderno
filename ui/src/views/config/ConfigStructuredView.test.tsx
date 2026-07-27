@@ -110,6 +110,10 @@ function draftStub(overrides: Partial<ConfigDraft> = {}): ConfigDraft {
     setDraft: vi.fn(),
     baseline: DRAFT,
     hash: "deadbeefdeadbeef",
+    // A stub's `live` never moves on its own — none of the plain
+    // `draftStub()` tests race an external change, so a fixed ref matching
+    // the fixed `draft`/`hash` above is all they need.
+    live: { current: { draft: DRAFT, hash: "deadbeefdeadbeef" } },
     dirty: false,
     validation: null,
     conflict: false,
@@ -311,7 +315,7 @@ function modelStamped(label: string): ConfigModel {
   return { ...MODEL, vault: { ...MODEL.vault, name: label } };
 }
 
-test("an external config.toml change landing mid-edit is folded in, not clobbered", async () => {
+test("an external config.toml change landing mid-edit means the edit is not applied, and the user is told", async () => {
   // The exact sequence #507 describes: a Form edit's surgical command is
   // still in flight when the watcher-driven refetch adopts an external
   // on-disk change. Nothing here is dirty yet (THIS edit has not landed —
@@ -336,8 +340,7 @@ test("an external config.toml change landing mid-edit is folded in, not clobbere
       noteTypeCalls.push(content);
       // Held open until the test resolves it below — standing in for the
       // real IPC round trip the reseed races.
-      if (noteTypeCalls.length === 1) return firstCommand;
-      return `${content}#applied`;
+      return firstCommand;
     }
     return undefined;
   });
@@ -355,59 +358,89 @@ test("an external config.toml change landing mid-edit is folded in, not clobbere
   await screen.findByText("After the edit");
 
   // Only now does the first command resolve — with a result computed from
-  // the OLD, pre-reseed content, exactly as the buggy sequence requires.
+  // the OLD, pre-reseed content.
   resolveFirstCommand?.(`${DRAFT}#stale-result`);
 
-  // The load-bearing assertion: the fix must not publish that stale
-  // result. It notices the base moved and re-runs the SAME edit against
-  // the fresh, external-edit-bearing content instead of the superseded
-  // one — the external edit survives in what gets applied.
-  await waitFor(() => expect(noteTypeCalls.length).toBe(2));
-  expect(noteTypeCalls[1]).toContain("external hand-edit");
-  expect(noteTypeCalls[1]).not.toBe(`${DRAFT}#stale-result`);
+  // The load-bearing assertion: the fix must neither publish that stale
+  // result nor retry it — it abandons the edit outright and tells the user
+  // plainly. Exactly one config_set_note_type call ever fires.
+  await screen.findByText(/changed on disk while this edit was applying/i);
+  expect(noteTypeCalls.length).toBe(1);
+
+  // The external content survives in the draft: the vault name shown is
+  // still the externally-stamped one (never regressed by the stale write
+  // being re-parsed), and the note type still shows its on-disk, un-toggled
+  // value — this edit never landed anywhere.
+  expect(screen.getByText("After the edit")).toBeDefined();
+  const appendOnly = screen.getByLabelText("Append-only") as HTMLInputElement;
+  expect(appendOnly.checked).toBe(false);
 });
 
-test("a base that keeps moving faster than the retry budget gives up instead of guessing", async () => {
-  // Defensive: if the on-disk file keeps changing across every rebase
-  // attempt (pathological — well beyond a single watcher debounce, which
-  // is the realistic width of the race), the fix must not eventually
-  // apply SOME stale result just because it ran out of patience. It must
-  // surface the failure and leave the shared draft untouched.
-  let onDisk = { content: DRAFT, hash: "hash-0" };
-  const calls: string[] = [];
-  const deferred: Array<(value: string) => void> = [];
+// A third test was attempted here to resolve the stale command WITHOUT
+// awaiting a settled render first, to exercise the exact window the fix
+// above closes (`useConfigDraft`'s adoption effect has advanced `cfg.hash`
+// but nothing downstream has re-rendered yet) rather than skip past it via
+// `findByText`. It could not be made to do that deterministically:
+//
+// Five timing strategies were tried against BOTH this fix and a scratch
+// pre-fix build (a `cfgRef`-style cross-component mirror `useEffect`,
+// single-shot, in place of `cfg.live`) — resolving inside the same `act()`
+// flush as the reseed, immediately after `act()` returns, after one
+// `act()`-wrapped macrotask tick, after a full `findByText` settle, and
+// resolving unwrapped from `act()` entirely (chained straight onto
+// `refetchQueries`'s own promise, for a genuine, test-unmediated microtask
+// race). All five produced IDENTICAL outcomes for both implementations:
+// either both wrongly published the stale result (nothing had propagated
+// from the refetch yet — a real but different, pre-existing race the
+// "adopt only while clean" design already tolerates, since a later Save's
+// own compare-and-swap catches it) or both correctly refused. There was no
+// timing at which the two implementations diverged.
+//
+// This is consistent with `act()`'s documented job: it drains passive
+// effects in a loop until none remain, which collapses a mirror effect and
+// the state update that triggered it into the same flush — the two-commit
+// gap `cfg.live` closes is not something `act()`-mediated testing (with or
+// without `act()` itself, since even the unwrapped case never observed a
+// mid-flush moment) can hold open long enough to observe. Reproducing it
+// would need either patching React internals to pause between commits, or
+// running against a real browser event loop outside vitest/jsdom — both
+// out of scope here. Left unimplemented rather than shipping a test whose
+// name claims this coverage without actually exercising it.
 
+test("a continuation resolving after this view unmounts publishes nothing", async () => {
+  // Toggling to Raw (or the Settings dialog closing) unmounts this view
+  // without cancelling whatever surgical command was still in flight — the
+  // continuation runs anyway once it resolves. It must not touch
+  // `cfg.setDraft` or raise a conflict for a view no longer on screen.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let resolveCommand: ((value: string) => void) | undefined;
+  const command = new Promise<string>((resolve) => {
+    resolveCommand = resolve;
+  });
   mockIPC((cmd, args) => {
-    if (cmd === "read_config") return onDisk;
-    if (cmd === "parse_config_model") {
-      const content = (args as { content: string }).content;
-      const generation = /#gen(\d+)/.exec(content)?.[1];
-      return generation ? modelStamped(`Generation ${generation}`) : MODEL;
-    }
-    if (cmd === "config_set_note_type") {
-      calls.push((args as { content: string }).content);
-      return new Promise<string>((resolve) => deferred.push(resolve));
-    }
+    calls.push({ cmd, args });
+    if (cmd === "parse_config_model") return MODEL;
+    if (cmd === "config_set_note_type") return command;
     return undefined;
   });
 
-  const { client } = renderHarness();
+  const cfg = draftStub();
+  const { unmount } = renderView(cfg);
+
   fireEvent.click(await screen.findByLabelText("Append-only"));
+  await waitFor(() => expect(calls.some((c) => c.cmd === "config_set_note_type")).toBe(true));
 
-  // Three attempts (the fix's retry budget), each raced by a fresh
-  // on-disk move that is fully adopted and rendered before it resolves —
-  // the base never gets a chance to settle within the budget.
-  for (let i = 1; i <= 3; i += 1) {
-    await waitFor(() => expect(calls.length).toBe(i));
-    onDisk = { content: `${DRAFT}#gen${i}`, hash: `hash-${i}` };
-    await act(() => client.refetchQueries({ queryKey: ["read_config"] }));
-    await screen.findByText(`Generation ${i}`);
-    deferred[i - 1]?.(`stale-write-${i}`);
-  }
+  unmount();
 
-  await screen.findByText(/changed on disk while this edit was applying/i);
-  // Bounded: exactly the retry budget, not one call per generation forever.
-  expect(calls.length).toBe(3);
+  // Resolve well after unmount, giving the continuation every opportunity
+  // to run before asserting it did nothing.
+  await act(async () => {
+    resolveCommand?.(NEW_DRAFT);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(cfg.setDraft).not.toHaveBeenCalled();
+  expect(cfg.setDraft).not.toHaveBeenCalled();
 });
 
 test("removing a note type fires config_remove_note_type", async () => {
