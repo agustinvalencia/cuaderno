@@ -39,6 +39,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   it is all-or-nothing, so a missing or unparseable `at` leaves the file's own order standing
   rather than quietly picking a different reading. (#483)
 
+- **A declared activity draws its series from frontmatter and nowhere else.** With two sources
+  available, an activity that is declared while its notes still carry a legacy body table would
+  emit two series for the same metric, under names that can collide — and the two disagree, since
+  the whole point of declaring is that the table's blanket sum was wrong. An activity whose
+  frontmatter now yields a series no longer emits its body-table one as well. Everything else is
+  untouched and keeps being served from its table, so nothing forces a migration; whether body
+  tables should eventually go away stays an open question rather than a prerequisite. (#485)
+
 - **A tracking entry can carry structured metrics, and can be filed for a day that has already
   passed.** Recording lags the event more often than not — a statement reconciled at the weekend,
   a balance read whenever the app happens to be open — and every surface stamped the entry with

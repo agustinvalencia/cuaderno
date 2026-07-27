@@ -1398,3 +1398,176 @@ fn tracking_series_gives_a_wide_table_one_series_per_metric() {
     );
     assert_eq!(value_of("body \u{b7} Sleep (h)"), 7.2);
 }
+
+// ---------------------------------------------------------------------
+// tracking_series_with_specs — the precedence rule (#485)
+// ---------------------------------------------------------------------
+
+/// A note carrying BOTH a frontmatter metric and a legacy body table, which
+/// is the state a vault is in the moment it declares an activity it has been
+/// tracking with tables.
+fn note_with_both(stewardship: &str, activity: &str, date: &str) -> String {
+    format!(
+        "---\ntype: tracking\nstewardship: {stewardship}\nactivity: {activity}\ndate: {date}\nweight: 82.5\n---\n\n# {activity} {date}\n\n| Weight (kg) |\n|-------------|\n| 99          |\n"
+    )
+}
+
+fn weight_spec() -> TrackingSpec {
+    TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("weight".to_owned(), metric(Aggregate::Last))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+#[test]
+fn a_declared_activity_emits_the_frontmatter_series_only() {
+    // Concatenating both sources would emit two series for the same metric,
+    // and they DISAGREE — 82.5 from frontmatter against 99 summed from the
+    // table. The whole point of declaring is that the table's blanket sum was
+    // wrong, so the declaration wins outright.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} weight"]);
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5),
+        "the frontmatter value, not the table's 99"
+    );
+}
+
+#[test]
+fn an_undeclared_activity_still_comes_from_its_body_table() {
+    // No migration is forced: an activity nobody declared is served exactly
+    // as it was before any of this existed.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &BTreeMap::new())
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} Weight (kg)"), ymd(2026, 7, 6)),
+        Some(99.0)
+    );
+}
+
+#[test]
+fn a_stewardship_mixing_declared_and_undeclared_draws_each_from_its_own_source() {
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-body.md",
+            &note_with_both("health", "body", "2026-07-06"),
+        ),
+        (
+            "stewardships/health/tracking/2026-07-06-gym.md",
+            &note_with_both("health", "gym", "2026-07-06"),
+        ),
+    ]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    assert_eq!(
+        names_of(&series),
+        vec!["body \u{b7} weight", "gym \u{b7} Weight (kg)"],
+        "declared from frontmatter, undeclared from its table"
+    );
+}
+
+#[test]
+fn no_series_name_appears_twice() {
+    // The failure the rule exists to prevent, set up so it can actually
+    // happen: the table's column header is spelled exactly like the declared
+    // metric, so without the rule both sources emit `body · weight` and the
+    // response carries two points for one name that disagree (82.5 and 99).
+    let colliding = "---\ntype: tracking\nstewardship: health\nactivity: body\ndate: 2026-07-06\nweight: 82.5\n---\n\n# body\n\n| weight |\n|--------|\n| 99     |\n";
+    let (vault, _store) =
+        vault_with(&[("stewardships/health/tracking/2026-07-06-body.md", colliding)]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", weight_spec())]))
+        .unwrap();
+
+    let mut names = names_of(&series);
+    let before = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(before, names.len(), "duplicate series name in {names:?}");
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5),
+        "and the surviving one is the frontmatter value"
+    );
+}
+
+#[test]
+fn declaring_an_activity_does_not_blank_it_in_another_stewardship() {
+    // Specs are keyed on activity alone, so a declaration reaches every
+    // stewardship. Suppressing on the DECLARED set would take `walk` away from
+    // `dog` — whose notes carry no `distance` — and put nothing in its place,
+    // silently emptying a chart that was working. Suppression keys on what the
+    // frontmatter side actually produced, so `dog` keeps its table series.
+    let health_walk = "---\ntype: tracking\nstewardship: health\nactivity: walk\ndate: 2026-07-06\ndistance: 4.2\n---\n\n# walk\n";
+    let dog_walk = "---\ntype: tracking\nstewardship: dog\nactivity: walk\ndate: 2026-07-06\n---\n\n# walk\n\n| Minutes |\n|---------|\n| 45      |\n";
+    let (vault, _store) = vault_with(&[
+        (
+            "stewardships/health/tracking/2026-07-06-walk.md",
+            health_walk,
+        ),
+        ("stewardships/dog/tracking/2026-07-06-walk.md", dog_walk),
+    ]);
+    let walk_spec = TrackingSpec {
+        records: None,
+        group_by: None,
+        metrics: [("distance".to_owned(), metric(Aggregate::Sum))]
+            .into_iter()
+            .collect(),
+    };
+    let specs = specs(&[("walk", walk_spec)]);
+
+    let health = vault.tracking_series_with_specs("health", &specs).unwrap();
+    assert_eq!(names_of(&health), vec!["walk \u{b7} distance"]);
+
+    let dog = vault.tracking_series_with_specs("dog", &specs).unwrap();
+    assert_eq!(
+        names_of(&dog),
+        vec!["walk \u{b7} Minutes"],
+        "an undeclared stewardship's chart must not vanish"
+    );
+    assert_eq!(
+        point_on(named(&dog, "walk \u{b7} Minutes"), ymd(2026, 7, 6)),
+        Some(45.0)
+    );
+}
+
+#[test]
+fn a_cadence_only_declaration_leaves_the_body_table_alone() {
+    // An activity declaring no metrics is a complete, valid use (an
+    // occurrence). Its frontmatter side yields nothing, so there is no
+    // duplicate to prevent and no reason to take its table away.
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault
+        .tracking_series_with_specs("health", &specs(&[("body", TrackingSpec::default())]))
+        .unwrap();
+
+    assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
+}

@@ -29,7 +29,7 @@
 
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cdno_core::config::{Aggregate, TrackingSpec};
 use cdno_core::error::StoreError;
@@ -602,6 +602,16 @@ impl Vault {
     /// table contribute no points. Series are sorted by name, points
     /// by date.
     pub fn tracking_series(&self, stewardship: &str) -> Result<Vec<TrackingSeries>, DomainError> {
+        self.tracking_series_excluding(stewardship, &BTreeSet::new())
+    }
+
+    /// As [`tracking_series`](Self::tracking_series), skipping any activity in
+    /// `declared` — the body-table half of the precedence rule (`#485`).
+    fn tracking_series_excluding(
+        &self,
+        stewardship: &str,
+        declared: &BTreeSet<&str>,
+    ) -> Result<Vec<TrackingSeries>, DomainError> {
         // BTreeMap so series come out name-sorted without a second pass.
         let mut by_name: BTreeMap<String, Vec<TrackingPoint>> = BTreeMap::new();
         for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
@@ -609,6 +619,9 @@ impl Vault {
             let (fm, body) = Frontmatter::parse(&raw)?;
             let tf = TrackingFrontmatter::try_from(fm)?;
             if tf.stewardship != stewardship {
+                continue;
+            }
+            if declared.contains(tf.activity.as_str()) {
                 continue;
             }
             let Some(table) = extract_first_table(body) else {
@@ -683,6 +696,20 @@ impl Vault {
         stewardship: &str,
         specs: &BTreeMap<String, TrackingSpec>,
     ) -> Result<Vec<TrackingSeries>, DomainError> {
+        self.derive_frontmatter_series(stewardship, specs)
+            .map(|(series, _covered)| series)
+    }
+
+    /// As [`tracking_series_from_frontmatter`](Self::tracking_series_from_frontmatter),
+    /// also returning the activities that actually produced a series.
+    ///
+    /// The precedence rule keys on *that* set rather than on the declared one
+    /// — see [`tracking_series_with_specs`](Self::tracking_series_with_specs).
+    fn derive_frontmatter_series(
+        &self,
+        stewardship: &str,
+        specs: &BTreeMap<String, TrackingSpec>,
+    ) -> Result<(Vec<TrackingSeries>, BTreeSet<String>), DomainError> {
         // Values are pushed in document order; `last` depends on it.
         let mut acc: BTreeMap<SeriesKey, BTreeMap<NaiveDate, Vec<f64>>> = BTreeMap::new();
 
@@ -740,6 +767,10 @@ impl Vault {
         // within-entry collapse; once same-day entries merge (#488) the cell
         // holds both and the same rule reduces across them. Merge widens what
         // the cell contains rather than adding a second level.
+        // The activities that actually yielded a series — not the declared
+        // ones. See `tracking_series_with_specs` for why the difference is
+        // load-bearing.
+        let covered: BTreeSet<String> = acc.keys().map(|k| k.activity.clone()).collect();
         let mut series: Vec<TrackingSeries> = acc
             .into_iter()
             .map(|(key, by_date)| {
@@ -761,6 +792,45 @@ impl Vault {
                 }
             })
             .collect();
+        series.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok((series, covered))
+    }
+
+    /// Every series for `stewardship`, each activity drawn from whichever
+    /// source it declares (`#485`).
+    ///
+    /// **A declared activity suppresses its own body-table series entirely.**
+    /// Declaration is the opt-in and it is unambiguous: if the activity has a
+    /// [`TrackingSpec`], its series come from frontmatter and nowhere else.
+    /// Undeclared activities are untouched — the table engine serves them
+    /// exactly as before, so no migration is forced.
+    ///
+    /// Without the rule, an activity that is declared while its notes still
+    /// carry a legacy body table would emit **two** series for the same
+    /// metric, under names that can collide, and the two would *disagree* —
+    /// the whole point of declaring is that the table's blanket sum was wrong.
+    /// That is a correctness bug rather than a migration question, which is
+    /// why the rule does not wait on whether body tables should eventually go
+    /// away.
+    ///
+    /// The specs argument is temporary: `#487` reads them from
+    /// `[tracking.<activity>]` and this takes no parameter but the slug.
+    pub fn tracking_series_with_specs(
+        &self,
+        stewardship: &str,
+        specs: &BTreeMap<String, TrackingSpec>,
+    ) -> Result<Vec<TrackingSeries>, DomainError> {
+        // Suppress on what the frontmatter side actually PRODUCED, not on what
+        // was declared. Specs are keyed on activity alone, so a declaration
+        // reaches every stewardship — and a stewardship whose notes for that
+        // activity carry no declared field would otherwise have its table
+        // series suppressed and nothing put in their place, silently emptying
+        // a chart that was working. Keying on the produced set suppresses
+        // exactly the duplicates and nothing else: a duplicate exists only
+        // where both sources yielded a series for the same activity.
+        let (mut series, covered) = self.derive_frontmatter_series(stewardship, specs)?;
+        let covered: BTreeSet<&str> = covered.iter().map(String::as_str).collect();
+        series.extend(self.tracking_series_excluding(stewardship, &covered)?);
         series.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(series)
     }
