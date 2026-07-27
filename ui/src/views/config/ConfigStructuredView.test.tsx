@@ -9,15 +9,17 @@ import { afterEach, expect, test, vi } from "vitest";
 import * as matchers from "vitest-axe/matchers";
 import { axe } from "vitest-axe";
 import type { AxeMatchers } from "vitest-axe";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
 import type { ConfigModel } from "../../api/bindings/ConfigModel";
 import type { FieldSpec } from "../../api/bindings/FieldSpec";
 import type { NamedValue } from "../../api/bindings/NamedValue";
+import { readConfig } from "../../api/commands";
 import { ToastProvider } from "../../shell/Toasts";
 import ConfigStructuredView from "./ConfigStructuredView";
-import type { ConfigDraft } from "./useConfigDraft";
+import { useConfigDraft, type ConfigDraft } from "./useConfigDraft";
 
 expect.extend(matchers);
 declare module "vitest" {
@@ -250,6 +252,162 @@ test("rapid successive edits serialise: the second builds on the first's result"
   expect(seen[1]).toBe(`${DRAFT}#1`);
   // And the final draft carries BOTH edits, in order.
   expect(cfg.setDraft).toHaveBeenLastCalledWith(`${DRAFT}#1#2`);
+});
+
+// --- #507: an external on-disk change racing an in-flight Form edit ---
+//
+// The bug lives in the gap between `useConfigDraft`'s live state and this
+// view's own `draftRef`, so a `cfg` prop that never itself changes (every
+// other test's `draftStub()`) cannot reproduce it — nothing moves under
+// the view for it to notice. These tests wire up a REAL `useConfigDraft`
+// around a real `read_config` query, the way `StewardshipDetail.test.tsx`
+// drives the analogous #490 race, so a `client.refetchQueries` stands in
+// for the filesystem watcher's invalidation.
+
+/** Mirrors `Config.tsx`'s `ConfigPanel`/`ConfigView` split: the query gates
+ * the whole tree, so `useConfigDraft` — and, inside it, `ConfigStructuredView`'s
+ * own `draftRef`/`baseHashRef` — are only ever constructed once, from the
+ * REAL loaded document. Calling `useConfigDraft` unconditionally with an
+ * empty placeholder (as `usePlotKindDraft` does, of necessity — it is a
+ * hook, not a component, so it has no early return available before its
+ * own hook calls) would seed both refs from "" on this view's first mount,
+ * one render before the doc actually arrives — the opposite of what this
+ * test needs to reproduce the race honestly. */
+function ConfigStructuredHarness() {
+  const read = useQuery({ queryKey: ["read_config"], queryFn: readConfig });
+  if (!read.isSuccess) return null;
+  return <ConfigStructuredHarnessLoaded doc={read.data} />;
+}
+
+function ConfigStructuredHarnessLoaded({ doc }: { doc: ConfigDocument }) {
+  const cfg = useConfigDraft(doc);
+  return <ConfigStructuredView cfg={cfg} />;
+}
+
+function renderHarness() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const result = render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <main>
+          <ConfigStructuredHarness />
+        </main>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  return { ...result, client };
+}
+
+/** MODEL, but with the vault name stamped so a test can `findByText` its
+ * way to proof that a given on-disk generation has round-tripped all the
+ * way through: adopted into `useConfigDraft`'s state, re-rendered down to
+ * this view, and re-parsed by the `["parse_config_model", cfg.draft]`
+ * query. `client.refetchQueries` resolving is not that proof by itself —
+ * react-query's own notification of subscribers, and the cascade of
+ * renders/effects it triggers, is not guaranteed to have fully settled the
+ * instant the returned promise does (see the tests below, which need the
+ * settled state before racing a deferred command against it). */
+function modelStamped(label: string): ConfigModel {
+  return { ...MODEL, vault: { ...MODEL.vault, name: label } };
+}
+
+test("an external config.toml change landing mid-edit is folded in, not clobbered", async () => {
+  // The exact sequence #507 describes: a Form edit's surgical command is
+  // still in flight when the watcher-driven refetch adopts an external
+  // on-disk change. Nothing here is dirty yet (THIS edit has not landed —
+  // that only happens once its command resolves), so `useConfigDraft`'s
+  // "adopt an on-disk change while clean" effect adopts it exactly as it
+  // would for a real filesystem watcher tick.
+  let onDisk = { content: DRAFT, hash: "hash-a" };
+  const noteTypeCalls: string[] = [];
+  let resolveFirstCommand: ((value: string) => void) | undefined;
+  const firstCommand = new Promise<string>((resolve) => {
+    resolveFirstCommand = resolve;
+  });
+
+  mockIPC((cmd, args) => {
+    if (cmd === "read_config") return onDisk;
+    if (cmd === "parse_config_model") {
+      const content = (args as { content: string }).content;
+      return content.includes("external hand-edit") ? modelStamped("After the edit") : MODEL;
+    }
+    if (cmd === "config_set_note_type") {
+      const content = (args as { content: string }).content;
+      noteTypeCalls.push(content);
+      // Held open until the test resolves it below — standing in for the
+      // real IPC round trip the reseed races.
+      if (noteTypeCalls.length === 1) return firstCommand;
+      return `${content}#applied`;
+    }
+    return undefined;
+  });
+
+  const { client } = renderHarness();
+  fireEvent.click(await screen.findByLabelText("Append-only"));
+  await waitFor(() => expect(noteTypeCalls.length).toBe(1));
+
+  // The external hand-edit lands...
+  onDisk = { content: `# external hand-edit\n${DRAFT}`, hash: "hash-b" };
+  await act(() => client.refetchQueries({ queryKey: ["read_config"] }));
+  // ...and is adopted: wait for the stamped model to actually render,
+  // proving the adoption has propagated all the way through — not just
+  // that `refetchQueries`'s own promise settled (see `modelStamped`).
+  await screen.findByText("After the edit");
+
+  // Only now does the first command resolve — with a result computed from
+  // the OLD, pre-reseed content, exactly as the buggy sequence requires.
+  resolveFirstCommand?.(`${DRAFT}#stale-result`);
+
+  // The load-bearing assertion: the fix must not publish that stale
+  // result. It notices the base moved and re-runs the SAME edit against
+  // the fresh, external-edit-bearing content instead of the superseded
+  // one — the external edit survives in what gets applied.
+  await waitFor(() => expect(noteTypeCalls.length).toBe(2));
+  expect(noteTypeCalls[1]).toContain("external hand-edit");
+  expect(noteTypeCalls[1]).not.toBe(`${DRAFT}#stale-result`);
+});
+
+test("a base that keeps moving faster than the retry budget gives up instead of guessing", async () => {
+  // Defensive: if the on-disk file keeps changing across every rebase
+  // attempt (pathological — well beyond a single watcher debounce, which
+  // is the realistic width of the race), the fix must not eventually
+  // apply SOME stale result just because it ran out of patience. It must
+  // surface the failure and leave the shared draft untouched.
+  let onDisk = { content: DRAFT, hash: "hash-0" };
+  const calls: string[] = [];
+  const deferred: Array<(value: string) => void> = [];
+
+  mockIPC((cmd, args) => {
+    if (cmd === "read_config") return onDisk;
+    if (cmd === "parse_config_model") {
+      const content = (args as { content: string }).content;
+      const generation = /#gen(\d+)/.exec(content)?.[1];
+      return generation ? modelStamped(`Generation ${generation}`) : MODEL;
+    }
+    if (cmd === "config_set_note_type") {
+      calls.push((args as { content: string }).content);
+      return new Promise<string>((resolve) => deferred.push(resolve));
+    }
+    return undefined;
+  });
+
+  const { client } = renderHarness();
+  fireEvent.click(await screen.findByLabelText("Append-only"));
+
+  // Three attempts (the fix's retry budget), each raced by a fresh
+  // on-disk move that is fully adopted and rendered before it resolves —
+  // the base never gets a chance to settle within the budget.
+  for (let i = 1; i <= 3; i += 1) {
+    await waitFor(() => expect(calls.length).toBe(i));
+    onDisk = { content: `${DRAFT}#gen${i}`, hash: `hash-${i}` };
+    await act(() => client.refetchQueries({ queryKey: ["read_config"] }));
+    await screen.findByText(`Generation ${i}`);
+    deferred[i - 1]?.(`stale-write-${i}`);
+  }
+
+  await screen.findByText(/changed on disk while this edit was applying/i);
+  // Bounded: exactly the retry budget, not one call per generation forever.
+  expect(calls.length).toBe(3);
 });
 
 test("removing a note type fires config_remove_note_type", async () => {

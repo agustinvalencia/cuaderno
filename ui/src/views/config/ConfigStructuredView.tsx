@@ -107,27 +107,94 @@ export default function ConfigStructuredView({ cfg }: { cfg: ConfigDraft }) {
   // command) and its rewrite would silently drop the first edit's table.
   // Instead the queue threads the true accumulated string through
   // `draftRef`, advanced synchronously as each command resolves, so every
-  // edit builds on the previous one. External reseeds — a conflict reload
-  // changing the on-disk hash, or a toggle back from Raw — remount this
-  // view (the `key={hash}` on ConfigView, and the Raw/Form ternary), giving
-  // a fresh `draftRef` seeded from the current draft; so the ref is never
-  // stale against the shared draft while the view is mounted.
+  // edit builds on the previous one. Toggling back to Raw remounts this
+  // view (the Form/Raw ternary swaps element types), which seeds a fresh
+  // `draftRef` from the then-current draft.
+  //
+  // INVARIANT (#507): the content this queue hands to `cfg.setDraft` and
+  // the hash the next Save will compare-and-swap against must always
+  // describe the SAME on-disk base. This view used to argue the invariant
+  // was moot because a `key={hash}` on ConfigView would remount the whole
+  // form — and any stale `draftRef` with it — the instant the on-disk hash
+  // changed. That key was deliberately removed (see Config.tsx) so an
+  // in-flight edit would not be torn down, and nothing replaced the
+  // argument it was resting on.
+  //
+  // The real hole: `useConfigDraft`'s "adopt an on-disk change while clean"
+  // effect can fire WHILE a surgical `config_*` command above is in flight
+  // — this view's own edit has not landed yet (that only happens when
+  // `cfg.setDraft` runs, below), so `dirty` is still false and the effect
+  // happily adopts the newer file, advancing `cfg.hash` and `cfg.draft`.
+  // `draftRef` does not see that: it is still holding the OLD base, and the
+  // command in flight was computed from it. Applying that result verbatim
+  // once it resolves would pass the compare-and-swap (the hash genuinely
+  // matches disk) while silently discarding the on-disk edit underneath it
+  // (#507). `baseHashRef` tracks the hash `draftRef`'s content is actually
+  // built on; `cfgRef` mirrors the live `cfg` prop on every render, because
+  // `cfg.hash`/`cfg.draft` are plain values snapshotted at render time and
+  // a promise continuation that resolves after further renders needs a ref,
+  // not a closure, to see what changed since it started. After each
+  // surgical command resolves, compare the two: if the live hash has moved,
+  // the base drifted mid-edit — rebase onto the fresh draft/hash pair and
+  // redo the edit rather than commit a result computed from a superseded
+  // base. Bounded: a base that keeps moving faster than this loop can catch
+  // up gives up rather than retrying forever, and leaves both refs
+  // untouched so the next edit (or a Save against live state) sees the same
+  // staleness and can react to it, instead of this queue quietly guessing.
   const draftRef = useRef(cfg.draft);
+  const baseHashRef = useRef(cfg.hash);
+  const cfgRef = useRef(cfg);
+  useEffect(() => {
+    cfgRef.current = cfg;
+  });
   const queueRef = useRef<Promise<void>>(Promise.resolve());
+  // A reseed racing a single command is realistically one watcher debounce
+  // wide (400ms — VALIDATE_DEBOUNCE_MS's sibling); three attempts is room
+  // to spare without risking a genuine runaway retry against a config that
+  // is somehow changing faster than this loop can keep up with it.
+  const MAX_REBASE_ATTEMPTS = 3;
   const applyEdit = (make: (content: string) => Promise<string>) => {
     queueRef.current = queueRef.current.then(async () => {
-      try {
-        const next = await make(draftRef.current);
-        // Advance the ref BEFORE the next queued edit reads it — this is
-        // what makes successive rapid edits compose instead of clobber.
-        draftRef.current = next;
-        cfg.setDraft(next);
-      } catch (err) {
-        // A failure (e.g. the draft was hand-broken into invalid TOML in
-        // Raw) is a calm toast, never a crash. The ref is not advanced, so
-        // the next edit retries from the last good draft.
-        toast(errorMessage(err), "attention");
+      let base = draftRef.current;
+      let baseHash = baseHashRef.current;
+      for (let attempt = 0; attempt < MAX_REBASE_ATTEMPTS; attempt += 1) {
+        try {
+          const next = await make(base);
+          const live = cfgRef.current;
+          if (live.hash !== baseHash) {
+            // The base moved under this edit (#507) — redo it against the
+            // fresh draft/hash rather than publish a result computed from
+            // the superseded one.
+            base = live.draft;
+            baseHash = live.hash;
+            continue;
+          }
+          // `next` was computed from `base`, and `base` is still paired
+          // with `baseHash` — the invariant above holds, so it is safe to
+          // advance both trackers together and publish the result. Advance
+          // BEFORE the next queued edit reads them — this is what makes
+          // successive rapid edits compose instead of clobber.
+          draftRef.current = next;
+          baseHashRef.current = baseHash;
+          cfg.setDraft(next);
+          return;
+        } catch (err) {
+          // A failure (e.g. the draft was hand-broken into invalid TOML in
+          // Raw) is a calm toast, never a crash. The refs are not advanced,
+          // so the next edit retries from the last good draft.
+          toast(errorMessage(err), "attention");
+          return;
+        }
       }
+      // The base kept moving faster than this loop's budget. Leave
+      // `draftRef`/`baseHashRef` untouched — still paired with each other,
+      // just stale — rather than guess which version to trust. The next
+      // edit retries from there; a Save in the meantime reads live state
+      // directly and is unaffected by anything this queue does.
+      toast(
+        "The config changed on disk while this edit was applying — try it again.",
+        "attention",
+      );
     });
   };
 
