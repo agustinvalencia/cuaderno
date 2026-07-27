@@ -25,16 +25,20 @@ concrete.
 
 Two substrates, and the choice decides what you can ask later.
 
-**Frontmatter** (`spending.md`, `reading.md`) is the one to reach for. Values are indexed as data,
-each metric reduces by its own rule, and a field like `category` can split one entry into a series
-per value. Declare the contract for an activity and each metric says how it collapses: `sum` for a
-total, `last` for a level such as a balance or a measurement, `mean` for a rate or a rating. An
-entry holding several comparable items writes a **sequence of flat records** (`spending.md`), so
-the same category can appear twice in one entry and still land in one series.
+**Frontmatter** (`spending.md`, `reading.md`) is where tracking data is heading. Values are indexed
+as data rather than prose, so they are queryable the moment they are written, and the shape carries
+enough for each metric to reduce by its own rule — `sum` for a total, `last` for a level such as a
+balance or a measurement, `mean` for a rate or a rating — with a field like `category` splitting one
+entry into a series per value. An entry holding several comparable items writes a **sequence of
+flat records** (`spending.md`), so the same category can appear twice in one entry.
 
-**A body table** (`gym.md`, `body.md`, `swim.md`) is the older route and still works. It reads the
-first table in the note and **sums each column** — right for a count, wrong for anything else — so
-it suits a rep sheet better than a set of measurements.
+Writing the shape now is worth it regardless: the values are indexed either way, and the per-metric
+reduction reads them when you declare the activity's contract. That declaration surface is still
+landing — until it does, these two variants are correct data with no chart behind them yet.
+
+**A body table** (`gym.md`, `body.md`, `swim.md`) is the older route and what drives the trend
+charts today. It reads the first table in the note and **sums each column** — right for a count,
+wrong for anything else — so it suits a rep sheet better than a set of measurements.
 
 ## Wide, not long — if you use a table
 
