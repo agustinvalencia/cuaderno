@@ -207,6 +207,7 @@ impl<'a> TypeRegistry<'a> {
     pub fn validate(config: &VaultConfig) -> Result<(), DomainError> {
         config.validate_note_types()?;
         config.validate_schemas()?;
+        config.validate_tracking()?;
         for name in config.note_types.keys() {
             // Case-insensitive: `from_str` is exact-match, so `[note_types.Project]`
             // would otherwise slip past and resolve as a *distinct* type from the

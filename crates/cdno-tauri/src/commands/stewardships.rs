@@ -9,7 +9,7 @@
 //! the UI; the backend just hands over the numeric series
 //! `tracking_series` already computes).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use chrono::{Local, NaiveDate, NaiveDateTime};
 
@@ -135,13 +135,12 @@ pub fn get_stewardship_detail_impl(
 
     // Charts are an expanded-only surface: skip the tracking-note scan
     // entirely for a flat stewardship (it would return empty anyway).
-    // Each activity's series come from whichever source it declares: a
-    // declared activity is served from frontmatter and its legacy body table
-    // suppressed, an undeclared one from the table exactly as before (#485).
-    // The spec map is empty until `[tracking.<activity>]` is parsed (#487),
-    // which is why nothing here reads config yet.
+    // Each activity's series come from whichever source it declares: an
+    // activity whose `[tracking.<activity>]` contract yields a series is
+    // served from frontmatter and its legacy body table suppressed, anything
+    // else from the table exactly as before (#485, #487).
     let series = match variant {
-        StewardshipVariant::Expanded => vault.tracking_series_with_specs(slug, &BTreeMap::new())?,
+        StewardshipVariant::Expanded => vault.tracking_series_declared(slug)?,
         StewardshipVariant::Flat => Vec::new(),
     };
 

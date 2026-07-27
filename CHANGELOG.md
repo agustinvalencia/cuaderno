@@ -47,6 +47,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   untouched and keeps being served from its table, so nothing forces a migration; whether body
   tables should eventually go away stays an open question rather than a prerequisite. (#485)
 
+- **`[tracking.<activity>]` declares an activity's contract, and agents can read it back.** The
+  derivation had no way for a user to reach it: the specs came from the caller, so nothing in a
+  vault could say that `balance` is a level or that `focus` must average rather than sum. A
+  `[tracking]` section in `.cuaderno/config.toml` now carries the record key, the field the series
+  split on, and each metric's type, unit, aggregate and plot — validated at **vault-open**, so an
+  unknown `aggregate`, a mistyped key or a blank `records` fails there rather than at first chart
+  render. An absent section is not an error, and an activity may declare no metrics at all, which
+  is a complete use rather than a half-finished one. `window` is parsed but rejected as reserved,
+  so adding the time-reduction axis later is not a breaking change.
+
+  `get_stewardship_tracking` returns the parsed contract alongside the entries, so an agent can
+  learn the field names and — the part that matters — each metric's aggregate *before* writing a
+  payload, rather than guessing or parsing `config.toml` itself. A null contract says the activity
+  is undeclared: metrics are still writable as undeclared frontmatter, but nothing aggregates
+  them. (#487)
+
 - **A tracking entry can carry structured metrics, and can be filed for a day that has already
   passed.** Recording lags the event more often than not — a statement reconciled at the weekend,
   a balance read whenever the app happens to be open — and every surface stamped the entry with

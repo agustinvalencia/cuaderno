@@ -1571,3 +1571,45 @@ fn a_cadence_only_declaration_leaves_the_body_table_alone() {
 
     assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
 }
+
+#[test]
+fn declared_series_read_the_vaults_own_tracking_section() {
+    // The production entry point: specs come from `[tracking.<activity>]`
+    // rather than from a caller, which is what finally makes the derivation
+    // reachable by a user (#487).
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(
+            &vp("stewardships/health/tracking/2026-07-06-body.md"),
+            &note_with_both("health", "body", "2026-07-06"),
+        )
+        .unwrap();
+    let mut config = VaultConfig::default();
+    config.tracking.insert("body".to_owned(), weight_spec());
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+
+    let series = vault.tracking_series_declared("health").unwrap();
+    assert_eq!(names_of(&series), vec!["body \u{b7} weight"]);
+    assert_eq!(
+        point_on(named(&series, "body \u{b7} weight"), ymd(2026, 7, 6)),
+        Some(82.5),
+        "the declaration drives it, and suppresses the body table"
+    );
+
+    // And the contract is readable back for agent discovery.
+    let spec = vault.tracking_spec("body").expect("declared");
+    assert!(spec.metrics.contains_key("weight"));
+    assert!(vault.tracking_spec("gym").is_none());
+}
+
+#[test]
+fn an_undeclared_vault_falls_back_to_the_body_table() {
+    let (vault, _store) = vault_with(&[(
+        "stewardships/health/tracking/2026-07-06-body.md",
+        &note_with_both("health", "body", "2026-07-06"),
+    )]);
+
+    let series = vault.tracking_series_declared("health").unwrap();
+    assert_eq!(names_of(&series), vec!["body \u{b7} Weight (kg)"]);
+}

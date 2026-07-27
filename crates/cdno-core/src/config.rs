@@ -39,6 +39,16 @@ pub struct VaultConfig {
     /// the pattern is removed and the vault is reindexed.
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// Per-activity tracking contracts, declared under
+    /// `[tracking.<activity>]` (`#487`). Absent is not an error — an
+    /// undeclared activity keeps being served by the body-table engine, so
+    /// declaring is opt-in and no migration is forced.
+    ///
+    /// Keyed on activity, consistent with template resolution, which already
+    /// discriminates on activity alone (`tracking-<activity>.md`, no
+    /// stewardship in the path).
+    #[serde(default)]
+    pub tracking: BTreeMap<String, TrackingSpec>,
 }
 
 /// The `[vault]` section — basic vault metadata.
@@ -311,6 +321,11 @@ pub enum Aggregate {
 
 /// How a metric is drawn, when it is drawn at all (`#483`).
 ///
+/// **Parsed but not yet consumed** (`#500`): the derivation emits a series for
+/// every declared metric regardless, and the desktop draws every series it is
+/// given. Declaring an activity therefore does change what is drawn today —
+/// its frontmatter series replace its body-table ones.
+///
 /// Presentation vocabulary, carried here for the same reason [`FieldType`] is
 /// — it is deserialised from config — but it is the one type in this crate
 /// that the crate neither parses for itself nor interprets; it flows through
@@ -320,8 +335,10 @@ pub enum Aggregate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlotKind {
-    /// Collected and queryable, but not drawn — the default, so declaring a
-    /// metric never changes the UI until you opt in.
+    /// Collected and queryable, but not drawn.
+    ///
+    /// NOT YET HONOURED: nothing reads this field, so a declared metric's
+    /// series is emitted and drawn whatever it says. Wiring it is `#500`.
     #[default]
     None,
     Line,
@@ -332,6 +349,7 @@ pub enum PlotKind {
 
 /// One declared metric within a [`TrackingSpec`] (`#483`).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricSpec {
     /// The value's scalar type. Optional: a metric may be declared purely to
     /// name its aggregate.
@@ -354,6 +372,11 @@ pub struct MetricSpec {
     pub unit: Option<String>,
     #[serde(default)]
     pub plot: PlotKind,
+    /// RESERVED for the time-reduction axis — month-over-month deltas,
+    /// rollups, streaks. Parsed so the grammar is fixed now, but a value is a
+    /// load error ("not yet implemented"), so adding the behaviour later is
+    /// not a breaking change.
+    pub window: Option<String>,
 }
 
 impl MetricSpec {
@@ -376,6 +399,7 @@ impl MetricSpec {
 /// Reading these from `[tracking.<activity>]` in `config.toml` is `#487`;
 /// until then a caller supplies them directly.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrackingSpec {
     /// Frontmatter key holding repeated records. `None` means the metrics are
     /// scalars read straight off the entry's frontmatter.
@@ -511,6 +535,63 @@ impl VaultConfig {
             path: config_path,
             source,
         })
+    }
+
+    /// Structural validation of the `[tracking.*]` tables (`#487`), surfaced
+    /// at vault-open so a malformed declaration fails there rather than at
+    /// first chart render — the same posture `validate_schemas` takes.
+    ///
+    /// An absent `[tracking]` section is not an error. Unknown `aggregate` /
+    /// `plot` values and mistyped keys are already hard deserialize errors
+    /// (the enums are exhaustive and both spec structs carry
+    /// `deny_unknown_fields`), so what is left to check is what parses but
+    /// cannot be honoured:
+    ///
+    /// - `window` is reserved and unimplemented;
+    /// - a blank `records` / `group_by` / metric name, which would silently
+    ///   read nothing rather than erroring at derivation time.
+    pub fn validate_tracking(&self) -> Result<(), ConfigError> {
+        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidTracking(msg));
+        for (activity, spec) in &self.tracking {
+            let at = format!("`[tracking.{activity}]`");
+            if activity.trim().is_empty() {
+                return invalid("a `[tracking.*]` table has a blank activity name".to_owned());
+            }
+            if spec.records.as_deref().is_some_and(|r| r.trim().is_empty()) {
+                return invalid(format!("{at} sets an empty `records` key"));
+            }
+            if spec
+                .group_by
+                .as_deref()
+                .is_some_and(|g| g.trim().is_empty())
+            {
+                return invalid(format!("{at} sets an empty `group_by`"));
+            }
+            for (metric, mspec) in &spec.metrics {
+                let at = format!("`[tracking.{activity}.metrics.{metric}]`");
+                if metric.trim().is_empty() {
+                    return invalid(format!(
+                        "`[tracking.{activity}]` declares a metric with a blank name"
+                    ));
+                }
+                if mspec.window.is_some() {
+                    return invalid(format!(
+                        "{at} uses `window`, which is reserved for the time-reduction axis and \
+                         not yet implemented"
+                    ));
+                }
+                if mspec
+                    .group_by
+                    .as_deref()
+                    .is_some_and(|g| g.trim().is_empty())
+                {
+                    return invalid(format!(
+                        "{at} sets an empty `group_by` \u{2014} use `none` to collapse across records"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Returns the schema extension for a given note type, if any.

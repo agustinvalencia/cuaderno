@@ -835,6 +835,32 @@ impl Vault {
         Ok(series)
     }
 
+    /// Every series for `stewardship`, drawing each activity's contract from
+    /// the vault's own `[tracking.<activity>]` declarations (`#487`).
+    ///
+    /// The production entry point. [`tracking_series_with_specs`] takes the
+    /// specs explicitly and stays public for callers that have their own — and
+    /// for the tests, which pin the derivation against specs they build rather
+    /// than against a config file.
+    ///
+    /// [`tracking_series_with_specs`]: Self::tracking_series_with_specs
+    pub fn tracking_series_declared(
+        &self,
+        stewardship: &str,
+    ) -> Result<Vec<TrackingSeries>, DomainError> {
+        self.tracking_series_with_specs(stewardship, &self.config.tracking)
+    }
+
+    /// The declared contract for `activity`, if the vault has one (`#487`).
+    ///
+    /// Exposed so an agent can learn the record key, the group field, and the
+    /// metric names and their aggregates *before* writing a payload, rather
+    /// than guessing or parsing `config.toml` itself — the same gap
+    /// `list_note_types` closes for custom note types.
+    pub fn tracking_spec(&self, activity: &str) -> Option<&TrackingSpec> {
+        self.config.tracking.get(activity)
+    }
+
     /// What you are in the middle of, according to today's log.
     ///
     /// Starting an action writes `started [[slug]] - text` into the daily

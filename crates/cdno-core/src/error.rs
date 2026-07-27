@@ -35,6 +35,15 @@ pub enum ConfigError {
     /// the offending field.
     #[error("invalid schema field: {0}")]
     InvalidSchema(String),
+
+    /// A `[tracking.<activity>]` declaration is structurally invalid (a
+    /// reserved `window`, a blank key). Distinct from [`InvalidSchema`] so the
+    /// message does not point the user at the unrelated
+    /// `[schemas.<type>.fields.<name>]` section.
+    ///
+    /// [`InvalidSchema`]: Self::InvalidSchema
+    #[error("invalid tracking declaration: {0}")]
+    InvalidTracking(String),
 }
 
 /// Errors from the surgical config editor ([`crate::config_edit`], #365
