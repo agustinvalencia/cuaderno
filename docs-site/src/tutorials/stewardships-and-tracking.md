@@ -99,6 +99,22 @@ detail:
   - { minutes: 15, subject: sight-reading }
 ```
 
+A metric that reports a **level** rather than a total — a balance, a measurement, the last set of
+the day — reduces to the last record in the entry, and "last" means the order the records appear in
+the file. If you append them out of order, give **every** record an `at` field and they sort by it:
+
+```yaml
+detail:
+  - { balance: 1200, at: "09:00" }
+  - { balance: 1240, at: "18:00" }
+```
+
+It is all-or-nothing: if any record lacks an `at`, or carries one that does not parse (`09:00`,
+`9:00`, `9:00 AM` and their with-seconds forms all do), the file's own order stands and nothing is
+reordered. The key is `at` rather than `time` precisely because `time` is a plausible *metric* —
+a swim split, a lap time — and ordering a record set by one of its own measurements would report
+a number that was never the last reading.
+
 Declaring a metric under `[schemas.tracking.fields]` (see
 [Configuration](../reference/configuration.md)) gets it type-checked on the way in — a `float` for
 a measurement or an amount, an `int` for a count. Anything undeclared is written as given, except

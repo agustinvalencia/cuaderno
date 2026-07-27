@@ -44,3 +44,9 @@ ui/tsconfig.tsbuildinfo
 .cuaderno/index.db-shm
 .cuaderno/index.db-wal
 .cuaderno/.lock
+
+# ts-rs writes here when TS_RS_EXPORT_DIR is unset (a bare
+# `cargo test --features ts-bindings`). The bindings the UI consumes are
+# generated into ui/src/api/bindings by `just gen-bindings`; a second copy
+# would go stale the first time a type changed, with nothing comparing them.
+crates/*/bindings/

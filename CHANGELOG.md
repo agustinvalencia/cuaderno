@@ -8,6 +8,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Tracking series can be derived from frontmatter, each metric reduced by its own declared
+  rule.** The existing engine parses the first table in a tracking note's body and *sums every
+  numeric column*. Summing is right for a total and wrong for everything else: it adds
+  successive readings of the same balance, it grows a rating with how often you record it, and
+  it cannot split a column by an entity, so "minutes by subject" or "spending by category" were
+  not expressible at all. A new derivation reads the parsed frontmatter the index already holds
+  — no file access — and applies each metric's own `sum`/`mean`/`last`/`max`/`min`, with
+  `group_by` fanning one entry out into an independent series per value. Two metrics over the
+  *same* records can now reduce differently: minutes sum while focus averages. A date a group
+  was not recorded on produces no point rather than a zero, since zero-filling would draw a
+  false line to the axis, and a value appearing for the first time starts its own series with
+  no configuration change. Undeclared activities are untouched and keep working exactly as
+  before.
+
+  A `last` metric reduces to the last record in the entry, which is the order the records appear
+  in the file — nothing else persists intra-day order, since an entry's date carries no time. When
+  records are appended out of order, giving every one of them an `at` field sorts them by it;
+  it is all-or-nothing, so a missing or unparseable `at` leaves the file's own order standing
+  rather than quietly picking a different reading. (#483)
+
 - **A tracking entry can carry structured metrics, and can be filed for a day that has already
   passed.** Recording lags the event more often than not — a statement reconciled at the weekend,
   a balance read whenever the app happens to be open — and every surface stamped the entry with
