@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **A second tracking entry for the same activity and date merges instead of erroring.** The
+  duplicate guard's rationale was right — logging an activity twice in a day should be one note,
+  not two silently-overwriting writes — but the merge it implied was never built, so the second
+  write simply failed. Several domains are naturally multi-occurrence: spending happens through
+  the day, contact more than once, practice splits morning and evening, and for agent-driven
+  logging a day recorded in two passes is ordinary. Content is appended and metrics folded in.
+
+  Merging is not blind concatenation, because the guard being removed was the only thing
+  preventing a double-write. A record carrying a stable `id` **replaces** the record with that
+  `id`, so re-applying a payload is idempotent; a record without one **appends**, so re-running an
+  import that omits ids double-counts every summed metric — documented at both surfaces rather
+  than left to be discovered. Scalars are last-write-wins, but replacing a record set with a
+  non-record value is refused rather than silently discarding the day's entries. A merged day still
+  reduces to one point per series: the two passes share a cell and the metric's own aggregate
+  reduces across both. (#488)
+
 ### Fixed
 
 - **The shipped `body` tracking template produced one meaningless number.** It was long-format —

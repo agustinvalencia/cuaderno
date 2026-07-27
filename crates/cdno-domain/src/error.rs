@@ -94,12 +94,6 @@ pub enum DomainError {
     #[error("frontmatter has no field '{0}' to rewrite")]
     MissingFrontmatterField(String),
 
-    #[error(
-        "frontmatter field '{0}' already carries a nested block \u{2014} replacing it would have to \
-         guess how many lines it spans; edit the note by hand instead"
-    )]
-    MultilineFrontmatterField(String),
-
     #[error("frontmatter field '{field}' cannot be written as YAML: {reason}")]
     UnrepresentableFrontmatterValue { field: String, reason: String },
 

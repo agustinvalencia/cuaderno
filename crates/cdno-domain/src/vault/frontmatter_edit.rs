@@ -24,10 +24,11 @@ use crate::error::DomainError;
 
 /// Merge `fields` into `raw`'s frontmatter block, returning the new document.
 ///
-/// A key already present as a **single-line** scalar (`routine: null`, the
-/// shape a template scaffolds) is replaced where it stands, keeping its
-/// position in the block. A key not present is appended just before the
-/// closing `---`.
+/// A key already present is replaced where it stands, keeping its position in
+/// the block — including one whose value spans lines, whose continuation lines
+/// are consumed. The caller passes the complete new value, so a merge computes
+/// its result first and hands the whole thing over. A key not present is
+/// appended just before the closing `---`.
 ///
 /// Key order — both the appended keys and the keys inside a record — is
 /// `serde_json::Map`'s, which is alphabetical (the workspace does not enable
@@ -36,10 +37,6 @@ use crate::error::DomainError;
 ///
 /// Errors:
 /// - [`DomainError::MissingSection`] — `raw` has no frontmatter block.
-/// - [`DomainError::MultilineFrontmatterField`] — the key is present and its
-///   value already spans lines. Replacing it means consuming an unknown number
-///   of continuation lines, and guessing wrong would silently drop or
-///   duplicate data; a freshly scaffolded note never has one.
 /// - [`DomainError::UnrepresentableFrontmatterValue`] — the key carries a line
 ///   break (never a legitimate frontmatter key) or the value cannot be
 ///   serialised as YAML.
@@ -71,19 +68,45 @@ pub fn merge_fields_into_frontmatter(
     let mut new_yaml = String::with_capacity(yaml.len() + 128);
     let mut replaced: Vec<&str> = Vec::new();
 
-    // First pass: replace in place any key the block already declares whose
-    // value fits on one line. A key whose value spans lines is a hard error.
+    // First pass: replace in place any key the block already declares,
+    // consuming its continuation lines when the existing value spans them.
+    //
+    // The extent of a multi-line value is not a guess: a continuation line is
+    // one `declared_key` does not recognise, which is the same definition
+    // `normalise` uses to move a key's line-group. The caller passes the
+    // COMPLETE new value, so the old lines go and the rendered ones replace
+    // them wholesale.
     let lines: Vec<&str> = yaml.split_inclusive('\n').collect();
-    for (i, line) in lines.iter().enumerate() {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
         match declared_key(line).and_then(|k| fields.get_key_value(k)) {
             Some((key, value)) => {
-                if continues_onto_next_line(lines.get(i + 1).copied()) {
-                    return Err(DomainError::MultilineFrontmatterField(key.clone()));
-                }
                 new_yaml.push_str(&render_field(key, value, newline)?);
                 replaced.push(key);
+                i += 1;
+                // Drop whatever belonged to the old value. A blank line does
+                // not end it: a block scalar may contain one, and stopping
+                // there would orphan the rest — which then reads back as part
+                // of the REPLACEMENT value rather than erroring. So look past
+                // any run of blanks, and consume them only when a continuation
+                // follows; otherwise leave them where they are.
+                loop {
+                    let mut next = i;
+                    while next < lines.len() && lines[next].trim().is_empty() {
+                        next += 1;
+                    }
+                    if next < lines.len() && is_continuation(lines[next]) {
+                        i = next + 1;
+                    } else {
+                        break;
+                    }
+                }
             }
-            None => new_yaml.push_str(line),
+            None => {
+                new_yaml.push_str(line);
+                i += 1;
+            }
         }
     }
 
@@ -124,23 +147,16 @@ fn declared_key(line: &str) -> Option<&str> {
     Some(unquoted)
 }
 
-/// Whether the line *after* a key belongs to that key's value.
+/// Whether a line belongs to the preceding key's value rather than starting a
+/// new one.
 ///
-/// Decided from the following line alone, deliberately. Judging by the key's
-/// own inline value would miss every block scalar (`key: |`, `key: >`) and
-/// every wrapped or multi-line flow collection — all of which carry a
-/// non-empty inline value and still continue. Replacing one of those orphans
-/// its continuation lines, which either breaks the document or, worse, lets
-/// the orphaned text be absorbed into the replacement value.
-fn continues_onto_next_line(next: Option<&str>) -> bool {
-    match next {
-        Some(next) => {
-            let trimmed = next.trim_start();
-            !trimmed.is_empty()
-                && (next.starts_with(char::is_whitespace) || trimmed.starts_with("- "))
-        }
-        None => false,
-    }
+/// Decided from the line itself, deliberately. Judging by the *previous* key's
+/// inline value would miss every block scalar (`key: |`, `key: >`) and every
+/// wrapped or multi-line flow collection — all of which carry a non-empty
+/// inline value and still continue.
+fn is_continuation(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    !trimmed.is_empty() && (line.starts_with(char::is_whitespace) || trimmed.starts_with("- "))
 }
 
 /// The characters YAML treats as line breaks. `\n` and `\r` are the obvious

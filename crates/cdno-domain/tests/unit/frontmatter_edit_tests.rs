@@ -111,14 +111,26 @@ fn a_string_needing_quotes_survives_the_round_trip() {
 }
 
 #[test]
-fn a_key_already_carrying_a_nested_block_errors_rather_than_guessing() {
-    // Replacing it means consuming an unknown number of continuation lines;
-    // guessing wrong silently drops or duplicates data.
+fn a_key_already_carrying_a_nested_block_is_replaced_wholesale() {
+    // The caller passes the COMPLETE new value, so the old block's
+    // continuation lines go with it. Their extent is not a guess: a
+    // continuation is a line `declared_key` does not recognise, the same
+    // definition `normalise` uses to move a key's line-group.
     let note = "---\ntype: tracking\ndetail:\n  - subject: harmony\n    minutes: 25\ndate: 2026-04-06\n---\n\n# Body\n";
-    match merge_fields_into_frontmatter(note, &fields(serde_json::json!({"detail": [1]}))) {
-        Err(DomainError::MultilineFrontmatterField(field)) => assert_eq!(field, "detail"),
-        other => panic!("expected MultilineFrontmatterField(detail), got {other:?}"),
-    }
+    let out = merge_fields_into_frontmatter(
+        note,
+        &fields(serde_json::json!({"detail": [{"subject": "scales"}]})),
+    )
+    .unwrap();
+
+    let (fm, body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    let detail = fm.as_json();
+    let detail = detail["detail"].as_array().unwrap();
+    assert_eq!(detail.len(), 1, "the old records are gone: {out}");
+    assert_eq!(detail[0]["subject"], serde_json::json!("scales"));
+    // Neighbouring keys and the body are untouched.
+    assert!(out.contains("date: 2026-04-06"), "{out}");
+    assert_eq!(body, "\n# Body\n");
 }
 
 #[test]
@@ -212,17 +224,20 @@ fn a_key_carrying_a_line_break_is_refused() {
 }
 
 #[test]
-fn a_block_scalar_is_refused_rather_than_orphaning_its_lines() {
+fn a_block_scalar_takes_its_continuation_lines_with_it() {
     // `notes: |` carries a non-empty inline value AND continues onto the next
-    // lines. Replacing it leaves them orphaned — which either breaks the
-    // document or, when they look like mapping entries, is silently absorbed
-    // into the replacement value.
+    // lines. They must go when it is replaced - orphaning them either breaks
+    // the document or, when they look like mapping entries, silently absorbs
+    // them into the replacement value.
     let note =
         "---\ntype: tracking\nnotes: |\n  warm-up\n  main set\ndate: 2026-04-06\n---\n\n# Body\n";
-    match merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "quick"}))) {
-        Err(DomainError::MultilineFrontmatterField(field)) => assert_eq!(field, "notes"),
-        other => panic!("expected MultilineFrontmatterField(notes), got {other:?}"),
-    }
+    let out = merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "quick"})))
+        .unwrap();
+
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(fm.as_json()["notes"], serde_json::json!("quick"));
+    assert!(!out.contains("warm-up"), "orphaned line survived: {out}");
+    assert!(out.contains("date: 2026-04-06"), "{out}");
 }
 
 #[test]
@@ -306,4 +321,36 @@ fn a_multiline_string_round_trips_in_an_lf_document() {
         fm.as_json().get("notes"),
         Some(&serde_json::json!("line1\nline2"))
     );
+}
+
+#[test]
+fn a_block_scalar_containing_a_blank_line_is_replaced_whole() {
+    // A blank line does not end a block scalar. Stopping there orphans the
+    // rest, which then reads back as part of the REPLACEMENT value — the
+    // "orphaned text absorbed into the replacement" failure, silently.
+    let note =
+        "---\ntype: tracking\nnotes: |\n  warm up\n\n  main set\nweight: 80\n---\n\n# Body\n";
+    let out = merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "quick"})))
+        .unwrap();
+
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(
+        fm.as_json()["notes"],
+        serde_json::json!("quick"),
+        "no orphan may be absorbed: {out}"
+    );
+    assert!(!out.contains("main set"), "orphaned line survived: {out}");
+    // The key after the block is untouched.
+    assert_eq!(fm.as_json()["weight"], serde_json::json!(80));
+}
+
+#[test]
+fn a_blank_line_between_keys_is_left_where_it_is() {
+    // The look-past-blanks rule must not swallow a blank that merely
+    // separates two top-level keys.
+    let note = "---\ntype: tracking\nweight: 80\n\ndate: 2026-04-10\n---\n\n# Body\n";
+    let out =
+        merge_fields_into_frontmatter(note, &fields(serde_json::json!({"weight": 82.5}))).unwrap();
+
+    assert!(out.contains("weight: 82.5\n\ndate: 2026-04-10"), "{out:?}");
 }

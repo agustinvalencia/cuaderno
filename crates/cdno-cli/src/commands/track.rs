@@ -107,7 +107,7 @@ pub fn run(
     // from the vault filesystem — airtight if a `tracking-<variant>` default is
     // ever bundled (it'd report `BuiltinVariant`, so no false nudge).
     if !json
-        && source == TemplateSource::BuiltinDefault
+        && source == Some(TemplateSource::BuiltinDefault)
         && let Some(hint) = newcomer_template_hint(root, &activity_variant)
     {
         eprintln!("{hint}");

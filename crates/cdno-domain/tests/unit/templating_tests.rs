@@ -661,7 +661,7 @@ fn add_tracking_entry_renders_a_prompted_variable_from_a_variant_template() {
         "tracking-variant prompted value should render"
     );
     // A custom `tracking-gym.md` override resolves as a custom variant (#287).
-    assert_eq!(source, TemplateSource::CustomVariant);
+    assert_eq!(source, Some(TemplateSource::CustomVariant));
 }
 
 #[test]
@@ -693,7 +693,7 @@ fn add_tracking_entry_reports_the_resolved_template_source() {
             TrackingEntryDraft::new("health", "gym").with_content("Session."),
         )
         .expect("tracking");
-    assert_eq!(source, TemplateSource::BuiltinDefault);
+    assert_eq!(source, Some(TemplateSource::BuiltinDefault));
 
     // A custom base `tracking.md` (no variant-specific file) → CustomBase.
     let base = "---\ntype: tracking\nstewardship: {{stewardship}}\nactivity: {{activity}}\ndate: {{date}}\n---\n# {{activity_title}}\n";
@@ -705,7 +705,7 @@ fn add_tracking_entry_reports_the_resolved_template_source() {
             TrackingEntryDraft::new("health", "gym").with_content("Session."),
         )
         .expect("tracking");
-    assert_eq!(source, TemplateSource::CustomBase);
+    assert_eq!(source, Some(TemplateSource::CustomBase));
 }
 
 #[test]
