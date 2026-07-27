@@ -243,8 +243,13 @@ OP      := '+' | '-' | '*'
 - **No parentheses, calls, chaining or recursion**, and no deriving from another derived metric.
 - **Field names** are letters, digits and `_`, not starting with a digit. Hyphens are excluded
   because `a-b` would be indistinguishable from a subtraction.
+- **Numbers are plain decimal** — digits, an optional leading `-`, an optional `.`. Exponent
+  notation (`1e-3`) is not supported; write the value out in full.
 - **Every operand must name a metric the same activity declares.** A typo is a vault-open error
-  naming the field, rather than a silently empty chart.
+  naming the field, rather than a silently empty chart. The cost of that requirement: an operand
+  that exists only to be multiplied — a rate, say — still becomes a metric of its own, and until
+  `plot` gates drawing it is charted alongside the result (today `plot` only chooses the mark, not
+  whether a series appears — see below).
 - **`type` must be omitted** — the output is numeric by construction, so declaring one can only
   contradict it.
 - **A record missing an operand contributes nothing** — a gap, on the same rule as a plain metric.

@@ -355,8 +355,6 @@ pub enum PlotKind {
 /// `NaN`/`Inf`, which the derivation has to keep out of its aggregates — and
 /// admitting it would mean defining division-by-zero as "skip the record",
 /// a rule better introduced deliberately than inherited.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DerivedOp {
@@ -388,6 +386,10 @@ pub enum DerivedOperand {
 ///
 /// A field name is `[A-Za-z_][A-Za-z0-9_]*`. Hyphens are excluded on purpose:
 /// `a-b` would be indistinguishable from a subtraction.
+///
+/// A number is plain decimal digits, with an optional leading `-` and an
+/// optional `.` — exponent notation (`1e-3`) is not supported; write the
+/// value out in full.
 ///
 /// No expression crate backs this. `rhai` is Turing-complete, and
 /// `evalexpr`/`meval` bring calls and a far wider grammar than is wanted on

@@ -1777,3 +1777,51 @@ fn a_non_finite_derived_result_skips_its_record() {
         "the overflowing record is skipped, not propagated as inf"
     );
 }
+
+#[test]
+fn a_derived_metric_is_computed_per_record_then_grouped() {
+    // The three tests above all use group_by: None. Grouping happens on top
+    // of derivation, not instead of it: each record still derives its own
+    // value first, and only then falls into its group's reduction - so each
+    // group ends up with its own independently-aggregated total.
+    use cdno_core::config::DerivedExpr;
+    let body = "detail:\n  - {mode: bus, km: 10, rate_per_km: 0.5}\n  - {mode: bus, km: 20, rate_per_km: 0.25}\n  - {mode: train, km: 5, rate_per_km: 2.0}\n";
+    let (vault, _store) = vault_with(&[(
+        "stewardships/finances/tracking/2026-07-06-commute.md",
+        &tracking_fm_note("finances", "commute", "2026-07-06", body),
+    )]);
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: Some("mode".to_owned()),
+        metrics: [(
+            "cost".to_owned(),
+            MetricSpec {
+                aggregate: Aggregate::Sum,
+                derived: Some("km * rate_per_km".parse::<DerivedExpr>().unwrap()),
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+
+    let series = vault
+        .tracking_series_from_frontmatter("finances", &specs(&[("commute", spec)]))
+        .unwrap();
+    assert_eq!(
+        point_on(
+            named(&series, "commute \u{b7} bus \u{b7} cost"),
+            ymd(2026, 7, 6)
+        ),
+        Some(10.0),
+        "10*0.5 + 20*0.25 = 10, bus's own total"
+    );
+    assert_eq!(
+        point_on(
+            named(&series, "commute \u{b7} train \u{b7} cost"),
+            ymd(2026, 7, 6)
+        ),
+        Some(10.0),
+        "5*2.0 = 10, train's own total, independent of bus"
+    );
+}

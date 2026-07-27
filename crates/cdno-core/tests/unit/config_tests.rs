@@ -1,4 +1,4 @@
-use cdno_core::config::{Aggregate, PlotKind, StateOverflow, VaultConfig};
+use cdno_core::config::{Aggregate, DerivedExpr, PlotKind, StateOverflow, VaultConfig};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -833,6 +833,20 @@ fn a_literal_operand_parses_including_a_negative_one() {
     }
 }
 
+#[test]
+fn a_derived_expr_round_trips_through_serialize() {
+    // The desktop's Config editor reads a `DerivedExpr` back out with
+    // `Serialize` and writes that string to `config.toml` on save — so the
+    // printed form has to re-parse to the identical AST, not just to
+    // something plausible.
+    for raw in ["km * rate_per_km", "km + -5", "km * 0.5"] {
+        let parsed: DerivedExpr = raw.parse().unwrap_or_else(|e| panic!("`{raw}`: {e}"));
+        let json = serde_json::to_string(&parsed).unwrap();
+        let round_tripped: DerivedExpr = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, round_tripped, "`{raw}` via {json}");
+    }
+}
+
 /// The full error chain as a user sees it: `ConfigError::Parse` names the
 /// file, and the deserialize error underneath carries the reason. The CLI
 /// prints the chain (anyhow), so both halves reach the user.
@@ -864,19 +878,25 @@ fn division_is_rejected_with_a_reason() {
 
 #[test]
 fn anything_outside_the_grammar_fails_at_load() {
-    for raw in [
-        "km * rate_per_km * 2", // chained
-        "(km + 1) * 2",         // parentheses
-        "max(km, 2)",           // a call
-        "km ^ 2",               // an unknown operator
-        "km",                   // no operation
-        "2 km",                 // no operator
+    // Pinned to the actual reason, not just "it failed" — otherwise a case
+    // could pass for the wrong reason (e.g. a parentheses input rejected as
+    // "missing an operator" rather than as an unparseable operand) and the
+    // test would never notice.
+    for (raw, expected_substring) in [
+        ("km * rate_per_km * 2", "has more than one operation"), // chained
+        ("(km + 1) * 2", "is not `operand OP operand`"),         // parentheses
+        ("max(km, 2)", "uses `(` where an operator was expected"), // a call
+        ("km ^ 2", "uses `^` where an operator was expected"),   // an unknown operator
+        ("km", "is missing an operator"),                        // no operation
+        ("2 km", "uses `k` where an operator was expected"),     // no operator
     ] {
         let dir = TempDir::new().unwrap();
         write_config(dir.path(), &commute_config(raw));
+        let err = VaultConfig::load(dir.path()).unwrap_err();
+        let chain = error_chain(&err);
         assert!(
-            VaultConfig::load(dir.path()).is_err(),
-            "`{raw}` must be rejected at load"
+            chain.contains(expected_substring),
+            "`{raw}` must fail with `{expected_substring}`, got: {chain}"
         );
     }
 }

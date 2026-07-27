@@ -1528,6 +1528,70 @@ async fn get_stewardship_tracking_returns_the_declared_contract() {
     let minutes = metrics.iter().find(|m| m["name"] == "minutes").unwrap();
     assert_eq!(minutes["type"], "int");
     assert_eq!(minutes["unit"], "min");
+    assert!(
+        minutes["derived"].is_null(),
+        "a recorded metric is not derived"
+    );
+}
+
+#[tokio::test]
+async fn a_derived_metric_is_marked_as_computed_in_the_contract() {
+    // Without the marker, a caller told to follow the declared field names
+    // writes a field for the derived metric - which the derivation ignores in
+    // favour of its own computation, silently.
+    use cdno_core::config::{Aggregate, DerivedExpr, MetricSpec, TrackingSpec};
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut config = VaultConfig::default();
+    config.tracking.insert(
+        "commute".to_owned(),
+        TrackingSpec {
+            records: Some("detail".to_owned()),
+            group_by: None,
+            metrics: [
+                ("km".to_owned(), MetricSpec::default()),
+                ("rate_per_km".to_owned(), MetricSpec::default()),
+                (
+                    "cost".to_owned(),
+                    MetricSpec {
+                        aggregate: Aggregate::Sum,
+                        derived: Some("km * rate_per_km".parse::<DerivedExpr>().unwrap()),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        },
+    );
+    let (vault, _r) = Vault::new(store, index, config).unwrap();
+    vault
+        .create_stewardship_expanded(moment(2026, 1, 1, 9, 0), "Finances", Context::Household)
+        .unwrap();
+    let server = CuadernoServer::new(Arc::new(vault));
+
+    let result = server
+        .get_stewardship_tracking(Parameters(GetStewardshipTrackingInput {
+            stewardship: "finances".to_owned(),
+            activity: "commute".to_owned(),
+            period: None,
+        }))
+        .await
+        .expect("get_stewardship_tracking");
+
+    let value = decode_json(&result);
+    let metrics = value["spec"]["metrics"].as_array().unwrap();
+    let cost = metrics.iter().find(|m| m["name"] == "cost").unwrap();
+    assert_eq!(
+        cost["derived"], "km * rate_per_km",
+        "the expression tells a caller not to write a `cost` field: {value}"
+    );
+    let km = metrics.iter().find(|m| m["name"] == "km").unwrap();
+    assert!(
+        km["derived"].is_null(),
+        "an operand is recorded, not derived"
+    );
 }
 
 #[tokio::test]

@@ -23,8 +23,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and those must never reach an aggregate. An operand naming a metric the activity does not
   declare is a vault-open error naming the field, rather than a silently empty chart. (#484)
 
-### Added
-
 - **Tracking series are readable over MCP, and carry what the declaration knows.** Asked whether
   something is trending up, an agent had to open and parse every tracking note itself — the
   largest gap in the tracking surface, and one that widens as a vault grows.
