@@ -19,8 +19,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   preventing a double-write. A record carrying a stable `id` **replaces** the record with that
   `id`, so re-applying a payload is idempotent; a record without one **appends**, so re-running an
   import that omits ids double-counts every summed metric — documented at both surfaces rather
-  than left to be discovered. Scalars are last-write-wins. A merged day still reduces to one point
-  per series: the two passes share a cell and the metric's own aggregate reduces across both. (#488)
+  than left to be discovered. Scalars are last-write-wins, but replacing a record set with a
+  non-record value is refused rather than silently discarding the day's entries. A merged day still
+  reduces to one point per series: the two passes share a cell and the metric's own aggregate
+  reduces across both. (#488)
 
 ### Fixed
 

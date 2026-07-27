@@ -322,3 +322,35 @@ fn a_multiline_string_round_trips_in_an_lf_document() {
         Some(&serde_json::json!("line1\nline2"))
     );
 }
+
+#[test]
+fn a_block_scalar_containing_a_blank_line_is_replaced_whole() {
+    // A blank line does not end a block scalar. Stopping there orphans the
+    // rest, which then reads back as part of the REPLACEMENT value — the
+    // "orphaned text absorbed into the replacement" failure, silently.
+    let note =
+        "---\ntype: tracking\nnotes: |\n  warm up\n\n  main set\nweight: 80\n---\n\n# Body\n";
+    let out = merge_fields_into_frontmatter(note, &fields(serde_json::json!({"notes": "quick"})))
+        .unwrap();
+
+    let (fm, _body) = cdno_core::frontmatter::Frontmatter::parse(&out).unwrap();
+    assert_eq!(
+        fm.as_json()["notes"],
+        serde_json::json!("quick"),
+        "no orphan may be absorbed: {out}"
+    );
+    assert!(!out.contains("main set"), "orphaned line survived: {out}");
+    // The key after the block is untouched.
+    assert_eq!(fm.as_json()["weight"], serde_json::json!(80));
+}
+
+#[test]
+fn a_blank_line_between_keys_is_left_where_it_is() {
+    // The look-past-blanks rule must not swallow a blank that merely
+    // separates two top-level keys.
+    let note = "---\ntype: tracking\nweight: 80\n\ndate: 2026-04-10\n---\n\n# Body\n";
+    let out =
+        merge_fields_into_frontmatter(note, &fields(serde_json::json!({"weight": 82.5}))).unwrap();
+
+    assert!(out.contains("weight: 82.5\n\ndate: 2026-04-10"), "{out:?}");
+}

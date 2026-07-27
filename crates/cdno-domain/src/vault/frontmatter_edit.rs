@@ -85,9 +85,22 @@ pub fn merge_fields_into_frontmatter(
                 new_yaml.push_str(&render_field(key, value, newline)?);
                 replaced.push(key);
                 i += 1;
-                // Drop whatever belonged to the old value.
-                while i < lines.len() && is_continuation(lines[i]) {
-                    i += 1;
+                // Drop whatever belonged to the old value. A blank line does
+                // not end it: a block scalar may contain one, and stopping
+                // there would orphan the rest — which then reads back as part
+                // of the REPLACEMENT value rather than erroring. So look past
+                // any run of blanks, and consume them only when a continuation
+                // follows; otherwise leave them where they are.
+                loop {
+                    let mut next = i;
+                    while next < lines.len() && lines[next].trim().is_empty() {
+                        next += 1;
+                    }
+                    if next < lines.len() && is_continuation(lines[next]) {
+                        i = next + 1;
+                    } else {
+                        break;
+                    }
                 }
             }
             None => {

@@ -204,6 +204,14 @@ impl Vault {
             }
             let existing = self.store.read_file(&path)?;
             let merged = merge_into_entry(&existing, &draft)?;
+            // The same invariant the fresh path enforces, and for the same
+            // reason: every reader that scans all tracking notes parses before
+            // it filters, so one note that no longer parses fails the read for
+            // every stewardship in the vault. Without this, a payload the
+            // fresh path refuses outright would be committed simply because it
+            // arrived second.
+            let (fm, _rest) = Frontmatter::parse(&merged)?;
+            TrackingFrontmatter::try_from(fm)?;
             let entry = build_index_entry_for(&path, &merged, NoteType::Tracking.as_str())?;
             tx.write_file(path.clone(), merged);
             tx.upsert_note(entry);
@@ -339,7 +347,23 @@ fn merge_into_entry(existing: &str, draft: &TrackingEntryDraft) -> Result<String
                 (Some(serde_json::Value::Array(old)), serde_json::Value::Array(new)) => {
                     serde_json::Value::Array(merge_records(old, new))
                 }
-                // Anything else - a scalar, or a shape change - is replaced.
+                // Replacing a record set with something that is not one would
+                // erase every record already filed for that day, on a note
+                // type that is append-only. A shape change is far more likely
+                // a caller slip than an intent to discard, so refuse it.
+                (Some(serde_json::Value::Array(old)), _) => {
+                    return Err(DomainError::InvalidFieldValue {
+                        note_type: NoteType::Tracking.as_str().to_owned(),
+                        field: key.clone(),
+                        reason: format!(
+                            "already holds {} record(s); replacing them with a non-record value \
+                             would discard the day's entries",
+                            old.len()
+                        ),
+                    });
+                }
+                // A scalar is last-write-wins: there is no array to key on,
+                // and the later reading is what a level means.
                 _ => incoming.clone(),
             };
             merged.insert(key.clone(), value);
@@ -360,7 +384,25 @@ fn merge_into_entry(existing: &str, draft: &TrackingEntryDraft) -> Result<String
     // does not replace it.
     let mut doc = MarkdownDocument::parse(out)?;
     doc.ensure_section(TRACKING_NOTES_SECTION)?;
-    doc.append_to_section(TRACKING_NOTES_SECTION, &format!("{content}\n"))?;
+    // A note carrying two `## Notes` headings (hand-edited, or from a vault
+    // template that lists it twice) cannot resolve a unique target.
+    // `ensure_section` no-ops on it and `append_to_section` then errors -
+    // refusing the whole write, metrics included. Losing the merge over an
+    // ambiguity in the prose section is the wrong trade: append at the end of
+    // the body instead, where the content is still on the record. `cdno lint`
+    // is what should complain about the duplicate heading.
+    if doc
+        .append_to_section(TRACKING_NOTES_SECTION, &format!("{content}\n"))
+        .is_err()
+    {
+        let mut raw = doc.render().to_owned();
+        if !raw.ends_with('\n') {
+            raw.push('\n');
+        }
+        raw.push_str(content);
+        raw.push('\n');
+        return Ok(raw);
+    }
     Ok(doc.render().to_owned())
 }
 

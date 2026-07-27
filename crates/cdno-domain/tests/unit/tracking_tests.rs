@@ -745,3 +745,116 @@ fn an_extra_required_only_schema_does_not_type_check_metrics() {
         )
         .expect("a lint-only extra_required must not block a numeric metric");
 }
+
+#[test]
+fn a_merge_cannot_commit_a_note_the_fresh_path_would_refuse() {
+    // The asymmetry that matters: both paths must enforce the same invariant.
+    // A payload refused outright as a first entry must not slip in simply
+    // because it arrived second - one note that no longer parses fails
+    // `list_tracking`/`list_stewardships` for every stewardship in the vault,
+    // since those readers parse before they filter.
+    let (vault, store) = health_vault();
+    let bad = || metrics(serde_json::json!({"duration_min": -5}));
+
+    // Refused as a first entry, leaving nothing behind.
+    let first = vault.add_tracking_entry(
+        dt(2026, 4, 1, 8, 0),
+        TrackingEntryDraft::new("health", "gym").with_metrics(bad()),
+    );
+    assert!(first.is_err(), "a negative duration is not a u32");
+    assert!(
+        !store
+            .exists(&vp("stewardships/health/tracking/2026-04-01-gym.md"))
+            .unwrap()
+    );
+
+    // And refused as a merge, leaving the existing entry intact.
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "gym").with_content("Morning."),
+        )
+        .unwrap();
+    let before = store
+        .read_file(&vp("stewardships/health/tracking/2026-04-01-gym.md"))
+        .unwrap();
+    assert!(
+        vault
+            .add_tracking_entry(
+                dt(2026, 4, 1, 20, 0),
+                TrackingEntryDraft::new("health", "gym").with_metrics(bad()),
+            )
+            .is_err(),
+        "the merge path must enforce the same invariant"
+    );
+    assert_eq!(
+        store
+            .read_file(&vp("stewardships/health/tracking/2026-04-01-gym.md"))
+            .unwrap(),
+        before,
+        "a refused merge must leave the note untouched"
+    );
+}
+
+#[test]
+fn a_merge_refuses_to_replace_a_record_set_with_a_scalar() {
+    // Tracking notes are append-only, and the tool description shows both a
+    // scalar and an array shape for `metrics` - so a caller sending the wrong
+    // one is a plausible slip rather than an intent to discard the day.
+    let (vault, store) = health_vault();
+    let (first, _) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "spending").with_metrics(metrics(
+                serde_json::json!({"detail": [{"id": "a", "amount": 40}]}),
+            )),
+        )
+        .unwrap();
+
+    match vault.add_tracking_entry(
+        dt(2026, 4, 1, 20, 0),
+        TrackingEntryDraft::new("health", "spending")
+            .with_metrics(metrics(serde_json::json!({"detail": 5}))),
+    ) {
+        Err(DomainError::InvalidFieldValue { field, reason, .. }) => {
+            assert_eq!(field, "detail");
+            assert!(reason.contains("record"), "reason: {reason}");
+        }
+        other => panic!("expected InvalidFieldValue(detail), got {other:?}"),
+    }
+
+    let detail = frontmatter_json(&store, &first.primary);
+    assert_eq!(
+        detail["detail"].as_array().unwrap().len(),
+        1,
+        "the day's records survive"
+    );
+}
+
+#[test]
+fn a_merge_still_records_content_when_the_notes_heading_is_ambiguous() {
+    // A note carrying two `## Notes` headings cannot resolve a unique target.
+    // Losing the whole merge - metrics included - over an ambiguity in the
+    // prose section is the wrong trade; the content still lands.
+    let (vault, store) = health_vault();
+    let path = vp("stewardships/health/tracking/2026-04-01-gym.md");
+    store
+        .write_file(
+            &path,
+            "---\ntype: tracking\nstewardship: health\nactivity: gym\ndate: 2026-04-01\n---\n\n# Gym\n\n## Notes\nfirst\n\n## Notes\nsecond\n",
+        )
+        .unwrap();
+
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 20, 0),
+            TrackingEntryDraft::new("health", "gym")
+                .with_content("Evening.")
+                .with_metrics(metrics(serde_json::json!({"duration_min": 45}))),
+        )
+        .expect("an ambiguous heading must not refuse the write");
+
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("Evening."), "content is on the record: {raw}");
+    assert!(raw.contains("duration_min: 45"), "metrics landed: {raw}");
+}
