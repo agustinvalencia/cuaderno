@@ -709,6 +709,36 @@ type = \"int\"
 }
 
 #[test]
+fn set_metric_plot_none_defensively_no_ops_when_any_ancestor_table_is_absent() {
+    // Clearing a plot is a remove-shaped edit: if `tracking`, the
+    // activity, `metrics`, or the metric table itself is missing — most
+    // plausibly because the user hand-deleted the activity — it must be a
+    // no-op success, never a vivifying write that re-declares what was
+    // just removed. One case per ancestor level.
+    let cases = [
+        // `tracking` missing entirely.
+        "[vault]\nname = \"Demo\"\n",
+        // The activity missing under an existing `tracking`.
+        "[tracking.other-activity.metrics.x]\ntype = \"int\"\n",
+        // `metrics` missing under an existing activity.
+        "[tracking.gym]\nsome_key = \"x\"\n",
+        // The metric missing under an existing `metrics` table.
+        "[tracking.gym.metrics.sets]\ntype = \"int\"\n",
+    ];
+    for existing in cases {
+        let out = set_metric_plot(existing, "gym", "reps", PlotKind::None).expect("no-op clear");
+        assert_eq!(
+            out, existing,
+            "clearing an absent metric's plot must not change the document: {existing}"
+        );
+        assert!(
+            !out.contains("reps"),
+            "must never write a `reps` metric table that didn't exist: {out}"
+        );
+    }
+}
+
+#[test]
 fn set_metric_plot_leaves_every_sibling_key_on_the_metric_untouched() {
     // The picker only ever sees `plot` — every other key a hand-authored
     // metric declares (`type`, `aggregate`, `group_by`, `unit`, `label`,

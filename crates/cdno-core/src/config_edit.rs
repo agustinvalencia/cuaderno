@@ -293,12 +293,21 @@ pub fn remove_schema_field(
 /// rendering, which by construction already has a
 /// `[tracking.<activity>.metrics.<metric>]` entry. If the file changed
 /// underneath since the draft was loaded (a concurrent hand-edit dropped
-/// the metric), [`table_entry`] would vivify empty ancestor tables rather
-/// than erroring here — that is harmless, because the candidate string
-/// this produces still has to clear the save gate's compare-and-swap on
-/// the hash read before this edit was made. This writer's job is only to
-/// produce the right candidate; authorising the write is the gate's job,
-/// not this function's.
+/// the metric), declaring a KIND still vivifies the ancestor tables via
+/// [`table_entry`] — harmless, because the candidate string this produces
+/// still has to clear the save gate's compare-and-swap on the hash read
+/// before this edit was made, and re-declaring a kind for a metric the
+/// user just removed is at worst surprising, never destructive.
+///
+/// `PlotKind::None` (clearing) is different, and does NOT vivify: it is a
+/// remove-shaped edit, so it navigates defensively, the same way
+/// [`remove_schema_field`]/[`remove_variable`] do — if `tracking`, the
+/// activity, `metrics`, or the metric table is absent, clearing is a no-op
+/// success. Without this, clearing a plot on a metric whose table no
+/// longer exists (the user just deleted the activity by hand) would use
+/// the vivifying path and WRITE a bare `[tracking.<activity>.metrics.
+/// <metric>]` header back — silently re-declaring the very activity the
+/// user removed, for an edit whose whole point was to remove something.
 pub fn set_metric_plot(
     content: &str,
     activity: &str,
@@ -306,15 +315,31 @@ pub fn set_metric_plot(
     plot: PlotKind,
 ) -> Result<String, ConfigEditError> {
     let mut doc = parse(content)?;
+
+    if plot == PlotKind::None {
+        if let Some(table) = doc
+            .as_table_mut()
+            .get_mut("tracking")
+            .and_then(Item::as_table_mut)
+            .and_then(|tracking| tracking.get_mut(activity))
+            .and_then(Item::as_table_mut)
+            .and_then(|activity_table| activity_table.get_mut("metrics"))
+            .and_then(Item::as_table_mut)
+            .and_then(|metrics| metrics.get_mut(metric))
+            .and_then(Item::as_table_mut)
+        {
+            table.remove("plot");
+        }
+        return Ok(doc.to_string());
+    }
+
     let tracking = table_entry(doc.as_table_mut(), "tracking", true)?;
     let activity_table = table_entry(tracking, activity, true)?;
     let metrics = table_entry(activity_table, "metrics", true)?;
     let table = table_entry(metrics, metric, false)?;
 
     match plot {
-        PlotKind::None => {
-            table.remove("plot");
-        }
+        PlotKind::None => unreachable!("handled above, before any ancestor is vivified"),
         PlotKind::Line => {
             table.insert("plot", value("line"));
         }

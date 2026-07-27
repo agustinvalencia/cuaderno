@@ -9,6 +9,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { ConfigDocument } from "../../api/bindings/ConfigDocument";
 import type { StewardshipDetail as StewardshipDetailData } from "../../api/bindings/StewardshipDetail";
 import type { TrackingSeries } from "../../api/bindings/TrackingSeries";
 import { setShowMetrics } from "../../lib/metrics";
@@ -242,8 +243,54 @@ const DECLARED: StewardshipDetailData = {
   ],
 };
 
+// Two declared series whose (activity, metric) pairs collide under a naive
+// space-joined key: `("morning run", "pace")` and `("morning", "run pace")`
+// both space-join to `"morning run pace"`. Both are free text (activity
+// names and metric field names come from tracking-note frontmatter), so
+// either can legitimately contain a space — the encoding itself must not
+// collide, staging must stay independent per pair.
+const COLLIDING_KEYS: StewardshipDetailData = {
+  ...EXPANDED,
+  series: [
+    {
+      name: "morning run · pace",
+      points: [{ date: "2026-07-01", value: 5.2 }],
+      unit: null,
+      label: null,
+      mark: "line",
+    },
+    {
+      name: "morning · run pace",
+      points: [{ date: "2026-07-01", value: 6.1 }],
+      unit: null,
+      label: null,
+      mark: "line",
+    },
+  ],
+};
+
 const CONFIG_TOML = '[tracking.gym.metrics.reps]\ntype = "int"\nplot = "line"\n';
 const CONFIG_HASH = "cafef00dcafef00d";
+
+/** A minimal stand-in for the real `config_set_metric_plot` surgical
+ * writer, faithful enough for these tests: swaps, inserts, or drops the
+ * `plot` line under `[tracking.gym.metrics.reps]` in whatever `content` is
+ * actually PASSED — not a fixed constant. The compose-from-current-draft
+ * tests below stage several successive edits against content that has
+ * moved on since the fixture's baseline, and a mock that ignored its own
+ * `content` argument would silently paper over exactly the bug those
+ * tests exist to catch. */
+function mockApplyPlot(content: string, plot: string): string {
+  if (plot === "none") {
+    return content.replace(/plot = "[a-z]+"\n/, "");
+  }
+  return /plot = "[a-z]+"/.test(content)
+    ? content.replace(/plot = "[a-z]+"/, `plot = "${plot}"`)
+    : content.replace(
+        "[tracking.gym.metrics.reps]\n",
+        `[tracking.gym.metrics.reps]\nplot = "${plot}"\n`,
+      );
+}
 
 /** How save_config should answer for the plot-kind picker's persist
  * action: resolve with a new document, or reject with a tagged
@@ -269,10 +316,8 @@ function renderDeclaredWith(
       case "read_config":
         return { content: CONFIG_TOML, hash: CONFIG_HASH };
       case "config_set_metric_plot": {
-        const { plot } = args as { plot: string };
-        return plot === "none"
-          ? CONFIG_TOML.replace('plot = "line"\n', "")
-          : CONFIG_TOML.replace('plot = "line"', `plot = "${plot}"`);
+        const { content, plot } = args as { content: string; plot: string };
+        return mockApplyPlot(content, plot);
       }
       case "validate_config":
         return undefined;
@@ -331,9 +376,14 @@ function renderDetailWith(handler: (cmd: string, args: unknown) => unknown) {
   return mountDetail(EXPANDED);
 }
 
+/** Returns the render result PLUS the `QueryClient` itself — the
+ * compose-timing tests below need to drive a `read_config` refetch
+ * directly (standing in for the watcher-driven invalidation `vault:changed`
+ * triggers in the real app, which isn't wired up under this mock harness),
+ * and `render()` alone gives no way back to the client that owns it. */
 function mountDetail(fixture: StewardshipDetailData, at?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <ToastProvider>
         <MemoryRouter initialEntries={[at ?? `/stewardships/${fixture.slug}`]}>
@@ -349,6 +399,7 @@ function mountDetail(fixture: StewardshipDetailData, at?: string) {
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return { ...result, client };
 }
 
 afterEach(() => {
@@ -607,7 +658,11 @@ test("a body-table series (mark: null) has no picker — there is nothing to per
   expect(screen.queryByRole("combobox", { name: /Chart type for/ })).toBeNull();
 });
 
-test("changing the picker previews immediately, and writes nothing until the explicit action", async () => {
+test("changing the picker previews immediately and stages with NO ipc call at all", async () => {
+  // The redesign's whole point (#490 follow-up): staging is synchronous
+  // and side-effect free, so there is no async gap for a background
+  // "adopt on-disk change" reseed to land in and desync the draft from
+  // its hash — the root cause of the silent-clobber bug this closes.
   const calls: Array<{ cmd: string; args: unknown }> = [];
   renderDeclaredWith({ calls });
 
@@ -616,11 +671,14 @@ test("changing the picker previews immediately, and writes nothing until the exp
   expect(figure?.getAttribute("data-chart-kind")).toBe("line");
 
   const select = screen.getByRole("combobox", { name: "Chart type for gym · reps" });
+  const callsBeforeStage = calls.length;
   fireEvent.change(select, { target: { value: "column" } });
 
-  // The preview updates without a save_config ever firing.
-  await waitFor(() => expect(figure?.getAttribute("data-chart-kind")).toBe("column"));
-  expect(calls.some((c) => c.cmd === "config_set_metric_plot")).toBe(true);
+  // The preview updates immediately, with no IPC call of any kind fired
+  // by the change — not just no save_config, NOTHING.
+  expect(figure?.getAttribute("data-chart-kind")).toBe("column");
+  expect(calls.length).toBe(callsBeforeStage);
+  expect(calls.some((c) => c.cmd === "config_set_metric_plot")).toBe(false);
   expect(calls.some((c) => c.cmd === "save_config")).toBe(false);
 });
 
@@ -654,10 +712,139 @@ test("the explicit action persists the staged pick through save_config, with the
     const saved = calls.find((c) => c.cmd === "save_config");
     expect(saved?.args).toMatchObject({ expectedHash: CONFIG_HASH });
   });
+  // The surgical compose happens as part of THIS action now, not the
+  // staging step above — persist is where config_set_metric_plot fires.
+  expect(calls.some((c) => c.cmd === "config_set_metric_plot")).toBe(true);
   // The persist bar clears once the save lands.
   await waitFor(() =>
     expect(screen.queryByRole("group", { name: "Unsaved chart type changes" })).toBeNull(),
   );
+});
+
+test("persist composes from the draft as it is at persist time, not a value captured when staged", async () => {
+  // An external edit lands AFTER the pick is staged but BEFORE persist is
+  // clicked, while nothing is dirty — `useConfigDraft`'s "adopt while
+  // clean" effect adopts it, same as it always would between an unrelated
+  // Settings-dialog visit and a Save here. Under the old queue-and-apply
+  // design this window is exactly where the bug lived, because staging
+  // itself captured a base early. Under the redesign staging never reads
+  // the draft at all, so this must resolve cleanly: persist composes
+  // against the NEW content, not whatever was current back when the pick
+  // was made.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  let onDisk = { content: CONFIG_TOML, hash: CONFIG_HASH };
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return onDisk;
+      case "config_set_metric_plot": {
+        const { content, plot } = args as { content: string; plot: string };
+        return mockApplyPlot(content, plot);
+      }
+      case "validate_config":
+        return undefined;
+      case "save_config": {
+        const { content, expectedHash } = args as { content: string; expectedHash: string };
+        return { content, hash: expectedHash };
+      }
+      default:
+        return undefined;
+    }
+  });
+  const { client } = mountDetail(DECLARED);
+
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "column" },
+  });
+
+  // The external edit: a NEW unrelated metric appears, under a NEW hash.
+  onDisk = {
+    content: `${CONFIG_TOML}\n[tracking.gym.metrics.weight]\ntype = "float"\n`,
+    hash: "hash-after-external-edit",
+  };
+  await act(() => client.refetchQueries({ queryKey: ["read_config"] }));
+
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+
+  await waitFor(() => expect(calls.some((c) => c.cmd === "save_config")).toBe(true));
+  const saved = calls.find((c) => c.cmd === "save_config");
+  expect(saved?.args).toMatchObject({ expectedHash: "hash-after-external-edit" });
+  const savedContent = (saved?.args as { content: string }).content;
+  // Composed from the FRESH base (carries the external edit's new metric)
+  // with the staged pick applied on top of it.
+  expect(savedContent).toContain("weight");
+  expect(savedContent).toContain('plot = "column"');
+});
+
+test("an external config change landing between a stage and a persist produces a conflict, not a clobber", async () => {
+  // The high-severity case the redesign exists to fix: composing a
+  // multi-step staged edit is itself async (one `config_set_metric_plot`
+  // round trip per pick), so a genuine concurrent hand-edit CAN still land
+  // inside that window. Persist must be caught by the save's own
+  // compare-and-swap in that case — a CONFLICT — rather than the mismatch
+  // silently passing and overwriting the newer file, which is exactly what
+  // the old design's unconditional draft/hash write-back allowed.
+  //
+  // The mock's `save_config` here performs the same compare-and-swap the
+  // real backend does: it checks the posted hash against "what's actually
+  // on disk", not against whatever the client's own state currently says.
+  let onDisk = { content: CONFIG_TOML, hash: CONFIG_HASH };
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return onDisk;
+      case "config_set_metric_plot": {
+        const { content, plot } = args as { content: string; plot: string };
+        // The concurrent hand-edit: it lands the moment persist's own
+        // compose step starts touching the file, well after the pick was
+        // staged and well before the final save.
+        onDisk = { ...onDisk, hash: "hash-from-a-concurrent-hand-edit" };
+        return mockApplyPlot(content, plot);
+      }
+      case "validate_config":
+        return undefined;
+      case "save_config": {
+        const { content, expectedHash } = args as { content: string; expectedHash: string };
+        if (expectedHash !== onDisk.hash) {
+          throw { kind: "conflict" };
+        }
+        onDisk = { content, hash: "hash-after-save" };
+        return onDisk;
+      }
+      default:
+        return undefined;
+    }
+  });
+  mountDetail(DECLARED);
+
+  await screen.findByRole("heading", { name: "Trends" });
+  fireEvent.change(screen.getByRole("combobox", { name: "Chart type for gym · reps" }), {
+    target: { value: "column" },
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+
+  await waitFor(() => {
+    const status = screen
+      .getAllByRole("status")
+      .find((n) => n.textContent?.includes("changed on disk"));
+    expect(status).toBeDefined();
+  });
+  // save_config was genuinely attempted (and refused) — a true clobber
+  // would show no conflict notice at all, just a quiet, wrong success.
+  expect(calls.some((c) => c.cmd === "save_config")).toBe(true);
+  expect(onDisk.hash).toBe("hash-from-a-concurrent-hand-edit");
 });
 
 test("Discard reverts the staged pick without ever calling save_config", async () => {
@@ -719,6 +906,153 @@ test("the picker has no axe violations while a change is staged, or while a conf
   expect(
     await axe(conflict.container, { rules: { "color-contrast": { enabled: false } } }),
   ).toHaveNoViolations();
+});
+
+test("the picker is disabled with an accessible explanation before the config read resolves", async () => {
+  let resolveRead!: (doc: ConfigDocument) => void;
+  const pendingRead = new Promise<ConfigDocument>((resolve) => {
+    resolveRead = resolve;
+  });
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return pendingRead;
+      default:
+        return undefined;
+    }
+  });
+  mountDetail(DECLARED);
+
+  const select = (await screen.findByRole("combobox", {
+    name: "Chart type for gym · reps",
+  })) as HTMLSelectElement;
+  expect(select.disabled).toBe(true);
+  // A greyed-out select alone doesn't say WHY — the reason is both visible
+  // and wired to the control via aria-describedby.
+  const describedBy = select.getAttribute("aria-describedby");
+  expect(describedBy).not.toBeNull();
+  expect(document.getElementById(describedBy as string)?.textContent).toMatch(/reading/i);
+
+  await act(async () => {
+    resolveRead({ content: CONFIG_TOML, hash: CONFIG_HASH });
+    await pendingRead;
+  });
+  await waitFor(() => expect(select.disabled).toBe(false));
+});
+
+test("the picker is disabled with an accessible explanation when the config read errors", async () => {
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        throw new Error("vault is locked");
+      default:
+        return undefined;
+    }
+  });
+  mountDetail(DECLARED);
+
+  const select = (await screen.findByRole("combobox", {
+    name: "Chart type for gym · reps",
+  })) as HTMLSelectElement;
+  await waitFor(() => expect(select.disabled).toBe(true));
+  const describedBy = select.getAttribute("aria-describedby");
+  expect(describedBy).not.toBeNull();
+  expect(document.getElementById(describedBy as string)?.textContent).toMatch(
+    /could not be read/i,
+  );
+});
+
+test("the picker is disabled with an accessible explanation while a save is in flight", async () => {
+  let resolveSave!: (doc: ConfigDocument) => void;
+  const pendingSave = new Promise<ConfigDocument>((resolve) => {
+    resolveSave = resolve;
+  });
+  mockIPC((cmd, args) => {
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return DECLARED;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return { content: CONFIG_TOML, hash: CONFIG_HASH };
+      case "config_set_metric_plot": {
+        const { content, plot } = args as { content: string; plot: string };
+        return mockApplyPlot(content, plot);
+      }
+      case "validate_config":
+        return undefined;
+      case "save_config":
+        return pendingSave;
+      default:
+        return undefined;
+    }
+  });
+  mountDetail(DECLARED);
+
+  await screen.findByRole("heading", { name: "Trends" });
+  const select = screen.getByRole("combobox", {
+    name: "Chart type for gym · reps",
+  }) as HTMLSelectElement;
+  fireEvent.change(select, { target: { value: "column" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Save chart type as default" }));
+
+  await waitFor(() => expect(select.disabled).toBe(true));
+  const describedBy = select.getAttribute("aria-describedby");
+  expect(describedBy).not.toBeNull();
+  expect(document.getElementById(describedBy as string)?.textContent).toMatch(/saving/i);
+
+  await act(async () => {
+    resolveSave({ content: CONFIG_TOML.replace('plot = "line"', 'plot = "column"'), hash: "new-hash" });
+    await pendingSave;
+  });
+  await waitFor(() => expect(select.disabled).toBe(false));
+});
+
+test("staged picks for colliding activity/metric pairs stay independent", async () => {
+  // A naive space-joined key collapses ("morning run", "pace") and
+  // ("morning", "run pace") into the same staged entry — picking a plot
+  // kind for one would silently apply to (and later clobber the preview
+  // of) the other. This does not depend on persisting: staging alone must
+  // already keep the two apart.
+  mockIPC((cmd) => {
+    switch (cmd) {
+      case "get_stewardship_detail":
+        return COLLIDING_KEYS;
+      case "get_tracking_template_fields":
+        return [];
+      case "read_config":
+        return { content: "", hash: "h" };
+      default:
+        return undefined;
+    }
+  });
+  mountDetail(COLLIDING_KEYS);
+
+  await screen.findByRole("heading", { name: "Trends" });
+  const selectA = screen.getByRole("combobox", {
+    name: "Chart type for morning run · pace",
+  }) as HTMLSelectElement;
+  const selectB = screen.getByRole("combobox", {
+    name: "Chart type for morning · run pace",
+  }) as HTMLSelectElement;
+
+  fireEvent.change(selectA, { target: { value: "column" } });
+  expect(selectA.value).toBe("column");
+  expect(selectB.value).toBe("line");
+
+  fireEvent.change(selectB, { target: { value: "area" } });
+  // Staging B must not have overwritten A's independently-staged pick —
+  // the exact failure a colliding key would cause.
+  expect(selectA.value).toBe("column");
+  expect(selectB.value).toBe("area");
 });
 
 test('a stewardship whose only series are all plot = "none" has no Trends pane', async () => {

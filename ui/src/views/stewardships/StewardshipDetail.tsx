@@ -518,6 +518,10 @@ function ChartCard({
   // already committed `plot = "none"` is filtered out of the grid entirely
   // before this component ever renders (`isDrawable`, above).
   const willStopDrawing = declared && effectivePlot === "none";
+  // A stable id off the series name for `aria-describedby` — computed
+  // unconditionally so the select and the (conditionally rendered)
+  // explanation span always agree on the same id.
+  const disabledReasonId = `plot-picker-disabled-${series.name.replace(/\s+/g, "-")}`;
 
   return (
     <div className={willStopDrawing ? "opacity-50" : undefined}>
@@ -526,11 +530,13 @@ function ChartCard({
         <div className="mt-1.5 flex items-center gap-2">
           <select
             aria-label={`Chart type for ${captionFor(series)}`}
+            aria-describedby={plotDraft.pickerDisabled ? disabledReasonId : undefined}
             value={effectivePlot ?? "line"}
+            disabled={plotDraft.pickerDisabled}
             onChange={(event) =>
               plotDraft.setPlot(activity, metric, event.target.value as PlotKind)
             }
-            className="rounded border border-line bg-bg-base px-1.5 py-0.5 text-xs text-ink"
+            className="rounded border border-line bg-bg-base px-1.5 py-0.5 text-xs text-ink disabled:opacity-50"
           >
             <option value="line">Line</option>
             <option value="column">Column</option>
@@ -538,6 +544,15 @@ function ChartCard({
             <option value="scatter">Scatter</option>
             <option value="none">None — stop drawing this chart</option>
           </select>
+          {/* A greyed-out control alone tells a sighted user something is
+              wrong but not what — this states it, and is wired to the
+              select via `aria-describedby` so a screen reader gets the
+              same "why". */}
+          {plotDraft.pickerDisabled && plotDraft.pickerDisabledReason && (
+            <span id={disabledReasonId} className="text-xs text-ink-faint">
+              {plotDraft.pickerDisabledReason}
+            </span>
+          )}
         </div>
       )}
       {willStopDrawing && (

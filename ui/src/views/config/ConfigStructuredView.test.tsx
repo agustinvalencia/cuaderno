@@ -113,6 +113,9 @@ function draftStub(overrides: Partial<ConfigDraft> = {}): ConfigDraft {
     conflict: false,
     save: vi.fn(),
     saving: false,
+    // Only the plot-kind picker (#490) uses this — ConfigStructuredView
+    // itself binds to `draft`/`setDraft`/`save` like the raw editor does.
+    saveContent: vi.fn(),
     check: vi.fn(),
     checking: false,
     reloadFromDisk: vi.fn(),
