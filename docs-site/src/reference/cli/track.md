@@ -49,6 +49,18 @@ Until a vault has any tracking template, `cdno track` prints a one-line hint (on
 at [`examples/templates/tracking/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/templates/tracking)
 for a structured layout. It goes quiet once you author a template, and is suppressed under `--json`.
 
+## Merging a day
+
+A second `cdno track` for the same activity and date **merges** into the first rather than
+erroring: `--content` is appended to the entry's `## Notes`, and any metrics are folded into its
+frontmatter. Recording a day in two passes — a morning and an evening session, spending logged as
+it happens — is ordinary rather than exceptional.
+
+Merging is not blind concatenation. A record carrying a stable `id` **replaces** the record with
+that `id`, so re-applying the same payload is idempotent; a record without one **appends**, so
+re-running an import that omits ids double-counts every summed metric. Scalars are
+last-write-wins: there is no array to key on, and the later reading is what a level means.
+
 ## Related MCP tool
 
 [`create_tracking_entry`](../mcp/writes.md).

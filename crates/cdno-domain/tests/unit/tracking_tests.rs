@@ -206,29 +206,159 @@ fn add_tracking_errors_on_flat_stewardship() {
 }
 
 #[test]
-fn add_tracking_errors_on_same_day_same_activity_duplicate() {
-    let (vault, _store) = empty_vault();
-    vault
-        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
-        .unwrap();
-    vault
+fn a_second_entry_the_same_day_merges_rather_than_erroring() {
+    // Several domains are naturally multi-occurrence - spending happens
+    // through the day, contact more than once, practice splits morning and
+    // evening - and for agent-driven logging a day recorded in two passes is
+    // ordinary rather than exceptional.
+    let (vault, store) = health_vault();
+    let (first, _source) = vault
         .add_tracking_entry(
             dt(2026, 4, 1, 8, 0),
-            TrackingEntryDraft::new("health", "gym"),
+            TrackingEntryDraft::new("health", "gym").with_content("Morning session."),
         )
-        .map(|(outcome, _)| outcome.primary)
         .unwrap();
-    let err = vault
+    let (second, source) = vault
         .add_tracking_entry(
             dt(2026, 4, 1, 18, 0),
-            TrackingEntryDraft::new("health", "gym").with_content("evening session"),
+            TrackingEntryDraft::new("health", "gym").with_content("Evening session."),
         )
-        .map(|(outcome, _)| outcome.primary)
-        .expect_err("duplicate slug should error");
-    assert!(matches!(
-        err,
-        DomainError::Store(StoreError::AlreadyExists(_))
-    ));
+        .expect("a second entry the same day merges");
+
+    assert_eq!(first.primary, second.primary, "one note, not two");
+    assert_eq!(source, None, "a merge resolves no template");
+    let raw = store.read_file(&second.primary).unwrap();
+    assert!(raw.contains("Morning session."), "{raw}");
+    assert!(
+        raw.contains("Evening session."),
+        "tracking notes are append-only: {raw}"
+    );
+}
+
+#[test]
+fn re_applying_records_with_matching_ids_leaves_a_sum_unchanged() {
+    // Removing the duplicate guard without an identity would make re-running
+    // an import append the same records again and double-count every `sum`.
+    // Reconciled domains are exactly where re-runs happen.
+    let (vault, store) = health_vault();
+    let payload = || {
+        metrics(serde_json::json!({
+            "detail": [
+                {"id": "a", "category": "groceries", "amount": 40},
+                {"id": "b", "category": "transport", "amount": 12},
+            ]
+        }))
+    };
+    let (first, _) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "spending").with_metrics(payload()),
+        )
+        .unwrap();
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 20, 0),
+            TrackingEntryDraft::new("health", "spending").with_metrics(payload()),
+        )
+        .expect("re-applying merges");
+
+    let fm = frontmatter_json(&store, &first.primary);
+    let detail = fm["detail"].as_array().unwrap();
+    assert_eq!(detail.len(), 2, "identical ids replace, not append: {fm}");
+    let total: f64 = detail.iter().filter_map(|r| r["amount"].as_f64()).sum();
+    assert_eq!(total, 52.0, "a re-run must not double-count");
+}
+
+#[test]
+fn a_record_without_an_id_appends() {
+    // Documented, not discovered: without an id there is nothing to key on,
+    // so a re-run double-counts. Import paths should supply one.
+    let (vault, store) = health_vault();
+    let (first, _) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "spending")
+                .with_metrics(metrics(serde_json::json!({"detail": [{"amount": 40}]}))),
+        )
+        .unwrap();
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 20, 0),
+            TrackingEntryDraft::new("health", "spending")
+                .with_metrics(metrics(serde_json::json!({"detail": [{"amount": 12}]}))),
+        )
+        .unwrap();
+
+    let fm = frontmatter_json(&store, &first.primary);
+    let detail = fm["detail"].as_array().unwrap();
+    assert_eq!(detail.len(), 2);
+    assert_eq!(detail[0]["amount"], serde_json::json!(40), "in order: {fm}");
+    assert_eq!(detail[1]["amount"], serde_json::json!(12));
+}
+
+#[test]
+fn a_scalar_metric_is_last_write_wins_on_merge() {
+    // No array to key on, so the later reading replaces the earlier - which
+    // is what a level means.
+    let (vault, store) = health_vault();
+    let (first, _) = vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 8, 0),
+            TrackingEntryDraft::new("health", "body")
+                .with_metrics(metrics(serde_json::json!({"weight": 82.5}))),
+        )
+        .unwrap();
+    vault
+        .add_tracking_entry(
+            dt(2026, 4, 1, 20, 0),
+            TrackingEntryDraft::new("health", "body")
+                .with_metrics(metrics(serde_json::json!({"weight": 82.1}))),
+        )
+        .unwrap();
+
+    assert_eq!(
+        frontmatter_json(&store, &first.primary)["weight"],
+        serde_json::json!(82.1)
+    );
+}
+
+#[test]
+fn a_merged_day_reduces_to_one_point_per_series() {
+    // Merge does not add a level: the two passes share a (series, date) cell
+    // and the metric's own aggregate reduces across both.
+    use cdno_core::config::{Aggregate, MetricSpec, TrackingSpec};
+    let (vault, _store) = health_vault();
+    for amount in [40, 12] {
+        vault
+            .add_tracking_entry(
+                dt(2026, 4, 1, 8, 0),
+                TrackingEntryDraft::new("health", "spending")
+                    .with_metrics(metrics(serde_json::json!({"detail": [{"amount": amount}]}))),
+            )
+            .unwrap();
+    }
+    let spec = TrackingSpec {
+        records: Some("detail".to_owned()),
+        group_by: None,
+        metrics: [(
+            "amount".to_owned(),
+            MetricSpec {
+                aggregate: Aggregate::Sum,
+                ..Default::default()
+            },
+        )]
+        .into_iter()
+        .collect(),
+    };
+    let specs: std::collections::BTreeMap<String, TrackingSpec> =
+        [("spending".to_owned(), spec)].into_iter().collect();
+
+    let series = vault
+        .tracking_series_from_frontmatter("health", &specs)
+        .unwrap();
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].points.len(), 1, "one point for the merged day");
+    assert_eq!(series[0].points[0].value, 52.0);
 }
 
 #[test]
