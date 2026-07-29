@@ -76,6 +76,19 @@ design:
 Everything Raw-only is still covered by the never-brick save and live reload; only the structured
 inputs are absent.
 
+## This is not the only thing that writes the config
+
+A stewardship's trend charts carry a chart-type picker that persists into
+`[tracking.<activity>.metrics.<name>]`, so a control that looks like a view setting makes a durable
+change to `.cuaderno/config.toml`. It stages locally and writes nothing until you use its explicit
+save, and that save runs through everything on this page — validation, the compare-and-swap against
+what is on disk, and the live reload afterwards. See
+[the desktop app tour](desktop-app.md) for what the picker does.
+
+The reason it goes through the same gate rather than writing directly is the one this page is
+about: there is a single way config reaches disk, so an edit made from a chart cannot skip a check
+an edit made here would have to pass.
+
 ---
 
 Next: the concepts behind these keys in [Configuration](../concepts/configuration.md), or the

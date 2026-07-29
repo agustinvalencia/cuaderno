@@ -93,9 +93,30 @@ horizon is yours to set, from a fortnight up to everything. **Stewardships** are
 complete, so the list shows status rather than progress: quietest first, with a count of how many
 have gone quiet and a filter down to just those, and freshness read as ink emphasis rather than a
 colour. Logging is one click from a row. A stewardship's detail leads with **Log entry** in its
-header and draws each tracked series as a calm trend — counts and volumes (reps, laps, sessions) as
-columns, continuous measures (a weight, a pace) as lines, always in the context hue and never as a
-target to hit; charts sit two-up behind an activity filter.
+header and draws each tracked series as a calm trend, always in the context hue and never as a
+target to hit. A metric that declares a `plot` in
+[`[tracking.<activity>]`](../reference/configuration.md#tracking) is drawn the way it says; anything
+undeclared falls back to reading the values — counts and volumes (reps, laps, sessions) as columns,
+continuous measures (a weight, a pace) as lines.
+
+What you see by default is deliberately bounded. **One trend per activity is always on**: the
+activity's own number when it has one, rather than an arbitrary slice of a grouped metric. Every
+further series for that activity is denser material — a line per category, a grid of averaged
+ratings — and appears only when the metrics toggle is on. Nothing is hidden permanently; the dense
+view is opt-in rather than the default, and beyond six charts the rest sit behind an explicit
+**show all** that says how many it is holding back. That is a cap rather than a second filter: a
+grouped metric grows a chart per new category on its own, so without one the page would expand
+quietly as your data did. The activity chips narrow further and reset when you navigate away —
+looking is meant to be temporary, unlike a declaration.
+
+The chart type is changeable in place. Picking one previews immediately and writes nothing; an
+explicit **Save chart type as default** persists it into `.cuaderno/config.toml`, through the same
+validated, conflict-checked save every other config edit uses (see
+[Editing the config in the app](config-editor.md)). It is worth knowing that a control on a chart
+writes to your vault's config — that is the point, since the declaration is what an agent reads
+too, but it is a durable change rather than a view setting. Choosing **None** stops the chart being
+drawn while the data stays collected and queryable; turning it back on is done from the config
+editor, since there will be no chart left here to pick from.
 
 **Inquiry** is investigation. **Questions** is the important-questions list that sits above any one
 project, grouped into research and life, each showing what is pointed at it and each movable between
@@ -108,7 +129,7 @@ Open / Quit reachable even with every window closed. `⌘[` and `⌘]` (or the m
 side buttons) step backward and forward through your view history, just like a browser.
 
 `⌘,` opens **Settings**, which holds everything that configures the app or the vault rather than
-living in it: Appearance and Reading, a metrics toggle under General, custom CSS under Advanced,
+living in it: Appearance and Reading, a metrics toggle under General (which governs the denser half of a stewardship's trend charts, described above), custom CSS under Advanced,
 and two full editors — **Vault config**, which edits `.cuaderno/config.toml` in a Raw text view and
 a structured Form for note types and schemas (every save validated before it touches disk, with a
 live reload whenever the config changes underneath), and **Templates**, the per-note-type template
