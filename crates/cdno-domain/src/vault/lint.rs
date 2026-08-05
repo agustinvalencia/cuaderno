@@ -18,7 +18,7 @@ use crate::lint::{LintIssue, LintReport};
 use crate::note_type::NoteType;
 
 use super::Vault;
-use super::commitments::parse_periodic_line;
+use super::commitments::{parse_periodic_line, split_at_next_marker};
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 
@@ -409,19 +409,45 @@ fn habit_line_hint(line: &str) -> &'static str {
     }
 }
 
+/// Whether any em dash on the line introduces a `next:` segment, including
+/// the first — which [`split_at_next_marker`] excludes, since the grammar
+/// needs a dash before the marker to carry the recurrence. The hint uses
+/// this to tell "the marker is missing" apart from "the marker is in the
+/// recurrence's place", two defects whose remedies are opposites.
+fn has_next_marker_segment(body: &str) -> bool {
+    body.match_indices('\u{2014}')
+        .any(|(idx, dash)| body[idx + dash.len()..].trim_start().starts_with("next:"))
+}
+
 /// Best-effort guess at *why* a `## Periodic Commitments` bullet fails
 /// the `- {title} — {recurrence} — next: YYYY-MM-DD` grammar. Heuristic
 /// only, mirroring [`habit_line_hint`]: the verdict is
 /// [`parse_periodic_line`]'s. Staged so the most actionable pointer wins.
 fn periodic_line_hint(line: &str) -> &'static str {
     let body = bullet_body(line);
-    // The grammar needs two em-dashes: `title — recurrence — next: date`.
-    let parts: Vec<&str> = body.splitn(3, '\u{2014}').collect();
-    if parts.len() < 3 {
-        // Only blame a dash once the em-dash structure is known to be
-        // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
-        // is legitimate, and a line failing on a missing `next:` or a bad
-        // date must not be pointed at a dash that isn't broken.
+    // Anchor on the marker through the parser's own helper rather than
+    // re-deriving the split here (#453). A hint that disagrees with the
+    // verdict is worse than none, and that was the sharpest edge of the
+    // bug: a line whose `next:` marker was plainly present, correctly
+    // placed and followed by a valid date, reported as missing it.
+    let Some((head, next_part)) = split_at_next_marker(body) else {
+        // The anchor only ever declines the *first* em dash, so if it found
+        // nothing while a marker exists, that marker is sitting where the
+        // recurrence belongs. Say that, rather than claim a marker the user
+        // can see on the line is missing — announcing an absent `next:` at a
+        // line that plainly has one is the #453 misdiagnosis itself, and it
+        // survives the anchor unless it is named here.
+        if has_next_marker_segment(body) {
+            return "no recurrence between the title and the `next:` marker";
+        }
+        // Now the marker really is absent. Separate that from "the
+        // separators are wrong", and only blame a dash once the em-dash
+        // structure is known to be incomplete: an en-dash inside a *title*
+        // (`Q1\u{2013}Q2 review`) is legitimate, and a line failing on a
+        // missing `next:` must not be pointed at a dash that isn't broken.
+        if body.matches('\u{2014}').count() >= 2 {
+            return "missing the `next:` marker before the date";
+        }
         if body.contains('\u{2013}') {
             return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) is expected";
         }
@@ -429,19 +455,26 @@ fn periodic_line_hint(line: &str) -> &'static str {
             return "found an ASCII hyphen (-) where an em-dash (\u{2014}) is expected";
         }
         return "expected `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD` (needs two em-dashes)";
-    }
-    let next_part = parts[2].trim();
-    let Some(after_marker) = next_part.strip_prefix("next:") else {
-        return "missing the `next:` marker before the date";
     };
-    // Mirror the parser: a trailing `(overdue)` annotation is tolerated,
-    // so only the first whitespace-delimited token is the date.
+    // The marker is present by construction, so this only strips it.
+    let after_marker = next_part.strip_prefix("next:").unwrap_or("").trim();
+    // Mirror the parser: a trailing annotation is tolerated, so only the
+    // first whitespace-delimited token is the date.
     let date_str = after_marker.split_whitespace().next().unwrap_or("");
     if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_err() {
         return "unparseable date after `next:` (expected YYYY-MM-DD)";
     }
-    // Structure looks right but the parser still rejected it (e.g. an
-    // empty title) — a generic pointer beats a confidently wrong guess.
+    // The one remaining parser rejection with a known cause. Anchoring on
+    // the marker makes the title segment unambiguous, so this can be named
+    // rather than folded into the generic fallback below.
+    let title_is_empty = head
+        .rsplit_once('\u{2014}')
+        .is_none_or(|(title, _)| title.trim().is_empty());
+    if title_is_empty {
+        return "the title before the recurrence is empty";
+    }
+    // Structure looks right but the parser still rejected it — a generic
+    // pointer beats a confidently wrong guess.
     "does not match `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD`"
 }
 

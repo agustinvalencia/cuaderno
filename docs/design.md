@@ -653,6 +653,23 @@ The commitments register is **not a static file**. It is a query assembled by th
 3. **Standalone commitment notes** in `commitments/` (read from the `due` frontmatter field)
 4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth.
 
+A periodic commitment line is `- {title} — {recurrence} — next: YYYY-MM-DD`, optionally followed by
+a free-text annotation after the date (`(overdue)`, `— moved from April`). It is parsed by anchoring
+on the **`next:` marker**, not by counting em dashes: the first em dash after the title's is taken as
+the one introducing the marker, the recurrence is the segment immediately before it, and the title is
+everything before that.
+
+Counting dashes fails whichever end it counts from, because the em dash is the separator the grammar
+itself chose and the vault's prose style uses it constantly — so it appears on both sides of the
+marker. Counting from the left loses a title containing one; counting from the right loses an
+annotation containing one. Either way the commitment disappears from the register with no diagnostic
+the user would see, which is worse than a wrong date.
+
+The one remaining ambiguity is the recurrence, which is defined as the segment adjacent to the
+marker: in `- A — B — weekly — next: <date>` the recurrence is `weekly` and the title is `A — B`, so
+an em dash inside a recurrence is read as part of the title. That is the better direction to be wrong
+in, a recurrence being a short controlled phrase and a title free prose.
+
 The CLI, MCP, and UI all consume this query. Example output:
 
 ```

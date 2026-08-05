@@ -619,17 +619,48 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
 /// cares about *when* the next occurrence is due. Trailing
 /// `(overdue)` is tolerated and stripped before the date parse so
 /// hand-annotated lines still round-trip.
+///
+/// The line is anchored on the `next:` **marker** rather than on a count
+/// of em dashes (#453). Counting fails in whichever direction it counts
+/// from, because the em dash is the separator the grammar itself chose
+/// and the vault's prose style uses it constantly, so it turns up on both
+/// sides of the marker:
+///
+/// - counting from the left cut at the first two dashes, so an em dash in
+///   the *title* pushed `next:` out of the final segment;
+/// - counting from the right cuts at the last two, so an em dash in a
+///   *trailing annotation* — which the `(overdue)` tolerance above
+///   invites — pushes `next:` out of it just as easily.
+///
+/// Either way the line vanishes from the register with no diagnostic the
+/// user would see. Anchoring on the marker admits both, and reads every
+/// line the previously shipped left-anchored parser accepted to exactly
+/// the same title and date.
+///
+/// That guarantee is deliberately stated against the *shipped* parser and
+/// not against right-counting as well. Right-counting accepted a handful
+/// of lines this does not — ones where a segment before the real marker
+/// itself begins with `next:` — but it was never released, so nothing on
+/// disk depends on it, and such a line is flagged by lint rather than
+/// dropped in silence.
+///
+/// The residual ambiguity is the *recurrence*: it is the last segment
+/// before the marker, so in `- A — B — weekly — next: <date>` the
+/// recurrence is `weekly` and the title is `A — B`. An em dash inside a
+/// recurrence is therefore read as part of the title. That is the
+/// direction worth being wrong in — a recurrence is a short controlled
+/// phrase, a title is free prose.
 pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
     let rest = line.trim_start().strip_prefix("- ")?;
-    let parts: Vec<&str> = rest.splitn(3, '\u{2014}').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let title = parts[0].trim().to_owned();
+    let (head, next_part) = split_at_next_marker(rest)?;
+    // The recurrence is whatever sits between the last em dash of the head
+    // and the marker; everything before it is the title. `split_at_next_marker`
+    // guarantees the head holds at least one dash, so this never fails.
+    let (title, _recurrence) = head.rsplit_once('\u{2014}')?;
+    let title = title.trim().to_owned();
     if title.is_empty() {
         return None;
     }
-    let next_part = parts[2].trim();
     let after_marker = next_part.strip_prefix("next:")?.trim();
     // Strip a trailing `(overdue)` annotation if present so the
     // remainder is a clean date string.
@@ -639,4 +670,29 @@ pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, Naive
         .unwrap_or(after_marker);
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
     Some((title, date))
+}
+
+/// Locate the em dash that introduces the `next:` segment, returning
+/// `(everything before it, the segment itself)`. `None` when no dash does —
+/// which is the "missing the `next:` marker" case.
+///
+/// Two rules make this a superset of both counting schemes rather than a
+/// third arbitrary one:
+///
+/// - the **first** em dash is never a candidate, since the grammar needs a
+///   dash before the marker to carry the recurrence. Scanning from the left
+///   after that skip lands on the same dash the old left-anchored parser
+///   used for every line it accepted, so those lines keep their exact
+///   `(title, date)` rather than merely still parsing;
+/// - the first *remaining* candidate wins, so a later `next:` inside a
+///   trailing annotation cannot steal the anchor from the real one.
+///
+/// Shared with the lint hint so the two cannot drift: a diagnostic that
+/// disagrees with the parser is worse than no diagnostic, and #453 was
+/// exactly that — lint blaming a missing marker that was plainly present.
+pub(in crate::vault) fn split_at_next_marker(rest: &str) -> Option<(&str, &str)> {
+    rest.match_indices('\u{2014}')
+        .skip(1)
+        .find(|(idx, dash)| rest[idx + dash.len()..].trim_start().starts_with("next:"))
+        .map(|(idx, dash)| (&rest[..idx], rest[idx + dash.len()..].trim()))
 }

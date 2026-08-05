@@ -1408,6 +1408,97 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
     );
 }
 
+#[test]
+fn lint_accepts_a_periodic_line_whose_title_contains_an_em_dash() {
+    // The regression #453 names: this line is valid under the grammar and
+    // the parser now accepts it, so lint must say nothing at all. Before the
+    // marker anchor it drew a warning that named the one thing about the line
+    // that was not wrong -- a missing `next:` marker that is right there, with
+    // a valid date after it.
+    let body = stewardship(
+        "## Periodic Commitments\n- Monthly review \u{2014} check the account balance \u{2014} monthly \u{2014} next: 2099-06-29\n",
+    );
+    let vault = vault_with_notes(
+        &[("stewardships/finances.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert!(
+        warnings.is_empty(),
+        "a title containing an em-dash is legal: {warnings:?}"
+    );
+}
+
+#[test]
+fn lint_stays_silent_on_a_periodic_line_annotated_with_an_em_dash() {
+    // The mirror of the parser fix: lint shares the parser's marker anchor,
+    // so a line whose annotation carries an em dash is accepted by both. The
+    // failure this guards is not just a spurious warning but a *wrong* one --
+    // the hint would have blamed a missing `next:` marker sitting plainly in
+    // the middle of the line.
+    let body = stewardship(
+        "## Periodic Commitments\n- Dental check-up \u{2014} every 6 months \u{2014} next: 2099-05-28 (overdue \u{2014} rebook)\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert!(
+        warnings.is_empty(),
+        "an em-dash in the annotation is legal: {warnings:?}"
+    );
+}
+
+/// The `skip(1)` in the marker anchor is load-bearing but invisible to the
+/// parser: with or without it these lines are rejected, because a head with
+/// no em dash has no recurrence to take. Only the hint changes, so only a
+/// hint test can guard it — and the wrong hint here is the #453 misdiagnosis
+/// all over again, telling the user a marker they can see is absent.
+#[test]
+fn lint_periodic_hint_names_a_marker_standing_in_the_recurrence_place() {
+    for line in [
+        // One em dash: the marker took the recurrence's position.
+        "- Boiler service \u{2014} next: 2099-05-28",
+        // Two: the marker is early and the trailing segment is not one.
+        "- Boiler service \u{2014} next: 2099-05-28 \u{2014} booked",
+    ] {
+        let body = stewardship(&format!("## Periodic Commitments\n{line}\n"));
+        let vault = vault_with_notes(&[("stewardships/home.md", &body)], VaultConfig::default());
+
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = dashboard_warnings(&report);
+        assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+        assert!(
+            warnings[0].message.contains("recurrence")
+                && !warnings[0].message.contains("missing the `next:`"),
+            "hint must name the missing recurrence, not a marker that is present: {}",
+            warnings[0].message
+        );
+    }
+}
+
+#[test]
+fn lint_periodic_hint_names_an_empty_title() {
+    // Structure, marker and date are all fine, so the parser's only reason
+    // to reject is the empty title. Anchoring on the marker makes the title
+    // segment unambiguous, so the hint can name it instead of falling back
+    // to the generic "does not match" pointer.
+    let body =
+        stewardship("## Periodic Commitments\n-  \u{2014} yearly \u{2014} next: 2099-04-01\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("title"),
+        "hint should name the empty title: {}",
+        warnings[0].message
+    );
+}
+
 // ---------------------------------------------------------------------
 // Orphan detection after #451. Ownership is resolved by location, not by
 // extension, so a folder of filed markdown is checked like any other —

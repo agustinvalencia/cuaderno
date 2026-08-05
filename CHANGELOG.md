@@ -6,6 +6,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **A periodic commitment whose title contains an em dash was silently dropped from the register**
+  (#453). The grammar is `- Title — recurrence — next: YYYY-MM-DD` and the parser split from the
+  left, so an em dash in the title pushed `next:` out of the segment the parser looked in and the
+  whole line failed to parse. The consequence was not a cosmetic one: `parse_periodic_line` feeds
+  the aggregated commitments view, so the commitment did not exist as far as `cdno commitments`,
+  `orient`, the weekly review's lookahead, or the desktop app were concerned — and nothing said
+  why. The lint hint mirrored the same split, so the one diagnostic a user might have seen reported
+  a missing `next:` marker while pointing at a line whose `next:` marker was right there with a
+  valid date after it. Both now anchor on the `next:` marker instead of counting em dashes. Counting
+  fails whichever end it counts from: the em dash is the separator the grammar itself chose and the
+  vault's prose style uses it constantly, so it turns up on both sides of the marker — in titles, and
+  in the trailing annotations the parser has always tolerated (`next: 2026-05-28 (overdue — rebook)`).
+  Anchoring accepts both, and reads every line the previous parser accepted to exactly the same
+  title and date, so no existing vault line changes meaning. The one remaining
+  ambiguity is the recurrence, defined as the segment adjacent to the marker: an em dash there is
+  read as part of the title, documented in `docs/design.md` §6 and pinned by a test. Lint also gained
+  a specific hint for an empty title, which the marker anchor makes unambiguous.
+
 ### Changed
 
 - **The narrative MCP tools now state the vault's linking convention in their own descriptions**
