@@ -22,7 +22,7 @@ use crate::server::CuadernoServer;
 #[tool_router(router = operations_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist."
+        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist. The entry is stamped with the vault clock (`- **HH:MM**: <text>`), so pass the text alone; a time you prefix yourself is stamped twice. Link as you write: wikilink every vault note the line names (`[[slug]]`), and render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather than a bare `#N`. An unlinked line is invisible to the vault graph."
     )]
     pub async fn append_to_log(
         &self,
@@ -431,7 +431,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Write a section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they grow via `append_to_log`. With `append: false` (default) the section is replaced (the planning sections); with `append: true` the content is appended (live meeting notes that accrue). Creates the section (and the daily note) if absent. An empty `content` with `append: false` clears the section to just its heading."
+        description = "Write a section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they grow via `append_to_log`. With `append: false` (default) the section is replaced (the planning sections); with `append: true` the content is appended (live meeting notes that accrue). Creates the section (and the daily note) if absent. An empty `content` with `append: false` clears the section to just its heading. The prose written here follows the same linking convention as the log: wikilink the vault notes it names (`[[slug]]`) and give forge references markdown links, never a bare `#N`."
     )]
     pub async fn upsert_daily_section(
         &self,

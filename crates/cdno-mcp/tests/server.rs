@@ -128,6 +128,85 @@ fn every_tool_has_description_and_object_input_schema() {
     }
 }
 
+/// The tool description is the only instruction surface an agent that has
+/// loaded no cuaderno skill ever sees, so the vault's linking convention has
+/// to live there or the narrative tools produce plain-text lines that need
+/// repairing downstream (#438). Asserted on the substance (wikilink syntax,
+/// the bare-`#N` prohibition) rather than the exact wording, so the sentence
+/// can be reworded without breaking the test.
+#[test]
+fn narrative_tools_mandate_linking_in_their_description() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    for name in ["append_to_log", "upsert_daily_section"] {
+        let desc = tools
+            .iter()
+            .find(|t| t.name.as_ref() == name)
+            .and_then(|t| t.description.clone())
+            .unwrap_or_else(|| panic!("tool '{name}' not advertised"));
+        assert!(
+            desc.contains("[[slug]]"),
+            "tool '{name}' description must show the wikilink form: {desc}"
+        );
+        assert!(
+            desc.contains("`#N`"),
+            "tool '{name}' description must rule out a bare forge reference: {desc}"
+        );
+    }
+
+    // The parameter schema is the second surface, not a duplicate: a client
+    // that renders field descriptions instead of the tool description sees
+    // only this one, which is the whole reason the sentence is written twice.
+    // Asserting just the tool description would let a cleanup trim the doc
+    // comment on `AppendToLogInput.text` and leave those clients unguided
+    // with the suite still green.
+    let text_param = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "append_to_log")
+        .and_then(|t| {
+            t.input_schema
+                .get("properties")
+                .and_then(|p: &serde_json::Value| p.get("text"))
+                .and_then(|f| f.get("description"))
+                .and_then(|d| d.as_str())
+                .map(str::to_owned)
+        })
+        .expect("append_to_log's `text` parameter must carry a schema description");
+    assert!(
+        text_param.contains("[[slug]]") && text_param.contains("`#N`"),
+        "the linking rule must survive on the parameter schema too: {text_param}"
+    );
+
+    // The counterpart: `capture` is deliberately verbatim and zero-friction,
+    // so it must NOT acquire the same mandate.
+    let capture = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "capture")
+        .and_then(|t| t.description.clone())
+        .expect("capture not advertised");
+    assert!(
+        !capture.contains("[[slug]]"),
+        "capture is a verbatim quick-capture and must stay friction-free: {capture}"
+    );
+}
+
+/// The `append_to_log` description has to say the timestamp is applied for
+/// you, or an agent prefixes its own and the line is stamped twice.
+#[test]
+fn append_to_log_description_warns_against_a_self_prefixed_time() {
+    let server = empty_server();
+    let desc = server
+        .advertised_tools()
+        .iter()
+        .find(|t| t.name.as_ref() == "append_to_log")
+        .and_then(|t| t.description.clone())
+        .expect("append_to_log not advertised");
+    assert!(
+        desc.contains("HH:MM"),
+        "description must show the stamped form it produces: {desc}"
+    );
+}
+
 /// No tools should still be flagged as "not yet implemented" in
 /// their description now that GH #142 is fully closed (every
 /// design §11 tool has a real handler). This is the post-condition
