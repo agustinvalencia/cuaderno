@@ -752,6 +752,51 @@ fn commitments_flags_overdue_periodic_within_lookback_and_excludes_outside_windo
     assert!(got[0].is_overdue);
 }
 
+/// The em dash is the separator the grammar itself chose, and the vault's
+/// prose style uses it constantly — so a title carrying one is the natural
+/// way to write these lines, not an exotic case (#453). Under the old
+/// left-anchored split the third segment stopped being the `next:` part and
+/// the commitment disappeared from the register entirely.
+#[test]
+fn commitments_surfaces_a_periodic_line_whose_title_contains_an_em_dash() {
+    let lines = "- Monthly review \u{2014} check the account balance \u{2014} monthly \u{2014} next: 2026-05-29\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "the line must reach the register: {got:?}");
+    assert_eq!(
+        got[0].title,
+        "Monthly review \u{2014} check the account balance"
+    );
+    assert_eq!(got[0].date, ymd(2026, 5, 29));
+    assert_eq!(
+        got[0].source,
+        CommitmentSource::Stewardship("finances".to_owned())
+    );
+}
+
+/// The ambiguity the right-anchored split moves rather than removes: the
+/// segment adjacent to `next:` is always the recurrence, so an em dash in a
+/// *recurrence* is absorbed into the title. Pinned deliberately — it is the
+/// documented direction to be wrong in, and a change of mind should have to
+/// edit this assertion rather than discover it in a vault.
+#[test]
+fn commitments_reads_an_em_dash_in_the_recurrence_as_part_of_the_title() {
+    let lines = "- Deep clean \u{2014} every 3 \u{2014} 4 months \u{2014} next: 2026-05-29\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/home.md",
+        &stewardship_with_periodics("Home", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].title, "Deep clean \u{2014} every 3");
+    assert_eq!(got[0].date, ymd(2026, 5, 29));
+}
+
 #[test]
 fn commitments_tolerates_overdue_annotation_and_skips_malformed_periodic_lines() {
     let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-05-28 (overdue)\n- Garbage line without separators\n- \u{2014} \u{2014} next: not-a-date\n";

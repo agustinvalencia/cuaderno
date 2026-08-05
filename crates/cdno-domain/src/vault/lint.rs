@@ -416,7 +416,12 @@ fn habit_line_hint(line: &str) -> &'static str {
 fn periodic_line_hint(line: &str) -> &'static str {
     let body = bullet_body(line);
     // The grammar needs two em-dashes: `title — recurrence — next: date`.
-    let parts: Vec<&str> = body.splitn(3, '\u{2014}').collect();
+    // Split from the right exactly as the parser does (#453), so the hint
+    // cannot contradict the verdict: under the old left-anchored split a
+    // title containing an em dash was reported as "missing the `next:`
+    // marker" while pointing at a line whose `next:` marker was plainly
+    // there, in the right place, with a valid date after it.
+    let parts: Vec<&str> = body.rsplitn(3, '\u{2014}').collect();
     if parts.len() < 3 {
         // Only blame a dash once the em-dash structure is known to be
         // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
@@ -430,7 +435,8 @@ fn periodic_line_hint(line: &str) -> &'static str {
         }
         return "expected `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD` (needs two em-dashes)";
     }
-    let next_part = parts[2].trim();
+    // `rsplitn` yields right-to-left: [next-part, recurrence, title].
+    let next_part = parts[0].trim();
     let Some(after_marker) = next_part.strip_prefix("next:") else {
         return "missing the `next:` marker before the date";
     };
@@ -440,8 +446,14 @@ fn periodic_line_hint(line: &str) -> &'static str {
     if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_err() {
         return "unparseable date after `next:` (expected YYYY-MM-DD)";
     }
-    // Structure looks right but the parser still rejected it (e.g. an
-    // empty title) — a generic pointer beats a confidently wrong guess.
+    // The one remaining parser rejection with a known cause. Splitting from
+    // the right makes the title segment unambiguous, so this can now be
+    // named rather than folded into the generic fallback below.
+    if parts[2].trim().is_empty() {
+        return "the title before the first em-dash (\u{2014}) is empty";
+    }
+    // Structure looks right but the parser still rejected it — a generic
+    // pointer beats a confidently wrong guess.
     "does not match `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD`"
 }
 

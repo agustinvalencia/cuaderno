@@ -653,6 +653,15 @@ The commitments register is **not a static file**. It is a query assembled by th
 3. **Standalone commitment notes** in `commitments/` (read from the `due` frontmatter field)
 4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth.
 
+A periodic commitment line is `- {title} — {recurrence} — next: YYYY-MM-DD`, and it is parsed by
+splitting **from the right**: the date segment is last, the recurrence second-to-last, and the
+title is everything before them. That makes a title containing an em dash legal — which matters,
+because the em dash is the separator the grammar itself chose and the vault's prose style uses it
+constantly, so the natural way to write these lines would otherwise be unparseable. The residual
+ambiguity is pushed onto the recurrence: in `- A — B — weekly — next: <date>` the recurrence is
+`weekly` and the title is `A — B`. That is the better direction to be wrong in, a recurrence being
+a short controlled phrase and a title free prose.
+
 The CLI, MCP, and UI all consume this query. Example output:
 
 ```

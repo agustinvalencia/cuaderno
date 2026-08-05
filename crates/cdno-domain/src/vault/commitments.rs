@@ -619,17 +619,36 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
 /// cares about *when* the next occurrence is due. Trailing
 /// `(overdue)` is tolerated and stripped before the date parse so
 /// hand-annotated lines still round-trip.
+///
+/// The split runs from the **right** (#453). The date segment is always
+/// last and the recurrence second-to-last, so anchoring there lets a
+/// title contain an em dash — the separator the grammar itself chose,
+/// and one the vault's prose style uses constantly — while every line
+/// that parsed under the old left-anchored split still parses
+/// identically. Splitting from the left instead cut at the first two
+/// em dashes, which pushed `next:` out of the final segment and made the
+/// whole line vanish from the register with no diagnostic anywhere the
+/// user would see.
+///
+/// The residual ambiguity moves to the *recurrence*: in
+/// `- A — B — weekly — next: <date>` the recurrence is `weekly` and the
+/// title is `A — B`. An em dash inside a recurrence is therefore read as
+/// part of the title. That is the direction worth being wrong in — a
+/// recurrence is a short controlled phrase, a title is free prose.
 pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
     let rest = line.trim_start().strip_prefix("- ")?;
-    let parts: Vec<&str> = rest.splitn(3, '\u{2014}').collect();
+    // `rsplitn` yields segments right-to-left, so this is
+    // [next-part, recurrence, title] — and it produces three only when
+    // at least two em dashes are present, matching the old arity check.
+    let parts: Vec<&str> = rest.rsplitn(3, '\u{2014}').collect();
     if parts.len() != 3 {
         return None;
     }
-    let title = parts[0].trim().to_owned();
+    let title = parts[2].trim().to_owned();
     if title.is_empty() {
         return None;
     }
-    let next_part = parts[2].trim();
+    let next_part = parts[0].trim();
     let after_marker = next_part.strip_prefix("next:")?.trim();
     // Strip a trailing `(overdue)` annotation if present so the
     // remainder is a clean date string.

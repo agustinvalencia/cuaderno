@@ -1408,6 +1408,49 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
     );
 }
 
+#[test]
+fn lint_accepts_a_periodic_line_whose_title_contains_an_em_dash() {
+    // The regression #453 names: this line is valid under the grammar and
+    // the parser now accepts it, so lint must say nothing at all. Before the
+    // right-anchored split it drew a warning that named the one thing about
+    // the line that was not wrong -- a missing `next:` marker that is right
+    // there, with a valid date after it.
+    let body = stewardship(
+        "## Periodic Commitments\n- Monthly review \u{2014} check the account balance \u{2014} monthly \u{2014} next: 2099-06-29\n",
+    );
+    let vault = vault_with_notes(
+        &[("stewardships/finances.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert!(
+        warnings.is_empty(),
+        "a title containing an em-dash is legal: {warnings:?}"
+    );
+}
+
+#[test]
+fn lint_periodic_hint_names_an_empty_title() {
+    // Structure, marker and date are all fine, so the parser's only reason
+    // to reject is the empty title. Splitting from the right makes the title
+    // segment unambiguous, so the hint can name it instead of falling back
+    // to the generic "does not match" pointer.
+    let body =
+        stewardship("## Periodic Commitments\n-  \u{2014} yearly \u{2014} next: 2099-04-01\n");
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("title"),
+        "hint should name the empty title: {}",
+        warnings[0].message
+    );
+}
+
 // ---------------------------------------------------------------------
 // Orphan detection after #451. Ownership is resolved by location, not by
 // extension, so a folder of filed markdown is checked like any other —
