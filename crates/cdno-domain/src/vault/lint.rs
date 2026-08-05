@@ -18,7 +18,7 @@ use crate::lint::{LintIssue, LintReport};
 use crate::note_type::NoteType;
 
 use super::Vault;
-use super::commitments::parse_periodic_line;
+use super::commitments::{parse_periodic_line, split_at_next_marker};
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 
@@ -415,18 +415,21 @@ fn habit_line_hint(line: &str) -> &'static str {
 /// [`parse_periodic_line`]'s. Staged so the most actionable pointer wins.
 fn periodic_line_hint(line: &str) -> &'static str {
     let body = bullet_body(line);
-    // The grammar needs two em-dashes: `title — recurrence — next: date`.
-    // Split from the right exactly as the parser does (#453), so the hint
-    // cannot contradict the verdict: under the old left-anchored split a
-    // title containing an em dash was reported as "missing the `next:`
-    // marker" while pointing at a line whose `next:` marker was plainly
-    // there, in the right place, with a valid date after it.
-    let parts: Vec<&str> = body.rsplitn(3, '\u{2014}').collect();
-    if parts.len() < 3 {
-        // Only blame a dash once the em-dash structure is known to be
+    // Anchor on the marker through the parser's own helper rather than
+    // re-deriving the split here (#453). A hint that disagrees with the
+    // verdict is worse than none, and that was the sharpest edge of the
+    // bug: a line whose `next:` marker was plainly present, correctly
+    // placed and followed by a valid date, reported as missing it.
+    let Some((head, next_part)) = split_at_next_marker(body) else {
+        // No em dash introduces a `next:` segment. Separate "the
+        // separators are wrong" from "the marker is missing", and only
+        // blame a dash once the em-dash structure is known to be
         // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
-        // is legitimate, and a line failing on a missing `next:` or a bad
-        // date must not be pointed at a dash that isn't broken.
+        // is legitimate, and a line failing on a missing `next:` must not
+        // be pointed at a dash that isn't broken.
+        if body.matches('\u{2014}').count() >= 2 {
+            return "missing the `next:` marker before the date";
+        }
         if body.contains('\u{2013}') {
             return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) is expected";
         }
@@ -434,23 +437,23 @@ fn periodic_line_hint(line: &str) -> &'static str {
             return "found an ASCII hyphen (-) where an em-dash (\u{2014}) is expected";
         }
         return "expected `Title \u{2014} recurrence \u{2014} next: YYYY-MM-DD` (needs two em-dashes)";
-    }
-    // `rsplitn` yields right-to-left: [next-part, recurrence, title].
-    let next_part = parts[0].trim();
-    let Some(after_marker) = next_part.strip_prefix("next:") else {
-        return "missing the `next:` marker before the date";
     };
-    // Mirror the parser: a trailing `(overdue)` annotation is tolerated,
-    // so only the first whitespace-delimited token is the date.
+    // The marker is present by construction, so this only strips it.
+    let after_marker = next_part.strip_prefix("next:").unwrap_or("").trim();
+    // Mirror the parser: a trailing annotation is tolerated, so only the
+    // first whitespace-delimited token is the date.
     let date_str = after_marker.split_whitespace().next().unwrap_or("");
     if NaiveDate::parse_from_str(date_str, "%Y-%m-%d").is_err() {
         return "unparseable date after `next:` (expected YYYY-MM-DD)";
     }
-    // The one remaining parser rejection with a known cause. Splitting from
-    // the right makes the title segment unambiguous, so this can now be
-    // named rather than folded into the generic fallback below.
-    if parts[2].trim().is_empty() {
-        return "the title before the first em-dash (\u{2014}) is empty";
+    // The one remaining parser rejection with a known cause. Anchoring on
+    // the marker makes the title segment unambiguous, so this can be named
+    // rather than folded into the generic fallback below.
+    let title_is_empty = head
+        .rsplit_once('\u{2014}')
+        .is_none_or(|(title, _)| title.trim().is_empty());
+    if title_is_empty {
+        return "the title before the recurrence is empty";
     }
     // Structure looks right but the parser still rejected it — a generic
     // pointer beats a confidently wrong guess.

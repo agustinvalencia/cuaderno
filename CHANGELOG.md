@@ -16,13 +16,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `orient`, the weekly review's lookahead, or the desktop app were concerned — and nothing said
   why. The lint hint mirrored the same split, so the one diagnostic a user might have seen reported
   a missing `next:` marker while pointing at a line whose `next:` marker was right there with a
-  valid date after it. Both now split from the right, where the date segment is last and the
-  recurrence second-to-last, which makes a title containing an em dash legal while every line that
-  parsed before parses identically. The em dash is the separator the grammar itself chose and the
-  vault's prose style uses it constantly, so this was a trap the conventions walked straight into.
-  The remaining ambiguity moves to the recurrence: an em dash there is read as part of the title,
-  which is documented in `docs/design.md` §6 and pinned by a test. Lint also gained a specific
-  hint for an empty title, which the right-anchored split makes unambiguous.
+  valid date after it. Both now anchor on the `next:` marker instead of counting em dashes. Counting
+  fails whichever end it counts from: the em dash is the separator the grammar itself chose and the
+  vault's prose style uses it constantly, so it turns up on both sides of the marker — in titles, and
+  in the trailing annotations the parser has always tolerated (`next: 2026-05-28 (overdue — rebook)`).
+  Anchoring accepts both, and accepts every line either counting rule accepted. The one remaining
+  ambiguity is the recurrence, defined as the segment adjacent to the marker: an em dash there is
+  read as part of the title, documented in `docs/design.md` §6 and pinned by a test. Lint also gained
+  a specific hint for an empty title, which the marker anchor makes unambiguous.
 
 ### Changed
 

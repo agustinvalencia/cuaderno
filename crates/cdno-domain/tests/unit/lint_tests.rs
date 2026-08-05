@@ -1412,9 +1412,9 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
 fn lint_accepts_a_periodic_line_whose_title_contains_an_em_dash() {
     // The regression #453 names: this line is valid under the grammar and
     // the parser now accepts it, so lint must say nothing at all. Before the
-    // right-anchored split it drew a warning that named the one thing about
-    // the line that was not wrong -- a missing `next:` marker that is right
-    // there, with a valid date after it.
+    // marker anchor it drew a warning that named the one thing about the line
+    // that was not wrong -- a missing `next:` marker that is right there, with
+    // a valid date after it.
     let body = stewardship(
         "## Periodic Commitments\n- Monthly review \u{2014} check the account balance \u{2014} monthly \u{2014} next: 2099-06-29\n",
     );
@@ -1432,9 +1432,29 @@ fn lint_accepts_a_periodic_line_whose_title_contains_an_em_dash() {
 }
 
 #[test]
+fn lint_stays_silent_on_a_periodic_line_annotated_with_an_em_dash() {
+    // The mirror of the parser fix: lint shares the parser's marker anchor,
+    // so a line whose annotation carries an em dash is accepted by both. The
+    // failure this guards is not just a spurious warning but a *wrong* one --
+    // the hint would have blamed a missing `next:` marker sitting plainly in
+    // the middle of the line.
+    let body = stewardship(
+        "## Periodic Commitments\n- Dental check-up \u{2014} every 6 months \u{2014} next: 2099-05-28 (overdue \u{2014} rebook)\n",
+    );
+    let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = dashboard_warnings(&report);
+    assert!(
+        warnings.is_empty(),
+        "an em-dash in the annotation is legal: {warnings:?}"
+    );
+}
+
+#[test]
 fn lint_periodic_hint_names_an_empty_title() {
     // Structure, marker and date are all fine, so the parser's only reason
-    // to reject is the empty title. Splitting from the right makes the title
+    // to reject is the empty title. Anchoring on the marker makes the title
     // segment unambiguous, so the hint can name it instead of falling back
     // to the generic "does not match" pointer.
     let body =

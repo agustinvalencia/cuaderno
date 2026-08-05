@@ -756,7 +756,8 @@ fn commitments_flags_overdue_periodic_within_lookback_and_excludes_outside_windo
 /// prose style uses it constantly — so a title carrying one is the natural
 /// way to write these lines, not an exotic case (#453). Under the old
 /// left-anchored split the third segment stopped being the `next:` part and
-/// the commitment disappeared from the register entirely.
+/// the commitment disappeared from the register entirely. Note the title here
+/// contains *two* segments, so the line carries three em dashes in total.
 #[test]
 fn commitments_surfaces_a_periodic_line_whose_title_contains_an_em_dash() {
     let lines = "- Monthly review \u{2014} check the account balance \u{2014} monthly \u{2014} next: 2026-05-29\n";
@@ -778,11 +779,54 @@ fn commitments_surfaces_a_periodic_line_whose_title_contains_an_em_dash() {
     );
 }
 
-/// The ambiguity the right-anchored split moves rather than removes: the
-/// segment adjacent to `next:` is always the recurrence, so an em dash in a
-/// *recurrence* is absorbed into the title. Pinned deliberately — it is the
-/// documented direction to be wrong in, and a change of mind should have to
-/// edit this assertion rather than discover it in a vault.
+/// The other half of the same problem, and the reason the parse anchors on
+/// the marker instead of counting dashes from either end. The parser tolerates
+/// a trailing annotation after the date so hand-annotated lines round-trip, and
+/// an annotation is the freest prose on the line — so it attracts em dashes
+/// exactly as titles do. Counting from the right would drop these, which is
+/// #453 again with the victims swapped.
+#[test]
+fn commitments_surfaces_a_periodic_line_annotated_with_an_em_dash_after_the_date() {
+    let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-05-28 (overdue \u{2014} rebook)\n- Eye exam \u{2014} yearly \u{2014} next: 2026-05-30 \u{2014} moved from April\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/health/_index.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(&str, NaiveDate)> = got.iter().map(|c| (c.title.as_str(), c.date)).collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("Dental check-up", ymd(2026, 5, 28)),
+            ("Eye exam", ymd(2026, 5, 30)),
+        ],
+        "an em dash in the annotation must not evict the line",
+    );
+}
+
+/// A `next:` inside a trailing annotation must not steal the anchor from the
+/// real marker — the first candidate wins, so the date read is the one the
+/// grammar puts there and not whatever the prose mentions afterwards.
+#[test]
+fn commitments_ignores_a_second_next_marker_inside_the_annotation() {
+    let lines = "- Boiler service \u{2014} yearly \u{2014} next: 2026-05-28 \u{2014} was next: 2026-04-01\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/home.md",
+        &stewardship_with_periodics("Home", lines),
+    )]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].title, "Boiler service");
+    assert_eq!(got[0].date, ymd(2026, 5, 28));
+}
+
+/// The one ambiguity the marker anchor does not remove: the recurrence is the
+/// segment immediately before the marker, so an em dash in a *recurrence* is
+/// absorbed into the title. Pinned deliberately — it is the documented
+/// direction to be wrong in, and a change of mind should have to edit this
+/// assertion rather than discover it in a vault.
 #[test]
 fn commitments_reads_an_em_dash_in_the_recurrence_as_part_of_the_title() {
     let lines = "- Deep clean \u{2014} every 3 \u{2014} 4 months \u{2014} next: 2026-05-29\n";
