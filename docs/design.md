@@ -1226,6 +1226,12 @@ create_tracking_entry(stewardship, activity, routine?, content?, vars?)
 
 triage_inbox()
   → returns inbox items one by one for routing decisions
+
+upsert_daily_section(section, content, date?, append?)
+  → creates-or-replaces a daily planning section
+  → section is allowlisted to {Standup, Intention, Agenda, Meeting}
+  → append: true accrues instead of replacing (live meeting notes)
+  → the append-only ## Logs / ## Notes are unreachable here
 ```
 
 The optional `vars?` parameter (a `name -> value` map) supplies values for a template's

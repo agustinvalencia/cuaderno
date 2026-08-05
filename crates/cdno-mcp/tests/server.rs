@@ -154,6 +154,29 @@ fn narrative_tools_mandate_linking_in_their_description() {
         );
     }
 
+    // The parameter schema is the second surface, not a duplicate: a client
+    // that renders field descriptions instead of the tool description sees
+    // only this one, which is the whole reason the sentence is written twice.
+    // Asserting just the tool description would let a cleanup trim the doc
+    // comment on `AppendToLogInput.text` and leave those clients unguided
+    // with the suite still green.
+    let text_param = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "append_to_log")
+        .and_then(|t| {
+            t.input_schema
+                .get("properties")
+                .and_then(|p: &serde_json::Value| p.get("text"))
+                .and_then(|f| f.get("description"))
+                .and_then(|d| d.as_str())
+                .map(str::to_owned)
+        })
+        .expect("append_to_log's `text` parameter must carry a schema description");
+    assert!(
+        text_param.contains("[[slug]]") && text_param.contains("`#N`"),
+        "the linking rule must survive on the parameter schema too: {text_param}"
+    );
+
     // The counterpart: `capture` is deliberately verbatim and zero-friction,
     // so it must NOT acquire the same mandate.
     let capture = tools
