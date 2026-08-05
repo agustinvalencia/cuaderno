@@ -199,6 +199,7 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 |-----|-------|---------|
 | `records` | activity | Frontmatter key holding a sequence of flat records. Omit for plain scalars read straight off the entry. |
 | `group_by` | activity | Record field the series split on — a category, a subject, a person. One series per distinct value. |
+| `at` | *record* | Not a config key but the per-record field that orders a set, so `last` reads the reading you meant. `HH:MM`, `HH:MM:SS`, or a 12-hour time with a meridiem — **quoted**, since `at: 18:00` is a YAML sexagesimal number. All-or-nothing: `cdno lint` reports a value it cannot use, or a set only partly stamped. |
 | `type` | metric | `bool` \| `int` \| `float` \| `string` \| `date`. Optional. |
 | `aggregate` | metric | `sum` \| `mean` \| `last` \| `max` \| `min`. Defaults to `sum`. |
 | `group_by` | metric | Overrides the activity's. `"none"` collapses across records for an entry-level series. |

@@ -115,6 +115,16 @@ reordered. The key is `at` rather than `time` precisely because `time` is a plau
 a swim split, a lap time — and ordering a record set by one of its own measurements would report
 a number that was never the last reading.
 
+Quote it. Unquoted, `at: 1800` is an integer and `at: 18:00` is read by YAML as a sexagesimal
+number, so neither is ever a string the parser sees.
+
+Falling back to file order is the safe answer — ordering a half-stamped set would have to invent
+a position for the unstamped records, and whichever position it invented would quietly change
+which reading a `last` metric reports. But the fallback used to be invisible, so a set stamped
+`morning` / `evening` looked identical to one that sorted correctly. `cdno lint` now reports an
+`at` it cannot use, and a set where only some records carry one, naming the note and the value.
+An entry with no `at` anywhere is never reported: that is the normal way to write these notes.
+
 Declaring a metric under `[schemas.tracking.fields]` (see
 [Configuration](../reference/configuration.md)) gets it type-checked on the way in — a `float` for
 a measurement or an amount, an `int` for a count. Anything undeclared is written as given, except

@@ -6,6 +6,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno lint` reports a record-ordering `at` it cannot use** (#497). A tracking record set is
+  ordered by its per-record `at` field all-or-nothing: if any record lacks one, or carries one the
+  parser rejects, the file's document order stands. Falling back is right — ordering a half-stamped
+  set would have to invent a position for the unstamped records, and whichever position it invented
+  would quietly change which reading a `last` metric reports. But the fallback was silent on every
+  surface, so a user who stamped every record and merely spelled it in a way the parser rejects
+  (`morning`, `9am`, `21h15`, `24:00`) could not tell that from "the ordering worked and this really
+  is the last reading". Lint now names the note and the offending value, and separately reports an
+  `at` that is not a string at all — unquoted `at: 1800` is a YAML integer and `at: 18:00` a
+  sexagesimal number, so neither ever reaches the parser, and the remedy there is quoting rather
+  than respelling. A partially stamped set is reported too: its records fall back just as silently
+  and the user has demonstrably asked for ordering. A set with no `at` anywhere is never reported,
+  because that is the normal way to write these notes rather than a defect. Scalar activities are
+  skipped — one pseudo-record has no order to establish. The accepted spellings are stated in the
+  diagnostic itself and in the tracking tutorial and configuration reference.
+
 ### Fixed
 
 - **A periodic commitment whose title contains an em dash was silently dropped from the register**

@@ -19,6 +19,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::commitments::{parse_periodic_line, split_at_next_marker};
+use super::context::{RECORD_TIME_FORMATS, RecordTime, record_time, records_of, str_field};
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 
@@ -293,8 +294,94 @@ impl Vault {
         let ignore = self.config.ignore_set()?;
         issues.extend(orphan_artefact_issues(&self.store, &path_set, &ignore)?);
         issues.extend(self.stewardship_dashboard_issues()?);
+        issues.extend(self.tracking_record_order_issues()?);
 
         Ok(LintReport { issues })
+    }
+
+    /// Report a record whose `at` ordering field the read path cannot use
+    /// (#497).
+    ///
+    /// `records_of` orders a record set all-or-nothing: if any record's `at`
+    /// is missing or unparseable, the file's document order stands. Falling
+    /// back is right — ordering a mixture would have to invent a position for
+    /// the unstamped records, and whatever it invented would silently change
+    /// which reading a `last` metric reports. But the fallback is invisible on
+    /// every surface, so a user who stamped every record and merely spelled it
+    /// in a way the parser rejects cannot tell "the ordering did nothing" from
+    /// "the ordering worked and this really is the last reading". Lint is
+    /// where a silent-but-defensible fallback becomes visible without giving
+    /// up the fallback itself.
+    ///
+    /// Two shapes are reported, and the difference matters because the
+    /// remedies differ: a value the parser rejects wants respelling, a value
+    /// that is not a string at all wants quoting (unquoted `at: 1800` is a
+    /// YAML integer; `at: 18:00` is read as a sexagesimal number).
+    ///
+    /// A partially stamped set is reported too. Its acceptance criteria only
+    /// name the unparseable case, but a set where some records carry `at` and
+    /// others do not falls back exactly as silently, and there the user has
+    /// demonstrably asked for ordering. A set with no `at` anywhere is never
+    /// reported — that is the normal unstamped case, not a defect.
+    ///
+    /// Scalar activities are skipped: they contribute one pseudo-record, so
+    /// there is no order to establish and `at` carries no meaning the vault
+    /// ever promised to honour.
+    fn tracking_record_order_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        if self.config.tracking.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut issues = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Tracking.as_str())? {
+            let fm = &entry.frontmatter;
+            let Some(spec) = str_field(fm, "activity").and_then(|a| self.config.tracking.get(a))
+            else {
+                continue;
+            };
+            if spec.records.is_none() {
+                continue;
+            }
+
+            let records = records_of(fm, spec);
+            let mut stamped = 0usize;
+            for record in &records {
+                match record_time(record) {
+                    RecordTime::Absent => {}
+                    RecordTime::Valid => stamped += 1,
+                    // Counted as stamped: the user expressed an ordering
+                    // intent, so this set is not the unstamped normal case
+                    // and must not also draw the partial-coverage message.
+                    RecordTime::Unparseable(raw) => {
+                        stamped += 1;
+                        issues.push(LintIssue::warning(
+                            entry.path.clone(),
+                            format!(
+                                "record ordering field `at: \"{raw}\"` is not a time the parser accepts (expected {RECORD_TIME_FORMATS}) -- the records were left in document order"
+                            ),
+                        ));
+                    }
+                    RecordTime::NotAString => {
+                        stamped += 1;
+                        issues.push(LintIssue::warning(
+                            entry.path.clone(),
+                            "record ordering field `at` is not a string, so it never reaches the time parser -- quote it (`at: \"18:00\"`); the records were left in document order",
+                        ));
+                    }
+                }
+            }
+
+            // Only meaningful for a set big enough to have an order at all.
+            if records.len() > 1 && stamped > 0 && stamped < records.len() {
+                issues.push(LintIssue::warning(
+                    entry.path.clone(),
+                    format!(
+                        "{stamped} of {} records carry `at`, and ordering is all-or-nothing -- the records were left in document order",
+                        records.len()
+                    ),
+                ));
+            }
+        }
+        Ok(issues)
     }
 
     /// Scan every stewardship dashboard for malformed `## Active Habits`

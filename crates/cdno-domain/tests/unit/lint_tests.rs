@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use cdno_core::config::{CustomNoteType, SchemaExtension, VaultConfig};
+use cdno_core::config::{
+    Aggregate, CustomNoteType, MetricSpec, SchemaExtension, TrackingSpec, VaultConfig,
+};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -1497,6 +1500,169 @@ fn lint_periodic_hint_names_an_empty_title() {
         "hint should name the empty title: {}",
         warnings[0].message
     );
+}
+
+// ---------------------------------------------------------------------
+// Record-ordering diagnostics (#497). `records_of` orders a record set
+// all-or-nothing and falls back to document order in silence, so lint is
+// where a user finds out their ordering intent was ignored.
+// ---------------------------------------------------------------------
+
+/// A config declaring one record activity, so `records_of` has a spec to
+/// resolve `sets` against.
+fn tracking_config() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.tracking.insert(
+        "gym".to_owned(),
+        TrackingSpec {
+            records: Some("sets".to_owned()),
+            group_by: None,
+            metrics: [(
+                "reps".to_owned(),
+                MetricSpec {
+                    aggregate: Aggregate::Sum,
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    );
+    config
+}
+
+fn tracking_note(records: &str) -> String {
+    format!(
+        "---\ntype: tracking\nstewardship: fitness\nactivity: gym\ndate: 2026-05-28\nsets:\n{records}---\n\n# gym 2026-05-28\n"
+    )
+}
+
+fn record_warnings(report: &cdno_domain::lint::LintReport) -> Vec<&cdno_domain::lint::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("`at"))
+        .collect()
+}
+
+#[test]
+fn lint_flags_a_record_whose_at_is_not_a_time_the_parser_accepts() {
+    // Every record is stamped and the intent is unmistakable -- the spelling
+    // is simply one the parser rejects, so the read path silently kept
+    // document order. Without this the user cannot tell that from "the
+    // ordering worked and this really is the last set".
+    let vault = vault_with_notes(
+        &[(
+            "stewardships/fitness/tracking/2026-05-28-gym.md",
+            &tracking_note("  - at: \"9am\"\n    reps: 8\n  - at: \"evening\"\n    reps: 6\n"),
+        )],
+        tracking_config(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = record_warnings(&report);
+    assert_eq!(warnings.len(), 2, "issues: {:?}", report.issues);
+    assert!(
+        warnings.iter().any(|w| w.message.contains("9am")),
+        "the offending value must be quoted back: {warnings:?}"
+    );
+    assert!(
+        warnings[0].message.contains("HH:MM"),
+        "the accepted spellings must be named: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_an_unquoted_at_that_yaml_never_makes_a_string() {
+    // `at: 1800` is a YAML integer and `at: 18:00` a sexagesimal number, so
+    // neither reaches the time parser at all. Reported apart from a bad
+    // spelling because the remedy is quoting, not respelling.
+    let vault = vault_with_notes(
+        &[(
+            "stewardships/fitness/tracking/2026-05-28-gym.md",
+            &tracking_note("  - at: 1800\n    reps: 8\n"),
+        )],
+        tracking_config(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = record_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("quote it"),
+        "the remedy must be quoting: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_a_partially_stamped_record_set() {
+    // Ordering is all-or-nothing, so one unstamped record discards every
+    // other record's stamp. The user asked for ordering and did not get it.
+    let vault = vault_with_notes(
+        &[(
+            "stewardships/fitness/tracking/2026-05-28-gym.md",
+            &tracking_note("  - at: \"09:00\"\n    reps: 8\n  - reps: 6\n"),
+        )],
+        tracking_config(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = record_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("1 of 2"),
+        "the message should show the coverage: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_says_nothing_about_records_that_are_all_stamped_or_none() {
+    // The two silent-and-correct cases. An unstamped set is the normal way to
+    // write these notes, not a defect, and reporting it would make the rule
+    // fire on almost every tracking note in a vault.
+    for records in [
+        "  - at: \"09:00\"\n    reps: 8\n  - at: \"18:30\"\n    reps: 6\n",
+        "  - reps: 8\n  - reps: 6\n",
+    ] {
+        let vault = vault_with_notes(
+            &[(
+                "stewardships/fitness/tracking/2026-05-28-gym.md",
+                &tracking_note(records),
+            )],
+            tracking_config(),
+        );
+
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = record_warnings(&report);
+        assert!(warnings.is_empty(), "unexpected: {warnings:?}");
+    }
+}
+
+#[test]
+fn lint_ignores_at_on_an_activity_with_no_records() {
+    // A scalar activity contributes one pseudo-record, so there is no order to
+    // establish and `at` was never part of its contract. Flagging it would
+    // invent a rule.
+    let mut config = VaultConfig::default();
+    config.tracking.insert(
+        "weigh-in".to_owned(),
+        TrackingSpec {
+            records: None,
+            group_by: None,
+            metrics: BTreeMap::new(),
+        },
+    );
+    let note = "---\ntype: tracking\nstewardship: fitness\nactivity: weigh-in\ndate: 2026-05-28\nat: \"whenever\"\nkg: 82.5\n---\n\n# weigh-in 2026-05-28\n";
+    let vault = vault_with_notes(
+        &[("stewardships/fitness/tracking/2026-05-28-weigh-in.md", note)],
+        config,
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(record_warnings(&report).is_empty(), "{:?}", report.issues);
 }
 
 // ---------------------------------------------------------------------

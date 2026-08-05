@@ -1209,7 +1209,7 @@ impl SeriesKey {
 }
 
 /// A string frontmatter field, or `None` when absent or not a string.
-fn str_field<'a>(fm: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+pub(in crate::vault) fn str_field<'a>(fm: &'a serde_json::Value, key: &str) -> Option<&'a str> {
     fm.get(key)?.as_str()
 }
 
@@ -1248,7 +1248,7 @@ fn date_field(fm: &serde_json::Value) -> Option<NaiveDate> {
 /// `time` would silently order a record set by one of its own measurements.
 /// `at` matches the vocabulary the write surfaces already use (`cdno log
 /// --at`, `cdno track --at`) for when something happened.
-fn records_of<'a>(
+pub(in crate::vault) fn records_of<'a>(
     fm: &'a serde_json::Value,
     spec: &cdno_core::config::TrackingSpec,
 ) -> Vec<&'a serde_json::Value> {
@@ -1281,6 +1281,46 @@ fn records_of<'a>(
 /// The per-record key that orders a record set. See [`records_of`] for why it
 /// is `at` rather than `time`.
 const RECORD_TIME_KEY: &str = "at";
+
+/// The `at` spellings the parser accepts, as prose for a diagnostic. Kept
+/// next to the format list so a new format cannot be added without the
+/// message that teaches it going stale.
+pub(in crate::vault) const RECORD_TIME_FORMATS: &str =
+    "`HH:MM`, `HH:MM:SS`, or a 12-hour time with a meridiem (`9:00 AM`)";
+
+/// How one record's ordering field reads.
+///
+/// [`records_of`] only needs "usable or not" — it orders a set or leaves it
+/// alone. Lint needs to know *why* a field was unusable, because the causes
+/// have different remedies and only some are worth reporting at all (#497).
+pub(in crate::vault) enum RecordTime<'a> {
+    /// No `at`, or an explicit null. The normal case for an unstamped set,
+    /// and never worth a diagnostic on its own.
+    Absent,
+    /// A string the parser accepts.
+    Valid,
+    /// A string the parser rejects, carried so the message can quote it back.
+    Unparseable(&'a str),
+    /// Present but not a string. Unquoted `at: 1800` is a YAML integer and
+    /// `at: 18:00` is worse — YAML reads it as a sexagesimal number — so
+    /// neither ever reaches the parser. Worth its own message, since the
+    /// remedy is quoting rather than respelling.
+    NotAString,
+}
+
+/// Classify a record's `at` field. The single place that decides what counts
+/// as a usable ordering stamp, so the read path and lint cannot disagree
+/// about which records are stamped.
+pub(in crate::vault) fn record_time(record: &serde_json::Value) -> RecordTime<'_> {
+    match record.get(RECORD_TIME_KEY) {
+        None | Some(serde_json::Value::Null) => RecordTime::Absent,
+        Some(serde_json::Value::String(raw)) => match parse_record_time(raw) {
+            Some(_) => RecordTime::Valid,
+            None => RecordTime::Unparseable(raw),
+        },
+        Some(_) => RecordTime::NotAString,
+    }
+}
 
 /// Parse a record's `at` field. Accepts 24-hour with or without seconds and
 /// 12-hour with a meridiem, since the field is hand-authored and nothing in
