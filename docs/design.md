@@ -1191,6 +1191,7 @@ get_active_questions(domain?)
 ```
 append_to_log(text)
   → appends to today's daily entry, creating it if needed
+  → stamps the vault clock; `text` carries no time of its own
 
 file_to_portfolio(portfolio, source, origin, content?, attach?, vars?)
   → creates evidence note in the portfolio folder
@@ -1234,6 +1235,16 @@ The optional `vars?` parameter (a `name -> value` map) supplies values for a tem
 `create_commitment`, `create_tracking_entry`, and the templated paths of `file_to_portfolio`,
 `add_action`, and `promote_action`). MCP has no interactive prompt, so a required prompted variable
 the supplied map omits surfaces `UnresolvedPrompts` rather than blocking on input.
+
+The narrative tools — `append_to_log` and `upsert_daily_section` — state the vault's linking
+convention in their own descriptions: wikilink every vault note the text names (`[[slug]]`), and
+render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather
+than a bare `#N`. The convention lives at the tool description because that is the only
+instruction surface an agent driving the server without a cuaderno skill loaded ever reads;
+stated anywhere else, it reaches only the callers that already knew it, and the unlinked lines
+have to be repaired afterwards. `capture` is deliberately exempt — an inbox item is stored
+verbatim, and adding a linking obligation to it would reintroduce the friction it exists to
+remove.
 
 -----
 

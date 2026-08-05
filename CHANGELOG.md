@@ -6,6 +6,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The narrative MCP tools now state the vault's linking convention in their own descriptions**
+  (#438). `append_to_log` and `upsert_daily_section` are where an agent writes prose into the
+  vault, but their descriptions said nothing about linking it — so an agent driving the server
+  without a cuaderno skill loaded wrote plain text, and the lines it produced had to be enriched
+  afterwards by a downstream sweep. Both tools now ask for a wikilink on every vault note the
+  text names and a markdown link on every forge reference, never a bare `#N`; the same rule is
+  repeated on `append_to_log`'s `text` parameter, which is what some clients surface instead of
+  the tool description. `append_to_log` also now says that it stamps the entry with the vault
+  clock, since an agent that doesn't know that prefixes its own time and the line ends up stamped
+  twice. `capture` is deliberately left alone: an inbox item is stored verbatim and a linking
+  obligation would reintroduce the friction it exists to remove.
+
 ## [0.33.1] - 2026-07-27
 
 ### Fixed

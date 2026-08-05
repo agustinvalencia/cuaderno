@@ -64,6 +64,10 @@ pub struct GetActiveQuestionsInput {
 /// Input for `append_to_log`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AppendToLogInput {
+    /// The log line, without a leading time — the vault clock stamps every
+    /// entry. Wikilink each vault note the line names (`[[slug]]`) and give
+    /// each forge reference (issue, MR/PR, epic, commit, repo file) a
+    /// markdown link, never a bare `#N`.
     pub text: String,
 }
 
