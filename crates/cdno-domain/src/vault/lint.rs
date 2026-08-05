@@ -409,6 +409,16 @@ fn habit_line_hint(line: &str) -> &'static str {
     }
 }
 
+/// Whether any em dash on the line introduces a `next:` segment, including
+/// the first — which [`split_at_next_marker`] excludes, since the grammar
+/// needs a dash before the marker to carry the recurrence. The hint uses
+/// this to tell "the marker is missing" apart from "the marker is in the
+/// recurrence's place", two defects whose remedies are opposites.
+fn has_next_marker_segment(body: &str) -> bool {
+    body.match_indices('\u{2014}')
+        .any(|(idx, dash)| body[idx + dash.len()..].trim_start().starts_with("next:"))
+}
+
 /// Best-effort guess at *why* a `## Periodic Commitments` bullet fails
 /// the `- {title} — {recurrence} — next: YYYY-MM-DD` grammar. Heuristic
 /// only, mirroring [`habit_line_hint`]: the verdict is
@@ -421,12 +431,20 @@ fn periodic_line_hint(line: &str) -> &'static str {
     // bug: a line whose `next:` marker was plainly present, correctly
     // placed and followed by a valid date, reported as missing it.
     let Some((head, next_part)) = split_at_next_marker(body) else {
-        // No em dash introduces a `next:` segment. Separate "the
-        // separators are wrong" from "the marker is missing", and only
-        // blame a dash once the em-dash structure is known to be
-        // incomplete: an en-dash inside a *title* (`Q1\u{2013}Q2 review`)
-        // is legitimate, and a line failing on a missing `next:` must not
-        // be pointed at a dash that isn't broken.
+        // The anchor only ever declines the *first* em dash, so if it found
+        // nothing while a marker exists, that marker is sitting where the
+        // recurrence belongs. Say that, rather than claim a marker the user
+        // can see on the line is missing — announcing an absent `next:` at a
+        // line that plainly has one is the #453 misdiagnosis itself, and it
+        // survives the anchor unless it is named here.
+        if has_next_marker_segment(body) {
+            return "no recurrence between the title and the `next:` marker";
+        }
+        // Now the marker really is absent. Separate that from "the
+        // separators are wrong", and only blame a dash once the em-dash
+        // structure is known to be incomplete: an en-dash inside a *title*
+        // (`Q1\u{2013}Q2 review`) is legitimate, and a line failing on a
+        // missing `next:` must not be pointed at a dash that isn't broken.
         if body.matches('\u{2014}').count() >= 2 {
             return "missing the `next:` marker before the date";
         }

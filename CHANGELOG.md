@@ -20,7 +20,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   fails whichever end it counts from: the em dash is the separator the grammar itself chose and the
   vault's prose style uses it constantly, so it turns up on both sides of the marker — in titles, and
   in the trailing annotations the parser has always tolerated (`next: 2026-05-28 (overdue — rebook)`).
-  Anchoring accepts both, and accepts every line either counting rule accepted. The one remaining
+  Anchoring accepts both, and reads every line the previous parser accepted to exactly the same
+  title and date, so no existing vault line changes meaning. The one remaining
   ambiguity is the recurrence, defined as the segment adjacent to the marker: an em dash there is
   read as part of the title, documented in `docs/design.md` §6 and pinned by a test. Lint also gained
   a specific hint for an empty title, which the marker anchor makes unambiguous.

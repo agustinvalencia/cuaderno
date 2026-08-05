@@ -633,8 +633,16 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
 ///   invites — pushes `next:` out of it just as easily.
 ///
 /// Either way the line vanishes from the register with no diagnostic the
-/// user would see. Anchoring on the marker admits both, and accepts every
-/// line either counting rule accepted.
+/// user would see. Anchoring on the marker admits both, and reads every
+/// line the previously shipped left-anchored parser accepted to exactly
+/// the same title and date.
+///
+/// That guarantee is deliberately stated against the *shipped* parser and
+/// not against right-counting as well. Right-counting accepted a handful
+/// of lines this does not — ones where a segment before the real marker
+/// itself begins with `next:` — but it was never released, so nothing on
+/// disk depends on it, and such a line is flagged by lint rather than
+/// dropped in silence.
 ///
 /// The residual ambiguity is the *recurrence*: it is the last segment
 /// before the marker, so in `- A — B — weekly — next: <date>` the

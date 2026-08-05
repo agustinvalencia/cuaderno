@@ -1451,6 +1451,34 @@ fn lint_stays_silent_on_a_periodic_line_annotated_with_an_em_dash() {
     );
 }
 
+/// The `skip(1)` in the marker anchor is load-bearing but invisible to the
+/// parser: with or without it these lines are rejected, because a head with
+/// no em dash has no recurrence to take. Only the hint changes, so only a
+/// hint test can guard it — and the wrong hint here is the #453 misdiagnosis
+/// all over again, telling the user a marker they can see is absent.
+#[test]
+fn lint_periodic_hint_names_a_marker_standing_in_the_recurrence_place() {
+    for line in [
+        // One em dash: the marker took the recurrence's position.
+        "- Boiler service \u{2014} next: 2099-05-28",
+        // Two: the marker is early and the trailing segment is not one.
+        "- Boiler service \u{2014} next: 2099-05-28 \u{2014} booked",
+    ] {
+        let body = stewardship(&format!("## Periodic Commitments\n{line}\n"));
+        let vault = vault_with_notes(&[("stewardships/home.md", &body)], VaultConfig::default());
+
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = dashboard_warnings(&report);
+        assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+        assert!(
+            warnings[0].message.contains("recurrence")
+                && !warnings[0].message.contains("missing the `next:`"),
+            "hint must name the missing recurrence, not a marker that is present: {}",
+            warnings[0].message
+        );
+    }
+}
+
 #[test]
 fn lint_periodic_hint_names_an_empty_title() {
     // Structure, marker and date are all fine, so the parser's only reason
