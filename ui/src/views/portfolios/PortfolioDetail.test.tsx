@@ -2,7 +2,7 @@
 // evidence row opens the reader; the quick-add composer submits with its
 // args; and an unresolvable origin surfaces its message inline.
 import { afterEach, expect, test } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Link, MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
@@ -220,10 +220,29 @@ test("an open evidence draft does not survive a move to another portfolio", asyn
   fireEvent.click(screen.getByRole("link", { name: "go to fresh" }));
 
   await screen.findByText("A brand-new question?");
-  // The composer is closed and its draft gone, so there is nothing to
-  // mis-file: the open form under the new heading is what invites the
-  // mistaken Save.
   expect(screen.queryByLabelText("Source")).toBeNull();
+
+  // Reopening is the assertion that matters. `QuickAdd` early-returns while
+  // closed, so a closed-but-mounted composer renders no fields at all --
+  // meaning "the inputs are gone" is satisfied by merely hiding the form
+  // while its useState draft survives underneath. That implementation still
+  // files the old text into the new portfolio the moment the user reopens,
+  // which is the whole of #461. Assert the draft is CLEARED, not hidden, so
+  // the test pins the property rather than one mechanism for reaching it.
+  fireEvent.click(screen.getByRole("button", { name: "File evidence" }));
+  expect((screen.getByLabelText("Source") as HTMLInputElement).value).toBe("");
+  expect((screen.getByLabelText("Origin") as HTMLInputElement).value).toBe("");
   expect(screen.queryByDisplayValue("Smith 2024")).toBeNull();
-  expect(filed).toEqual([]);
+
+  // Submitting from the reopened form reaches the portfolio now on screen,
+  // carrying none of the previous one's text.
+  fireEvent.change(screen.getByLabelText("Source"), { target: { value: "Jones 2025" } });
+  fireEvent.change(screen.getByLabelText("Origin"), { target: { value: "projects/beta" } });
+  fireEvent.click(screen.getByRole("button", { name: "File it" }));
+  await waitFor(() => expect(filed).toHaveLength(1));
+  expect(filed[0]).toMatchObject({
+    portfolio: "fresh",
+    source: "Jones 2025",
+    origin: "projects/beta",
+  });
 });
