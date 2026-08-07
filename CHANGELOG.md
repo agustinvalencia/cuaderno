@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **An open evidence draft could be filed into the wrong portfolio** (#461). Navigating from one
+  portfolio to another changes only the route param, and with a warm react-query cache the query
+  resolves synchronously — so the `isPending` branch never unmounts the body and React reconciles
+  it instead, keeping the evidence composer's draft. The composer's `slug` is a prop and updates in
+  the same pass, so a draft written for one portfolio sat open under another's heading and the next
+  Save would have filed it there. Portfolio Detail is now keyed on the slug, so a param change
+  remounts and clears the draft. Stewardship Detail had already gained the same key for an
+  unrelated reason (the chart chip selection, #489) and so was never exposed, but nothing pinned
+  the draft behaviour it accidentally protects — a regression test now does, in both views.
+
 ### Added
 
 - **`cdno lint` reports a record-ordering `at` it cannot use** (#497). A tracking record set is

@@ -3,7 +3,7 @@
 // args; and an unresolvable origin surfaces its message inline.
 import { afterEach, expect, test } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useParams } from "react-router";
+import { Link, MemoryRouter, Route, Routes, useParams } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import type { PortfolioDetail as PortfolioDetailData } from "../../api/bindings/PortfolioDetail";
@@ -166,4 +166,64 @@ test("a stale error is cleared when the form is cancelled and reopened", async (
 
   // The reopened, cleared form no longer greets the user with the error.
   expect(screen.queryByText(/origin does not resolve to a note/)).toBeNull();
+});
+
+test("an open evidence draft does not survive a move to another portfolio", async () => {
+  // The data-loss path (#461), the portfolio twin of the project-view defect
+  // fixed in #460. react-query serves a cached portfolio synchronously, so
+  // nothing unmounts, the body is RECONCILED with new props, and the
+  // composer's useState draft persists. Its `slug` is a prop and updates in
+  // the same pass, so `addEvidence(slug, ...)` would file text written for
+  // `surrogate` into `fresh`.
+  //
+  // Navigation happens in place, through the router, because that is what
+  // reconciles. Unmounting and rendering afresh passes with or without the
+  // fix and proves nothing.
+  const filed: unknown[] = [];
+  mockIPC((cmd, args) => {
+    if (cmd === "get_portfolio") {
+      return (args as { slug?: string }).slug === "fresh" ? EMPTY : DETAIL;
+    }
+    if (cmd === "add_evidence") {
+      filed.push(args);
+      return undefined;
+    }
+    if (cmd === "resolve_wikilink") return null;
+    return undefined;
+  });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // `fresh` must already be cached — that is the whole precondition. With a
+  // cold cache the `isPending` branch unmounts the body and clears its state,
+  // so the bug hides.
+  client.setQueryData(["get_portfolio", "fresh"], EMPTY);
+  render(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <MemoryRouter initialEntries={["/portfolios/surrogate"]}>
+          <ReaderProvider>
+            {/* Stands in for the portfolio list's always-available links. */}
+            <Link to="/portfolios/fresh">go to fresh</Link>
+            <Routes>
+              <Route path="/portfolios/:slug" element={<PortfolioDetail />} />
+              <Route path="/note/*" element={<NotePathProbe />} />
+            </Routes>
+          </ReaderProvider>
+        </MemoryRouter>
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+
+  fireEvent.click(await screen.findByRole("button", { name: "File evidence" }));
+  fireEvent.change(screen.getByLabelText("Source"), { target: { value: "Smith 2024" } });
+  fireEvent.change(screen.getByLabelText("Origin"), { target: { value: "projects/alpha" } });
+
+  fireEvent.click(screen.getByRole("link", { name: "go to fresh" }));
+
+  await screen.findByText("A brand-new question?");
+  // The composer is closed and its draft gone, so there is nothing to
+  // mis-file: the open form under the new heading is what invites the
+  // mistaken Save.
+  expect(screen.queryByLabelText("Source")).toBeNull();
+  expect(screen.queryByDisplayValue("Smith 2024")).toBeNull();
+  expect(filed).toEqual([]);
 });

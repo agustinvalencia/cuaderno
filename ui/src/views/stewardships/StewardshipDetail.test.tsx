@@ -1152,6 +1152,55 @@ test("navigating from one stewardship to another resets the chip selection and t
   ).toBe("false");
 });
 
+test("an open log draft does not survive a move to another stewardship", async () => {
+  // The companion to the chip/cap test above, pinning the consequence #461
+  // is actually about. `key={slug}` is already in place, but it was added
+  // for the chip selection (#489) -- so without this, someone reworking that
+  // could drop the key and reintroduce a draft written for one stewardship
+  // sitting under another's heading, with the form's `stewardship` taken
+  // from the new slug. The chip test would still pass.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC((cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "get_stewardship_detail") {
+      const { slug } = args as { slug: string };
+      return slug === "mood" ? NAV_MOOD : NAV_HEALTH;
+    }
+    if (cmd === "get_tracking_template_fields")
+      return [{ name: "mood", prompt: "How did it feel?" }];
+    if (cmd === "resolve_wikilink") {
+      const { target } = args as { target: string };
+      return target === "mood"
+        ? { path: "stewardships/mood.md", note_type: "stewardship" }
+        : { path: "stewardships/health.md", note_type: "stewardship" };
+    }
+    return undefined;
+  });
+  mountDetail(NAV_HEALTH);
+
+  // Warm mood's cache, so the move back is a reconcile rather than the
+  // `isPending` interstitial that would unmount the body and hide the bug.
+  await screen.findByText("mood");
+  fireEvent.click(screen.getByText("mood"));
+  await screen.findByRole("heading", { name: "Mood" });
+  fireEvent.click(screen.getByText("health"));
+  await screen.findByRole("heading", { name: "Health" });
+
+  // Type a draft on health, then move to mood in place.
+  fireEvent.click(await screen.findByRole("button", { name: "Log entry" }));
+  fireEvent.change(screen.getByLabelText("Activity"), { target: { value: "gym" } });
+  fireEvent.change(screen.getByLabelText("Notes"), { target: { value: "Heavy squats." } });
+
+  fireEvent.click(screen.getByText("mood"));
+  await screen.findByRole("heading", { name: "Mood" });
+
+  // The form is closed and the draft gone -- nothing left to submit against
+  // the wrong stewardship.
+  expect(screen.queryByLabelText("Activity")).toBeNull();
+  expect(screen.queryByDisplayValue("Heavy squats.")).toBeNull();
+  expect(calls.filter((c) => c.cmd === "log_tracking_entry")).toEqual([]);
+});
+
 test("a stale activity selection does not strand the Trends grid empty", async () => {
   // A config edit setting `plot = "none"` on the selected activity, seen
   // through a watcher-driven refetch, is what this reproduces — the
