@@ -48,7 +48,13 @@ export default function PortfolioDetail() {
     );
   }
 
-  return <PortfolioDetailBody slug={slug} data={data} />;
+  // Keyed on `slug` (#461). A route change from `/portfolios/a` to
+  // `/portfolios/b` only changes this param, and with a warm cache the query
+  // resolves synchronously — so `isPending` never unmounts the body and React
+  // reconciles it, keeping the evidence composer's `useState` draft. Its
+  // `slug` prop updates in the same pass, so the next Save would file text
+  // written for `a` into `b`.
+  return <PortfolioDetailBody key={slug} slug={slug} data={data} />;
 }
 
 function PortfolioDetailBody({ slug, data }: { slug: string; data: PortfolioDetailData }) {

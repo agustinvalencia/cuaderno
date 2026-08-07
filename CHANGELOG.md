@@ -28,6 +28,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **An open evidence draft could be filed into the wrong portfolio** (#461). Navigating from one
+  portfolio to another changes only the route param, and with a warm react-query cache the query
+  resolves synchronously — so the `isPending` branch never unmounts the body and React reconciles
+  it instead, keeping the evidence composer's draft. The composer's `slug` is a prop and updates in
+  the same pass, so a draft written for one portfolio sat open under another's heading and the next
+  Save would have filed it there. Portfolio Detail is now keyed on the slug, so a param change
+  remounts and clears the draft. Stewardship Detail carries the same defect in its tracking-entry
+  form and was exposed identically up to v0.32.1; v0.33.0 closed it incidentally, by keying that
+  view for an unrelated reason (the chart chip selection, #489). Nothing pinned the draft behaviour
+  that key protects, so a regression test now does, in both views.
+
 - **A periodic commitment whose title contains an em dash was silently dropped from the register**
   (#453). The grammar is `- Title — recurrence — next: YYYY-MM-DD` and the parser split from the
   left, so an em dash in the title pushed `next:` out of the segment the parser looked in and the
