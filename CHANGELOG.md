@@ -16,9 +16,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   surface, so a user who stamped every record and merely spelled it in a way the parser rejects
   (`morning`, `9am`, `21h15`, `24:00`) could not tell that from "the ordering worked and this really
   is the last reading". Lint now names the note and the offending value, and separately reports an
-  `at` that is not a string at all — unquoted `at: 1800` is a YAML integer and `at: 18:00` a
-  sexagesimal number, so neither ever reaches the parser, and the remedy there is quoting rather
-  than respelling. A partially stamped set is reported too: its records fall back just as silently
+  `at` that is not a string at all — `at: 1800`, `at: 18` and `at: 18.30` are YAML numbers and
+  `at: true` a bool, so none of them ever reaches the parser. That case is named by kind rather
+  than quoted as text, since what the user wrote and what the file holds differ. A time containing
+  a colon needs no quoting: `at: 18:00` is read as text and parses as written. A partially stamped
+  set is reported too: its records fall back just as silently
   and the user has demonstrably asked for ordering. A set with no `at` anywhere is never reported,
   because that is the normal way to write these notes rather than a defect. Scalar activities are
   skipped — one pseudo-record has no order to establish. The accepted spellings are stated in the

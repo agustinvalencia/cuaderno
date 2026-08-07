@@ -1301,11 +1301,16 @@ pub(in crate::vault) enum RecordTime<'a> {
     Valid,
     /// A string the parser rejects, carried so the message can quote it back.
     Unparseable(&'a str),
-    /// Present but not a string. Unquoted `at: 1800` is a YAML integer and
-    /// `at: 18:00` is worse — YAML reads it as a sexagesimal number — so
-    /// neither ever reaches the parser. Worth its own message, since the
-    /// remedy is quoting rather than respelling.
-    NotAString,
+    /// Present but not a string, so it never reaches the parser: `at: 1800`,
+    /// `at: 18` and `at: 18.30` resolve to YAML numbers, `at: true` to a
+    /// bool. Carried so the message can quote the value back.
+    ///
+    /// A colon is what keeps a time a string — `at: 18:00` resolves to
+    /// `String("18:00")` under the YAML 1.2 core schema this stack parses
+    /// with, and parses fine unquoted. So this arm is only ever reached by a
+    /// spelling with no colon in it, and the remedy is to write the time
+    /// properly rather than to quote what is there.
+    NotAString(&'a serde_json::Value),
 }
 
 /// Classify a record's `at` field. The single place that decides what counts
@@ -1318,7 +1323,7 @@ pub(in crate::vault) fn record_time(record: &serde_json::Value) -> RecordTime<'_
             Some(_) => RecordTime::Valid,
             None => RecordTime::Unparseable(raw),
         },
-        Some(_) => RecordTime::NotAString,
+        Some(other) => RecordTime::NotAString(other),
     }
 }
 

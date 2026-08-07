@@ -115,8 +115,8 @@ reordered. The key is `at` rather than `time` precisely because `time` is a plau
 a swim split, a lap time — and ordering a record set by one of its own measurements would report
 a number that was never the last reading.
 
-Quote it. Unquoted, `at: 1800` is an integer and `at: 18:00` is read by YAML as a sexagesimal
-number, so neither is ever a string the parser sees.
+Write the colon. `at: 18:00` needs no quoting — the colon is what keeps YAML reading it as text —
+but `at: 1800` is a number and never reaches the time parser at all.
 
 Falling back to file order is the safe answer — ordering a half-stamped set would have to invent
 a position for the unstamped records, and whichever position it invented would quietly change

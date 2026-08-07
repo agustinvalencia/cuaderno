@@ -1574,25 +1574,50 @@ fn lint_flags_a_record_whose_at_is_not_a_time_the_parser_accepts() {
 }
 
 #[test]
-fn lint_flags_an_unquoted_at_that_yaml_never_makes_a_string() {
-    // `at: 1800` is a YAML integer and `at: 18:00` a sexagesimal number, so
-    // neither reaches the time parser at all. Reported apart from a bad
-    // spelling because the remedy is quoting, not respelling.
+fn lint_flags_an_at_that_yaml_resolved_to_something_other_than_a_string() {
+    // A colon-less spelling resolves to a number or a bool, so it never
+    // reaches the time parser. Named by kind rather than quoted as text,
+    // because what the user typed and what the file holds have diverged.
+    for (written, kind) in [("1800", "number"), ("18", "number"), ("true", "boolean")] {
+        let vault = vault_with_notes(
+            &[(
+                "stewardships/fitness/tracking/2026-05-28-gym.md",
+                &tracking_note(&format!("  - at: {written}\n    reps: 8\n")),
+            )],
+            tracking_config(),
+        );
+
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = record_warnings(&report);
+        assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+        assert!(
+            warnings[0].message.contains(kind) && warnings[0].message.contains("HH:MM"),
+            "message must name the kind and the accepted spellings: {}",
+            warnings[0].message
+        );
+    }
+}
+
+/// The test whose absence let a false claim ship: the PR originally asserted,
+/// in two docs pages and a diagnostic, that `at: 18:00` is a YAML sexagesimal
+/// number that never reaches the parser. It is a plain string under the YAML
+/// 1.2 core schema this stack parses with, and it sorts correctly unquoted.
+/// A colon is exactly what keeps a time out of the number branch.
+#[test]
+fn lint_accepts_an_unquoted_time_because_the_colon_keeps_it_a_string() {
     let vault = vault_with_notes(
         &[(
             "stewardships/fitness/tracking/2026-05-28-gym.md",
-            &tracking_note("  - at: 1800\n    reps: 8\n"),
+            &tracking_note("  - at: 18:00\n    reps: 8\n  - at: 09:00\n    reps: 6\n"),
         )],
         tracking_config(),
     );
 
     let report = vault.lint_all_notes().expect("lint succeeds");
     let warnings = record_warnings(&report);
-    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
-        warnings[0].message.contains("quote it"),
-        "the remedy must be quoting: {}",
-        warnings[0].message
+        warnings.is_empty(),
+        "an unquoted `at: 18:00` is a valid stamp: {warnings:?}"
     );
 }
 

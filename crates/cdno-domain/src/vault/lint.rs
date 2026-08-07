@@ -313,10 +313,13 @@ impl Vault {
     /// where a silent-but-defensible fallback becomes visible without giving
     /// up the fallback itself.
     ///
-    /// Two shapes are reported, and the difference matters because the
-    /// remedies differ: a value the parser rejects wants respelling, a value
-    /// that is not a string at all wants quoting (unquoted `at: 1800` is a
-    /// YAML integer; `at: 18:00` is read as a sexagesimal number).
+    /// Two shapes are reported, and they are separated because the value the
+    /// user sees differs: a string the parser rejects is quoted back as
+    /// written, while a non-string never reached the parser at all
+    /// (`at: 1800`, `at: 18`, `at: 18.30` are YAML numbers, `at: true` a
+    /// bool) and is named by kind. A colon is what keeps a time a string
+    /// under the YAML 1.2 core schema this stack parses with, so `at: 18:00`
+    /// needs no quoting — which is why neither message asks for any.
     ///
     /// A partially stamped set is reported too. Its acceptance criteria only
     /// name the unparseable case, but a set where some records carry `at` and
@@ -360,11 +363,14 @@ impl Vault {
                             ),
                         ));
                     }
-                    RecordTime::NotAString => {
+                    RecordTime::NotAString(value) => {
                         stamped += 1;
                         issues.push(LintIssue::warning(
                             entry.path.clone(),
-                            "record ordering field `at` is not a string, so it never reaches the time parser -- quote it (`at: \"18:00\"`); the records were left in document order",
+                            format!(
+                                "record ordering field `at: {value}` is a {} rather than a time, so it never reaches the parser (expected {RECORD_TIME_FORMATS}) -- the records were left in document order",
+                                value_kind(value)
+                            ),
                         ));
                     }
                 }
@@ -493,6 +499,19 @@ fn habit_line_hint(line: &str) -> &'static str {
         "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates habit from status"
     } else {
         "missing the em-dash (\u{2014}) that separates habit from status"
+    }
+}
+
+/// Name a JSON scalar's kind for a diagnostic, so the message can say what
+/// the value *is* rather than only what it is not.
+fn value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Array(_) => "list",
+        serde_json::Value::Object(_) => "mapping",
+        // Strings and nulls are classified before this is reached.
+        _ => "value",
     }
 }
 
