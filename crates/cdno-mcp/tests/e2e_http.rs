@@ -9,6 +9,7 @@
 //! reconciliation that keeps a long-running server honest about
 //! out-of-band edits.
 
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -38,26 +39,62 @@ impl HttpServer {
             .env_remove("CUADERNO_VAULT_PATH")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            // Captured rather than discarded: when startup fails, the
+            // child's own message is the whole diagnosis, and `RUST_LOG=off`
+            // keeps the stream short enough that the pipe cannot fill.
+            .stderr(Stdio::piped());
         if let Some(root) = vault_root {
             cmd.env("CUADERNO_VAULT_PATH", root);
         }
-        let child = cmd.spawn().expect("spawn cdno-mcp-server");
+        let mut child = cmd.spawn().expect("spawn cdno-mcp-server");
 
         // Readiness: poll until the listener accepts. The binary
         // reconciles the vault at open, so allow a generous deadline.
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(15);
+        let mut attempts = 0usize;
         loop {
+            // Checked before the connect, so a child that died on startup
+            // (port taken, bad vault, panic) reports its exit status and
+            // stderr straight away instead of presenting as a 15s timeout
+            // with nothing to read. #458 was diagnosed against a message
+            // that could not tell those cases apart.
+            if let Some(status) = child.try_wait().expect("try_wait") {
+                panic!(
+                    "cdno-mcp-server exited during startup with {status} after {:?} ({attempts} probes); stderr:\n{}",
+                    started.elapsed(),
+                    drain_stderr(&mut child)
+                );
+            }
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
                 break;
             }
+            attempts += 1;
             assert!(
                 Instant::now() < deadline,
-                "cdno-mcp-server did not start listening on port {port} within 15s"
+                "cdno-mcp-server did not start listening on port {port} within 15s \
+                 ({attempts} probes, {:?} elapsed) though the process is still alive",
+                started.elapsed()
             );
             std::thread::sleep(Duration::from_millis(50));
         }
         Self { child, port }
+    }
+}
+
+/// Read whatever the child wrote to stderr, killing it first so the pipe
+/// reaches EOF rather than blocking on a process that is still running.
+fn drain_stderr(child: &mut Child) -> String {
+    let _ = child.kill();
+    let _ = child.wait();
+    let Some(mut err) = child.stderr.take() else {
+        return "<stderr already consumed>".to_owned();
+    };
+    let mut buf = String::new();
+    match err.read_to_string(&mut buf) {
+        Ok(_) if buf.trim().is_empty() => "<empty>".to_owned(),
+        Ok(_) => buf,
+        Err(e) => format!("<unreadable: {e}>"),
     }
 }
 
@@ -324,7 +361,7 @@ fn refuses_non_loopback_bind_without_origin_auth() {
 async fn periodic_reconciliation_picks_up_out_of_band_edits() {
     let dir = TempDir::new().expect("tempdir");
     make_vault(dir.path());
-    let server = HttpServer::spawn(Some(dir.path()), &["--reconcile-interval-secs", "1"]);
+    let mut server = HttpServer::spawn(Some(dir.path()), &["--reconcile-interval-secs", "1"]);
     let client = reqwest::Client::new();
 
     // Write a note directly to disk — the exact shape `cdno capture`
@@ -343,8 +380,19 @@ async fn periodic_reconciliation_picks_up_out_of_band_edits() {
 
     // The reconciliation loop runs every second; poll search until
     // the token surfaces (hard deadline well past several passes).
-    let deadline = Instant::now() + Duration::from_secs(15);
+    //
+    // This test has flaked once under a saturated full-workspace run and was
+    // not reproducible afterwards (#458): 27 targeted runs under CPU load,
+    // including the whole binary with all seven servers concurrent, never
+    // caught it. So rather than guess at a cause, the failure now reports
+    // enough to name one — how long it actually waited, how many passes it
+    // saw, and whether the server was even alive. A timeout at 15.0s reads
+    // very differently from one at 2.0s with a dead child.
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(15);
+    let mut polls = 0usize;
     loop {
+        polls += 1;
         let (status, resp) = post_mcp(
             &client,
             server.port,
@@ -359,10 +407,17 @@ async fn periodic_reconciliation_picks_up_out_of_band_edits() {
         if body.contains(token) {
             return; // reconciled: the out-of-band note is searchable
         }
-        assert!(
-            Instant::now() < deadline,
-            "out-of-band note never appeared in search results; last response: {resp}"
-        );
+        if Instant::now() >= deadline {
+            let alive = match server.child.try_wait().expect("try_wait") {
+                Some(status) => format!("server had exited with {status}"),
+                None => "server still running".to_owned(),
+            };
+            panic!(
+                "out-of-band note never appeared in search results after {:?} \
+                 ({polls} polls at a 1s reconcile interval, {alive}); last response: {resp}",
+                started.elapsed()
+            );
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
