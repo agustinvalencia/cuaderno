@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-08-08
+
 ### Added
 
 - **`cdno lint` reports a record-ordering `at` it cannot use** (#497). A tracking record set is
