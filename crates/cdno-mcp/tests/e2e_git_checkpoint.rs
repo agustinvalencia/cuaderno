@@ -2,6 +2,7 @@
 //! (GH #303): a dirty vault served by `cdno-mcp-server` gains a
 //! `cdno-mcp checkpoint` commit within one checkpoint interval.
 
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -57,7 +58,12 @@ fn dirty_vault_gets_a_checkpoint_commit() {
         .env("RUST_LOG", "off")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // Captured, not discarded: every startup failure in this binary
+        // (bind refused, vault open error, bad flag combination) prints its
+        // reason here and exits, and this test never waits on the process,
+        // so discarding it left a dead server indistinguishable from a slow
+        // checkpoint sweep (#458).
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn cdno-mcp-server");
 
@@ -65,8 +71,31 @@ fn dirty_vault_gets_a_checkpoint_commit() {
     // would, then wait for the sweep to commit it.
     std::fs::write(dir.path().join("inbox/checkpoint-probe.md"), "dirty").unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // This harness never probes for readiness, so a child that never bound
+    // is invisible from the first instant; `try_wait` each pass is what makes
+    // it visible at all. Checked before the git log so a dead server is
+    // reported as one rather than as a checkpoint that never arrived.
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(15);
+    let mut passes = 0usize;
     let committed = loop {
+        passes += 1;
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut err);
+            }
+            panic!(
+                "cdno-mcp-server exited with {status} after {:?} ({passes} passes) instead of \
+                 checkpointing; stderr:\n{}",
+                started.elapsed(),
+                if err.trim().is_empty() {
+                    "<empty>"
+                } else {
+                    err.trim()
+                }
+            );
+        }
         let log = git(dir.path(), &["log", "--oneline"]);
         let text = String::from_utf8_lossy(&log.stdout).into_owned();
         if text.contains("cdno-mcp checkpoint") {
@@ -75,7 +104,11 @@ fn dirty_vault_gets_a_checkpoint_commit() {
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("no checkpoint commit within 15s; git log:\n{text}");
+            panic!(
+                "no checkpoint commit after {:?} ({passes} passes at a 1s checkpoint interval, \
+                 server still running); git log:\n{text}",
+                started.elapsed()
+            );
         }
         std::thread::sleep(Duration::from_millis(250));
     };
