@@ -9,6 +9,7 @@
 //! token → 200 — and that configuring auth is exactly what lifts the
 //! non-loopback bind interlock.
 
+use std::io::Read;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -112,7 +113,7 @@ impl HttpServer {
         let port = free_port();
         let host = if bind_all { "0.0.0.0" } else { "127.0.0.1" };
         let bin = env!("CARGO_BIN_EXE_cdno-mcp-server");
-        let child = Command::new(bin)
+        let mut child = Command::new(bin)
             .args(["--smoke", "--bind", &format!("{host}:{port}")])
             .env("RUST_LOG", "off")
             .env_remove("CUADERNO_VAULT_PATH")
@@ -120,18 +121,41 @@ impl HttpServer {
             .env("CDNO_ACCESS_AUD", TEST_AUD)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            // Captured, not discarded: a refused bind or a bad Access config
+            // writes its reason here, and discarding it turns a named error
+            // into an unexplained 15s timeout (#458).
+            .stderr(Stdio::piped())
             .spawn()
             .expect("spawn cdno-mcp-server");
 
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(15);
+        let mut attempts = 0usize;
         loop {
+            if let Some(status) = child.try_wait().expect("try_wait") {
+                let mut buf = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_string(&mut buf);
+                }
+                panic!(
+                    "cdno-mcp-server exited during startup with {status} after {:?} ({attempts} probes); stderr:\n{}",
+                    started.elapsed(),
+                    if buf.trim().is_empty() {
+                        "<empty>"
+                    } else {
+                        buf.trim()
+                    }
+                );
+            }
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
                 break;
             }
+            attempts += 1;
             assert!(
                 Instant::now() < deadline,
-                "cdno-mcp-server did not start listening on port {port} within 15s"
+                "cdno-mcp-server did not start listening on port {port} within 15s \
+                 ({attempts} probes, {:?} elapsed) though the process is still alive",
+                started.elapsed()
             );
             std::thread::sleep(Duration::from_millis(50));
         }
