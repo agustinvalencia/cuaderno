@@ -50,7 +50,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   other tools, and a header, a gutter, or colour would buy nothing there and break that.
 
   New dependencies: `textwrap` and `unicode-linebreak` for width-aware wrapping — the second supplies
-  the UAX #14 break opportunities, without which text with no ASCII spaces (Chinese, Japanese, Thai)
+  the UAX #14 break opportunities, without which text with no ASCII spaces (Chinese, Japanese)
   is treated as one unbreakable word and never wraps. `anstyle`, `colorchoice`, and `anstyle-query`
   carry the styling and the environment precedence, and `crossterm` reports the terminal width; those
   four were already compiled as part of clap and comfy-table, so the change adds two crates in total.

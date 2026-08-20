@@ -442,3 +442,28 @@ fn sgr_of(text: &str) -> String {
         .collect::<Vec<_>>()
         .join(",")
 }
+
+#[test]
+fn an_action_bullet_cannot_drive_the_terminal() {
+    use cdno_domain::ActionListEntry;
+    let entries = vec![ActionListEntry {
+        text: "safe\ttab\u{1b}[41mRED\u{1b}[2J tail".to_owned(),
+        energy: None,
+        attached: None,
+    }];
+    let out = action::render_list("x", &entries);
+    assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
+    assert!(!out.contains('\t'), "tab survived: {out:?}");
+    assert!(out.contains("RED"), "content was dropped: {out}");
+}
+
+#[test]
+fn an_empty_action_listing_hugs_its_title() {
+    // Every other empty state hugs; the blank line separates a title
+    // from content, and there is none.
+    let out = action::render_list("x", &[]);
+    assert!(
+        out.starts_with("Actions for projects/x.md\n  ("),
+        "empty listing should hug its title: {out:?}"
+    );
+}

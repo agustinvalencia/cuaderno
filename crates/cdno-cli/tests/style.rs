@@ -261,3 +261,28 @@ fn the_flag_maps_onto_the_shared_colour_choice() {
     );
     assert_eq!(ColourChoice::default(), ColourChoice::Auto);
 }
+
+#[test]
+fn a_table_cell_sanitises_the_note_text_it_carries() {
+    // `cell` is the one funnel every table cell carrying note text goes
+    // through — commitment titles, evidence sources, lapsed-habit
+    // details. Without sanitising here, `cdno orient` emitted a raw
+    // `ESC[2J` from a commitment title three lines above the sanitised
+    // card quoting the same string.
+    let mut table = comfy_table::Table::new();
+    table.load_preset(comfy_table::presets::NOTHING);
+    table.force_no_tty();
+    table.add_row(vec![cell(
+        Role::Prose,
+        "safe\ttab\u{1b}[41mRED\u{1b}[2J tail",
+    )]);
+    let out = table.to_string();
+    assert!(
+        !out.contains('\u{1b}'),
+        "escape survived a table cell: {out:?}"
+    );
+    assert!(!out.contains('\t'), "tab survived a table cell: {out:?}");
+    for word in ["safe", "tab", "RED", "tail"] {
+        assert!(out.contains(word), "{word} was dropped: {out}");
+    }
+}

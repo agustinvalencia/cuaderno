@@ -128,8 +128,10 @@ prompt::drill_down(
   hits Esc immediately sees exactly what they saw before drill-down
   existed.
 - **Gated on the same expression as every write verb** —
-  `is_interactive(no_interactive || json)`. `--json`, `--no-interactive`,
-  and a non-tty stdout are excluded by construction.
+  `prompt::reports_interactively(no_interactive, json)`. `--json`,
+  `--no-interactive`, and either stream not being a terminal are excluded
+  by construction. (Both streams matter: the listing is written to stdout
+  but the picker reads stdin.)
 - **No confirm step**, for the reason in "What is not part of the
   convention" below: nothing is being mutated.
 - **Esc and Ctrl-C exit silently with status 0.** Contrast `cdno triage`,

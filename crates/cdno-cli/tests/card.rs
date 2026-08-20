@@ -404,3 +404,25 @@ fn the_gutter_costs_exactly_the_columns_it_claims() {
         "body filled {w} columns of a 40-column terminal, so the gutter is not costing 2: {body:?}"
     );
 }
+
+#[test]
+fn thai_is_a_known_gap_rather_than_a_surprise() {
+    // Thai, Lao and Khmer have no ASCII spaces, but their characters are
+    // one column wide, so `is_wide` does not select them — and routing
+    // them to UAX #14 would not help either: they are class SA (complex
+    // context), which needs dictionary segmentation `unicode-linebreak`
+    // does not implement. Measured, both separators leave the paragraph
+    // on one line.
+    //
+    // This pins the current behaviour so the gap is visible if anyone
+    // adds a segmenter, rather than being rediscovered as a bug.
+    let thai = "ภาษาไทยเป็นภาษาที่ไม่มีการเว้นวรรคระหว่างคำ".repeat(3);
+    let cards = vec![Card::new("thai").prose(thai)];
+    let out = render_cards(&cards, &Palette::plain(), 40);
+    let body: Vec<&str> = out.lines().filter(|l| !l.contains("thai")).collect();
+    assert_eq!(body.len(), 1, "Thai does not wrap today:\n{out}");
+    assert!(
+        display_width(body[0]) > 40,
+        "and therefore overflows, like an over-long token"
+    );
+}

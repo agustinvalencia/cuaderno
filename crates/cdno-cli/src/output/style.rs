@@ -279,7 +279,12 @@ pub fn cell(role: Role, text: impl Into<String>) -> comfy_table::Cell {
     use comfy_table::{Attribute, Cell};
 
     let style = palette(role);
-    let mut cell = Cell::new(text.into());
+    // Sanitised here because this is the one funnel every table cell
+    // carrying note text goes through — commitment titles, evidence
+    // sources, lapsed-habit details. Without it `cdno orient` could emit
+    // a raw `ESC[2J` from a commitment title three lines above the
+    // sanitised card that quotes the same string.
+    let mut cell = Cell::new(super::sanitise(&text.into()));
     if let Some(anstyle::Color::Ansi(colour)) = style.get_fg_color() {
         cell = cell.fg(to_comfy(colour));
     }

@@ -338,20 +338,21 @@ pub fn render_list(project: &str, entries: &[ActionListEntry]) -> String {
     // header per item would cost three lines to say what one already
     // says. Colour carries the status instead.
     let palette = Palette::active();
-    let mut out = format!(
-        "{}\n\n",
-        palette.paint(Role::Heading, &format!("Actions for projects/{project}.md"))
-    );
+    let title = palette.paint(Role::Heading, &format!("Actions for projects/{project}.md"));
     if entries.is_empty() {
+        // Empty states hug their title everywhere; the blank line
+        // separates a title from *content*.
+        let mut out = format!("{title}\n");
         out.push_str(&format!(
             "  {}\n",
             palette.paint(Role::Muted, "(no open actions)")
         ));
         return out;
     }
+    let mut out = format!("{title}\n\n");
     for entry in entries {
         out.push_str("  - ");
-        out.push_str(&entry.text);
+        out.push_str(&crate::output::sanitise(&entry.text));
         if let Some(att) = &entry.attached {
             let label = status_label(att);
             let role = status_role(att.status);

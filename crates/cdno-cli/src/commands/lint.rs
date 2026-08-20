@@ -40,7 +40,7 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
             "{} {}: {}",
             palette.paint(role, &format!("[{}]", issue.severity.as_str())),
             palette.paint(Role::Meta, &issue.path.to_string()),
-            issue.message
+            crate::output::sanitise(&issue.message)
         );
     }
 

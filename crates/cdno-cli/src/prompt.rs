@@ -60,12 +60,13 @@ pub fn is_interactive_from(no_interactive: bool, stdin_tty: bool, stdout_tty: bo
     !no_interactive && stdin_tty && stdout_tty
 }
 
-/// Whether a read verb may follow its listing with a drill-down.
+/// Whether a command may prompt: a write verb before it mutates, or a
+/// read verb after its listing.
 ///
 /// `--json` implies non-interactive: a prompt writes to stdout, which
 /// would corrupt the result a scripted caller is parsing. Folding that
 /// into one named function rather than repeating
-/// `is_interactive(no_interactive || json)` at five call sites means the
+/// `is_interactive(no_interactive || json)` at every call site means the
 /// composition can be tested — spelled out, every test in the crate runs
 /// off a tty, so dropping the `|| json` term changes no outcome under
 /// test and the mutation passes at every site.
@@ -528,9 +529,9 @@ pub fn prompt_context() -> Result<Context> {
 
 /// Narrowest terminal we will draw a picker in.
 ///
-/// The same threshold as [`crate::output::NON_TTY_WIDTH`]'s credibility
-/// floor, for the same reason: below it a terminal cannot be laid out in,
-/// and inquire underflows rather than degrading.
+/// The same threshold as [`crate::output::MIN_CREDIBLE_WIDTH`], for the
+/// same reason: below it a terminal cannot be laid out in, and inquire
+/// underflows rather than degrading.
 const MIN_PICKER_WIDTH: u16 = crate::output::MIN_CREDIBLE_WIDTH;
 
 /// Offer a repeated drill-down into a report that has already been

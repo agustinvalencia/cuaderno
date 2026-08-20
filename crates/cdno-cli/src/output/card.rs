@@ -233,7 +233,7 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
 /// The word separator is chosen per segment, and that choice is the whole
 /// point of this function.
 ///
-/// Scripts with no ASCII spaces — Chinese, Japanese, Thai — need UAX #14
+/// Scripts with no ASCII spaces — Chinese and Japanese — need UAX #14
 /// break opportunities or they are one unbreakable word and never wrap.
 /// But UAX #14 also breaks after `/`, `?`, `=` and `&`, which splits
 /// paths and URLs across lines and makes them uncopyable — and a path is
@@ -242,7 +242,16 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
 /// still overflows.
 ///
 /// So: UAX #14 only for segments that actually contain wide characters,
-/// and plain whitespace splitting otherwise. A segment mixing CJK with a
+/// and plain whitespace splitting otherwise.
+///
+/// Thai, Lao, Khmer and Myanmar are a known gap. They have no ASCII
+/// spaces either, but their characters are one column wide, so this test
+/// does not select them — and routing them to UAX #14 would not help:
+/// they are class SA (complex context), which needs dictionary-based
+/// segmentation that `unicode-linebreak` does not implement. Measured,
+/// both separators leave a Thai paragraph on one line. They overflow
+/// like an over-long token until something like `icu_segmenter` is
+/// worth the dependency. A segment mixing CJK with a
 /// long URL will still break the URL; that is rare enough to accept, and
 /// it is a considered trade rather than a side effect.
 fn options(segment: &str, width: usize) -> textwrap::Options<'static> {
