@@ -8,6 +8,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **A freshly created stewardship warned on its own scaffolding** (#515). The shipped template
+  seeded `## Periodic Commitments` with an example of the line shape, written as a bullet — so the
+  dashboard lint read it as data, fed it to `parse_periodic_line`, and reported the literal
+  `YYYY-MM-DD` standing in for the date as an unparseable date. Every stewardship therefore carried
+  a warning from the moment `cdno stewardship create` returned, about a line nobody had typed, and
+  that warning is the first thing a new user sees after creating one. A lint that fires on untouched
+  scaffolding teaches its reader to skip lint output, which is the opposite of what a near-miss
+  diagnostic is for. The placeholder is now prose, in the same parenthesised style the template's
+  `## Current Status` already uses: it still shows the shape, em dashes and `- ` marker intact and
+  ready to copy, but no longer presents as a parseable line. The marker is part of the shape
+  deliberately — a line pasted without one is not a bullet, and a non-bullet is skipped by the
+  commitments aggregator *and* by the lint, so it would vanish from the register with no diagnostic
+  anywhere. Prose inside the section was already exempt from the scan by design, so the lint rule
+  itself is unchanged.
+
 - **`slugify` cut mid-word at the 50-char cap** (#524). A title whose slug crossed the char cap was
   truncated at char 50 with only a trailing separator trimmed afterwards, so a cut landing inside a
   word left the fragment behind — `… and material` became `…-and-materia`. The comment above the
@@ -25,6 +40,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   before: a note created earlier and referred to by re-deriving its slug from the same text will no
   longer be found, so a portfolio silently loses the backlink to a long-titled question, and a
   commitment naming a long-titled stewardship writes a link `cdno lint` reports as dangling.
+
+  One consequence is deliberate and worth stating plainly: ending on a whole word means discarding
+  the fragment that distinguished two similar titles, so questions sharing a long prefix can now
+  slugify identically — `… in composite alpha` and `… in composite gamma` both become
+  `characterising-thermal-expansion-in-composite`, where before they differed in their final four
+  characters. `cdno portfolio create` uses the raw slug with no `-2` disambiguation, so the second
+  create fails with `AlreadyExists` rather than filing into the wrong dossier. The failure is loud
+  and the remedy is to reword the question; whether those creates should disambiguate instead is
+  tracked in #529, since the slug doubles as the key correlating a portfolio with its question.
 
 ## [0.34.0] - 2026-08-08
 
