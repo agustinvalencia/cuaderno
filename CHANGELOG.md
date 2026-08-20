@@ -6,6 +6,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **`slugify` cut mid-word at the 50-char cap** (#524). A title whose slug crossed the char cap was
+  truncated at char 50 with only a trailing separator trimmed afterwards, so a cut landing inside a
+  word left the fragment behind — `… and material` became `…-and-materia`. The comment above the
+  truncation spoke of trimming "trailing partial-word dashes", but a cut inside a word leaves the
+  fragment rather than a stray dash, so only half of the stated intent was ever implemented. Nothing
+  misbehaved as a result, but the slug is the filename and the wikilink target, so the mangled word
+  is permanent and visible everywhere the note is referenced. The cut now backs off to the preceding
+  word boundary — unless the cap fell on the separator itself, in which case the last kept word is
+  already whole and backing off would discard a word that fits. A single word longer than the cap
+  has no boundary to retreat to and is still cut where the cap falls, which is what the cap is for.
+
 ## [0.34.0] - 2026-08-08
 
 ### Added

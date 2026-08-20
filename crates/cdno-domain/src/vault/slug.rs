@@ -23,6 +23,11 @@ pub(in crate::vault) const SLUG_MAX_CHARS: usize = 50;
 /// [`SLUG_MAX_CHARS`] so the filename stays manageable. Returns
 /// `"untitled"` if the text contains no alphanumerics.
 ///
+/// A char cap landing inside a word backs off to the preceding word
+/// boundary, so the slug never ends in a fragment (#524). The one
+/// exception is a single word longer than [`SLUG_MAX_CHARS`], which has
+/// no boundary to back off to and is cut where the cap falls.
+///
 /// Public so callers that must resolve the same template *variant* the
 /// domain will (e.g. the CLI deriving the tracking activity variant for
 /// [`Vault::template_prompts`](crate::Vault::template_prompts)) share one
@@ -44,14 +49,31 @@ pub fn slugify(text: &str) -> String {
     }
     let mut slug = words.join("-");
     if slug.chars().count() > SLUG_MAX_CHARS {
-        // Char-aware truncate, then trim any trailing partial-word
-        // dashes so the slug never ends in a stray separator.
+        // Char-aware truncate, then back off to a word boundary so the
+        // slug never ends in half a word or a stray separator (#524).
         let cut = slug
             .char_indices()
             .nth(SLUG_MAX_CHARS)
             .map(|(i, _)| i)
             .unwrap_or(slug.len());
+        // Whether the char being dropped is the separator itself. If it
+        // is, the cut already fell between two words and the last kept
+        // word is whole — backing off further would discard a word the
+        // cap left room for.
+        let cut_on_separator = slug.as_bytes().get(cut) == Some(&b'-');
         slug.truncate(cut);
+        if !cut_on_separator {
+            // The cut landed inside a word, leaving a fragment. Drop back
+            // to the last separator: the slug is the filename and the
+            // wikilink target, so a mangled word is permanent and visible
+            // everywhere the note is referenced. `rfind` returning `None`
+            // is the case the cap exists for — one word longer than
+            // `SLUG_MAX_CHARS`, which has to be cut somewhere, so the hard
+            // truncation stands rather than collapsing to nothing.
+            if let Some(sep) = slug.rfind('-') {
+                slug.truncate(sep);
+            }
+        }
         slug = slug.trim_end_matches('-').to_owned();
     }
     slug
