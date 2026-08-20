@@ -23,6 +23,8 @@ use cdno_core::path::VaultPath;
 
 use crate::bootstrap;
 use crate::completions;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role, cell};
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -317,25 +319,46 @@ fn link_to_question(
 /// Render `cdno portfolio list` output. Public so tests can assert on
 /// the formatted text without capturing stdout.
 pub fn render_list(summaries: &[PortfolioSummary]) -> String {
+    let palette = Palette::active();
+    let header = palette.paint(Role::Heading, "Portfolios");
     if summaries.is_empty() {
-        return "Portfolios\n  (no portfolios \u{2014} create one with `cdno portfolio create`)\n"
-            .to_owned();
+        return format!(
+            "{header}\n  {}\n",
+            palette.paint(
+                Role::Muted,
+                "(no portfolios \u{2014} create one with `cdno portfolio create`)"
+            )
+        );
     }
-    // slug / question / staleness columns; the question wraps to the
-    // terminal rather than running off the edge (#153).
-    let mut table = crate::output::styled_table();
-    for p in summaries {
-        let badge = match p.staleness_days {
-            Some(days) if p.evidence_count > 0 => {
-                format!("{} evidence, last {} days ago", p.evidence_count, days)
-            }
-            _ => "no evidence yet".to_owned(),
-        };
-        table.add_row(vec![p.slug.clone(), p.question.clone(), badge]);
-    }
-    // Keep the slug and staleness badge whole; only the question reflows.
-    crate::output::no_wrap_columns(&mut table, &[0, 2]);
-    format!("Portfolios\n{}\n", crate::output::render(&table))
+    // A portfolio's question is a sentence, so each becomes a card: slug
+    // as the title, staleness as the badge, and the question wrapping
+    // underneath rather than fighting the badge for width.
+    let cards: Vec<Card> = summaries
+        .iter()
+        .map(|p| {
+            let (badge, accent) = match p.staleness_days {
+                Some(days) if p.evidence_count > 0 => (
+                    format!("{} evidence, last {} days ago", p.evidence_count, days),
+                    // A portfolio nobody has fed in a month is the thing
+                    // this list exists to surface.
+                    if days > 30 {
+                        Accent::Yellow
+                    } else {
+                        Accent::Cyan
+                    },
+                ),
+                _ => ("no evidence yet".to_owned(), Accent::Grey),
+            };
+            Card::new(&p.slug)
+                .badge(badge)
+                .accent(accent)
+                .prose(&p.question)
+        })
+        .collect();
+    format!(
+        "{header}\n{}",
+        render_cards(&cards, &palette, crate::output::render_width())
+    )
 }
 
 /// Render `cdno portfolio show` output. Public for test access.
@@ -345,10 +368,26 @@ pub fn render_show(
     summary: Option<&PortfolioSummary>,
     entries: &[(VaultPath, EvidenceFrontmatter)],
 ) -> String {
-    let mut out = format!("{slug} \u{2014} {}\n", fm.question);
-    out.push_str(&format!("Created: {}\n", fm.created));
+    // A detail view, so no gutter: it renders one record and has no
+    // boundary to mark. Colour only.
+    let palette = Palette::active();
+    let mut out = format!(
+        "{} \u{2014} {}\n",
+        palette.paint(Role::Slug, slug),
+        fm.question
+    );
+    out.push_str(&format!(
+        "Created: {}\n",
+        palette.paint(Role::Meta, &fm.created.to_string())
+    ));
     let project_label = fm.project.as_deref().unwrap_or("(none)");
-    out.push_str(&format!("Project: {project_label}\n"));
+    out.push_str(&format!(
+        "Project: {}\n",
+        match fm.project.as_deref() {
+            Some(p) => palette.paint(Role::Slug, p),
+            None => palette.paint(Role::Muted, project_label),
+        }
+    ));
 
     match summary {
         Some(s) if s.evidence_count > 0 => {
@@ -376,9 +415,9 @@ pub fn render_show(
                 .map(|k| format!("[{k}] "))
                 .unwrap_or_default();
             table.add_row(vec![
-                ev.created.to_string(),
-                format!("{tag}{}", ev.source),
-                ev.origin.clone(),
+                cell(Role::Meta, ev.created.to_string()),
+                cell(Role::Prose, format!("{tag}{}", ev.source)),
+                cell(Role::Meta, &ev.origin),
             ]);
         }
         crate::output::no_wrap_columns(&mut table, &[0, 2]);

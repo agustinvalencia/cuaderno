@@ -16,6 +16,8 @@ use chrono::NaiveDate;
 use cdno_domain::{SearchFilters, SearchResultEntry};
 
 use crate::bootstrap;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role};
 
 // Thin CLI passthrough of the search flags plus `--json`; bundling them
 // into a struct would add indirection for no real gain (same rationale
@@ -92,29 +94,38 @@ pub fn build_search(
 
 /// Render search hits, ranked best-first. Pure for testability.
 pub fn render(query: &str, results: &[SearchResultEntry]) -> String {
+    let palette = Palette::active();
+    let header = palette.paint(Role::Heading, &format!("Search: {query}"));
     if results.is_empty() {
-        return format!("Search: {query}\n  (no matches)\n");
-    }
-    // One row per hit: a pinned rank column beside a block cell holding
-    // `title · type` / path / snippet. The block reflows to the terminal,
-    // so a long snippet wraps under the hit instead of overflowing (#153).
-    let mut table = crate::output::styled_table();
-    for (i, r) in results.iter().enumerate() {
-        let title = r.title.as_deref().unwrap_or("(untitled)");
-        let mut block = format!(
-            "{title}  \u{00b7}  {}\n{}",
-            r.note_type,
-            r.path.as_path().display()
+        return format!(
+            "{header}\n  {}\n",
+            palette.paint(Role::Muted, "(no matches)")
         );
-        // Collapse the snippet's internal whitespace/newlines so the cell
-        // re-wraps it cleanly to the available width.
-        let snippet: String = r.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-        if !snippet.is_empty() {
-            block.push('\n');
-            block.push_str(&snippet);
-        }
-        table.add_row(vec![format!("{}.", i + 1), block]);
     }
-    crate::output::no_wrap_columns(&mut table, &[0]);
-    format!("Search: {query}\n{}\n", crate::output::render(&table))
+    // The old rank-column-plus-block-cell layout was already a card in
+    // all but name: one pinned identifier beside a multi-line block. As
+    // a card the rank and title lead, the note type is the badge, and
+    // the path and snippet read as body behind the gutter.
+    let cards: Vec<Card> = results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let title = r.title.as_deref().unwrap_or("(untitled)");
+            // Collapse the snippet's internal whitespace so it re-wraps
+            // cleanly rather than inheriting the note's own line breaks.
+            let snippet: String = r.snippet.split_whitespace().collect::<Vec<_>>().join(" ");
+            let mut card = Card::new(format!("{}. {title}", i + 1))
+                .badge(r.note_type.to_string())
+                .accent(Accent::Cyan)
+                .meta(r.path.as_path().display().to_string());
+            if !snippet.is_empty() {
+                card = card.prose(snippet);
+            }
+            card
+        })
+        .collect();
+    format!(
+        "{header}\n{}",
+        render_cards(&cards, &palette, crate::output::render_width())
+    )
 }
