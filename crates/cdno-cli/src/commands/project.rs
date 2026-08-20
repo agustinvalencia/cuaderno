@@ -72,9 +72,15 @@ pub enum ProjectCommands {
     List,
 
     /// Show a compact summary of a single project (any status).
+    ///
+    /// The slug stays a positional — `cdno project show alpha` is what
+    /// people type — but is now optional, so an interactive run prompts
+    /// for it like `portfolio show` and `stewardship show` already do.
+    /// A trailing optional positional only *adds* the omitted form, so
+    /// every existing invocation parses unchanged.
     Show {
         #[arg(add = ArgValueCompleter::new(completions::complete_any_project))]
-        slug: String,
+        slug: Option<String>,
     },
 
     /// Manage project milestones.
@@ -178,9 +184,29 @@ pub fn run(
                 println!("{}", serde_json::to_string_pretty(&summaries)?);
             } else {
                 print!("{}", render_list(&summaries));
+                // The listing is already on screen; in a terminal, offer
+                // to open one of them rather than making the reader
+                // retype a slug they can see.
+                crate::prompt::drill_down(
+                    &summaries,
+                    "Inspect a project",
+                    interactive,
+                    |s| format!("{} ({})", s.slug, s.context.as_str()),
+                    |s| {
+                        print!("{}", render_show(s));
+                        Ok(())
+                    },
+                )?;
             }
         }
         ProjectCommands::Show { slug } => {
+            // Read-only, so no confirm step even when the slug was
+            // prompted for — nothing is being mutated.
+            let slug = match slug {
+                Some(s) => s,
+                None if interactive => crate::prompt::prompt_any_project(&vault)?,
+                None => return Err(crate::prompt::missing_flag("slug")),
+            };
             let summary = vault
                 .project_summary(&slug)
                 .context("loading project summary")?;

@@ -257,7 +257,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Show {
-            slug: "alpha".to_owned(),
+            slug: Some("alpha".to_owned()),
         },
         true,
         false,
@@ -279,7 +279,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 12, 0),
         ProjectCommands::Show {
-            slug: "alpha".to_owned(),
+            slug: Some("alpha".to_owned()),
         },
         true,
         false,
@@ -294,7 +294,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 13, 0),
         ProjectCommands::Show {
-            slug: "done".to_owned(),
+            slug: Some("done".to_owned()),
         },
         true,
         false,
@@ -324,7 +324,7 @@ fn show_renders_no_open_actions_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,
@@ -352,7 +352,7 @@ fn show_renders_state_none_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,
@@ -370,7 +370,7 @@ fn show_renders_top_action_without_energy_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,

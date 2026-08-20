@@ -110,6 +110,13 @@ pub fn run(
                 println!("{}", serde_json::to_string_pretty(&summaries)?);
             } else {
                 print!("{}", render_list(&summaries));
+                prompt::drill_down(
+                    &summaries,
+                    "Inspect a portfolio",
+                    interactive,
+                    |s| s.slug.clone(),
+                    |s| show(&vault, at, Some(s.slug.clone()), interactive, false),
+                )?;
             }
             Ok(())
         }
