@@ -94,7 +94,10 @@ anything about how it is invoked.
 
 ## Width
 
-On a terminal, output is laid out to the terminal's width as measured when the command runs. `cdno`
+On a terminal, output is laid out to the terminal's width as measured when the command runs. Text with
+nowhere to break — a long URL, a long slug, or Thai and Lao, which need dictionary-based word
+segmentation `cdno` does not yet do — runs past the edge rather than being cut, on the grounds that a
+path you can copy beats a path that fits. `cdno`
 prints once and exits, so resizing afterwards does not reflow anything already on screen — run the
 command again. Everywhere else — piped, redirected, or when the terminal reports no usable size (a
 pty opened without one reports zero columns) — it lays out to a fixed 100 columns, so captured output

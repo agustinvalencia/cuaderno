@@ -220,53 +220,65 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
             if trimmed.is_empty() {
                 return vec![String::new()];
             }
-            textwrap::wrap(trimmed, options(trimmed, width))
-                .into_iter()
-                .map(|line| line.trim_end().to_owned())
-                .collect::<Vec<_>>()
+            wrap_segment(trimmed, width)
         })
         .collect()
 }
 
-/// Wrapping options for one segment.
+/// Wrap one already-sanitised segment, reaching for UAX #14 only where
+/// plain whitespace splitting cannot cope.
 ///
-/// The word separator is chosen per segment, and that choice is the whole
-/// point of this function.
+/// Two properties have to hold at once, and a single word separator
+/// cannot give both. Scripts with no ASCII spaces — Chinese, Japanese —
+/// need UAX #14 break opportunities or they are one unbreakable word and
+/// never wrap. But UAX #14 also breaks after `/`, `?`, `=` and `&`, which
+/// splits paths and URLs across lines and makes them uncopyable, and a
+/// path is exactly what `search` puts in a card body.
 ///
-/// Scripts with no ASCII spaces — Chinese and Japanese — need UAX #14
-/// break opportunities or they are one unbreakable word and never wrap.
-/// But UAX #14 also breaks after `/`, `?`, `=` and `&`, which splits
-/// paths and URLs across lines and makes them uncopyable — and a path is
-/// exactly what `search` puts in a card body. Breaking it buys nothing:
-/// the fragment before the break is usually a few columns and the rest
-/// still overflows.
+/// So: split on whitespace first, then re-wrap only those lines that
+/// *still* overflow **and** contain a wide character. A long URL
+/// overflows but has no wide character, so it is left whole; a run of CJK
+/// overflows and does have one, so it gets its break opportunities. The
+/// decision is per line rather than per segment, which matters more than
+/// it sounds: an emoji is a wide character, and "Shipped 🎉 see <url>"
+/// is ordinary prose in this product's own idiom — deciding per segment
+/// would let one emoji cost the URL its integrity.
 ///
-/// So: UAX #14 only for segments that actually contain wide characters,
-/// and plain whitespace splitting otherwise.
-///
-/// Thai, Lao, Khmer and Myanmar are a known gap. They have no ASCII
-/// spaces either, but their characters are one column wide, so this test
-/// does not select them — and routing them to UAX #14 would not help:
-/// they are class SA (complex context), which needs dictionary-based
-/// segmentation that `unicode-linebreak` does not implement. Measured,
-/// both separators leave a Thai paragraph on one line. They overflow
-/// like an over-long token until something like `icu_segmenter` is
-/// worth the dependency. A segment mixing CJK with a
-/// long URL will still break the URL; that is rare enough to accept, and
-/// it is a considered trade rather than a side effect.
-fn options(segment: &str, width: usize) -> textwrap::Options<'static> {
-    let base = textwrap::Options::new(width)
-        .break_words(false)
-        .word_splitter(textwrap::WordSplitter::NoHyphenation)
-        // Greedy, not optimal-fit: a card is read top-to-bottom and the
-        // first line should take as much as it can. Named explicitly so
-        // enabling `smawk` later cannot silently change the layout.
-        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
-    if segment.chars().any(is_wide) {
-        base.word_separator(textwrap::WordSeparator::UnicodeBreakProperties)
-    } else {
-        base.word_separator(textwrap::WordSeparator::AsciiSpace)
-    }
+/// Thai, Lao, Khmer and Myanmar remain a known gap. They are spaceless
+/// too, but their characters are one column wide so no line is ever
+/// selected for the retry — and routing them there would not help
+/// anyway: they are UAX #14 class SA (complex context), needing
+/// dictionary-based segmentation that `unicode-linebreak` does not
+/// implement. Measured, both separators leave a Thai paragraph on one
+/// line. They overflow like an over-long token until something such as
+/// `icu_segmenter` earns its place.
+fn wrap_segment(segment: &str, width: usize) -> Vec<String> {
+    let base = || {
+        textwrap::Options::new(width)
+            .break_words(false)
+            .word_splitter(textwrap::WordSplitter::NoHyphenation)
+            // Greedy, not optimal-fit: a card is read top-to-bottom and
+            // the first line should take as much as it can. Named
+            // explicitly so enabling `smawk` later cannot silently change
+            // the layout.
+            .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit)
+    };
+    let by_space = base().word_separator(textwrap::WordSeparator::AsciiSpace);
+    let by_uax = base().word_separator(textwrap::WordSeparator::UnicodeBreakProperties);
+
+    textwrap::wrap(segment, by_space)
+        .into_iter()
+        .flat_map(|line| {
+            if display_width(&line) > width && line.chars().any(is_wide) {
+                textwrap::wrap(&line, by_uax.clone())
+                    .into_iter()
+                    .map(|l| l.trim_end().to_owned())
+                    .collect::<Vec<_>>()
+            } else {
+                vec![line.trim_end().to_owned()]
+            }
+        })
+        .collect()
 }
 
 /// Whether `c` occupies two terminal columns — the marker for a script

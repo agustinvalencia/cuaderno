@@ -68,6 +68,9 @@ pub fn init(choice: ColourChoice) {
 /// preference about their own terminal, whereas `CLICOLOR_FORCE` is
 /// typically set by a harness that has no standing to override it.
 pub fn colour_enabled() -> bool {
+    if let Some(forced) = OVERRIDE.with(std::cell::Cell::get) {
+        return forced;
+    }
     match colorchoice::ColorChoice::global() {
         colorchoice::ColorChoice::Never => false,
         colorchoice::ColorChoice::Always | colorchoice::ColorChoice::AlwaysAnsi => true,
@@ -77,6 +80,35 @@ pub fn colour_enabled() -> bool {
                 && (anstyle_query::clicolor_force() || std::io::stdout().is_terminal())
         }
     }
+}
+
+thread_local! {
+    /// A scoped override of the process gate, for tests.
+    static OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Run `f` with colour forced on or off, then restore.
+///
+/// Every `render_*` in this crate reads the process gate internally, and
+/// that gate is write-once and resolved from a terminal the test suite
+/// does not have. So a rendered listing carries no colour under test, and
+/// no assertion can reach the colour a renderer *chose* — which is how a
+/// mapping from status or context to `Role` can be collapsed to one value
+/// at the call site with the whole suite still green.
+///
+/// Thread-local rather than global because integration tests share a
+/// process and run in parallel; scoped rather than set-once so two tests
+/// can want different answers. The guard restores the previous value even
+/// if `f` panics, so a failing assertion cannot leak into its neighbours.
+pub fn with_colour<R>(on: bool, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<bool>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            OVERRIDE.with(|o| o.set(self.0));
+        }
+    }
+    let _guard = Restore(OVERRIDE.with(|o| o.replace(Some(on))));
+    f()
 }
 
 /// What a run of text *is*, which is what decides how it looks.
@@ -279,11 +311,18 @@ pub fn cell(role: Role, text: impl Into<String>) -> comfy_table::Cell {
     use comfy_table::{Attribute, Cell};
 
     let style = palette(role);
-    // Sanitised here because this is the one funnel every table cell
-    // carrying note text goes through — commitment titles, evidence
-    // sources, lapsed-habit details. Without it `cdno orient` could emit
-    // a raw `ESC[2J` from a commitment title three lines above the
-    // sanitised card that quotes the same string.
+    // Sanitised here because this is the one funnel every note-derived
+    // table cell goes through — commitment titles, evidence sources,
+    // lapsed-habit details. Without it `cdno orient` could emit a raw
+    // `ESC[2J` from a commitment title three lines above the sanitised
+    // card that quotes the same string.
+    //
+    // Note this also replaces `\n`, so a cell cannot be multi-line. No
+    // caller passes one today, but `orient` used
+    // `format!("{}\nnext: {}", …)` until cards replaced it — if a
+    // multi-line cell is ever wanted again, sanitise per line and join.
+    // (`templates vars` is the one `add_row` that bypasses this; it
+    // carries config-authored placeholder names, not note text.)
     let mut cell = Cell::new(super::sanitise(&text.into()));
     if let Some(anstyle::Color::Ansi(colour)) = style.get_fg_color() {
         cell = cell.fg(to_comfy(colour));

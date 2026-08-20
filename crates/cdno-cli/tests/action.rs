@@ -467,3 +467,35 @@ fn an_empty_action_listing_hugs_its_title() {
         "empty listing should hug its title: {out:?}"
     );
 }
+
+#[test]
+fn a_rendered_listing_actually_uses_the_status_role() {
+    // Same shape: `status_role` being correct does not prove
+    // `render_list` calls it. Collapsing the three statuses at the call
+    // site survived every other test in this file.
+    use cdno_cli::output::style::with_colour;
+    use cdno_domain::ActionListEntry;
+    use cdno_domain::frontmatter::ActionStatus;
+
+    let entry = |text: &str, status: ActionStatus| ActionListEntry {
+        text: text.to_owned(),
+        energy: None,
+        attached: Some(cdno_domain::AttachedAction {
+            slug: text.to_owned(),
+            status,
+        }),
+    };
+    let entries = vec![
+        entry("blocked one", ActionStatus::Blocked),
+        entry("done one", ActionStatus::Completed),
+        entry("active one", ActionStatus::Active),
+    ];
+    let out = with_colour(true, || action::render_list("x", &entries));
+    let styling_of = |needle: &str| -> String {
+        let line = out.lines().find(|l| l.contains(needle)).expect("a bullet");
+        sgr_of(line)
+    };
+    assert_ne!(styling_of("blocked one"), styling_of("active one"));
+    assert_ne!(styling_of("done one"), styling_of("active one"));
+    assert_ne!(styling_of("blocked one"), styling_of("done one"));
+}

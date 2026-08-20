@@ -137,3 +137,27 @@ fn a_table_without_colour_emits_no_escapes() {
         "colour off must mean no escapes: {out:?}"
     );
 }
+
+#[test]
+fn styled_table_asks_the_process_gate_rather_than_assuming() {
+    // `styled_table` is one line of wiring with no logic, so replacing
+    // `colour_enabled()` with a constant is invisible to a suite that has
+    // no terminal. `with_colour` forces the gate for the length of the
+    // call, which makes the wiring observable.
+    use cdno_cli::output::style::{Role, cell, with_colour};
+    let painted = with_colour(true, || {
+        let mut t = styled_table();
+        t.add_row(vec![cell(Role::Slug, "alpha")]);
+        render(&t)
+    });
+    let plain = with_colour(false, || {
+        let mut t = styled_table();
+        t.add_row(vec![cell(Role::Slug, "alpha")]);
+        render(&t)
+    });
+    assert!(
+        painted.contains('\u{1b}'),
+        "gate on should paint: {painted:?}"
+    );
+    assert!(!plain.contains('\u{1b}'), "gate off should not: {plain:?}");
+}

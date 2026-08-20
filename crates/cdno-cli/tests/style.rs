@@ -168,10 +168,15 @@ fn staleness_reads_off_the_gutter() {
     );
 }
 
-/// The SGR parameters a rendered string carries, canonicalised so the
-/// two encodings of a base-16 colour compare equal: anstyle writes
+/// The *opening* SGR parameters a rendered string carries, canonicalised
+/// so the two encodings of a base-16 colour compare equal: anstyle writes
 /// `ESC[36m` while comfy-table (via crossterm) writes `ESC[38;5;6m`, and
 /// both mean colour index 6.
+///
+/// Resets are deliberately out of scope: the card path closes a span with
+/// `ESC[0m` and the table path with `ESC[39m` for colour-only roles, a
+/// difference that changes nothing on screen. Comparing them would fail
+/// for no reason a reader would care about.
 fn sgr_facts(text: &str) -> (Option<u8>, bool, bool) {
     let (mut colour, mut bold, mut dim) = (None, false, false);
     for chunk in text.split('\u{1b}').skip(1) {

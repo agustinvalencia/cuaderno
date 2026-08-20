@@ -733,3 +733,34 @@ fn show_names_an_absent_state() {
     let out = render_show(&summary("alpha", Context::Work, ""));
     assert!(out.contains("  State: (none)"), "{out}");
 }
+
+#[test]
+fn a_rendered_listing_actually_uses_the_context_accent() {
+    // `Accent::for_context` being right is not the same as the renderer
+    // using it: replacing the accent with a constant at the call site
+    // left every test green, because `render_list` reads the process
+    // colour gate and the suite has no terminal. `with_colour` forces the
+    // gate for the length of the call so the choice is observable.
+    use cdno_cli::output::style::with_colour;
+    let summaries = [
+        summary("alpha", Context::Work, "state one"),
+        summary("beta", Context::Family, "state two"),
+    ];
+    let out = with_colour(true, || render_list(&summaries));
+
+    let gutter_of = |slug: &str| -> String {
+        out.lines()
+            .find(|l| l.contains(slug))
+            .map(|l| l.split('▎').next().unwrap_or("").to_owned())
+            .expect("a card header")
+    };
+    assert_ne!(
+        gutter_of("alpha"),
+        gutter_of("beta"),
+        "a work project and a family project must not share a gutter colour:\n{out}"
+    );
+    assert!(
+        out.contains('\u{1b}'),
+        "forcing colour should paint:\n{out}"
+    );
+}

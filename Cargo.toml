@@ -89,8 +89,10 @@ crossterm = { version = "0.29", default-features = false }
 # Word wrapping for the card renderer. `unicode-width` measures display
 # columns so wide characters are counted as two; `unicode-linebreak`
 # supplies the UAX #14 break opportunities, without which text that has
-# no ASCII spaces — Chinese, Japanese, Thai — is treated as one
-# unbreakable word and never wraps at all. `smawk` is left off: that is
+# no ASCII spaces — Chinese and Japanese — is treated as one unbreakable
+# word and never wraps at all. (Thai, Lao and Khmer are spaceless too but
+# are UAX #14 class SA, which needs dictionary segmentation this crate
+# does not implement; see `output/card.rs`.) `smawk` is left off: that is
 # the optimal-fit algorithm, and a terminal card wants the greedy
 # first-fit pass (see `WrapAlgorithm::FirstFit` in `output/card.rs`).
 textwrap = { version = "0.16", default-features = false, features = [

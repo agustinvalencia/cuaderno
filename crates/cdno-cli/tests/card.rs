@@ -138,12 +138,18 @@ fn body_text_wraps_within_the_available_width() {
 }
 
 #[test]
-fn text_without_ascii_spaces_still_wraps() {
-    // Chinese, Japanese and Thai have no ASCII spaces, so a wrapper with
-    // only `WordSeparator::AsciiSpace` sees one unbreakable word and
-    // never wraps at all — the paragraph runs off the terminal at any
-    // width. That is what happens without textwrap's `unicode-linebreak`
+fn wide_text_without_ascii_spaces_still_wraps() {
+    // Chinese and Japanese have no ASCII spaces, so a wrapper with only
+    // `WordSeparator::AsciiSpace` sees one unbreakable word and never
+    // wraps at all — the paragraph runs off the terminal at any width.
+    // That is what happens without textwrap's `unicode-linebreak`
     // feature, and it is why the feature is enabled.
+    //
+    // The name says *wide* deliberately: Thai and Lao are spaceless too
+    // and are not covered, for reasons pinned in
+    // `thai_is_a_known_gap_rather_than_a_surprise`. Naming this test for
+    // the general property while testing one script is the fixture-too-
+    // narrow mistake that let the path-breaking regression through.
     let cjk = "中文测试文字".repeat(20);
     let cards = vec![Card::new("cjk").prose(cjk)];
     let out = render_cards(&cards, &Palette::plain(), 40);
@@ -425,4 +431,41 @@ fn thai_is_a_known_gap_rather_than_a_surprise() {
         display_width(body[0]) > 40,
         "and therefore overflows, like an over-long token"
     );
+}
+
+#[test]
+fn one_wide_character_does_not_cost_a_url_its_integrity() {
+    // The separator is chosen per *line*, not per segment. Deciding per
+    // segment meant any wide character routed the whole thing to UAX #14,
+    // which breaks after `/`, `?`, `=` and `&` — and the common wide
+    // character in prose is an emoji, not CJK. "Shipped 🎉 see <url>" is
+    // ordinary in this product's own idiom.
+    let url = "https://example.com/one/two/three/four?query=1&other=2";
+    for text in [
+        format!("Shipped 🎉 see {url} now"),
+        format!("See {url} now"),
+        format!("中文测试 {url} 结束"),
+    ] {
+        let cards = vec![Card::new("s").prose(text.clone())];
+        let out = render_cards(&cards, &Palette::plain(), 40);
+        assert!(
+            out.lines().any(|l| l.contains(url)),
+            "the URL was split in {text:?}:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn a_wide_run_still_wraps_when_it_shares_a_line_with_prose() {
+    // The other half of the same property: a line that overflows *and*
+    // carries wide characters must still get its break opportunities.
+    let cards = vec![Card::new("s").prose(format!("note {} end", "中文测试文字".repeat(12)))];
+    let out = render_cards(&cards, &Palette::plain(), 40);
+    for line in out.lines() {
+        assert!(
+            display_width(line) <= 40,
+            "{} columns, budget 40: {line:?}",
+            display_width(line)
+        );
+    }
 }
