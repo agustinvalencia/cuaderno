@@ -15,9 +15,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   fragment rather than a stray dash, so only half of the stated intent was ever implemented. Nothing
   misbehaved as a result, but the slug is the filename and the wikilink target, so the mangled word
   is permanent and visible everywhere the note is referenced. The cut now backs off to the preceding
-  word boundary — unless the cap fell on the separator itself, in which case the last kept word is
-  already whole and backing off would discard a word that fits. A single word longer than the cap
-  has no boundary to retreat to and is still cut where the cap falls, which is what the cap is for.
+  word boundary, with three cases deliberately left on the hard cut: the cap falling on the
+  separator itself, where the last kept word is already whole and retreating would discard a word
+  that fits; the *first* word overrunning the cap, which leaves no boundary to retreat to however
+  many words follow it; and a retreat that would leave less than half the cap, since a long word
+  starting early would otherwise trade fifty informative chars for a handful — and slugs collapsed
+  onto a shared prefix collide, which `cdno portfolio create` reports as `AlreadyExists` rather than
+  disambiguating away. Note that a title crossing the cap now yields a different slug than it did
+  before: a note created earlier and referred to by re-deriving its slug from the same text will no
+  longer be found, so a portfolio silently loses the backlink to a long-titled question, and a
+  commitment naming a long-titled stewardship writes a link `cdno lint` reports as dangling.
 
 ## [0.34.0] - 2026-08-08
 

@@ -59,6 +59,39 @@ fn slugify_still_truncates_a_single_word_longer_than_the_char_cap() {
 }
 
 #[test]
+fn slugify_truncates_a_first_word_that_overruns_the_cap_whatever_follows() {
+    // The no-boundary exception is about the *first* word, not about the
+    // title holding only one: words after it never reach the kept text,
+    // so there is still no separator to retreat to.
+    assert_eq!(slugify(&format!("{} tail", "a".repeat(60))), "a".repeat(50));
+}
+
+#[test]
+fn slugify_keeps_the_hard_cut_when_a_retreat_would_gut_the_slug() {
+    // A long word starting early puts the preceding boundary near the
+    // front, so retreating would trade 50 informative chars for 8 — and
+    // slugs collapsed onto a shared prefix collide, which
+    // `create_portfolio` reports as `AlreadyExists` rather than
+    // disambiguating. Below the floor the word is simply long enough to
+    // be the same pathological case a first word of that length is, so
+    // the cap cuts it where it falls.
+    let title = format!("ab cd ef {}", "g".repeat(45));
+    assert_eq!(slugify(&title), format!("ab-cd-ef-{}", "g".repeat(41)));
+}
+
+#[test]
+fn slugify_retreats_when_it_leaves_exactly_the_floor() {
+    // The floor is inclusive: two twelve-char words put the separator at
+    // char 25, exactly `SLUG_MIN_AFTER_RETREAT`, and the retreat is taken
+    // rather than declined. Pins which side of the boundary `>=` sits on.
+    let title = format!("{} {} {}", "a".repeat(12), "b".repeat(12), "c".repeat(30));
+    assert_eq!(
+        slugify(&title),
+        format!("{}-{}", "a".repeat(12), "b".repeat(12)),
+    );
+}
+
+#[test]
 fn slugify_counts_chars_not_bytes_when_the_cap_bites() {
     // The cap is char-aware, and the boundary check that follows it reads
     // a byte at that char index -- so a multi-byte word is the input that

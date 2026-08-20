@@ -18,15 +18,31 @@ pub(in crate::vault) const SLUG_MAX_WORDS: usize = 6;
 /// truncated so a pathological input can't blow filesystem name limits.
 pub(in crate::vault) const SLUG_MAX_CHARS: usize = 50;
 
+/// Floor on what backing off to a word boundary may leave (#524).
+///
+/// The retreat exists to avoid a mangled fragment, but a long word
+/// starting early puts the preceding boundary near the front of the
+/// slug: `ab cd ef <45-char word>` would retreat from 50 chars to 8,
+/// discarding most of what makes the filename recognisable — and slugs
+/// that collapse to a shared prefix collide, which
+/// [`Vault::create_portfolio`](crate::Vault::create_portfolio) reports
+/// as `AlreadyExists` rather than disambiguating away. Below this floor
+/// the word being cut is long enough to be the pathological case the
+/// char cap exists for, so it is cut where the cap falls — exactly as a
+/// *first* word of the same length already is.
+pub(in crate::vault) const SLUG_MIN_AFTER_RETREAT: usize = SLUG_MAX_CHARS / 2;
+
 /// Build a slug from the first words of `text`: lowercase
 /// alphanumerics joined by `-`, capped to [`SLUG_MAX_WORDS`] /
 /// [`SLUG_MAX_CHARS`] so the filename stays manageable. Returns
 /// `"untitled"` if the text contains no alphanumerics.
 ///
 /// A char cap landing inside a word backs off to the preceding word
-/// boundary, so the slug never ends in a fragment (#524). The one
-/// exception is a single word longer than [`SLUG_MAX_CHARS`], which has
-/// no boundary to back off to and is cut where the cap falls.
+/// boundary, so the slug ends on a whole word (#524). Two cases are
+/// exempt, and both are a word too long to keep whole: the *first* word
+/// overrunning the cap, which leaves no boundary to retreat to however
+/// many words follow it, and a retreat that would leave less than
+/// [`SLUG_MIN_AFTER_RETREAT`] chars. Both are cut where the cap falls.
 ///
 /// Public so callers that must resolve the same template *variant* the
 /// domain will (e.g. the CLI deriving the tracking activity variant for
@@ -50,7 +66,7 @@ pub fn slugify(text: &str) -> String {
     let mut slug = words.join("-");
     if slug.chars().count() > SLUG_MAX_CHARS {
         // Char-aware truncate, then back off to a word boundary so the
-        // slug never ends in half a word or a stray separator (#524).
+        // slug ends on a whole word rather than a fragment (#524).
         let cut = slug
             .char_indices()
             .nth(SLUG_MAX_CHARS)
@@ -66,15 +82,25 @@ pub fn slugify(text: &str) -> String {
             // The cut landed inside a word, leaving a fragment. Drop back
             // to the last separator: the slug is the filename and the
             // wikilink target, so a mangled word is permanent and visible
-            // everywhere the note is referenced. `rfind` returning `None`
-            // is the case the cap exists for — one word longer than
-            // `SLUG_MAX_CHARS`, which has to be cut somewhere, so the hard
-            // truncation stands rather than collapsing to nothing.
-            if let Some(sep) = slug.rfind('-') {
+            // everywhere the note is referenced.
+            //
+            // Two ways the retreat is declined, both meaning the word
+            // being cut is too long to keep whole. `rfind` finds no
+            // separator when the first word alone overruns the cap, and
+            // `SLUG_MIN_AFTER_RETREAT` refuses a retreat that would give
+            // up most of the slug to save one fragment. Either way the
+            // hard truncation stands, which is what the cap is for.
+            if let Some(sep) = slug.rfind('-')
+                && slug[..sep].chars().count() >= SLUG_MIN_AFTER_RETREAT
+            {
                 slug.truncate(sep);
             }
         }
-        slug = slug.trim_end_matches('-').to_owned();
+        // No trailing-dash trim: every path above now ends on a word
+        // char. A cut on the separator keeps the text before it, the
+        // retreat truncates *at* a separator, and a declined retreat can
+        // only happen when the last separator sits below the floor —
+        // which a slug ending in one never does.
     }
     slug
 }
