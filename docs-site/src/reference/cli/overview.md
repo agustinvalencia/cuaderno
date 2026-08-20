@@ -17,7 +17,7 @@ These apply to every command:
 |------|--------|
 | `--vault <PATH>` | Operate on the vault at `PATH`. Overrides both discovery and `CUADERNO_VAULT_PATH`. |
 | `--json` | Emit machine-readable JSON instead of a formatted table (see below). |
-| `--no-interactive` | Never prompt; a missing required argument is an error. Implicit when stdout isn't a TTY. Also turns off interactive reports. |
+| `--no-interactive` | Never prompt; a missing required argument is an error. Implicit unless both stdin and stdout are TTYs. Also turns off interactive reports. |
 | `--color <WHEN>` | `auto` (default), `always`, or `never`. See [Colour and interactivity](../colour-and-interactivity.md). Spelled `--colour` too. |
 | `-h, --help` | Print help. |
 | `-V, --version` | Print the version (top level only). |
@@ -35,7 +35,8 @@ Write commands follow one convention (the "flags-and-prompts" pattern):
 
 - **Interactive terminal, missing a required flag** → `cdno` prompts for it, then asks you to confirm
   before writing.
-- **Non-interactive** (piped, redirected, in CI, or `--no-interactive`) → a missing required flag is
+- **Non-interactive** (either stream not a terminal — piped, redirected, `< /dev/null`, or running
+  in CI, which is the usual reason neither is — or `--no-interactive`) → a missing required flag is
   an error. Supply every flag and the command runs unattended.
 
 This means the same command serves a human at a prompt and a script with no changes.

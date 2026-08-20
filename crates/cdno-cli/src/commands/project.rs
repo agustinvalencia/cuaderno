@@ -161,7 +161,7 @@ pub fn run(
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
-    let interactive = crate::prompt::is_interactive(no_interactive || json);
+    let interactive = crate::prompt::reports_interactively(no_interactive, json);
     match command {
         ProjectCommands::Create {
             title,
@@ -597,10 +597,13 @@ pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
         // Same shape as every other empty listing: a painted title, then
         // an indented dim parenthetical. This used to be a bare
         // `No active projects.` with no title, no indent, and no colour
-        // — the only empty state in the CLI that looked like that.
+        // — the only empty state in the CLI that looked like that. The
+        // title stays constant whether or not there are any, as
+        // `Portfolios` and `Stewardships` do; the parenthetical is what
+        // carries the emptiness.
         return format!(
             "{}\n  {}\n",
-            palette.paint(Role::Heading, "No active projects"),
+            palette.paint(Role::Heading, "Active projects"),
             palette.paint(
                 Role::Muted,
                 "(none — create one with `cdno project create`)"
@@ -670,14 +673,20 @@ pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
     } else {
         out.push_str(&format!("  {}\n", palette.paint(Role::Heading, "State:")));
         for line in summary.state_snippet.lines() {
-            out.push_str(&format!("    {line}\n"));
+            // Same sanitising the listing applies. Without it, picking a
+            // row out of `project list` would hand back the escapes the
+            // listing had just neutralised.
+            out.push_str(&format!("    {}\n", crate::output::sanitise(line)));
         }
     }
     let top = match &summary.top_action {
-        Some(action) => match action.energy {
-            Some(energy) => format!("{} ({})", action.text, energy.as_str()),
-            None => action.text.clone(),
-        },
+        Some(action) => {
+            let text = crate::output::sanitise(&action.text);
+            match action.energy {
+                Some(energy) => format!("{text} ({})", energy.as_str()),
+                None => text,
+            }
+        }
         None => palette.paint(Role::Muted, "(no open actions)"),
     };
     out.push_str(&format!(

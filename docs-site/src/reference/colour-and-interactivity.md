@@ -81,8 +81,9 @@ skipped entirely when:
 
 - **either** stdin or stdout is not a terminal — piped, redirected, `< /dev/null`, a background job,
   or running under CI, which is the usual reason neither end is a terminal,
-- `--no-interactive` is passed, or
-- `--json` is passed.
+- `--no-interactive` is passed,
+- `--json` is passed, or
+- the terminal is narrower than 20 columns, which is too narrow to draw a picker in.
 
 Both streams matter: the listing is written to stdout but the picker reads stdin, so a caller with a
 terminal on only one end is not offered the prompt. There is no separate CI detection — a CI job has
@@ -99,6 +100,8 @@ command again. Everywhere else — piped, redirected, or when the terminal repor
 pty opened without one reports zero columns) — it lays out to a fixed 100 columns, so captured output
 is deterministic and diffable.
 
-Text from your notes is sanitised before it is laid out: tabs become spaces, and carriage returns and
-escape sequences are replaced. A note is data, and without this a stray escape in a note could repaint
-the terminal, move the cursor, or draw over the card's own gutter.
+Text from your notes is sanitised before it is laid out — in listings and in `show` views alike, and
+in card titles as well as bodies. Tabs and carriage returns become spaces; other control characters,
+including escape sequences, are replaced. A note is data, and without this a stray escape in a note
+could repaint the terminal, move the cursor, or draw over the card's own gutter. The raw markdown is
+of course untouched, and `cdno note` still prints paths verbatim.
