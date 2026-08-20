@@ -25,7 +25,7 @@
 use std::io::IsTerminal;
 
 use anstyle::{AnsiColor, Style};
-use cdno_domain::frontmatter::Context;
+use cdno_domain::frontmatter::{Context, QuestionDomain};
 
 /// The `--color` flag's three settings.
 ///
@@ -136,6 +136,15 @@ impl Accent {
         }
     }
 
+    /// The gutter colour for a question's domain, so research and life
+    /// questions stay distinguishable when the two lists sit together.
+    pub fn for_question(domain: QuestionDomain) -> Self {
+        match domain {
+            QuestionDomain::Research => Accent::Cyan,
+            QuestionDomain::Life => Accent::Green,
+        }
+    }
+
     fn style(self) -> Style {
         let colour = match self {
             Accent::Blue => AnsiColor::Blue,
@@ -222,5 +231,34 @@ impl Palette {
             return text.to_owned();
         }
         format!("{}{text}{}", style.render(), style.render_reset())
+    }
+}
+
+/// A table cell painted for `role`.
+///
+/// Tables take this route rather than [`Palette::paint`] because
+/// comfy-table measures column widths from the raw cell text: handing it
+/// a string with escape bytes already in it would make every styled
+/// column believe it is several characters wider than it looks. Styling
+/// the `Cell` instead lets comfy-table measure the content and emit the
+/// escapes itself, at render time.
+///
+/// There is no palette parameter, and no gate here: [`super::styled_table`]
+/// has already told the table whether to emit styling at all, via
+/// `enforce_styling` / `force_no_tty`. A cell built here is therefore
+/// safe to use unconditionally.
+pub fn cell(role: Role, text: impl Into<String>) -> comfy_table::Cell {
+    use comfy_table::{Attribute, Cell, Color};
+
+    let cell = Cell::new(text.into());
+    match role {
+        Role::Slug => cell.fg(Color::Cyan).add_attribute(Attribute::Bold),
+        Role::Badge => cell.fg(Color::Magenta).add_attribute(Attribute::Dim),
+        Role::Heading => cell.add_attribute(Attribute::Bold),
+        Role::Prose => cell,
+        Role::Meta | Role::Muted => cell.add_attribute(Attribute::Dim),
+        Role::Warn => cell.fg(Color::Yellow),
+        Role::Error => cell.fg(Color::Red).add_attribute(Attribute::Bold),
+        Role::Success => cell.fg(Color::Green),
     }
 }

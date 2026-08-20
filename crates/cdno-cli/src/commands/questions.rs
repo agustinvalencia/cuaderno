@@ -14,6 +14,8 @@ use cdno_domain::QuestionSummary;
 use cdno_domain::frontmatter::QuestionDomain;
 
 use crate::bootstrap;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role};
 
 pub fn run(root: &Path, json: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
@@ -33,7 +35,8 @@ pub fn run(root: &Path, json: bool) -> Result<()> {
 /// seam as `cdno orient` / `cdno commitments` / `cdno portfolio
 /// list`).
 pub fn render(active: &[QuestionSummary]) -> String {
-    let mut out = String::from("Active questions\n");
+    let palette = Palette::active();
+    let mut out = format!("{}\n", palette.paint(Role::Heading, "Active questions"));
     if active.is_empty() {
         out.push_str(
             "  (none \u{2014} create one with `cdno question create --domain research --text ...`)\n",
@@ -49,23 +52,32 @@ pub fn render(active: &[QuestionSummary]) -> String {
         if in_domain.is_empty() {
             continue;
         }
-        out.push_str(&format!("\n{}\n", capitalise_first(domain.as_str())));
-        // One borderless slug/question table per domain so the question
-        // column wraps to the terminal instead of running off the edge
-        // (#153). The shared preset keeps every list command consistent.
-        let mut table = crate::output::styled_table();
-        for q in in_domain {
-            let text = if q.question_text.is_empty() {
-                "(no H1)".to_owned()
-            } else {
-                q.question_text.clone()
-            };
-            table.add_row(vec![q.slug.clone(), text]);
-        }
-        // Keep the slug whole; only the question text reflows.
-        crate::output::no_wrap_columns(&mut table, &[0]);
-        out.push_str(&crate::output::render(&table));
-        out.push('\n');
+        // The heading hugs its section, matching the table sections in
+        // `cdno orient`; the blank line is what separates one card from
+        // the next, so spending one here too would blur the two.
+        out.push_str(&format!(
+            "\n{}\n",
+            palette.paint(Role::Heading, &capitalise_first(domain.as_str()))
+        ));
+        // A research question is a sentence, not a field, so each one is
+        // a card: the slug reads as a title and the question wraps below
+        // it, rather than the two competing for width in one row.
+        let cards: Vec<Card> = in_domain
+            .iter()
+            .map(|q| {
+                let card = Card::new(&q.slug).accent(Accent::for_question(q.domain));
+                if q.question_text.is_empty() {
+                    card.muted("(no H1)")
+                } else {
+                    card.prose(&q.question_text)
+                }
+            })
+            .collect();
+        out.push_str(&render_cards(
+            &cards,
+            &palette,
+            crate::output::render_width(),
+        ));
     }
     out
 }

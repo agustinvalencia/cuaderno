@@ -12,6 +12,7 @@ use cdno_domain::OrientationContext;
 
 use crate::bootstrap;
 use crate::commands::orient::project_next;
+use crate::output::style::{Role, cell};
 
 /// Print a quick status snapshot for the vault at `root` as of `today`.
 pub fn run(root: &Path, today: NaiveDate, json: bool) -> Result<()> {
@@ -38,21 +39,38 @@ pub fn build_status(root: &Path, today: NaiveDate) -> Result<String> {
 }
 
 fn render(ctx: &OrientationContext) -> String {
+    let palette = crate::output::style::Palette::active();
+    // Deliberately still a table, not cards. `status` is the lean
+    // snapshot next to `orient`'s fuller view; giving each project three
+    // gutter lines here would make the quick check taller than the
+    // considered one.
     let mut out = format!(
-        "{} active project{}, {} commitment{} due soon\n\n",
-        ctx.projects.len(),
-        plural(ctx.projects.len()),
-        ctx.commitments.len(),
-        plural(ctx.commitments.len()),
+        "{}\n\n",
+        palette.paint(
+            Role::Heading,
+            &format!(
+                "{} active project{}, {} commitment{} due soon",
+                ctx.projects.len(),
+                plural(ctx.projects.len()),
+                ctx.commitments.len(),
+                plural(ctx.commitments.len()),
+            )
+        )
     );
 
     if ctx.projects.is_empty() {
-        out.push_str("  (no active projects)\n");
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(Role::Muted, "(no active projects)")
+        ));
     } else {
         // slug column stays whole; the next-action reflows (#153).
         let mut table = crate::output::styled_table();
         for p in &ctx.projects {
-            table.add_row(vec![p.slug.clone(), format!("next: {}", project_next(p))]);
+            table.add_row(vec![
+                cell(Role::Slug, &p.slug),
+                cell(Role::Meta, format!("next: {}", project_next(p))),
+            ]);
         }
         crate::output::no_wrap_columns(&mut table, &[0]);
         out.push_str(&crate::output::render(&table));
