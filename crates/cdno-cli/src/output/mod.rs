@@ -12,6 +12,7 @@
 //! binary. (The MCP stdout channel is JSON-RPC and never touches this
 //! module — table code is only ever on the CLI path.)
 
+pub mod card;
 pub mod style;
 
 use std::io::IsTerminal;
