@@ -6,6 +6,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **A freshly created stewardship warned on its own scaffolding** (#515). The shipped template
+  seeded `## Periodic Commitments` with an example of the line shape, written as a bullet — so the
+  dashboard lint read it as data, fed it to `parse_periodic_line`, and reported the literal
+  `YYYY-MM-DD` standing in for the date as an unparseable date. Every stewardship therefore carried
+  a warning from the moment `cdno stewardship create` returned, about a line nobody had typed, and
+  that warning is the first thing a new user sees after creating one. A lint that fires on untouched
+  scaffolding teaches its reader to skip lint output, which is the opposite of what a near-miss
+  diagnostic is for. The placeholder is now prose, in the same parenthesised style the template's
+  `## Current Status` already uses: it still shows the shape with its em dashes intact, ready to
+  copy, but no longer presents as a parseable line. Prose inside the section was already exempt from
+  the scan by design, so the lint rule itself is unchanged.
+
 ## [0.34.0] - 2026-08-08
 
 ### Added

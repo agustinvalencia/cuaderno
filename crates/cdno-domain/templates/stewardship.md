@@ -9,7 +9,7 @@ context: {{context}}
 (Pending. Update at month or quarter boundaries.)
 
 ## Periodic Commitments
-- Example item — yearly — next: YYYY-MM-DD
+(One bullet each, shaped `Title — recurrence — next: YYYY-MM-DD`.)
 
 ## Active Habits
 - Example habit — on track

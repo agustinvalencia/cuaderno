@@ -1502,6 +1502,38 @@ fn lint_periodic_hint_names_an_empty_title() {
     );
 }
 
+use cdno_domain::frontmatter::Context;
+
+#[test]
+fn lint_stays_silent_on_a_freshly_created_stewardship() {
+    // #515. The shipped template seeds `## Periodic Commitments` with an
+    // example of the shape. As a bullet it was a candidate line, so the
+    // scan fed it to `parse_periodic_line`, which cannot parse the literal
+    // `YYYY-MM-DD` standing in for the date -- and every stewardship warned
+    // from the moment it was created, about scaffolding the user had not
+    // touched. That is the first thing a new user sees after `stewardship
+    // create`, and a lint that fires on untouched scaffolding teaches them
+    // to ignore lint output.
+    //
+    // Both variants render through the same `render_stewardship`, so both
+    // are created here: the guarantee is about the template, and a future
+    // divergence between the two entry points must not slip past.
+    let vault = vault_with_notes(&[], VaultConfig::default());
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .expect("create_stewardship_flat");
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .expect("create_stewardship_expanded");
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        dashboard_warnings(&report).is_empty(),
+        "a freshly created stewardship must lint clean: {:?}",
+        report.issues
+    );
+}
+
 // ---------------------------------------------------------------------
 // Record-ordering diagnostics (#497). `records_of` orders a record set
 // all-or-nothing and falls back to document order in silence, so lint is
