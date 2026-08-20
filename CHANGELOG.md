@@ -23,6 +23,33 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   anywhere. Prose inside the section was already exempt from the scan by design, so the lint rule
   itself is unchanged.
 
+- **`slugify` cut mid-word at the 50-char cap** (#524). A title whose slug crossed the char cap was
+  truncated at char 50 with only a trailing separator trimmed afterwards, so a cut landing inside a
+  word left the fragment behind — `… and material` became `…-and-materia`. The comment above the
+  truncation spoke of trimming "trailing partial-word dashes", but a cut inside a word leaves the
+  fragment rather than a stray dash, so only half of the stated intent was ever implemented. Nothing
+  misbehaved as a result, but the slug is the filename and the wikilink target, so the mangled word
+  is permanent and visible everywhere the note is referenced. The cut now backs off to the preceding
+  word boundary, with three cases deliberately left on the hard cut: the cap falling on the
+  separator itself, where the last kept word is already whole and retreating would discard a word
+  that fits; the *first* word overrunning the cap, which leaves no boundary to retreat to however
+  many words follow it; and a retreat that would leave less than half the cap, since a long word
+  starting early would otherwise trade fifty informative chars for a handful — and slugs collapsed
+  onto a shared prefix collide, which `cdno portfolio create` reports as `AlreadyExists` rather than
+  disambiguating away. Note that a title crossing the cap now yields a different slug than it did
+  before: a note created earlier and referred to by re-deriving its slug from the same text will no
+  longer be found, so a portfolio silently loses the backlink to a long-titled question, and a
+  commitment naming a long-titled stewardship writes a link `cdno lint` reports as dangling.
+
+  One consequence is deliberate and worth stating plainly: ending on a whole word means discarding
+  the fragment that distinguished two similar titles, so questions sharing a long prefix can now
+  slugify identically — `… in composite alpha` and `… in composite gamma` both become
+  `characterising-thermal-expansion-in-composite`, where before they differed in their final four
+  characters. `cdno portfolio create` uses the raw slug with no `-2` disambiguation, so the second
+  create fails with `AlreadyExists` rather than filing into the wrong dossier. The failure is loud
+  and the remedy is to reword the question; whether those creates should disambiguate instead is
+  tracked in #529, since the slug doubles as the key correlating a portfolio with its question.
+
 ## [0.34.0] - 2026-08-08
 
 ### Added
