@@ -88,3 +88,89 @@ fn an_empty_report_does_not_prompt_even_interactively() {
     .expect("an empty report is not an error");
     assert!(!shown.get());
 }
+
+use cdno_cli::prompt::{drive_for_test, leaves_quietly};
+use inquire::InquireError;
+
+fn labels(n: usize) -> Vec<String> {
+    (0..n).map(|i| format!("row-{i}")).collect()
+}
+
+#[test]
+fn cancelling_leaves_without_an_error() {
+    // Esc and Ctrl-C are the ordinary way out of a read-only report, so
+    // they must exit 0. Making this arm propagate instead used to pass
+    // the whole suite.
+    for err in [
+        InquireError::OperationCanceled,
+        InquireError::OperationInterrupted,
+        InquireError::NotTTY,
+        InquireError::IO(std::io::Error::other("no terminal")),
+    ] {
+        assert!(
+            leaves_quietly(&err),
+            "{err:?} should end the session quietly"
+        );
+    }
+    assert!(
+        !leaves_quietly(&InquireError::InvalidConfiguration("broken".into())),
+        "a genuine configuration fault is not a quiet exit"
+    );
+}
+
+#[test]
+fn the_loop_re_asks_after_showing_a_detail() {
+    let items = ["alpha", "beta"];
+    let seen = Cell::new(Vec::new());
+    let mut answers = vec![Ok(1), Ok(0), Err(InquireError::OperationCanceled)].into_iter();
+    drive_for_test(
+        &items,
+        &labels(2),
+        &mut || answers.next().unwrap(),
+        |item| {
+            let mut v = seen.take();
+            v.push(*item);
+            seen.set(v);
+            Ok(())
+        },
+    )
+    .expect("cancelling ends the session cleanly");
+    assert_eq!(
+        seen.take(),
+        vec!["beta", "alpha"],
+        "each pick shows its own row, and the loop asks again"
+    );
+}
+
+#[test]
+fn a_row_that_cannot_be_shown_does_not_end_the_session() {
+    // The tolerance `cdno triage` has for a failing item. Making this
+    // propagate instead passed every test in the crate.
+    let items = ["alpha", "beta"];
+    let shown = Cell::new(0);
+    let mut answers = vec![Ok(0), Ok(1), Err(InquireError::OperationCanceled)].into_iter();
+    let result = drive_for_test(
+        &items,
+        &labels(2),
+        &mut || answers.next().unwrap(),
+        |item| {
+            shown.set(shown.get() + 1);
+            if *item == "alpha" {
+                anyhow::bail!("cannot read alpha");
+            }
+            Ok(())
+        },
+    );
+    assert!(result.is_ok(), "one bad row must not abort: {result:?}");
+    assert_eq!(shown.get(), 2, "the second row was still offered");
+}
+
+#[test]
+fn a_genuine_prompt_fault_propagates() {
+    let items = ["alpha"];
+    let mut answers = vec![Err(InquireError::InvalidConfiguration("bad".into()))].into_iter();
+    let result = drive_for_test(&items, &labels(1), &mut || answers.next().unwrap(), |_| {
+        Ok(())
+    });
+    assert!(result.is_err(), "a real fault should not be swallowed");
+}

@@ -44,11 +44,32 @@ const MIN_CREDIBLE_WIDTH: u16 = 20;
 /// means a table and the cards beside it can never disagree about how
 /// wide the screen is.
 pub fn render_width() -> u16 {
+    credible_width(terminal_columns())
+}
+
+/// The terminal's column count, or `None` when stdout is not a terminal.
+///
+/// Distinct from [`render_width`], which substitutes a usable number:
+/// callers that need to know the terminal is *genuinely* too small to
+/// draw in — rather than laying out against a fallback — need the raw
+/// answer.
+pub fn terminal_columns() -> Option<u16> {
     if !std::io::stdout().is_terminal() {
-        return NON_TTY_WIDTH;
+        return None;
     }
-    match crossterm::terminal::size() {
-        Ok((cols, _rows)) if cols >= MIN_CREDIBLE_WIDTH => cols,
+    crossterm::terminal::size().ok().map(|(cols, _rows)| cols)
+}
+
+/// Decide a usable width from whatever the terminal reported.
+///
+/// Split out from [`render_width`] because the interesting branch is
+/// unreachable from a test: the suite runs off a tty, so `render_width`
+/// returns [`NON_TTY_WIDTH`] before it ever queries the terminal, and a
+/// test calling it can only ever re-confirm the fallback. This takes the
+/// reported value as an argument so the guard itself can be exercised.
+pub fn credible_width(reported: Option<u16>) -> u16 {
+    match reported {
+        Some(cols) if cols >= MIN_CREDIBLE_WIDTH => cols,
         _ => NON_TTY_WIDTH,
     }
 }
@@ -72,6 +93,12 @@ pub fn styled_table() -> Table {
     } else {
         table.force_no_tty();
     }
+    // Style the text, not the cell padding. comfy-table's default wraps
+    // the *padded* cell in the SGR span, which puts the trailing spaces
+    // inside the escape — where [`render`]'s `trim_end` cannot reach
+    // them, silently voiding its no-trailing-whitespace contract the
+    // moment colour is on.
+    table.style_text_only();
     table
 }
 

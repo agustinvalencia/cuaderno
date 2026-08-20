@@ -26,18 +26,41 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
 use cdno_domain::recurrence::Recurrence;
 
-/// `true` when interactive prompts are available — `stdout` is a TTY
-/// **and** the user hasn't opted out via `--no-interactive`. Handlers
-/// use this to decide whether a missing `Option` argument turns into a
-/// prompt or an error.
+/// `true` when interactive prompts are available — **both** `stdin` and
+/// `stdout` are TTYs and the user hasn't opted out via
+/// `--no-interactive`. Handlers use this to decide whether a missing
+/// `Option` argument turns into a prompt or an error.
+///
+/// Both streams matter, and testing only `stdout` is a real bug rather
+/// than a theoretical one: `inquire` reads from stdin, so a caller with
+/// a terminal on stdout but not on stdin (`cdno orient < /dev/null`, a
+/// background job, a supervisor or pty wrapper that only allocates one
+/// end) would pass this check, reach the prompt, and get
+/// `InquireError::NotTTY` — turning a read-only listing into a non-zero
+/// exit. Requiring both also upgrades every *write* verb's failure in
+/// that situation from inquire's opaque error to the `missing required
+/// flag` message this module exists to produce.
 pub fn is_interactive(no_interactive: bool) -> bool {
-    !no_interactive && std::io::stdout().is_terminal()
+    !no_interactive && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// Build a clear "missing flag" error for the non-interactive path so
 /// piped / scripted invocations fail fast rather than hanging.
 pub fn missing_flag(flag: &str) -> anyhow::Error {
     anyhow!("missing required flag: --{flag} (provide it explicitly or run interactively in a TTY)")
+}
+
+/// The same, for a verb whose argument is a positional rather than a
+/// flag (see the read-verb exception in `docs/cli-ergonomics.md`).
+///
+/// Separate from [`missing_flag`] because that one hardcodes the `--`
+/// prefix, and telling someone to pass `--slug` to a command that has no
+/// such flag sends them to `--help` for nothing.
+pub fn missing_positional(name: &str) -> anyhow::Error {
+    let upper = name.to_uppercase();
+    anyhow!(
+        "missing required argument: <{upper}> (provide it explicitly or run interactively in a TTY)"
+    )
 }
 
 /// `clap` value-parser for a repeatable `--var name=value` flag (#238):
@@ -470,6 +493,9 @@ pub fn prompt_context() -> Result<Context> {
 /// Callers pass `is_interactive(no_interactive || json)`, so `--json`,
 /// `--no-interactive`, and a non-tty stdout are all excluded by the same
 /// expression every write verb already uses.
+/// Narrowest terminal we will draw a picker in.
+const MIN_PICKER_WIDTH: u16 = 20;
+
 pub fn drill_down<T>(
     items: &[T],
     label: &str,
@@ -480,37 +506,102 @@ pub fn drill_down<T>(
     if !interactive || items.is_empty() {
         return Ok(());
     }
+    // A terminal too narrow to draw a picker in gets the listing and
+    // nothing else. inquire lays its own frame out against the real
+    // terminal width and underflows below a couple of columns — a panic
+    // in debug builds, an escape-soup redraw in release. The listing is
+    // already on screen, so declining to ask costs the reader nothing.
+    if crate::output::terminal_columns().is_some_and(|cols| cols < MIN_PICKER_WIDTH) {
+        return Ok(());
+    }
     let labels: Vec<String> = items.iter().map(&row_label).collect();
+    // `raw_prompt` returns the chosen index rather than the chosen
+    // string. The older pickers in this module recover the index by
+    // searching for the label, which silently returns the wrong row when
+    // two labels are equal — and a report's rows are titles and question
+    // text, which genuinely can repeat.
+    let mut ask = || {
+        Select::new(label, labels.clone())
+            .with_help_message("↑↓ to move, enter to inspect, Esc to leave")
+            .raw_prompt()
+            .map(|option| option.index)
+    };
+    drive(items, &labels, &mut ask, show)
+}
+
+/// The drill-down loop, with asking factored out.
+///
+/// `ask` supplies the next chosen index, or the reason there isn't one.
+/// Splitting it this way is what makes the loop testable: entering it
+/// otherwise requires a terminal on both ends, so every branch below —
+/// the cancel arm, the propagate arm, and the tolerance of a failing
+/// `show` — could only be exercised by hand.
+fn drive<T>(
+    items: &[T],
+    labels: &[String],
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
     loop {
         println!();
-        // `raw_prompt` returns the chosen index rather than the chosen
-        // string. The older pickers in this module recover the index by
-        // searching for the label, which silently returns the wrong row
-        // when two labels are equal — and a report's rows are titles and
-        // question text, which genuinely can repeat.
-        let choice = Select::new(label, labels.clone())
-            .with_help_message("↑↓ to move, enter to inspect, Esc to leave")
-            .raw_prompt();
-        match choice {
-            Ok(option) => {
-                if let Err(e) = show(&items[option.index]) {
-                    eprintln!("Could not show `{}`: {e:#}", labels[option.index]);
+        match ask() {
+            Ok(index) => {
+                if let Err(e) = show(&items[index]) {
+                    // One unreadable row should not end the session, the
+                    // same way `cdno triage` keeps draining after a
+                    // failed item.
+                    eprintln!("Could not show `{}`: {e:#}", labels[index]);
                 }
             }
-            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
-                return Ok(());
-            }
+            Err(e) if leaves_quietly(&e) => return Ok(()),
             Err(e) => return Err(e.into()),
         }
     }
 }
 
-/// Fuzzy-pick any project — active, parked, or completed.
+/// Whether a failed prompt means "stop asking", rather than "the command
+/// failed".
+///
+/// Cancellation is the ordinary way out and must exit 0. `NotTTY` and IO
+/// failures mean we cannot ask at all: [`is_interactive`] should have
+/// kept us out of the loop, but if something slipped through, the
+/// listing is already printed and there is nothing to report — returning
+/// an error there would turn a read-only listing into a non-zero exit,
+/// which is exactly the regression this arm exists to prevent.
+pub fn leaves_quietly(error: &InquireError) -> bool {
+    matches!(
+        error,
+        InquireError::OperationCanceled
+            | InquireError::OperationInterrupted
+            | InquireError::NotTTY
+            | InquireError::IO(_)
+    )
+}
+
+/// Drive a drill-down from a canned sequence of answers. Test-only seam
+/// for [`drive`], which is otherwise unreachable without a terminal.
+#[doc(hidden)]
+pub fn drive_for_test<T>(
+    items: &[T],
+    labels: &[String],
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
+    drive(items, labels, ask, show)
+}
+
+/// Fuzzy-pick an active or parked project.
 ///
 /// [`prompt_project`] offers only active projects because the verbs that
 /// use it act on live work. `cdno project show` reads, and reading a
-/// parked or completed project is exactly what someone reaching for it
-/// is likely to want.
+/// parked project is exactly what someone reaching for it is likely to
+/// want.
+///
+/// Completed projects are deliberately absent: `project show <slug>`
+/// still resolves one by name, but `Vault` exposes no listing for them
+/// (`active_projects` and `parked_projects` filter on status), so there
+/// is nothing to offer without a new domain query. Naming that here so
+/// the gap reads as known rather than overlooked.
 pub fn prompt_any_project(vault: &Vault) -> Result<String> {
     let mut all = vault.active_projects()?;
     all.extend(vault.parked_projects()?);
