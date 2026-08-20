@@ -1527,8 +1527,12 @@ fn lint_stays_silent_on_a_freshly_created_stewardship() {
         .expect("create_stewardship_expanded");
 
     let report = vault.lint_all_notes().expect("lint succeeds");
+    // The whole report, not just the dashboard warnings this fixed: the
+    // lesson of #515 generalises, so a future template edit that trips any
+    // other rule -- a dangling wikilink, a missing required field -- is the
+    // same defect and should fail here too.
     assert!(
-        dashboard_warnings(&report).is_empty(),
+        report.is_clean(),
         "a freshly created stewardship must lint clean: {:?}",
         report.issues
     );

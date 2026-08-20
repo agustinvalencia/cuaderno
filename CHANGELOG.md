@@ -16,9 +16,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   that warning is the first thing a new user sees after creating one. A lint that fires on untouched
   scaffolding teaches its reader to skip lint output, which is the opposite of what a near-miss
   diagnostic is for. The placeholder is now prose, in the same parenthesised style the template's
-  `## Current Status` already uses: it still shows the shape with its em dashes intact, ready to
-  copy, but no longer presents as a parseable line. Prose inside the section was already exempt from
-  the scan by design, so the lint rule itself is unchanged.
+  `## Current Status` already uses: it still shows the shape, em dashes and `- ` marker intact and
+  ready to copy, but no longer presents as a parseable line. The marker is part of the shape
+  deliberately — a line pasted without one is not a bullet, and a non-bullet is skipped by the
+  commitments aggregator *and* by the lint, so it would vanish from the register with no diagnostic
+  anywhere. Prose inside the section was already exempt from the scan by design, so the lint rule
+  itself is unchanged.
 
 ## [0.34.0] - 2026-08-08
 
