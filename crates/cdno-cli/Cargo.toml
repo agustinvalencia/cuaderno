@@ -31,6 +31,10 @@ chrono.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# Tests measure display width with the same function the renderer
+# uses; asserting on `chars().count()` instead would silently pass for
+# CJK and emoji, which are the cases that matter.
+textwrap.workspace = true
 tempfile.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true

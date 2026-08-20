@@ -168,6 +168,15 @@ fn render_card(
 
     for (role, text) in &card.body {
         for line in wrap_block(text, body_width) {
+            // Emptiness is decided on the *unpainted* line. A painted
+            // empty string is not empty — `paint(Meta, "")` is a pair of
+            // escapes — so testing the painted value would put a stray
+            // space after the gutter on every blank line in a styled
+            // body block.
+            if line.is_empty() {
+                push_gutter_line(out, card.accent, palette, "");
+                continue;
+            }
             let painted = palette.paint(*role, &line);
             push_gutter_line(out, card.accent, palette, &painted);
         }
@@ -201,11 +210,16 @@ fn push_gutter_line(out: &mut String, accent: Accent, palette: &Palette, content
 fn wrap_block(text: &str, width: usize) -> Vec<String> {
     let options = textwrap::Options::new(width)
         .break_words(false)
-        .word_splitter(textwrap::WordSplitter::NoHyphenation);
+        .word_splitter(textwrap::WordSplitter::NoHyphenation)
+        // Greedy, not optimal-fit: a card is read top-to-bottom and the
+        // first line should take as much as it can. Named explicitly so
+        // enabling `smawk` later cannot silently change the layout.
+        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
 
     text.split('\n')
         .flat_map(|segment| {
-            let trimmed = segment.trim_end();
+            let sanitised = sanitise(segment);
+            let trimmed = sanitised.trim_end();
             if trimmed.is_empty() {
                 return vec![String::new()];
             }
@@ -213,6 +227,36 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
                 .into_iter()
                 .map(|line| line.trim_end().to_owned())
                 .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Replace control characters in note content with something that
+/// occupies the columns it appears to.
+///
+/// Vault content is arbitrary text, and three classes of character
+/// break a layout that measures display width:
+///
+/// - **Tab** measures as zero columns but renders as up to eight, so a
+///   line with tabs overflows the terminal by however many it contains.
+///   Expanded to a single space — cards reflow text anyway, so column
+///   alignment inside a body block was never meaningful.
+/// - **Carriage return** returns the cursor to column zero, painting
+///   over the gutter bar that the card is built around.
+/// - **Escape** and other C0 controls let note content drive the
+///   terminal — colours that never reset, cursor moves, even
+///   `ESC[2J`. Content is data, not instructions.
+///
+/// This does not make cdno a sanitiser for every surface — `cdno note`
+/// and the raw markdown are untouched, and were never filtered. It keeps
+/// the *card* renderer's own arithmetic honest.
+fn sanitise(segment: &str) -> String {
+    segment
+        .chars()
+        .map(|c| match c {
+            '\t' => ' ',
+            c if c.is_control() => '\u{fffd}',
+            c => c,
         })
         .collect()
 }

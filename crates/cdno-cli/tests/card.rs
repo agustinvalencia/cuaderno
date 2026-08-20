@@ -12,6 +12,7 @@ mod strip;
 
 use cdno_cli::output::card::{Card, render_cards};
 use cdno_cli::output::style::{Accent, Palette, Role};
+use textwrap::core::display_width;
 
 use strip::strip_sgr;
 
@@ -121,14 +122,109 @@ fn body_text_wraps_within_the_available_width() {
     let cards = vec![Card::new("s").prose(long)];
     let out = render_cards(&cards, &Palette::plain(), 30);
     for line in out.lines() {
+        // Display width, not `chars().count()` — the renderer budgets in
+        // columns, and counting chars would let a CJK card overflow the
+        // terminal by 2x while this assertion still passed.
         assert!(
-            line.chars().count() <= 30,
-            "line exceeds the width budget: {line:?}"
+            display_width(line) <= 30,
+            "line is {} columns, budget 30: {line:?}",
+            display_width(line)
         );
     }
     assert!(
         out.lines().count() > 2,
         "the body should have wrapped:\n{out}"
+    );
+}
+
+#[test]
+fn text_without_ascii_spaces_still_wraps() {
+    // Chinese, Japanese and Thai have no ASCII spaces, so a wrapper with
+    // only `WordSeparator::AsciiSpace` sees one unbreakable word and
+    // never wraps at all — the paragraph runs off the terminal at any
+    // width. That is what happens without textwrap's `unicode-linebreak`
+    // feature, and it is why the feature is enabled.
+    let cjk = "中文测试文字".repeat(20);
+    let cards = vec![Card::new("cjk").prose(cjk)];
+    let out = render_cards(&cards, &Palette::plain(), 40);
+    for line in out.lines() {
+        assert!(
+            display_width(line) <= 40,
+            "{} columns, budget 40: {line:?}",
+            display_width(line)
+        );
+    }
+    assert!(
+        out.lines().count() > 4,
+        "120 wide characters must wrap at width 40:\n{out}"
+    );
+}
+
+#[test]
+fn a_wide_title_still_aligns_the_badge_column() {
+    // Catches measuring the title with `chars().count()`: CJK titles are
+    // one char but two columns each, so a char-counted badge column would
+    // sit half as far right as it should and badges would not line up.
+    let cards = vec![
+        Card::new("中文项目").badge("work"),
+        Card::new("ascii-slug").badge("family"),
+    ];
+    let out = render_cards(&cards, &Palette::plain(), 80);
+    let columns: Vec<usize> = out
+        .lines()
+        .filter_map(|line| {
+            let at = line.find("work").or_else(|| line.find("family"))?;
+            Some(display_width(&line[..at]))
+        })
+        .collect();
+    assert_eq!(columns.len(), 2, "both headers found:\n{out}");
+    assert_eq!(columns[0], columns[1], "badges share a column:\n{out}");
+}
+
+#[test]
+fn an_over_narrow_terminal_falls_back_to_the_floor() {
+    // Exercises the MIN_BODY_WIDTH floor, which no other test reaches
+    // because they all use widths comfortably above it.
+    let cards = vec![Card::new("s").prose("alpha beta gamma delta epsilon zeta")];
+    let narrow = render_cards(&cards, &Palette::plain(), 4);
+    let floored = render_cards(&cards, &Palette::plain(), 22);
+    assert_eq!(
+        narrow, floored,
+        "below the floor the layout should match the floor, not degenerate"
+    );
+}
+
+#[test]
+fn control_characters_in_note_content_cannot_drive_the_terminal() {
+    // Vault content is data, not instructions. A tab measures zero
+    // columns but renders as up to eight; a carriage return walks the
+    // cursor back over the gutter; an escape lets a note set colours,
+    // move the cursor, or clear the screen.
+    let hostile = "before\ttab\rcarriage\u{1b}[31mescape\u{7}bell";
+    let cards = vec![Card::new("s").prose(hostile)];
+    let out = render_cards(&cards, &Palette::plain(), 80);
+    assert!(!out.contains('\t'), "tab survived: {out:?}");
+    assert!(!out.contains('\r'), "carriage return survived: {out:?}");
+    assert!(!out.contains('\u{1b}'), "escape survived: {out:?}");
+    assert!(!out.contains('\u{7}'), "bell survived: {out:?}");
+    // The visible words are still there — this sanitises, it does not censor.
+    for word in ["before", "tab", "carriage", "escape", "bell"] {
+        assert!(out.contains(word), "{word} was dropped: {out}");
+    }
+}
+
+#[test]
+fn a_blank_line_in_a_styled_body_block_keeps_a_bare_gutter() {
+    // `paint(Meta, "")` is a pair of escapes, not an empty string, so
+    // deciding emptiness on the painted value would put a stray space
+    // after the gutter on every blank line in a styled block.
+    let cards = vec![Card::new("s").block(Role::Meta, "first\n\nthird")];
+    let plain = render_cards(&cards, &Palette::plain(), 60);
+    let painted = render_cards(&cards, &Palette::forced(), 60);
+    assert_eq!(strip_sgr(&painted), plain, "colour changed the layout");
+    assert!(
+        !painted.lines().any(|l| strip_sgr(l).ends_with(' ')),
+        "{painted:?}"
     );
 }
 
