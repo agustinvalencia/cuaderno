@@ -65,7 +65,10 @@ pub struct Card {
 impl Card {
     pub fn new(title: impl Into<String>) -> Self {
         Card {
-            title: title.into(),
+            // Sanitised on the way in, so the stored text and
+            // `title_width` agree and a note's H1 cannot reach the
+            // terminal raw — `cdno search` titles a card with one.
+            title: super::sanitise(&title.into()),
             badge: None,
             accent: Accent::default(),
             body: Vec::new(),
@@ -75,7 +78,7 @@ impl Card {
     /// The short classification shown right of the title, aligned into a
     /// column shared by every card in the set.
     pub fn badge(mut self, badge: impl Into<String>) -> Self {
-        self.badge = Some(badge.into());
+        self.badge = Some(super::sanitise(&badge.into()));
         self
     }
 
@@ -206,24 +209,18 @@ fn push_gutter_line(out: &mut String, accent: Accent, palette: &Palette, content
 /// segment is then greedily word-wrapped. An over-long single token
 /// (a URL, a long slug) is emitted whole and allowed to overflow, for
 /// the same reason `no_wrap_columns` exists: an identifier broken across
-/// lines is worse than one that runs past the edge.
+/// lines is worse than one that runs past the edge. That holds for every
+/// segment except one mixing wide characters with a long identifier —
+/// see [`options`], which explains why.
 fn wrap_block(text: &str, width: usize) -> Vec<String> {
-    let options = textwrap::Options::new(width)
-        .break_words(false)
-        .word_splitter(textwrap::WordSplitter::NoHyphenation)
-        // Greedy, not optimal-fit: a card is read top-to-bottom and the
-        // first line should take as much as it can. Named explicitly so
-        // enabling `smawk` later cannot silently change the layout.
-        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
-
     text.split('\n')
         .flat_map(|segment| {
-            let sanitised = sanitise(segment);
+            let sanitised = super::sanitise(segment);
             let trimmed = sanitised.trim_end();
             if trimmed.is_empty() {
                 return vec![String::new()];
             }
-            textwrap::wrap(trimmed, options.clone())
+            textwrap::wrap(trimmed, options(trimmed, width))
                 .into_iter()
                 .map(|line| line.trim_end().to_owned())
                 .collect::<Vec<_>>()
@@ -231,32 +228,41 @@ fn wrap_block(text: &str, width: usize) -> Vec<String> {
         .collect()
 }
 
-/// Replace control characters in note content with something that
-/// occupies the columns it appears to.
+/// Wrapping options for one segment.
 ///
-/// Vault content is arbitrary text, and three classes of character
-/// break a layout that measures display width:
+/// The word separator is chosen per segment, and that choice is the whole
+/// point of this function.
 ///
-/// - **Tab** measures as zero columns but renders as up to eight, so a
-///   line with tabs overflows the terminal by however many it contains.
-///   Expanded to a single space — cards reflow text anyway, so column
-///   alignment inside a body block was never meaningful.
-/// - **Carriage return** returns the cursor to column zero, painting
-///   over the gutter bar that the card is built around.
-/// - **Escape** and other C0 controls let note content drive the
-///   terminal — colours that never reset, cursor moves, even
-///   `ESC[2J`. Content is data, not instructions.
+/// Scripts with no ASCII spaces — Chinese, Japanese, Thai — need UAX #14
+/// break opportunities or they are one unbreakable word and never wrap.
+/// But UAX #14 also breaks after `/`, `?`, `=` and `&`, which splits
+/// paths and URLs across lines and makes them uncopyable — and a path is
+/// exactly what `search` puts in a card body. Breaking it buys nothing:
+/// the fragment before the break is usually a few columns and the rest
+/// still overflows.
 ///
-/// This does not make cdno a sanitiser for every surface — `cdno note`
-/// and the raw markdown are untouched, and were never filtered. It keeps
-/// the *card* renderer's own arithmetic honest.
-fn sanitise(segment: &str) -> String {
-    segment
-        .chars()
-        .map(|c| match c {
-            '\t' => ' ',
-            c if c.is_control() => '\u{fffd}',
-            c => c,
-        })
-        .collect()
+/// So: UAX #14 only for segments that actually contain wide characters,
+/// and plain whitespace splitting otherwise. A segment mixing CJK with a
+/// long URL will still break the URL; that is rare enough to accept, and
+/// it is a considered trade rather than a side effect.
+fn options(segment: &str, width: usize) -> textwrap::Options<'static> {
+    let base = textwrap::Options::new(width)
+        .break_words(false)
+        .word_splitter(textwrap::WordSplitter::NoHyphenation)
+        // Greedy, not optimal-fit: a card is read top-to-bottom and the
+        // first line should take as much as it can. Named explicitly so
+        // enabling `smawk` later cannot silently change the layout.
+        .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
+    if segment.chars().any(is_wide) {
+        base.word_separator(textwrap::WordSeparator::UnicodeBreakProperties)
+    } else {
+        base.word_separator(textwrap::WordSeparator::AsciiSpace)
+    }
+}
+
+/// Whether `c` occupies two terminal columns — the marker for a script
+/// that UAX #14 is needed to wrap.
+fn is_wide(c: char) -> bool {
+    let mut buf = [0u8; 4];
+    display_width(c.encode_utf8(&mut buf)) > 1
 }

@@ -34,7 +34,7 @@ pub const NON_TTY_WIDTH: u16 = 100;
 /// per line, turning a table into a vertical column of letters. Anything
 /// under this is treated as "the terminal does not know", not as a very
 /// narrow screen.
-const MIN_CREDIBLE_WIDTH: u16 = 20;
+pub const MIN_CREDIBLE_WIDTH: u16 = 20;
 
 /// The column count every renderer lays out against: the real terminal
 /// width on a tty, the fixed [`NON_TTY_WIDTH`] otherwise.
@@ -83,12 +83,23 @@ pub fn credible_width(reported: Option<u16>) -> u16 {
 /// under `--color always | less`, and would still paint under `NO_COLOR`
 /// on a terminal. Subcommands add rows and render with [`render`].
 pub fn styled_table() -> Table {
+    table_with_styling(style::colour_enabled())
+}
+
+/// [`styled_table`], with the colour decision passed in.
+///
+/// The gate is a process global resolved from a terminal the suite does
+/// not have, so `styled_table` can only ever be observed in its
+/// colour-off configuration — under which swapping `enforce_styling` for
+/// `force_no_tty`, or dropping `style_text_only`, changes nothing. Both
+/// branches are reachable here.
+pub fn table_with_styling(colour: bool) -> Table {
     let mut table = Table::new();
     table
         .load_preset(presets::NOTHING)
         .set_content_arrangement(ContentArrangement::Dynamic)
         .set_width(render_width());
-    if style::colour_enabled() {
+    if colour {
         table.enforce_styling();
     } else {
         table.force_no_tty();
@@ -149,4 +160,41 @@ pub fn emit_write_result(json: bool, path: &str, message: &str) -> anyhow::Resul
         println!("{message}");
     }
     Ok(())
+}
+
+/// Replace control characters in note content with something that
+/// occupies the columns it appears to.
+///
+/// Vault content is arbitrary text, and three classes of character
+/// break a layout that measures display width:
+///
+/// - **Tab** measures as zero columns but renders as up to eight, so a
+///   line with tabs overflows the terminal by however many it contains.
+///   Expanded to a single space — cards reflow text anyway, so column
+///   alignment inside a body block was never meaningful.
+/// - **Carriage return** returns the cursor to column zero, painting
+///   over the gutter bar that the card is built around.
+/// - **Escape** and other C0 controls let note content drive the
+///   terminal — colours that never reset, cursor moves, even
+///   `ESC[2J`. Content is data, not instructions.
+///
+/// Applied to every piece of note-derived text the CLI lays out: card
+/// titles, badges and bodies, and the `show` renderers' fields. Card
+/// *titles* matter as much as bodies — `cdno search` uses a note's H1 as
+/// its title, so an H1 carrying escapes reached the terminal raw, and its
+/// width was miscounted, throwing the shared badge column off.
+///
+/// This does not make cdno a sanitiser for every surface — `cdno note`
+/// and the raw markdown are untouched, and were never filtered.
+pub fn sanitise(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            // Space, not a replacement character: `wrap_block` trims
+            // each segment afterwards, so a trailing CR (every line of
+            // CRLF content) disappears instead of leaving a visible mark.
+            '\t' | '\r' => ' ',
+            c if c.is_control() => '\u{fffd}',
+            c => c,
+        })
+        .collect()
 }

@@ -90,7 +90,7 @@ pub fn run(
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
-    let interactive = prompt::is_interactive(no_interactive || json);
+    let interactive = prompt::reports_interactively(no_interactive, json);
     match command {
         StewardshipCommands::Create {
             name,
@@ -352,6 +352,7 @@ pub fn render_show(
     };
     // A detail view: colour only, no gutter.
     let palette = Palette::active();
+    let name = crate::output::sanitise(name);
     let mut out = format!(
         "{} \u{2014} {name} [{}]\n",
         palette.paint(Role::Slug, slug),
