@@ -8,7 +8,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **Gutter-bar cards, colour, and interactive reports for the CLI.** `cdno project list` printed a
+- **Gutter-bar cards, colour, and interactive reports for the CLI** (#530). `cdno project list` printed a
   slug, a context, and a paragraph of project state at the same weight on the same indented line, so
   five projects arrived as one undifferentiated block of text — you could not see where one project
   ended and the next began without reading it. Every listing that carries prose now renders as a
@@ -41,10 +41,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   exists to be piped into other tools, and a header, a gutter, or a colour would buy nothing and
   break that.
 
-  New dependencies: `textwrap` for width-aware wrapping. `anstyle`, `colorchoice`, and `anstyle-query`
-  carry the styling and the environment precedence, and `crossterm` reports the terminal width — all
-  four were already being compiled as part of clap and comfy-table, so the whole change adds exactly
-  one crate to the build.
+  `cdno project list`'s header changed from `N active project(s):` to `N active projects`, so anything
+  grepping that line needs updating. `cdno project show`'s slug became an optional positional — every
+  existing invocation still parses, and omitting it in a terminal now offers a picker of active and
+  parked projects (completed ones are still addressable by name, but there is no listing to offer).
+
+  `note list` was deliberately left alone: it prints one bare path per line so it can be piped into
+  other tools, and a header, a gutter, or colour would buy nothing there and break that.
+
+  New dependencies: `textwrap` and `unicode-linebreak` for width-aware wrapping — the second supplies
+  the UAX #14 break opportunities, without which text with no ASCII spaces (Chinese, Japanese, Thai)
+  is treated as one unbreakable word and never wraps. `anstyle`, `colorchoice`, and `anstyle-query`
+  carry the styling and the environment precedence, and `crossterm` reports the terminal width; those
+  four were already compiled as part of clap and comfy-table, so the change adds two crates in total.
 
 ### Fixed
 

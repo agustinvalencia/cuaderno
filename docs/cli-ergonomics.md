@@ -85,11 +85,18 @@ args, so they never see the confirm step.
 
 ```rust
 pub fn is_interactive(no_interactive: bool) -> bool {
-    !no_interactive && std::io::stdout().is_terminal()
+    !no_interactive && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 ```
 
-- A TTY without `--no-interactive` → prompts are available.
+**Both** streams are checked. Prompts read stdin and write stdout, so a
+caller with a terminal on only one end — `cdno orient < /dev/null`, a
+background job, a wrapper that allocates a pty for output only — must not
+be offered one. Testing stdout alone lets such a caller reach the prompt
+and fail with inquire's `NotTTY`, which for a read-only listing means an
+error and a non-zero exit where there was neither before.
+
+- A TTY on both ends without `--no-interactive` → prompts are available.
 - Piped output, redirected stdout, CI, MCP transport → no prompts;
   missing flags error.
 - A TTY *with* `--no-interactive` → explicit opt-out; missing flags
@@ -133,10 +140,10 @@ prompt::drill_down(
 
 ### Exception: a read verb may take one trailing optional positional
 
-Rule 1 exists to keep *mutating* verbs unambiguous, where several
-promptable fields would otherwise compete for position. A read verb whose
-only promptable argument is an identifier may declare it as a trailing
-optional positional:
+Rule 1 exists to keep *mutating* verbs unambiguous, where several promptable
+fields would otherwise compete for position. A read verb whose only
+promptable argument is an identifier has no such ambiguity, so it may
+declare it as a trailing optional positional:
 
 ```rust
 Show {
@@ -145,12 +152,17 @@ Show {
 },
 ```
 
-`cdno project show alpha` is what people type, and making a trailing
-positional optional only *adds* the omitted form — every existing
-invocation parses unchanged. `portfolio show` and `stewardship show`
-keep their `--portfolio` / `--slug` flags: they shipped that way, and
-changing a released flag for symmetry is a breaking change bought for
-aesthetics.
+**The rule for new code:** a read-only `show`-style verb takes its
+identifier as a trailing optional positional, because `cdno project show
+alpha` is what people type. Missing and non-interactive, it errors with
+`missing_positional`, not `missing_flag` — naming a `--slug` that does not
+exist sends the reader to `--help` for nothing.
+
+`portfolio show` and `stewardship show` currently take `--portfolio` /
+`--slug` flags and are **grandfathered**. Adding a trailing positional to
+them later would be additive and is worth doing when one of them is next
+touched; their existing flags keep working either way. Until then the two
+shapes coexist, and that is a known inconsistency rather than a choice.
 
 ## Implementation template
 

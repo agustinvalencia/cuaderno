@@ -24,7 +24,10 @@ text wrapped underneath.
 ▎ next: Profile the assembly step
 ```
 
-The bar is coloured by the note's context, so a mixed list separates before you read a word.
+What the bar's colour means depends on the listing, and it is always the thing that listing exists to
+surface: **context** for `project list` and `orient`, **staleness** for `portfolio list` and
+`stewardship list` (amber once nothing has been filed for a month), and **domain** for `questions`.
+`search` colours every hit alike — relevance is already the ordering.
 
 Commands whose rows are genuinely tabular keep their tables — `status`, `commitments`, `orient`'s
 commitments section, and a portfolio's evidence list all have short, aligned fields where a column
@@ -76,15 +79,26 @@ Ctrl-C leaves**, with exit status 0.
 The listing is always printed first, so the prompt only ever adds to what you would have seen. It is
 skipped entirely when:
 
-- stdout is not a terminal (piped, redirected, or in CI),
+- **either** stdin or stdout is not a terminal — piped, redirected, `< /dev/null`, a background job,
+  or running under CI, which is the usual reason neither end is a terminal,
 - `--no-interactive` is passed, or
 - `--json` is passed.
+
+Both streams matter: the listing is written to stdout but the picker reads stdin, so a caller with a
+terminal on only one end is not offered the prompt. There is no separate CI detection — a CI job has
+no terminal, and that is what actually decides it.
 
 That makes the same command safe for a person, a shell pipeline, and an AI agent without changing
 anything about how it is invoked.
 
 ## Width
 
-On a terminal, output is laid out to the terminal's width and reflows when you resize. Everywhere
-else — piped, redirected, or when the terminal does not report a usable size — it lays out to a fixed
-100 columns, so captured output is deterministic and diffable.
+On a terminal, output is laid out to the terminal's width as measured when the command runs. `cdno`
+prints once and exits, so resizing afterwards does not reflow anything already on screen — run the
+command again. Everywhere else — piped, redirected, or when the terminal reports no usable size (a
+pty opened without one reports zero columns) — it lays out to a fixed 100 columns, so captured output
+is deterministic and diffable.
+
+Text from your notes is sanitised before it is laid out: tabs become spaces, and carriage returns and
+escape sequences are replaced. A note is data, and without this a stray escape in a note could repaint
+the terminal, move the cursor, or draw over the card's own gutter.
