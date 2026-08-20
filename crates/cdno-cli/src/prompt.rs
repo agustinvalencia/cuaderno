@@ -20,7 +20,7 @@ use std::io::IsTerminal;
 
 use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
-use inquire::{Confirm, DateSelect, Editor, Select, Text};
+use inquire::{Confirm, DateSelect, Editor, InquireError, Select, Text};
 
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
@@ -445,4 +445,92 @@ pub fn prompt_context() -> Result<Context> {
         .position(|l| l == &pick)
         .expect("picked label was in the offered list");
     Ok(Context::ALL[idx])
+}
+
+/// Offer a repeated drill-down into a report that has already been
+/// printed: pick a row, see its detail, pick again, until Esc.
+///
+/// This is the read-verb counterpart to the gather-then-confirm flow
+/// above, and the rules differ because nothing is being mutated:
+///
+/// - **The listing renders first, unconditionally.** The prompt is
+///   purely additive, so a reader who pipes the output, passes
+///   `--no-interactive`, or hits Esc immediately sees exactly what they
+///   saw before this existed.
+/// - **No confirm step**, for the same reason `cdno action list` has
+///   none — there is nothing to confirm.
+/// - **Esc and Ctrl-C exit silently, with status 0.** Contrast
+///   `cdno triage`, which announces `Triage stopped.`: there a mutating
+///   drain was abandoned part-way and saying so earns its line. Here
+///   nothing happened, and a message every time would be noise.
+/// - **A failure to render one detail does not end the session** —
+///   it goes to stderr and the loop continues, matching triage's
+///   per-item tolerance.
+///
+/// Callers pass `is_interactive(no_interactive || json)`, so `--json`,
+/// `--no-interactive`, and a non-tty stdout are all excluded by the same
+/// expression every write verb already uses.
+pub fn drill_down<T>(
+    items: &[T],
+    label: &str,
+    interactive: bool,
+    row_label: impl Fn(&T) -> String,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
+    if !interactive || items.is_empty() {
+        return Ok(());
+    }
+    let labels: Vec<String> = items.iter().map(&row_label).collect();
+    loop {
+        println!();
+        // `raw_prompt` returns the chosen index rather than the chosen
+        // string. The older pickers in this module recover the index by
+        // searching for the label, which silently returns the wrong row
+        // when two labels are equal — and a report's rows are titles and
+        // question text, which genuinely can repeat.
+        let choice = Select::new(label, labels.clone())
+            .with_help_message("↑↓ to move, enter to inspect, Esc to leave")
+            .raw_prompt();
+        match choice {
+            Ok(option) => {
+                if let Err(e) = show(&items[option.index]) {
+                    eprintln!("Could not show `{}`: {e:#}", labels[option.index]);
+                }
+            }
+            Err(InquireError::OperationCanceled | InquireError::OperationInterrupted) => {
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// Fuzzy-pick any project — active, parked, or completed.
+///
+/// [`prompt_project`] offers only active projects because the verbs that
+/// use it act on live work. `cdno project show` reads, and reading a
+/// parked or completed project is exactly what someone reaching for it
+/// is likely to want.
+pub fn prompt_any_project(vault: &Vault) -> Result<String> {
+    let mut all = vault.active_projects()?;
+    all.extend(vault.parked_projects()?);
+    if all.is_empty() {
+        return Err(anyhow!(
+            "no projects — create one with `cdno project create`",
+        ));
+    }
+    let labels: Vec<String> = all
+        .iter()
+        .map(|(path, fm)| format!("{} ({})", slug_of(path), fm.context.as_str()))
+        .collect();
+    let pick = Select::new("Project", labels.clone()).raw_prompt()?;
+    Ok(slug_of(&all[pick.index].0).to_owned())
+}
+
+/// The slug a note's path encodes, or `""` when the path has no stem.
+fn slug_of(path: &cdno_core::path::VaultPath) -> &str {
+    path.as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
 }
