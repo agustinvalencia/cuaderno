@@ -1,7 +1,9 @@
 //! Tests for the shared CLI table-formatting helper (#153). These run
 //! off a tty, so `styled_table()` pins the deterministic fallback width.
 
-use cdno_cli::output::{NON_TTY_WIDTH, credible_width, no_wrap_columns, render, styled_table};
+use cdno_cli::output::{
+    NON_TTY_WIDTH, credible_width, no_wrap_columns, render, styled_table, table_with_styling,
+};
 
 #[test]
 fn render_strips_trailing_whitespace_from_every_line() {
@@ -76,5 +78,62 @@ fn a_short_row_stays_on_one_line_at_the_fallback_width() {
         out.lines().count(),
         1,
         "a short row must not wrap at the fallback width:\n{out}"
+    );
+}
+
+#[test]
+fn a_styled_table_does_not_paint_its_own_padding() {
+    // comfy-table's default wraps the *padded* cell in the SGR span,
+    // which puts the trailing spaces inside the escape where `render`'s
+    // `trim_end` cannot reach them — so the no-trailing-whitespace
+    // contract lapsed exactly when colour was on. The suite runs off a
+    // tty, so `styled_table` alone can never be observed in that
+    // configuration; this drives the colour-on branch directly.
+    let mut table = table_with_styling(true);
+    table.add_row(vec![
+        cdno_cli::output::style::cell(cdno_cli::output::style::Role::Slug, "alpha"),
+        cdno_cli::output::style::cell(cdno_cli::output::style::Role::Meta, "next: x"),
+    ]);
+    let out = render(&table);
+    assert!(
+        out.contains('\u{1b}'),
+        "the colour-on branch should paint: {out:?}"
+    );
+    for line in out.lines() {
+        // The visible text, with escapes removed, must not end in space.
+        let visible: String = {
+            let mut o = String::new();
+            let mut it = line.chars();
+            while let Some(c) = it.next() {
+                if c == '\u{1b}' {
+                    for c in it.by_ref() {
+                        if c == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    o.push(c);
+                }
+            }
+            o
+        };
+        assert!(
+            !visible.ends_with(' '),
+            "trailing pad: {visible:?} from {line:?}"
+        );
+    }
+}
+
+#[test]
+fn a_table_without_colour_emits_no_escapes() {
+    let mut table = table_with_styling(false);
+    table.add_row(vec![cdno_cli::output::style::cell(
+        cdno_cli::output::style::Role::Slug,
+        "alpha",
+    )]);
+    let out = render(&table);
+    assert!(
+        !out.contains('\u{1b}'),
+        "colour off must mean no escapes: {out:?}"
     );
 }

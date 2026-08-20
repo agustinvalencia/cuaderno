@@ -27,7 +27,7 @@ pub fn run(root: &Path, today: NaiveDate, no_interactive: bool, json: bool) -> R
     print!("{}", render(&ctx));
     // `--json` implies non-interactive: a prompt writes to stdout, which
     // would corrupt the result a scripted caller is parsing.
-    let interactive = crate::prompt::is_interactive(no_interactive || json);
+    let interactive = crate::prompt::reports_interactively(no_interactive, json);
     crate::prompt::drill_down(
         &ctx.projects,
         "Inspect a project",

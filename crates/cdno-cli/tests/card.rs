@@ -298,3 +298,109 @@ fn a_painted_card_paints_the_gutter_itself() {
         "the gutter is the accent's job: {painted:?}"
     );
 }
+
+#[test]
+fn a_hostile_title_cannot_drive_the_terminal_either() {
+    // `cdno search` titles a card with the note's H1, so a title is
+    // arbitrary vault content just as a body is. Sanitising only bodies
+    // left the header line passing raw escapes through — and miscounting
+    // the title's width, which threw the shared badge column off.
+    let cards = vec![
+        Card::new("Nasty\ttitle \u{1b}[41mRED\u{1b}[K one").badge("inbox"),
+        Card::new("plain").badge("project"),
+    ];
+    let out = render_cards(&cards, &Palette::plain(), 100);
+    assert!(!out.contains('\u{1b}'), "escape in a title: {out:?}");
+    assert!(!out.contains('\t'), "tab in a title: {out:?}");
+
+    // And with the title's width now measured on sanitised text, the
+    // badge column still lines up.
+    let columns: Vec<usize> = out
+        .lines()
+        .filter_map(|line| {
+            let at = line.find("inbox").or_else(|| line.find("project"))?;
+            Some(display_width(&line[..at]))
+        })
+        .collect();
+    assert_eq!(columns.len(), 2, "both headers found:\n{out}");
+    assert_eq!(columns[0], columns[1], "badges share a column:\n{out}");
+}
+
+#[test]
+fn a_hostile_badge_is_sanitised_too() {
+    let cards = vec![Card::new("s").badge("we\u{1b}[31mird")];
+    let out = render_cards(&cards, &Palette::plain(), 60);
+    assert!(!out.contains('\u{1b}'), "{out:?}");
+}
+
+#[test]
+fn a_path_is_never_broken_across_lines() {
+    // Enabling `unicode-linebreak` for CJK also switched textwrap to UAX
+    // #14, which breaks after `/`, `?`, `=` and `&` — so paths and URLs
+    // were split mid-identifier and stopped being copy-pasteable. The
+    // break bought nothing: the fragment before it was a few columns and
+    // the remainder still overflowed. The separator is now chosen per
+    // segment, and this pins it.
+    //
+    // The older `an_over_long_token_overflows_rather_than_breaking` test
+    // did not catch the regression because its fixture is hyphen-only,
+    // and UAX #14 does not break at hyphens.
+    for identifier in [
+        "portfolios/does-the-thing-work/2026-08-20-a-study-of-surrogate-model.md",
+        "https://example.com/a/very/long/path?query=value&other=thing",
+        "actions/_done/2026/2026-08-20-finish-the-thing.md",
+    ] {
+        let cards = vec![Card::new("s").meta(identifier)];
+        let out = render_cards(&cards, &Palette::plain(), 40);
+        assert!(
+            out.lines().any(|l| l.contains(identifier)),
+            "{identifier} was split:\n{out}"
+        );
+    }
+}
+
+#[test]
+fn wide_text_still_wraps_even_though_identifiers_do_not() {
+    // The two properties have to hold together: choosing the separator
+    // per segment must not cost CJK its break opportunities.
+    let cjk = "中文测试文字".repeat(20);
+    let cards = vec![Card::new("cjk").prose(cjk)];
+    let out = render_cards(&cards, &Palette::plain(), 40);
+    assert!(out.lines().count() > 4, "CJK must still wrap:\n{out}");
+    for line in out.lines() {
+        assert!(display_width(line) <= 40, "{line:?}");
+    }
+}
+
+#[test]
+fn crlf_content_leaves_no_visible_marker() {
+    // A carriage return maps to a space rather than a replacement
+    // character, so the trailing CR of every CRLF line is removed by the
+    // existing trim instead of showing up as a mark.
+    let cards = vec![Card::new("s").prose("windows line\r\nsecond line\r\n")];
+    let out = render_cards(&cards, &Palette::plain(), 60);
+    assert!(!out.contains('\u{fffd}'), "a marker was left: {out:?}");
+    assert!(!out.contains('\r'), "{out:?}");
+    assert!(out.contains("▎ windows line\n"), "{out:?}");
+    assert!(!out.lines().any(|l| l.ends_with(' ')), "{out:?}");
+}
+
+#[test]
+fn the_gutter_costs_exactly_the_columns_it_claims() {
+    // Pins GUTTER_WIDTH against the glyph it accounts for. If they drift,
+    // cards are silently narrower or wider than the budget, and only the
+    // over-wide direction would ever be noticed.
+    let cards = vec![Card::new("s").prose("x ".repeat(200))];
+    let out = render_cards(&cards, &Palette::plain(), 40);
+    let body = out.lines().nth(1).expect("a body line");
+    assert!(body.starts_with("▎ "), "{body:?}");
+    // A greedy fill of one-column tokens gets within a token of the
+    // budget, so the line lands at width-1 or width. It can only do that
+    // if the gutter costs the 2 columns it claims: at 4 the budget drops
+    // to 36 and the line lands at 37.
+    let w = display_width(body);
+    assert!(
+        (39..=40).contains(&w),
+        "body filled {w} columns of a 40-column terminal, so the gutter is not costing 2: {body:?}"
+    );
+}

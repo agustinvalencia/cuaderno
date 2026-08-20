@@ -144,6 +144,13 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
     let health = card_header(&out, "health").expect("a header for health");
     assert!(health.ends_with("expanded"), "variant badge: {health:?}");
     assert!(out.contains("no tracking yet"));
+    // The name reads as the card's body. Deleting `.prose(&s.name)`
+    // outright used to pass, because every other assertion here reads a
+    // value that survives the name vanishing.
+    assert!(
+        out.lines().any(|l| l.trim_end() == "▎ Finances"),
+        "the stewardship's name is the card body:\n{out}"
+    );
 }
 
 /// The card header line for `slug`: the gutter line whose *title* is

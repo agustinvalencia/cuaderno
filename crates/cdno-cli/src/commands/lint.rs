@@ -35,10 +35,7 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
     // when the gate turns painting off.
     let palette = crate::output::style::Palette::active();
     for issue in &report.issues {
-        let role = match issue.severity {
-            LintSeverity::Error => Role::Error,
-            LintSeverity::Warning => Role::Warn,
-        };
+        let role = severity_role(issue.severity);
         println!(
             "{} {}: {}",
             palette.paint(role, &format!("[{}]", issue.severity.as_str())),
@@ -60,4 +57,17 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
         "found {errors} error(s), {warnings} warning(s) (warnings are non-fatal; use --strict to fail)"
     );
     Ok(())
+}
+
+/// The style a lint severity reads in.
+///
+/// A named function rather than an inline match so the mapping can be
+/// asserted: inverting it — errors rendered as warnings and warnings as
+/// errors — is invisible to a test that only reads the literal
+/// `[error]` / `[warning]` text, which is every test this command has.
+pub fn severity_role(severity: LintSeverity) -> Role {
+    match severity {
+        LintSeverity::Error => Role::Error,
+        LintSeverity::Warning => Role::Warn,
+    }
 }

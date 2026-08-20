@@ -41,7 +41,63 @@ use cdno_domain::recurrence::Recurrence;
 /// that situation from inquire's opaque error to the `missing required
 /// flag` message this module exists to produce.
 pub fn is_interactive(no_interactive: bool) -> bool {
-    !no_interactive && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+    is_interactive_from(
+        no_interactive,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+/// The decision itself, over plain booleans.
+///
+/// Split out because the interesting cases are unreachable from a test:
+/// the suite's subprocesses get a null stdin *and* a piped stdout, so
+/// they only ever exercise "neither is a terminal" — under which the
+/// stdout-only version this replaced short-circuits identically, and
+/// reverting the fix passes. The regression it guards is the one
+/// combination a test cannot arrange without a pty.
+pub fn is_interactive_from(no_interactive: bool, stdin_tty: bool, stdout_tty: bool) -> bool {
+    !no_interactive && stdin_tty && stdout_tty
+}
+
+/// Whether a read verb may follow its listing with a drill-down.
+///
+/// `--json` implies non-interactive: a prompt writes to stdout, which
+/// would corrupt the result a scripted caller is parsing. Folding that
+/// into one named function rather than repeating
+/// `is_interactive(no_interactive || json)` at five call sites means the
+/// composition can be tested — spelled out, every test in the crate runs
+/// off a tty, so dropping the `|| json` term changes no outcome under
+/// test and the mutation passes at every site.
+pub fn reports_interactively(no_interactive: bool, json: bool) -> bool {
+    reports_interactively_from(
+        no_interactive,
+        json,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+/// [`reports_interactively`] over plain booleans.
+///
+/// The tty terms have to be arguments for the `json` term to be testable
+/// at all: off a tty the whole expression is false regardless, so a test
+/// that asserts `reports_interactively(false, true)` is false passes
+/// just as well with the `json` term deleted.
+pub fn reports_interactively_from(
+    no_interactive: bool,
+    json: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+) -> bool {
+    is_interactive_from(no_interactive || json, stdin_tty, stdout_tty)
+}
+
+/// Whether a terminal reporting `columns` is wide enough to draw a
+/// picker in. `None` means stdout is not a terminal, where the question
+/// does not arise.
+pub fn picker_fits(columns: Option<u16>) -> bool {
+    !columns.is_some_and(|cols| cols < MIN_PICKER_WIDTH)
 }
 
 /// Build a clear "missing flag" error for the non-interactive path so
@@ -470,6 +526,13 @@ pub fn prompt_context() -> Result<Context> {
     Ok(Context::ALL[idx])
 }
 
+/// Narrowest terminal we will draw a picker in.
+///
+/// The same threshold as [`crate::output::NON_TTY_WIDTH`]'s credibility
+/// floor, for the same reason: below it a terminal cannot be laid out in,
+/// and inquire underflows rather than degrading.
+const MIN_PICKER_WIDTH: u16 = crate::output::MIN_CREDIBLE_WIDTH;
+
 /// Offer a repeated drill-down into a report that has already been
 /// printed: pick a row, see its detail, pick again, until Esc.
 ///
@@ -490,12 +553,9 @@ pub fn prompt_context() -> Result<Context> {
 ///   it goes to stderr and the loop continues, matching triage's
 ///   per-item tolerance.
 ///
-/// Callers pass `is_interactive(no_interactive || json)`, so `--json`,
-/// `--no-interactive`, and a non-tty stdout are all excluded by the same
-/// expression every write verb already uses.
-/// Narrowest terminal we will draw a picker in.
-const MIN_PICKER_WIDTH: u16 = 20;
-
+/// Callers pass [`reports_interactively`], so `--json`,
+/// `--no-interactive`, and either stream not being a terminal are all
+/// excluded by one named expression.
 pub fn drill_down<T>(
     items: &[T],
     label: &str,
@@ -511,7 +571,7 @@ pub fn drill_down<T>(
     // terminal width and underflows below a couple of columns — a panic
     // in debug builds, an escape-soup redraw in release. The listing is
     // already on screen, so declining to ask costs the reader nothing.
-    if crate::output::terminal_columns().is_some_and(|cols| cols < MIN_PICKER_WIDTH) {
+    if !picker_fits(crate::output::terminal_columns()) {
         return Ok(());
     }
     let labels: Vec<String> = items.iter().map(&row_label).collect();

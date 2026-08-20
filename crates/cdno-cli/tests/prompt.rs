@@ -174,3 +174,67 @@ fn a_genuine_prompt_fault_propagates() {
     });
     assert!(result.is_err(), "a real fault should not be swallowed");
 }
+
+#[test]
+fn prompting_needs_a_terminal_on_both_ends() {
+    use cdno_cli::prompt::is_interactive_from;
+    // The regression that shipped: only stdout was checked, so a caller
+    // with a terminal on stdout and not stdin reached the prompt and
+    // exited 1. A subprocess test cannot arrange that combination — it
+    // gets neither — so the decision is asserted directly.
+    assert!(is_interactive_from(false, true, true), "both terminals");
+    assert!(
+        !is_interactive_from(false, false, true),
+        "stdout a terminal but stdin not: the shipped regression"
+    );
+    assert!(
+        !is_interactive_from(false, true, false),
+        "stdout not a terminal"
+    );
+    assert!(!is_interactive_from(false, false, false), "neither");
+    assert!(
+        !is_interactive_from(true, true, true),
+        "--no-interactive outranks both"
+    );
+}
+
+#[test]
+fn json_output_is_never_followed_by_a_prompt() {
+    use cdno_cli::prompt::reports_interactively;
+    // Every test in the crate runs off a tty, so the `|| json` term
+    // changes no outcome under test and dropping it at any of the ten
+    // call sites passed the whole suite. Asserting the composition is
+    // the only way to pin it without a terminal.
+    use cdno_cli::prompt::reports_interactively_from;
+    // The terminal terms are supplied so the `json` term is the only
+    // thing deciding the outcome — off a tty the whole expression is
+    // false anyway, and the assertion would hold with `json` deleted.
+    assert!(
+        reports_interactively_from(false, false, true, true),
+        "a terminal with no --json is where a report may prompt"
+    );
+    assert!(
+        !reports_interactively_from(false, true, true, true),
+        "--json must never prompt, even with terminals on both ends"
+    );
+    assert!(!reports_interactively_from(true, false, true, true));
+    assert!(!reports_interactively_from(true, true, true, true));
+    // And the wired version still refuses off a tty.
+    assert!(!reports_interactively(false, true));
+}
+
+#[test]
+fn a_terminal_too_narrow_for_a_picker_gets_none() {
+    use cdno_cli::prompt::picker_fits;
+    // inquire lays its frame out against the real terminal width and
+    // underflows below a couple of columns.
+    assert!(!picker_fits(Some(0)));
+    assert!(!picker_fits(Some(1)));
+    assert!(!picker_fits(Some(19)));
+    assert!(picker_fits(Some(20)), "exactly the floor");
+    assert!(picker_fits(Some(120)));
+    assert!(
+        picker_fits(None),
+        "not a terminal: the question does not arise"
+    );
+}

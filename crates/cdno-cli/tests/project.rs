@@ -650,7 +650,7 @@ fn an_empty_list_says_so_in_the_house_shape() {
     let out = render_list(&[]);
     assert_eq!(
         out,
-        "No active projects\n  (none — create one with `cdno project create`)\n"
+        "Active projects\n  (none — create one with `cdno project create`)\n"
     );
     assert!(
         !out.contains('▎'),
@@ -686,6 +686,12 @@ fn each_project_becomes_a_card_carrying_its_state() {
         "{out}"
     );
     assert!(out.contains("▎ Venue booked."), "{out}");
+    // Each card carries the project's top action; dropping the `next:`
+    // line entirely used to pass the whole suite.
+    assert!(
+        out.lines().any(|l| l.starts_with("▎ next: ")),
+        "every card needs its next action:\n{out}"
+    );
     // The badge is the context, and both badges share a column.
     let alpha = out.lines().find(|l| l.contains("alpha")).unwrap();
     let beta = out.lines().find(|l| l.contains("beta")).unwrap();

@@ -802,7 +802,10 @@ fn project_list_says_no_active_projects_when_vault_is_empty() {
         .args(["project", "list"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("No active projects"));
+        // The title is constant whether or not there are any, as `Portfolios`
+        // and `Stewardships` are; the parenthetical carries the emptiness.
+        .stdout(predicate::str::contains("Active projects"))
+        .stdout(predicate::str::contains("(none — create one"));
 }
 
 #[test]

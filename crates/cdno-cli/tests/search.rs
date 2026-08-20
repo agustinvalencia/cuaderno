@@ -222,14 +222,19 @@ fn each_hit_is_a_card_carrying_its_type_path_and_snippet() {
     let header = card_header(&out, "1.").expect("a first hit:\n{out}");
     // Rank and title lead; the note type is the badge, right-aligned.
     assert!(header.starts_with("▎ 1. "), "{header:?}");
-    assert!(
-        header.split_whitespace().last().is_some_and(|badge| {
-            [
-                "project", "daily", "weekly", "monthly", "action", "question", "inbox",
-            ]
-            .contains(&badge)
-        }),
-        "the note type should be the badge: {header:?}"
+    // The badge must be *this hit's* note type. A whitelist-membership
+    // check passes with the badge hardcoded to one value, while a
+    // daily-note hit would display the wrong type.
+    assert_eq!(
+        header.split_whitespace().last(),
+        Some("project"),
+        "the first hit is projects/alpha.md: {header:?}"
+    );
+    let daily = card_header(&out, "2.").expect("a second hit");
+    assert_eq!(
+        daily.split_whitespace().last(),
+        Some("daily"),
+        "the second hit is a daily note, and must not share the first's badge: {daily:?}"
     );
     // The path reads as a body line behind the gutter.
     assert!(

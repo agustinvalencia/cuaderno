@@ -265,6 +265,12 @@ impl Palette {
 /// is the bright variant and anstyle's is the normal one — so the same
 /// slug was two different cyans depending on which renderer drew it.
 ///
+/// Only base-16 foregrounds and the bold/dim effects are carried across,
+/// which is everything [`palette`] uses. If a role ever gains a truecolor
+/// foreground or another effect, it will render on cards and not in
+/// tables — the two tests below compare the paths per role and would
+/// catch it.
+///
 /// There is no palette parameter and no gate here: [`super::styled_table`]
 /// has already told the table whether to emit styling at all, via
 /// `enforce_styling` / `force_no_tty`. A cell built here is therefore
