@@ -82,20 +82,28 @@ cdno project activate --slug surrogate-model
 
 ## `cdno project list`
 
-List active projects with a state snippet. Honours `--json`.
+List active projects with a state snippet. Each project renders as a card — a coloured bar keyed to
+its context, the slug as a title, and the state wrapped underneath. Honours `--json`.
+
+In a terminal this then offers to open one of the projects it just listed, printing the same thing
+`cdno project show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
+`--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
 
 ```bash
 cdno project list
 cdno project list --json | jq '.[].slug'
+cdno project list --no-interactive     # listing only, never a prompt
 ```
 
 ## `cdno project show`
 
-Show a compact summary of a single project (any status). Takes the slug as a positional argument.
-Honours `--json` (emits the project summary object).
+Show a compact summary of a single project (any status). The slug is an optional positional: omit it
+in a terminal and `cdno` offers a picker covering active and parked projects. Honours `--json`
+(emits the project summary object).
 
 ```bash
 cdno project show surrogate-model
+cdno project show                      # pick from a list
 cdno project show surrogate-model --json
 ```
 

@@ -71,6 +71,10 @@ struct Cli {
     /// result and run non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
+    ///
+    /// Also suppresses the interactive report a read verb would
+    /// otherwise offer after its listing, and all colour — a prompt or
+    /// an escape sequence on stdout would corrupt the JSON.
     #[arg(long, global = true)]
     json: bool,
 
