@@ -22,6 +22,7 @@ use cdno_domain::{ActionListEntry, AttachedAction, Vault};
 
 use crate::bootstrap;
 use crate::completions;
+use crate::output::style::{Palette, Role};
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -333,16 +334,32 @@ fn yesno(b: bool) -> &'static str {
 /// Render `cdno action list` output. Pure so tests can exercise the
 /// formatting without going through stdout.
 pub fn render_list(project: &str, entries: &[ActionListEntry]) -> String {
-    let mut out = format!("Actions for projects/{project}.md\n");
+    // Bullets, not cards: an action is one short line, so a gutter and a
+    // header per item would cost three lines to say what one already
+    // says. Colour carries the status instead.
+    let palette = Palette::active();
+    let mut out = format!(
+        "{}\n",
+        palette.paint(Role::Heading, &format!("Actions for projects/{project}.md"))
+    );
     if entries.is_empty() {
-        out.push_str("  (no open actions)\n");
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(Role::Muted, "(no open actions)")
+        ));
         return out;
     }
     for entry in entries {
         out.push_str("  - ");
         out.push_str(&entry.text);
         if let Some(att) = &entry.attached {
-            out.push_str(&format!("  [{}]", status_label(att)));
+            let label = status_label(att);
+            let role = match att.status {
+                ActionStatus::Active => Role::Meta,
+                ActionStatus::Blocked => Role::Warn,
+                ActionStatus::Completed => Role::Success,
+            };
+            out.push_str(&format!("  {}", palette.paint(role, &format!("[{label}]"))));
         }
         out.push('\n');
     }

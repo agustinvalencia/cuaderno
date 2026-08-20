@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use cdno_domain::lint::LintSeverity;
+
 use crate::bootstrap;
+use crate::output::style::Role;
 
 /// Validate every indexed note and print a report.
 ///
@@ -25,11 +28,21 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
         return Ok(());
     }
 
+    // One issue per line, grep-friendly, exactly as before — the literal
+    // text is unchanged and only the severity tag and path are painted.
+    // That contract survives colour for free: stdout is not a terminal
+    // precisely when the output is being piped into `grep`, which is
+    // when the gate turns painting off.
+    let palette = crate::output::style::Palette::active();
     for issue in &report.issues {
+        let role = match issue.severity {
+            LintSeverity::Error => Role::Error,
+            LintSeverity::Warning => Role::Warn,
+        };
         println!(
-            "[{}] {}: {}",
-            issue.severity.as_str(),
-            issue.path,
+            "{} {}: {}",
+            palette.paint(role, &format!("[{}]", issue.severity.as_str())),
+            palette.paint(Role::Meta, &issue.path.to_string()),
             issue.message
         );
     }
