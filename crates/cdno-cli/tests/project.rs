@@ -619,3 +619,100 @@ fn waiting_add_in_non_interactive_errors_when_missing_description() {
     let msg = format!("{err:#}");
     assert!(msg.contains("--description"), "error message: {msg}");
 }
+
+// ---------------------------------------------------------------------
+// Rendering.
+//
+// `render_list` and `render_show` are pure, so these assert on the text
+// directly rather than through a subprocess — which is also the only way
+// tarpaulin sees them.
+// ---------------------------------------------------------------------
+
+use cdno_cli::commands::project::{render_list, render_show};
+use cdno_domain::ProjectSummary;
+use cdno_domain::frontmatter::ProjectStatus;
+
+fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
+    ProjectSummary {
+        slug: slug.to_owned(),
+        status: ProjectStatus::Active,
+        context,
+        state_snippet: state.to_owned(),
+        top_action: None,
+    }
+}
+
+#[test]
+fn an_empty_list_says_so_without_drawing_a_card() {
+    assert_eq!(render_list(&[]), "No active projects.\n");
+}
+
+#[test]
+fn the_list_counts_projects_and_agrees_with_itself_on_plurals() {
+    let one = render_list(&[summary("alpha", Context::Work, "state")]);
+    assert!(one.starts_with("1 active project\n"), "{one}");
+
+    let two = render_list(&[
+        summary("alpha", Context::Work, "state"),
+        summary("beta", Context::Personal, "state"),
+    ]);
+    assert!(two.starts_with("2 active projects\n"), "{two}");
+}
+
+#[test]
+fn each_project_becomes_a_card_carrying_its_state() {
+    let out = render_list(&[
+        summary(
+            "alpha",
+            Context::Work,
+            "Kicked off; waiting on the data drop.",
+        ),
+        summary("beta", Context::Family, "Venue booked."),
+    ]);
+    assert!(out.contains("▎ alpha"), "{out}");
+    assert!(
+        out.contains("▎ Kicked off; waiting on the data drop."),
+        "{out}"
+    );
+    assert!(out.contains("▎ Venue booked."), "{out}");
+    // The badge is the context, and both badges share a column.
+    let alpha = out.lines().find(|l| l.contains("alpha")).unwrap();
+    let beta = out.lines().find(|l| l.contains("beta")).unwrap();
+    assert_eq!(alpha.find("work"), beta.find("family"), "{out}");
+}
+
+#[test]
+fn a_project_with_no_state_says_so_rather_than_rendering_a_gap() {
+    let out = render_list(&[summary("alpha", Context::Work, "   ")]);
+    assert!(out.contains("(no state recorded)"), "{out}");
+}
+
+#[test]
+fn the_list_never_leaves_trailing_whitespace() {
+    // A wall of prose is what this command exists to fix; a ragged right
+    // edge would undo half of it.
+    let out = render_list(&[summary(
+        "alpha",
+        Context::Work,
+        "A state long enough to wrap across more than one line of the card body, \
+         so the padding path is genuinely exercised rather than skipped.",
+    )]);
+    assert!(!out.lines().any(|l| l.ends_with(' ')), "{out:?}");
+}
+
+#[test]
+fn show_keeps_its_line_shape_rather_than_becoming_a_card() {
+    // Cards are for lists. A detail view has no boundary to mark, so it
+    // must not grow a gutter.
+    let out = render_show(&summary("alpha", Context::Work, "Kicked off."));
+    assert!(!out.contains('▎'), "show must not draw a gutter:\n{out}");
+    assert!(out.starts_with("[alpha] (active)"), "{out}");
+    assert!(out.contains("  State:\n    Kicked off."), "{out}");
+    assert!(out.contains("  Top: (no open actions)"), "{out}");
+}
+
+#[test]
+fn show_names_an_absent_state() {
+    let out = render_show(&summary("alpha", Context::Work, ""));
+    assert!(out.contains("  State: (none)"), "{out}");
+}
