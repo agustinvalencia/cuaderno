@@ -15,17 +15,29 @@ use crate::commands::orient::project_next;
 use crate::output::style::{Role, cell};
 
 /// Print a quick status snapshot for the vault at `root` as of `today`.
-pub fn run(root: &Path, today: NaiveDate, json: bool) -> Result<()> {
+pub fn run(root: &Path, today: NaiveDate, no_interactive: bool, json: bool) -> Result<()> {
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    let ctx = vault
+        .orientation_context(today)
+        .context("building orientation context")?;
     if json {
-        let (vault, _report) = bootstrap::open_vault(root)?;
-        let ctx = vault
-            .orientation_context(today)
-            .context("building orientation context")?;
         println!("{}", serde_json::to_string_pretty(&ctx)?);
-    } else {
-        print!("{}", build_status(root, today)?);
+        return Ok(());
     }
-    Ok(())
+    print!("{}", render(&ctx));
+    // `--json` implies non-interactive: a prompt writes to stdout, which
+    // would corrupt the result a scripted caller is parsing.
+    let interactive = crate::prompt::is_interactive(no_interactive || json);
+    crate::prompt::drill_down(
+        &ctx.projects,
+        "Inspect a project",
+        interactive,
+        |p| format!("{} ({})", p.slug, p.context.as_str()),
+        |p| {
+            print!("{}", crate::commands::project::render_show(p));
+            Ok(())
+        },
+    )
 }
 
 /// Open the vault and render the snapshot to a string. Split from

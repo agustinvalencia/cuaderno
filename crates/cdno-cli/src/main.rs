@@ -421,11 +421,22 @@ fn main() -> Result<()> {
         }
         Commands::Orient { energy } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::orient::run(&root, Local::now().date_naive(), energy, cli.json)
+            commands::orient::run(
+                &root,
+                Local::now().date_naive(),
+                energy,
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::status::run(&root, Local::now().date_naive(), cli.json)
+            commands::status::run(
+                &root,
+                Local::now().date_naive(),
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Review { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
