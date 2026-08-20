@@ -307,24 +307,19 @@ pub fn render_list(summaries: &[StewardshipSummary]) -> String {
     let cards: Vec<Card> = summaries
         .iter()
         .map(|s| {
+            // Bare, like every other card badge. The brackets were a
+            // leftover from when this was a table column and nothing but
+            // punctuation marked it as a separate field.
             let variant_badge = match s.variant {
-                StewardshipVariant::Flat => "[flat]",
-                StewardshipVariant::Expanded => "[expanded]",
+                StewardshipVariant::Flat => "flat",
+                StewardshipVariant::Expanded => "expanded",
             };
-            let (activity_badge, accent) = match (s.tracking_count, s.staleness_days) {
-                (0, _) => ("no tracking yet".to_owned(), Accent::Grey),
-                // A stewardship is a standing commitment; one that has
-                // not been tracked in a month is the point of the list.
-                (n, Some(d)) => (
-                    format!("{n} tracking, last {d} days ago"),
-                    if d > 30 {
-                        Accent::Yellow
-                    } else {
-                        Accent::Green
-                    },
-                ),
-                (n, None) => (format!("{n} tracking"), Accent::Green),
+            let activity_badge = match (s.tracking_count, s.staleness_days) {
+                (0, _) => "no tracking yet".to_owned(),
+                (n, Some(d)) => format!("{n} tracking, last {d} days ago"),
+                (n, None) => format!("{n} tracking"),
             };
+            let accent = Accent::for_staleness(s.tracking_count, s.staleness_days);
             Card::new(&s.slug)
                 .badge(variant_badge)
                 .accent(accent)
@@ -333,7 +328,7 @@ pub fn render_list(summaries: &[StewardshipSummary]) -> String {
         })
         .collect();
     format!(
-        "{header}\n{}",
+        "{header}\n\n{}",
         render_cards(&cards, &palette, crate::output::render_width())
     )
 }

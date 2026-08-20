@@ -205,7 +205,7 @@ pub fn run(
             let slug = match slug {
                 Some(s) => s,
                 None if interactive => crate::prompt::prompt_any_project(&vault)?,
-                None => return Err(crate::prompt::missing_flag("slug")),
+                None => return Err(crate::prompt::missing_positional("slug")),
             };
             let summary = vault
                 .project_summary(&slug)
@@ -592,10 +592,21 @@ fn active_summaries(vault: &cdno_domain::Vault) -> Result<Vec<cdno_domain::Proje
 /// Pure, like every other `render_*` in this crate: the caller prints
 /// it, and tests assert on it without capturing stdout.
 pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
-    if summaries.is_empty() {
-        return "No active projects.\n".to_owned();
-    }
     let palette = Palette::active();
+    if summaries.is_empty() {
+        // Same shape as every other empty listing: a painted title, then
+        // an indented dim parenthetical. This used to be a bare
+        // `No active projects.` with no title, no indent, and no colour
+        // — the only empty state in the CLI that looked like that.
+        return format!(
+            "{}\n  {}\n",
+            palette.paint(Role::Heading, "No active projects"),
+            palette.paint(
+                Role::Muted,
+                "(none — create one with `cdno project create`)"
+            )
+        );
+    }
     let cards: Vec<Card> = summaries
         .iter()
         .map(|summary| {
@@ -615,9 +626,15 @@ pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
         .collect();
 
     format!(
-        "{} active project{}\n\n{}",
-        summaries.len(),
-        if summaries.len() == 1 { "" } else { "s" },
+        "{}\n\n{}",
+        palette.paint(
+            Role::Heading,
+            &format!(
+                "{} active project{}",
+                summaries.len(),
+                if summaries.len() == 1 { "" } else { "s" }
+            )
+        ),
         render_cards(&cards, &palette, crate::output::render_width()),
     )
 }
@@ -642,7 +659,10 @@ pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
         palette.paint(Role::Slug, &summary.slug),
         palette.paint(Role::Badge, status_word),
     );
-    if summary.state_snippet.is_empty() {
+    // `trim()`, matching `render_list` and `orient`: a state of nothing
+    // but whitespace is an absent state, and rendering it literally
+    // produced an empty `State:` block with trailing spaces in it.
+    if summary.state_snippet.trim().is_empty() {
         out.push_str(&format!(
             "  State: {}\n",
             palette.paint(Role::Muted, "(none)")

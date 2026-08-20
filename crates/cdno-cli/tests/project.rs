@@ -643,8 +643,19 @@ fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
 }
 
 #[test]
-fn an_empty_list_says_so_without_drawing_a_card() {
-    assert_eq!(render_list(&[]), "No active projects.\n");
+fn an_empty_list_says_so_in_the_house_shape() {
+    // Every empty listing in the CLI is a title then an indented dim
+    // parenthetical; this one used to be a bare sentence with no title,
+    // no indent, and no colour.
+    let out = render_list(&[]);
+    assert_eq!(
+        out,
+        "No active projects\n  (none — create one with `cdno project create`)\n"
+    );
+    assert!(
+        !out.contains('▎'),
+        "an empty listing draws no card: {out:?}"
+    );
 }
 
 #[test]

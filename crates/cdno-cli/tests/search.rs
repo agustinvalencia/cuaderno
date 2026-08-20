@@ -195,3 +195,46 @@ fn search_json_output_is_valid_and_carries_hit_fields() {
         "path serialised to the vault-relative string: {paths:?}"
     );
 }
+
+/// The card header line whose title starts with `rank`.
+fn card_header<'a>(out: &'a str, rank: &str) -> Option<&'a str> {
+    out.lines()
+        .map(str::trim_end)
+        .find(|l| l.strip_prefix("▎ ").is_some_and(|r| r.starts_with(rank)))
+}
+
+#[test]
+fn each_hit_is_a_card_carrying_its_type_path_and_snippet() {
+    // The pre-existing assertions here are single substrings that survive
+    // any layout, so they passed before this command rendered cards and
+    // would keep passing if the badge, the path, or the snippet were
+    // dropped entirely. This pins the card's actual shape.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let out = search::build_search(
+        dir.path(),
+        "sparse attention",
+        &SearchFilters::default(),
+        20,
+    )
+    .expect("search builds");
+
+    let header = card_header(&out, "1.").expect("a first hit:\n{out}");
+    // Rank and title lead; the note type is the badge, right-aligned.
+    assert!(header.starts_with("▎ 1. "), "{header:?}");
+    assert!(
+        header.split_whitespace().last().is_some_and(|badge| {
+            [
+                "project", "daily", "weekly", "monthly", "action", "question", "inbox",
+            ]
+            .contains(&badge)
+        }),
+        "the note type should be the badge: {header:?}"
+    );
+    // The path reads as a body line behind the gutter.
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("▎ ") && l.contains(".md")),
+        "the path should be a body line:\n{out}"
+    );
+}

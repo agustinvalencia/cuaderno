@@ -136,11 +136,24 @@ fn list_render_shows_each_with_variant_and_activity_badge() {
         .list_stewardships(NaiveDate::from_ymd_opt(2026, 5, 1).unwrap())
         .unwrap();
     let out = stewardship::render_list(&summaries);
-    assert!(out.contains("finances"));
-    assert!(out.contains("[flat]"), "out:\n{out}");
-    assert!(out.contains("health"));
-    assert!(out.contains("[expanded]"));
+    // Each stewardship is a card: slug as the title, variant as a bare
+    // badge on the same line (the brackets these used to carry were a
+    // table-column leftover), name and activity as body.
+    let finances = card_header(&out, "finances").expect("a header for finances");
+    assert!(finances.ends_with("flat"), "variant badge: {finances:?}");
+    let health = card_header(&out, "health").expect("a header for health");
+    assert!(health.ends_with("expanded"), "variant badge: {health:?}");
     assert!(out.contains("no tracking yet"));
+}
+
+/// The card header line for `slug`: the gutter line whose *title* is
+/// `slug`. Matching on `contains` would find a body line of an earlier
+/// card that merely mentions the slug.
+fn card_header<'a>(out: &'a str, slug: &str) -> Option<&'a str> {
+    out.lines().map(str::trim_end).find(|line| {
+        line.strip_prefix("▎ ")
+            .is_some_and(|rest| rest.split_whitespace().next() == Some(slug))
+    })
 }
 
 #[test]

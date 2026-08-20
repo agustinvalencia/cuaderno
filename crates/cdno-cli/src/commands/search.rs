@@ -125,7 +125,7 @@ pub fn render(query: &str, results: &[SearchResultEntry]) -> String {
         })
         .collect();
     format!(
-        "{header}\n{}",
+        "{header}\n\n{}",
         render_cards(&cards, &palette, crate::output::render_width())
     )
 }

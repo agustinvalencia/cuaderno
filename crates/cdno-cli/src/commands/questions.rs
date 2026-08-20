@@ -38,9 +38,13 @@ pub fn render(active: &[QuestionSummary]) -> String {
     let palette = Palette::active();
     let mut out = format!("{}\n", palette.paint(Role::Heading, "Active questions"));
     if active.is_empty() {
-        out.push_str(
-            "  (none \u{2014} create one with `cdno question create --domain research --text ...`)\n",
-        );
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(
+                Role::Muted,
+                "(none \u{2014} create one with `cdno question create --domain research --text ...`)"
+            )
+        ));
         return out;
     }
     // Two passes so the domain headings come out in a stable order

@@ -381,3 +381,36 @@ fn add_without_project_in_non_interactive_errors() {
     let msg = format!("{err:#}");
     assert!(msg.contains("--project"), "error message: {msg}");
 }
+
+#[test]
+fn action_status_badges_are_distinguishable_by_colour() {
+    // Collapsing active / blocked / completed to one role passed the
+    // whole suite: every assertion here reads the literal `[blocked]`
+    // text, which is unchanged by the colour it is painted in.
+    use cdno_cli::output::style::{Palette, Role};
+    let palette = Palette::forced();
+    let active = palette.paint(Role::Meta, "[active]");
+    let blocked = palette.paint(Role::Warn, "[blocked]");
+    let completed = palette.paint(Role::Success, "[completed]");
+    assert_ne!(
+        strip_style(&blocked),
+        strip_style(&active),
+        "blocked must read differently from active"
+    );
+    assert_ne!(
+        strip_style(&completed),
+        strip_style(&active),
+        "completed must read differently from active"
+    );
+    assert_ne!(strip_style(&blocked), strip_style(&completed));
+}
+
+/// The SGR parameters of `text`, with the visible characters removed —
+/// so two strings compare equal only if they are styled identically.
+fn strip_style(text: &str) -> String {
+    text.split('\u{1b}')
+        .skip(1)
+        .filter_map(|c| c.strip_prefix('[').and_then(|c| c.split('m').next()))
+        .collect::<Vec<_>>()
+        .join(",")
+}

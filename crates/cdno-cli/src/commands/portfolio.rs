@@ -343,19 +343,13 @@ pub fn render_list(summaries: &[PortfolioSummary]) -> String {
     let cards: Vec<Card> = summaries
         .iter()
         .map(|p| {
-            let (badge, accent) = match p.staleness_days {
-                Some(days) if p.evidence_count > 0 => (
-                    format!("{} evidence, last {} days ago", p.evidence_count, days),
-                    // A portfolio nobody has fed in a month is the thing
-                    // this list exists to surface.
-                    if days > 30 {
-                        Accent::Yellow
-                    } else {
-                        Accent::Cyan
-                    },
-                ),
-                _ => ("no evidence yet".to_owned(), Accent::Grey),
+            let badge = match p.staleness_days {
+                Some(days) if p.evidence_count > 0 => {
+                    format!("{} evidence, last {} days ago", p.evidence_count, days)
+                }
+                _ => "no evidence yet".to_owned(),
             };
+            let accent = Accent::for_staleness(p.evidence_count, p.staleness_days);
             Card::new(&p.slug)
                 .badge(badge)
                 .accent(accent)
@@ -363,7 +357,7 @@ pub fn render_list(summaries: &[PortfolioSummary]) -> String {
         })
         .collect();
     format!(
-        "{header}\n{}",
+        "{header}\n\n{}",
         render_cards(&cards, &palette, crate::output::render_width())
     )
 }

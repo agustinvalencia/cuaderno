@@ -577,11 +577,19 @@ fn project_list_prints_each_active_project_with_state() {
         .stdout(predicate::str::contains("▎ Just started."));
 }
 
-/// The card header line for `slug`: the one gutter line carrying it.
+/// The card header line whose *title* is `slug`.
+///
+/// Deliberately structural rather than `contains`: every body line of
+/// every card also starts with the gutter, so a `contains` match returns
+/// the first line mentioning the slug — which may be another project's
+/// state text ("Ping alpha about the work"), or the header of a card
+/// whose slug merely has this one as a prefix. Both produce a passing
+/// assertion about the wrong line.
 fn card_header<'a>(out: &'a str, slug: &str) -> Option<&'a str> {
-    out.lines()
-        .find(|line| line.starts_with("▎ ") && line.contains(slug))
-        .map(str::trim_end)
+    out.lines().map(str::trim_end).find(|line| {
+        line.strip_prefix("▎ ")
+            .is_some_and(|rest| rest.split_whitespace().next() == Some(slug))
+    })
 }
 
 #[test]
@@ -2120,4 +2128,67 @@ fn no_color_beats_a_forced_colour_environment() {
         !out.contains('\u{1b}'),
         "NO_COLOR is a user preference and outranks a harness's CLICOLOR_FORCE:\n{out:?}"
     );
+}
+
+/// Run `project list` in a vault with one project and return stdout.
+fn list_stdout(configure: impl FnOnce(&mut assert_cmd::Command)) -> String {
+    let dir = vault_with_a_project();
+    let mut cmd = cdno();
+    cmd.current_dir(dir.path()).args(["project", "list"]);
+    configure(&mut cmd);
+    let out = cmd.assert().success().get_output().stdout.clone();
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn clicolor_zero_turns_colour_off() {
+    // The `CLICOLOR` rung was the one the ladder never exercised:
+    // replacing it with `true` passed the whole suite, so the CLI would
+    // have ignored `CLICOLOR=0` silently.
+    let out = list_stdout(|c| {
+        c.env("CLICOLOR", "0").env("CLICOLOR_FORCE", "1");
+    });
+    assert!(
+        !out.contains('\u{1b}'),
+        "CLICOLOR=0 must suppress colour:\n{out:?}"
+    );
+}
+
+#[test]
+fn clicolor_force_paints_without_an_explicit_flag() {
+    // The complement: forcing colour on through the environment alone,
+    // with stdout a pipe and no `--color always`.
+    let out = list_stdout(|c| {
+        c.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+    });
+    assert!(
+        out.contains('\u{1b}'),
+        "CLICOLOR_FORCE should paint into a pipe:\n{out:?}"
+    );
+}
+
+#[test]
+fn color_never_beats_a_forcing_environment() {
+    let out = list_stdout(|c| {
+        c.env("CLICOLOR_FORCE", "1").args(["--color", "never"]);
+    });
+    assert!(
+        !out.contains('\u{1b}'),
+        "an explicit --color never outranks the environment:\n{out:?}"
+    );
+}
+
+#[test]
+fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
+    // `assert_cmd` gives the child a null stdin, so this is the
+    // stdin-not-a-tty half of the guard. The stdout-is-a-tty half needs a
+    // pty and is covered by hand; what matters here is that the prompt
+    // path can never turn a read-only listing into a non-zero exit.
+    let dir = vault_with_a_project();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active project"));
 }

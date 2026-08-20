@@ -105,6 +105,9 @@ pub enum Role {
     Success,
 }
 
+/// Days without an entry after which a dated collection reads as stale.
+const STALE_AFTER_DAYS: i64 = 30;
+
 /// A gutter colour. Named by hue rather than by meaning: at this layer
 /// it *is* a colour choice, and callers own the mapping from their own
 /// domain (see [`Accent::for_context`]). Keeping the names neutral lets
@@ -142,6 +145,23 @@ impl Accent {
         match domain {
             QuestionDomain::Research => Accent::Cyan,
             QuestionDomain::Life => Accent::Green,
+        }
+    }
+
+    /// The gutter colour for a dated collection — a portfolio's evidence,
+    /// a stewardship's tracking notes.
+    ///
+    /// One function rather than a conditional at each call site: the two
+    /// listings were picking their own hues for the same idea, so a
+    /// healthy portfolio was cyan and a healthy stewardship green, for
+    /// no reason a reader could infer.
+    pub fn for_staleness(count: usize, days: Option<i64>) -> Self {
+        match (count, days) {
+            (0, _) => Accent::Grey,
+            // A standing commitment nobody has fed in a month is what
+            // these listings exist to surface.
+            (_, Some(d)) if d > STALE_AFTER_DAYS => Accent::Yellow,
+            _ => Accent::Green,
         }
     }
 
@@ -206,11 +226,6 @@ impl Palette {
         Palette { enabled: true }
     }
 
-    /// Whether this palette paints.
-    pub fn is_enabled(self) -> bool {
-        self.enabled
-    }
-
     /// Paint `text` in `role`'s style, or return it untouched when this
     /// palette is off.
     ///
@@ -243,22 +258,61 @@ impl Palette {
 /// the `Cell` instead lets comfy-table measure the content and emit the
 /// escapes itself, at render time.
 ///
-/// There is no palette parameter, and no gate here: [`super::styled_table`]
+/// The colours are *derived* from [`palette`] rather than restated, so a
+/// role cannot mean one thing on a card and another in a table. It did
+/// exactly that before: `Role::Slug` came out as SGR 36 through anstyle
+/// and SGR 38;5;14 through comfy-table, because crossterm's `Color::Cyan`
+/// is the bright variant and anstyle's is the normal one — so the same
+/// slug was two different cyans depending on which renderer drew it.
+///
+/// There is no palette parameter and no gate here: [`super::styled_table`]
 /// has already told the table whether to emit styling at all, via
 /// `enforce_styling` / `force_no_tty`. A cell built here is therefore
 /// safe to use unconditionally.
 pub fn cell(role: Role, text: impl Into<String>) -> comfy_table::Cell {
-    use comfy_table::{Attribute, Cell, Color};
+    use comfy_table::{Attribute, Cell};
 
-    let cell = Cell::new(text.into());
-    match role {
-        Role::Slug => cell.fg(Color::Cyan).add_attribute(Attribute::Bold),
-        Role::Badge => cell.fg(Color::Magenta).add_attribute(Attribute::Dim),
-        Role::Heading => cell.add_attribute(Attribute::Bold),
-        Role::Prose => cell,
-        Role::Meta | Role::Muted => cell.add_attribute(Attribute::Dim),
-        Role::Warn => cell.fg(Color::Yellow),
-        Role::Error => cell.fg(Color::Red).add_attribute(Attribute::Bold),
-        Role::Success => cell.fg(Color::Green),
+    let style = palette(role);
+    let mut cell = Cell::new(text.into());
+    if let Some(anstyle::Color::Ansi(colour)) = style.get_fg_color() {
+        cell = cell.fg(to_comfy(colour));
+    }
+    let effects = style.get_effects();
+    if effects.contains(anstyle::Effects::BOLD) {
+        cell = cell.add_attribute(Attribute::Bold);
+    }
+    if effects.contains(anstyle::Effects::DIMMED) {
+        cell = cell.add_attribute(Attribute::Dim);
+    }
+    cell
+}
+
+/// Map an `anstyle` base-16 colour onto comfy-table's equivalent.
+///
+/// The `Dark*` names are not a typo. crossterm — which comfy-table
+/// renders through — calls the *normal* 30-37 range `DarkX` and reserves
+/// the plain name for the bright 90-97 range, the opposite of anstyle's
+/// convention. Mapping name-to-name would silently brighten every
+/// colour on the table path.
+fn to_comfy(colour: anstyle::AnsiColor) -> comfy_table::Color {
+    use anstyle::AnsiColor;
+    use comfy_table::Color;
+    match colour {
+        AnsiColor::Black => Color::Black,
+        AnsiColor::Red => Color::DarkRed,
+        AnsiColor::Green => Color::DarkGreen,
+        AnsiColor::Yellow => Color::DarkYellow,
+        AnsiColor::Blue => Color::DarkBlue,
+        AnsiColor::Magenta => Color::DarkMagenta,
+        AnsiColor::Cyan => Color::DarkCyan,
+        AnsiColor::White => Color::Grey,
+        AnsiColor::BrightBlack => Color::DarkGrey,
+        AnsiColor::BrightRed => Color::Red,
+        AnsiColor::BrightGreen => Color::Green,
+        AnsiColor::BrightYellow => Color::Yellow,
+        AnsiColor::BrightBlue => Color::Blue,
+        AnsiColor::BrightMagenta => Color::Magenta,
+        AnsiColor::BrightCyan => Color::Cyan,
+        AnsiColor::BrightWhite => Color::White,
     }
 }

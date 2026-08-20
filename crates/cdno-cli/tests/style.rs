@@ -14,7 +14,7 @@
 
 mod strip;
 
-use cdno_cli::output::style::{Accent, ColourChoice, Palette, Role};
+use cdno_cli::output::style::{Accent, ColourChoice, Palette, Role, cell};
 
 use strip::strip_sgr;
 
@@ -94,17 +94,152 @@ fn painting_changes_no_visible_character() {
 }
 
 #[test]
-fn every_context_gets_a_gutter_colour() {
+fn contexts_are_actually_distinguishable_by_gutter_colour() {
     use cdno_domain::frontmatter::Context;
     let palette = Palette::forced();
-    for context in Context::ALL {
-        let accent = Accent::for_context(context);
-        let painted = palette.paint_accent(accent, "▎");
-        assert_eq!(strip_sgr(&painted), "▎", "{context:?}");
-        assert!(
-            painted.starts_with('\u{1b}'),
-            "{context:?} should be distinguishable by colour: {painted:?}"
+    let painted: Vec<String> = Context::ALL
+        .iter()
+        .map(|c| palette.paint_accent(Accent::for_context(*c), "▎"))
+        .collect();
+
+    for (context, bar) in Context::ALL.iter().zip(&painted) {
+        assert_eq!(strip_sgr(bar), "▎", "{context:?} must not alter the glyph");
+    }
+    // The point of the gutter is that a mixed list separates before a
+    // word is read, so the colours must differ from each other. Asserting
+    // only "starts with an escape" would pass with every context mapped
+    // to one hue — which is exactly what the previous version of this
+    // test allowed.
+    let distinct: std::collections::BTreeSet<&String> = painted.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        Context::ALL.len(),
+        "every context needs its own colour, got:\n{painted:#?}"
+    );
+}
+
+#[test]
+fn question_domains_are_distinguishable_from_each_other() {
+    use cdno_domain::frontmatter::QuestionDomain;
+    let palette = Palette::forced();
+    let research = palette.paint_accent(Accent::for_question(QuestionDomain::Research), "▎");
+    let life = palette.paint_accent(Accent::for_question(QuestionDomain::Life), "▎");
+    assert_ne!(
+        research, life,
+        "research and life questions sit in one listing and must differ"
+    );
+}
+
+#[test]
+fn staleness_reads_off_the_gutter() {
+    // One mapping for both portfolios and stewardships — they used to
+    // pick their own hues for the same idea, so a healthy portfolio was
+    // cyan and a healthy stewardship green for no inferable reason.
+    assert_eq!(
+        Accent::for_staleness(0, None),
+        Accent::Grey,
+        "nothing filed"
+    );
+    assert_eq!(
+        Accent::for_staleness(0, Some(99)),
+        Accent::Grey,
+        "nothing filed"
+    );
+    assert_eq!(
+        Accent::for_staleness(3, Some(2)),
+        Accent::Green,
+        "fed recently"
+    );
+    assert_eq!(
+        Accent::for_staleness(3, None),
+        Accent::Green,
+        "fed, undated"
+    );
+    assert_eq!(
+        Accent::for_staleness(3, Some(31)),
+        Accent::Yellow,
+        "gone stale"
+    );
+    // The boundary is the interesting part.
+    assert_eq!(
+        Accent::for_staleness(3, Some(30)),
+        Accent::Green,
+        "exactly 30 days"
+    );
+}
+
+/// The SGR parameters a rendered string carries, canonicalised so the
+/// two encodings of a base-16 colour compare equal: anstyle writes
+/// `ESC[36m` while comfy-table (via crossterm) writes `ESC[38;5;6m`, and
+/// both mean colour index 6.
+fn sgr_facts(text: &str) -> (Option<u8>, bool, bool) {
+    let (mut colour, mut bold, mut dim) = (None, false, false);
+    for chunk in text.split('\u{1b}').skip(1) {
+        let Some(params) = chunk.strip_prefix('[').and_then(|c| c.split('m').next()) else {
+            continue;
+        };
+        let parts: Vec<&str> = params.split(';').collect();
+        match parts.as_slice() {
+            ["1"] => bold = true,
+            ["2"] => dim = true,
+            // 38;5;N — the 256-colour form comfy-table emits.
+            ["38", "5", n] => colour = n.parse().ok(),
+            // 30-37 normal, 90-97 bright — the form anstyle emits.
+            [n] => {
+                if let Ok(v) = n.parse::<u8>() {
+                    if (30..=37).contains(&v) {
+                        colour = Some(v - 30);
+                    } else if (90..=97).contains(&v) {
+                        colour = Some(v - 90 + 8);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    (colour, bold, dim)
+}
+
+/// Render one styled cell the way `styled_table` would with colour on.
+fn rendered_cell(role: Role) -> String {
+    let mut table = comfy_table::Table::new();
+    table.load_preset(comfy_table::presets::NOTHING);
+    table.enforce_styling();
+    table.style_text_only();
+    table.add_row(vec![cell(role, "x")]);
+    table.to_string()
+}
+
+#[test]
+fn a_table_cell_carries_the_same_style_as_the_card_beside_it() {
+    // `Role::Slug` used to come out as colour index 6 through anstyle and
+    // index 14 through comfy-table, because crossterm reserves the plain
+    // colour names for the *bright* range while anstyle uses them for the
+    // normal one — so the same slug was two different cyans depending on
+    // which renderer drew it. The table path now derives from the card
+    // path; this pins that they agree, for every role.
+    let palette = Palette::forced();
+    for role in EVERY_ROLE {
+        let card = sgr_facts(&palette.paint(role, "x"));
+        let table = sgr_facts(&rendered_cell(role));
+        assert_eq!(
+            card, table,
+            "{role:?}: card renders {card:?} but the table renders {table:?}"
         );
+    }
+}
+
+#[test]
+fn no_role_brightens_on_the_table_path() {
+    // The specific bug class, stated as its own assertion: indices 8-15
+    // are the bright range, and a name-to-name mapping would land there.
+    for role in EVERY_ROLE {
+        if let (Some(index), _, _) = sgr_facts(&rendered_cell(role)) {
+            assert!(
+                index < 8,
+                "{role:?} resolved to bright colour index {index}; the palette uses 0-7"
+            );
+        }
     }
 }
 
