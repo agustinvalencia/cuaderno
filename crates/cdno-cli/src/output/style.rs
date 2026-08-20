@@ -1,0 +1,226 @@
+//! Colour for human-readable CLI output: what may be painted, and
+//! whether painting happens at all.
+//!
+//! Two ideas carry this module.
+//!
+//! **Roles, not colours.** Callers ask for [`Role::Slug`], never for
+//! "bold cyan". Every colour decision therefore lives in the private
+//! `palette` function below and nowhere else, so the house style is
+//! retuned in one place rather than re-derived at thirty call sites.
+//!
+//! **One gate, decided once.** [`init`] records the `--color` choice
+//! before any command runs; [`colour_enabled`] answers from it. When
+//! colour is off, [`Palette::paint`] returns its input *unchanged* —
+//! byte-for-byte, not "visually equivalent". That is what lets the whole
+//! existing test surface keep asserting on plain substrings: integration
+//! tests and `assert_cmd` subprocesses both run off a tty, so they see
+//! exactly the text they saw before this module existed.
+//!
+//! The precedence ladder (`NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, tty)
+//! is not re-implemented here — `anstyle-query` already encodes it, and
+//! `colorchoice` already provides the process-wide slot to hold the
+//! flag's answer. Both build as part of clap's `color` feature, so
+//! neither is a new crate.
+
+use std::io::IsTerminal;
+
+use anstyle::{AnsiColor, Style};
+use cdno_domain::frontmatter::Context;
+
+/// The `--color` flag's three settings.
+///
+/// Distinct from [`colorchoice::ColorChoice`] so clap's `ValueEnum`
+/// derive can hang off it without a newtype; [`init`] converts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum ColourChoice {
+    /// Colour only when stdout is a terminal, honouring `NO_COLOR`,
+    /// `CLICOLOR`, and `CLICOLOR_FORCE`.
+    #[default]
+    Auto,
+    /// Always colour, even when redirected — for piping into a pager.
+    Always,
+    /// Never colour.
+    Never,
+}
+
+impl From<ColourChoice> for colorchoice::ColorChoice {
+    fn from(choice: ColourChoice) -> Self {
+        match choice {
+            ColourChoice::Auto => colorchoice::ColorChoice::Auto,
+            ColourChoice::Always => colorchoice::ColorChoice::Always,
+            ColourChoice::Never => colorchoice::ColorChoice::Never,
+        }
+    }
+}
+
+/// Record the `--color` choice for the rest of the process. Call once
+/// from `main`, straight after argument parsing and before any command
+/// runs — this is the single point where colour is decided.
+pub fn init(choice: ColourChoice) {
+    colorchoice::ColorChoice::from(choice).write_global();
+}
+
+/// Whether human-readable output should carry ANSI styling.
+///
+/// `Auto` defers to `anstyle-query` for the environment ladder and to
+/// `is_terminal` for the rest. `NO_COLOR` is checked first and wins over
+/// `CLICOLOR_FORCE`: a user exports `NO_COLOR` once, globally, as a
+/// preference about their own terminal, whereas `CLICOLOR_FORCE` is
+/// typically set by a harness that has no standing to override it.
+pub fn colour_enabled() -> bool {
+    match colorchoice::ColorChoice::global() {
+        colorchoice::ColorChoice::Never => false,
+        colorchoice::ColorChoice::Always | colorchoice::ColorChoice::AlwaysAnsi => true,
+        colorchoice::ColorChoice::Auto => {
+            !anstyle_query::no_color()
+                && anstyle_query::clicolor().unwrap_or(true)
+                && (anstyle_query::clicolor_force() || std::io::stdout().is_terminal())
+        }
+    }
+}
+
+/// What a run of text *is*, which is what decides how it looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A slug or other identifier the reader scans for.
+    Slug,
+    /// A short classification beside an identifier — a context, a
+    /// status, a kind.
+    Badge,
+    /// A section heading.
+    Heading,
+    /// Body text. Deliberately unstyled: prose is the baseline every
+    /// other role is read against, and colouring it would flatten the
+    /// contrast the other roles depend on.
+    Prose,
+    /// Supporting detail — dates, paths, counts, `next:` lines.
+    Meta,
+    /// A placeholder standing in for absent content.
+    Muted,
+    /// Something the reader should notice: overdue, lapsed, blocked.
+    Warn,
+    /// Something wrong.
+    Error,
+    /// Something completed.
+    Success,
+}
+
+/// A gutter colour. Named by hue rather than by meaning: at this layer
+/// it *is* a colour choice, and callers own the mapping from their own
+/// domain (see [`Accent::for_context`]). Keeping the names neutral lets
+/// one accent serve projects, portfolios, and stewardships alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Accent {
+    Blue,
+    Green,
+    Magenta,
+    Yellow,
+    Cyan,
+    Red,
+    #[default]
+    Grey,
+}
+
+impl Accent {
+    /// The gutter colour for a note's context, so a list of mixed
+    /// contexts is separable by colour alone before a word is read.
+    pub fn for_context(context: Context) -> Self {
+        match context {
+            Context::Work => Accent::Blue,
+            Context::SideProject => Accent::Cyan,
+            Context::University => Accent::Magenta,
+            Context::Family => Accent::Green,
+            Context::Household => Accent::Yellow,
+            Context::Legal => Accent::Red,
+            Context::Personal => Accent::Grey,
+        }
+    }
+
+    fn style(self) -> Style {
+        let colour = match self {
+            Accent::Blue => AnsiColor::Blue,
+            Accent::Green => AnsiColor::Green,
+            Accent::Magenta => AnsiColor::Magenta,
+            Accent::Yellow => AnsiColor::Yellow,
+            Accent::Cyan => AnsiColor::Cyan,
+            Accent::Red => AnsiColor::Red,
+            Accent::Grey => return Style::new().dimmed(),
+        };
+        Style::new().fg_color(Some(colour.into()))
+    }
+}
+
+/// The house style, in one place. Every colour the CLI emits is here.
+fn palette(role: Role) -> Style {
+    match role {
+        Role::Slug => Style::new().bold().fg_color(Some(AnsiColor::Cyan.into())),
+        Role::Badge => Style::new()
+            .dimmed()
+            .fg_color(Some(AnsiColor::Magenta.into())),
+        Role::Heading => Style::new().bold(),
+        Role::Prose => Style::new(),
+        Role::Meta | Role::Muted => Style::new().dimmed(),
+        Role::Warn => Style::new().fg_color(Some(AnsiColor::Yellow.into())),
+        Role::Error => Style::new().bold().fg_color(Some(AnsiColor::Red.into())),
+        Role::Success => Style::new().fg_color(Some(AnsiColor::Green.into())),
+    }
+}
+
+/// Whether a given render is painting, carried explicitly so pure
+/// renderers stay pure.
+///
+/// The process gate is set once and never changes, which makes it
+/// useless for testing a styled path from a test binary that runs off a
+/// tty. Passing the palette in as a value instead lets a test render the
+/// *same* function both ways, in parallel, touching no global and no
+/// environment variable.
+#[derive(Debug, Clone, Copy)]
+pub struct Palette {
+    enabled: bool,
+}
+
+impl Palette {
+    /// The palette the process is configured for.
+    pub fn active() -> Self {
+        Palette {
+            enabled: colour_enabled(),
+        }
+    }
+
+    /// A palette that never paints.
+    pub fn plain() -> Self {
+        Palette { enabled: false }
+    }
+
+    /// A palette that always paints, whatever the terminal thinks.
+    pub fn forced() -> Self {
+        Palette { enabled: true }
+    }
+
+    /// Whether this palette paints.
+    pub fn is_enabled(self) -> bool {
+        self.enabled
+    }
+
+    /// Paint `text` in `role`'s style, or return it untouched when this
+    /// palette is off.
+    ///
+    /// The disabled arm allocates rather than borrowing so callers have
+    /// one return type to handle; the point is that the *bytes* are
+    /// identical, not that the allocation is avoided.
+    pub fn paint(self, role: Role, text: &str) -> String {
+        self.wrap(palette(role), text)
+    }
+
+    /// Paint `text` in `accent`'s gutter colour.
+    pub fn paint_accent(self, accent: Accent, text: &str) -> String {
+        self.wrap(accent.style(), text)
+    }
+
+    fn wrap(self, style: Style, text: &str) -> String {
+        if !self.enabled || style == Style::new() {
+            return text.to_owned();
+        }
+        format!("{}{text}{}", style.render(), style.render_reset())
+    }
+}

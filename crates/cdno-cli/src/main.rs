@@ -46,6 +46,21 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
     vault: Option<PathBuf>,
 
+    /// When to colour human-readable output. `auto` colours only when
+    /// stdout is a terminal, and honours `NO_COLOR`, `CLICOLOR`, and
+    /// `CLICOLOR_FORCE`; `always` colours even when redirected (for
+    /// piping into a pager); `never` never does. JSON output is never
+    /// coloured whatever this says.
+    #[arg(
+        long,
+        alias = "colour",
+        global = true,
+        value_enum,
+        default_value_t,
+        value_name = "WHEN"
+    )]
+    color: cdno_cli::output::style::ColourChoice,
+
     /// Emit machine-readable JSON instead of the formatted table.
     /// Read verbs (`commitments`, `questions`, `status`, `orient`,
     /// `search`, and the `list`/`show` verbs of `project`, `portfolio`,
@@ -354,6 +369,9 @@ fn main() -> Result<()> {
     CompleteEnv::with_factory(Cli::command).complete();
 
     let cli = Cli::parse();
+    // The single point where colour is decided: every renderer asks
+    // `output::style` from here on, and nothing else threads a flag.
+    cdno_cli::output::style::init(cli.color);
     match cli.command {
         Commands::Init { path } => {
             let target = match path {

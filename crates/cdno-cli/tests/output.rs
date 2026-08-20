@@ -1,7 +1,7 @@
 //! Tests for the shared CLI table-formatting helper (#153). These run
 //! off a tty, so `styled_table()` pins the deterministic fallback width.
 
-use cdno_cli::output::{no_wrap_columns, render, styled_table};
+use cdno_cli::output::{no_wrap_columns, render, render_width, styled_table};
 
 #[test]
 fn render_strips_trailing_whitespace_from_every_line() {
@@ -40,5 +40,30 @@ fn no_wrap_columns_keeps_a_long_identifier_whole() {
     assert!(
         out.lines().any(|line| line.contains(slug)),
         "the pinned identifier must stay whole on one line:\n{out}"
+    );
+}
+
+#[test]
+fn an_unbelievable_terminal_width_falls_back_rather_than_shredding_the_table() {
+    // A pty opened with no window size reports zero columns. Handing
+    // that straight to comfy-table is not a near-miss — `set_width(0)`
+    // wraps every cell to one character per line, so a three-row table
+    // becomes a hundred-line vertical column of letters. These tests run
+    // off a tty, so `render_width` takes the non-tty branch; what this
+    // pins is that the number it returns is always usable.
+    let width = render_width();
+    assert!(
+        width >= 20,
+        "no renderer can lay out against {width} columns"
+    );
+
+    // And the table built from it must keep a row on one line.
+    let mut table = styled_table();
+    table.add_row(vec!["alpha", "next: define the first concrete step"]);
+    let out = render(&table);
+    assert_eq!(
+        out.lines().count(),
+        1,
+        "a short row must not wrap at the fallback width:\n{out}"
     );
 }

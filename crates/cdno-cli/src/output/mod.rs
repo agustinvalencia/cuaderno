@@ -12,6 +12,8 @@
 //! binary. (The MCP stdout channel is JSON-RPC and never touches this
 //! module — table code is only ever on the CLI path.)
 
+pub mod style;
+
 use std::io::IsTerminal;
 
 use comfy_table::{ColumnConstraint, ContentArrangement, Table, presets};
@@ -21,22 +23,53 @@ use comfy_table::{ColumnConstraint, ContentArrangement, Table, presets};
 /// rows on one line, narrow enough that genuinely long cells still wrap
 /// instead of running off forever — and fixed, so piped/test output is
 /// deterministic.
-const NON_TTY_WIDTH: u16 = 100;
+pub const NON_TTY_WIDTH: u16 = 100;
+
+/// Narrowest width we will believe from a terminal.
+///
+/// A pty opened without a window size, and some CI and `script`-style
+/// wrappers, report zero columns. Passing that to comfy-table is not a
+/// cosmetic problem: `set_width(0)` wraps every cell to one character
+/// per line, turning a table into a vertical column of letters. Anything
+/// under this is treated as "the terminal does not know", not as a very
+/// narrow screen.
+const MIN_CREDIBLE_WIDTH: u16 = 20;
+
+/// The column count every renderer lays out against: the real terminal
+/// width on a tty, the fixed [`NON_TTY_WIDTH`] otherwise.
+///
+/// comfy-table can measure the terminal itself, but the card renderer
+/// draws its own gutter and cannot; routing both through one function
+/// means a table and the cards beside it can never disagree about how
+/// wide the screen is.
+pub fn render_width() -> u16 {
+    if !std::io::stdout().is_terminal() {
+        return NON_TTY_WIDTH;
+    }
+    match crossterm::terminal::size() {
+        Ok((cols, _rows)) if cols >= MIN_CREDIBLE_WIDTH => cols,
+        _ => NON_TTY_WIDTH,
+    }
+}
 
 /// A borderless table preset to the cuaderno house style: no rules or
 /// frame, dynamic column arrangement so long cells wrap to the available
-/// width, and terminal-width auto-detection (falling back to a fixed
-/// width off a tty). Subcommands add rows and render with `to_string()`.
+/// width, and the shared [`render_width`].
+///
+/// Styling is bridged to our own gate rather than left to comfy-table's
+/// tty sniffing: without this a `Cell::fg` would silently do nothing
+/// under `--color always | less`, and would still paint under `NO_COLOR`
+/// on a terminal. Subcommands add rows and render with [`render`].
 pub fn styled_table() -> Table {
     let mut table = Table::new();
     table
         .load_preset(presets::NOTHING)
-        .set_content_arrangement(ContentArrangement::Dynamic);
-    // With the `tty` feature, comfy-table measures the terminal itself
-    // when stdout is a tty. Off a tty it has nothing to measure and would
-    // stop wrapping, so pin a width for the piped/redirected/test case.
-    if !std::io::stdout().is_terminal() {
-        table.set_width(NON_TTY_WIDTH);
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(render_width());
+    if style::colour_enabled() {
+        table.enforce_styling();
+    } else {
+        table.force_no_tty();
     }
     table
 }
