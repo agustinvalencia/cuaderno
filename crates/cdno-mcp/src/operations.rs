@@ -252,7 +252,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Append a next-action bullet to a project. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`."
+        description = "Append a next-action bullet to a project. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`."
     )]
     pub async fn add_action(
         &self,
@@ -293,7 +293,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Promote an existing bullet to an action note: matches the bullet on the project by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it. Errors with `INTERNAL_ERROR` on ambiguous matches (multiple bullets contain `query`)."
+        description = "Promote an existing bullet to an action note. An action is a bullet on the project map by default (add_action); promote it only once it has grown into a multi-day investigation with its own evidence, since a note per task is friction the method is built to avoid. Matches the bullet on the project by substring `query`, creates the note from the template, and rewrites the bullet to wikilink it. Errors with `INTERNAL_ERROR` on ambiguous matches (multiple bullets contain `query`)."
     )]
     pub async fn promote_action(
         &self,

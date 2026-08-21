@@ -6,6 +6,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **The MCP server states the method, not just the mechanics** (#533). Tool descriptions were precise
+  about *how* to call each tool — caps, wikilink shapes, which side effects land in the same commit —
+  and silent about *when* to reach for one. `create_stewardship` said "with `expanded: true` it's a
+  folder stewardship"; nothing said what a stewardship is, or that choosing one over a project is the
+  point. An agent therefore had perfect calling syntax and no judgement, and would cheerfully file
+  "Health" as a project, consuming one of five capped slots with something that can never be
+  finished.
+
+  The server's `instructions` now carry the method: the two tracks, and the distinctions that are
+  easy to get wrong — projects end while stewardships do not, a question sits above projects and
+  outlives them, a portfolio accumulates evidence rather than delivering an outcome, an action is a
+  bullet by default and a note only once it becomes an investigation, a commitment is something
+  someone else is counting on. That surface is loaded once per session, which is why the method lives
+  there rather than being repeated across forty-two tool schemas; six tools where the wrong choice is
+  likely gained one disambiguating sentence each.
+
+  The previous instructions ended by pointing at `docs/design.md` — a file an agent connected over
+  MCP cannot read.
+
+  `docs-site/concepts/rlm.md` is resynced with the method's own statement of itself: two tracks
+  rather than a flat list, the seventh practice (energy-matched scheduling) that the page had
+  dropped, and the bridge between the tracks.
+
 ## [0.35.0] - 2026-08-21
 
 ### Added
