@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-08-21
+
 ### Added
 
 - **Gutter-bar cards, colour, and interactive reports for the CLI** (#530). `cdno project list` printed a
