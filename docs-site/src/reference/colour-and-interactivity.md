@@ -70,8 +70,8 @@ splits on.
 
 ## Interactive reports
 
-In a terminal, `project list`, `portfolio list`, `stewardship list`, `orient`, and `status` follow
-their output with a picker:
+In a terminal, `project list`, `portfolio list`, `stewardship list`, `orient`, `status`, and
+`search` follow their output with a picker:
 
 ```text
 ? Inspect a project
@@ -83,6 +83,11 @@ their output with a picker:
 
 Choosing a row prints exactly what the matching `show` command would print, then asks again. **Esc or
 Ctrl-C leaves**, with exit status 0.
+
+`search` is the exception, and deliberately: choosing a hit **opens it in your editor** and the
+command ends there, rather than returning to the list. Once an editor has the file, coming back to
+the search results is not what anyone wants. [`cdno open`](cli/open.md)'s own picker behaves the
+same way.
 
 The listing is always printed first, so the prompt only ever adds to what you would have seen. It is
 skipped entirely when:

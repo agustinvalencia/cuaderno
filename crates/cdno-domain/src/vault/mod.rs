@@ -93,7 +93,7 @@ pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
 pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use normalise::NormaliseReport;
-pub use note_ref::{NoteRef, PeriodRef, RefResolution, RelativeDay};
+pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
 pub use notes::NoteView;
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;

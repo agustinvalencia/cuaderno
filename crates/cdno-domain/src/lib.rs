@@ -24,7 +24,7 @@ pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, BacklinkRef, CommitmentEntry, CommitmentSource,
     CompletedActionEntry, ConfigDocument, ConfigSaveError, ConfigValidationError, CurrentFocus,
-    DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, MonthlyNoteView,
+    DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, Miss, MonthlyNoteView,
     MonthlySection, NormaliseReport, NoteRef, OrientationContext, PeriodRef, PlaceholderSource,
     PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionBacklinks,
     QuestionSummary, RefResolution, RelativeDay, SearchFilters, SearchResultEntry,

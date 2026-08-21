@@ -99,7 +99,28 @@ pub enum RefResolution {
     Ambiguous(Vec<NoteCandidate>),
     NotFound {
         reference: String,
+        miss: Miss,
     },
+}
+
+/// What kind of reference failed to resolve.
+///
+/// Carried because the three misses want three different things said, and
+/// only the grammar knows which one happened. Guessing in the interface layer
+/// would mean reimplementing the shape rules there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Miss {
+    /// A slug matched nothing. The only kind that deserves "did you mean…" —
+    /// there is a set of candidates it could plausibly have been.
+    Slug,
+    /// A calendar word or date named a journal note that does not exist yet.
+    /// Journal notes are scaffolded lazily on first write, so this is
+    /// routine rather than an error in the reference.
+    JournalNote,
+    /// A path named a file that is not there. Near matches would be actively
+    /// unhelpful: someone who typed a path wants "no such file", not a list
+    /// of notes with vaguely similar names.
+    Path,
 }
 
 impl<'a> NoteRef<'a> {
@@ -222,6 +243,12 @@ impl super::Vault {
         let known_names = known.all_names();
         let parsed = NoteRef::parse(reference, &known_names);
 
+        // Which miss this would be, decided by the shape rather than guessed
+        // at downstream.
+        let miss = match parsed {
+            NoteRef::Path(_) => Miss::Path,
+            _ => Miss::JournalNote,
+        };
         let relpath = match parsed {
             NoteRef::Relative(day) => paths::daily_note_relpath(day.resolve(today)),
             NoteRef::Date(date) => paths::daily_note_relpath(date),
@@ -240,11 +267,18 @@ impl super::Vault {
         // typed a path with a typo wants "no such file", not a picker that
         // opens something adjacent.
         let path = VaultPath::new(&relpath)?;
-        if self.store.exists(&path)? {
+        // `.md` as well as existence, because `exists` is true for a
+        // directory: without this, `cdno open projects/` would hand back a
+        // directory that no editor can open and no `$(…)` can use. A note is
+        // always a markdown file.
+        let is_note_file =
+            path.as_path().extension().is_some_and(|e| e == "md") && self.store.exists(&path)?;
+        if is_note_file {
             Ok(RefResolution::Resolved(path))
         } else {
             Ok(RefResolution::NotFound {
                 reference: reference.to_owned(),
+                miss,
             })
         }
     }
@@ -286,6 +320,7 @@ impl super::Vault {
         match hits.len() {
             0 => RefResolution::NotFound {
                 reference: reference.to_owned(),
+                miss: Miss::Slug,
             },
             1 => RefResolution::Resolved(hits[0].path.clone()),
             _ => {
@@ -299,12 +334,14 @@ impl super::Vault {
                 // projects, so preferring the active one is a documented
                 // rule rather than a guess. Defensive, not load-bearing.
                 let projects_only = hits.iter().all(|c| c.note_type == "project");
-                if projects_only
-                    && hits.len() == 2
-                    && let Some(active) = hits
-                        .iter()
-                        .find(|c| !c.path.as_path().starts_with(paths::PROJECTS_PARKED))
-                {
+                let mut unparked = hits
+                    .iter()
+                    .filter(|c| !c.path.as_path().starts_with(paths::PROJECTS_PARKED));
+                // Exactly one unparked hit, not merely at least one. With a
+                // bare `find`, two *unparked* projects sharing a slug would
+                // resolve to whichever the index returned first — the silent
+                // wrong-file open this enum exists to prevent.
+                if projects_only && let (Some(active), None) = (unparked.next(), unparked.next()) {
                     return RefResolution::Resolved(active.path.clone());
                 }
                 RefResolution::Ambiguous(hits)
@@ -317,5 +354,16 @@ impl super::Vault {
     /// completion.
     pub fn list_note_candidates(&self) -> Result<Vec<NoteCandidate>, DomainError> {
         Ok(self.index.list_candidates()?)
+    }
+
+    /// Whether a note's existing content is frozen — an archived action whose
+    /// text was hashed at archival.
+    ///
+    /// Editing the frozen prefix is a `cdno lint` error (appending past it is
+    /// not), so an interface that is about to hand the file to an editor can
+    /// say so first. A question, not an enforcement: markdown stays the source
+    /// of truth and nothing here prevents the edit.
+    pub fn is_frozen(&self, path: &VaultPath) -> Result<bool, DomainError> {
+        Ok(self.index.find_archival_snapshot(path)?.is_some())
     }
 }

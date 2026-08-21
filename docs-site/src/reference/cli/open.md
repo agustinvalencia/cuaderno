@@ -1,12 +1,13 @@
 # `cdno open`
 
-Resolve a note reference and print the note's absolute path. Where
-[`cdno search`](search.md) answers *"where did I write about this"*, `open` answers *"take me to
-the note I mean"* — it is addressing, not searching.
+Open a note in your editor. Where [`cdno search`](search.md) answers *"where did I write about
+this"*, `open` answers *"take me to the note I mean"* — it is addressing, not searching.
 
 ```text
 cdno open [OPTIONS] [REFERENCE]
 ```
+
+Run it with no reference and it offers a picker over every note, most-recently-edited first.
 
 ## Arguments
 
@@ -37,10 +38,70 @@ The calendar words always mean the journal. A note genuinely named `today` stays
 
 | Flag | Description |
 |------|-------------|
-| `--list` | Print every note as `path<TAB>title<TAB>type`, for piping to a fuzzy finder. Resolves nothing and takes no reference. |
+| `--path` | Print the note's absolute path instead of opening it. |
+| `--list` | Print every note as `path<TAB>title<TAB>type`, for piping to a fuzzy finder. Opens nothing and takes no reference. |
+| `--editor <COMMAND>` | Editor command template for this invocation. Outranks `$CUADERNO_EDITOR`, `$VISUAL`, and `$EDITOR`. |
 
 Plus the [global options](overview.md#global-options). With `--json`, a resolved reference emits
 `{"path": …}` and `--list` emits an array of `{path, title, type}`.
+
+**When stdout is not a terminal, `cdno open` prints the path instead of launching anything.** So
+`cdno open today | cat`, a script, `--no-interactive`, and `--json` all behave the same way, and no
+editor is ever started into a pipe.
+
+## Choosing the editor
+
+First one set wins:
+
+| | |
+|---|---|
+| `--editor <COMMAND>` | this invocation only |
+| `$CUADERNO_EDITOR` | your shell |
+| `$VISUAL`, then `$EDITOR` | your shell |
+| *(nothing set)* | the operating system's default handler for `.md` |
+
+```bash
+export CUADERNO_EDITOR='code -g {path}'
+```
+
+`{path}` marks where the note's path goes. Leave it out and the path is appended, so a bare
+`nvim` works. Quoting is honoured, so a program name may contain spaces:
+
+```bash
+export CUADERNO_EDITOR='"/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl" -w {path}'
+```
+
+A value whose first word contains `://` is handed to the operating system instead of executed,
+with the path percent-encoded — `obsidian://open?path={path}`.
+
+`cdno` waits for the editor to exit. It does not try to guess whether your editor is a terminal
+or a GUI one — `code -w` blocks and `code` does not, and a guess would be wrong in a way you
+could not override. Waiting is correct for every terminal editor and harmless for a GUI one that
+returns immediately. If the editor exits non-zero, `cdno open` exits with the same code, the way
+`git commit` treats an abandoned edit.
+
+### There is no per-vault editor setting, on purpose
+
+You might expect `.cuaderno/config.toml` to carry this — a research vault that opens in Obsidian,
+a code vault that opens in your editor. It deliberately does not.
+
+A vault is a git repository, and `--vault` exists so cdno can be pointed at one you did not
+create. A setting that names *a program to run* cannot live in data that gets cloned and synced:
+opening a note in someone else's vault would run their choice of program on your machine. It is
+the same reason git does not honour every setting from a repository you just cloned.
+
+Restricting such a setting to a bare binary name would not help. `sh` is a binary name, and
+`sh <the note>` executes the note's own contents — which, in a vault you cloned, the author also
+wrote. The fix is that the setting comes from your shell rather than from the data.
+
+If you work across vaults that want different editors, set `CUADERNO_EDITOR` in a per-directory
+shell hook (`direnv`, or your shell's `chpwd`), which keeps the decision on your machine.
+
+## Archived notes
+
+Opening a note under `actions/_done/` prints a warning first: its text was frozen when it was
+archived, and [`cdno lint`](lint.md) reports an edit to the existing text as an error. Appending
+to it is fine. The warning does not stop you — markdown remains the source of truth.
 
 ## When a reference does not resolve
 
@@ -59,18 +120,23 @@ such file", not a near-miss opened on your behalf.
 ## Examples
 
 ```bash
+cdno open                             # pick from every note
 cdno open today                       # today's daily note
 cdno open surrogate-model             # by slug
 cdno open project:surrogate-model     # when one slug is used by two types
 cdno open 2026-W34                    # that week's weekly note
+cdno open --path today                # print the path, open nothing
 cdno open --list | head               # every note, tab-separated
 cdno open today --json | jq -r .path
+cdno open notes --editor 'code -g {path}'
 ```
 
 ### With a fuzzy finder
 
-Because `--list` emits vault-relative paths and `open` accepts absolute ones, the round-trip works
-from any directory — no need to `cd` into the vault first:
+`cdno open` has its own picker, so you do not need `fzf` at all. If you would rather use yours —
+your keybindings, your preview window — `--list` gives it candidates. Because `--list` emits
+vault-relative paths and `open` accepts absolute ones, the round-trip works from any directory,
+with no need to `cd` into the vault first:
 
 ```bash
 cdno open "$(cdno open --list | fzf --with-nth=2.. --delimiter='\t' | cut -f1)"

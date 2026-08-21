@@ -11,7 +11,7 @@ use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::{NoteRef, PeriodRef, RefResolution, RelativeDay, Vault};
+use cdno_domain::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -399,7 +399,7 @@ fn an_unknown_slug_is_not_found() {
         .expect("resolve");
 
     match result {
-        RefResolution::NotFound { reference } => assert_eq!(reference, "no-such-note"),
+        RefResolution::NotFound { reference, .. } => assert_eq!(reference, "no-such-note"),
         other => panic!("expected NotFound, got {other:?}"),
     }
 }
@@ -422,4 +422,55 @@ fn list_note_candidates_carries_the_body_h1_as_the_title() {
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].title.as_deref(), Some("Surrogate model"));
     assert_eq!(candidates[0].note_type, "project");
+}
+
+/// Two *unparked* projects sharing a slug must stay ambiguous. The earlier
+/// rule used `find`, which succeeds when at least one hit is unparked, so
+/// this resolved silently to whichever the index returned first.
+#[test]
+fn two_unparked_projects_sharing_a_slug_stay_ambiguous() {
+    let vault = vault_with(&[
+        (
+            "projects/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+        (
+            "projects/nested/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+    ]);
+
+    let result = vault
+        .resolve_note_ref("surrogate-model", day(2026, 8, 21))
+        .expect("resolve");
+
+    assert!(
+        matches!(result, RefResolution::Ambiguous(_)),
+        "expected Ambiguous, got {result:?}"
+    );
+}
+
+/// A miss on something that named a file is flagged as such, so the interface
+/// layer can decline to offer near matches for it.
+#[test]
+fn each_kind_of_miss_is_distinguishable() {
+    let vault = vault_with(&[(
+        "projects/surrogate-model.md",
+        note("project", "Surrogate model"),
+    )]);
+    let today = day(2026, 8, 21);
+
+    for (reference, expected) in [
+        ("today", Miss::JournalNote),
+        ("2026-W34", Miss::JournalNote),
+        ("projects/nope.md", Miss::Path),
+        ("no-such-slug", Miss::Slug),
+    ] {
+        match vault.resolve_note_ref(reference, today).unwrap() {
+            RefResolution::NotFound { miss, .. } => {
+                assert_eq!(miss, expected, "wrong miss kind for `{reference}`");
+            }
+            other => panic!("expected NotFound for `{reference}`, got {other:?}"),
+        }
+    }
 }

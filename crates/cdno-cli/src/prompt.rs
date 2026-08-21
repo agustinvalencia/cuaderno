@@ -686,3 +686,63 @@ fn slug_of(path: &cdno_core::path::VaultPath) -> &str {
         .and_then(|s| s.to_str())
         .unwrap_or("")
 }
+
+/// Pick one note from a list, for `cdno open`.
+///
+/// Deliberately *not* built on [`drill_down`]: that loops until Esc because a
+/// report can be inspected repeatedly, whereas `open` picks once and leaves.
+/// What is shared is the part that matters — [`raw_prompt`] for the index and
+/// [`leaves_quietly`] for cancellation.
+///
+/// `raw_prompt` is not a stylistic preference here. Every daily note's H1 is
+/// its own date, so **duplicate labels are guaranteed** in any vault with a
+/// journal, and the label-position lookup the older pickers use would open the
+/// wrong file.
+///
+/// Returns `None` when the user cancelled, which is an ordinary exit, not a
+/// failure.
+///
+/// [`raw_prompt`]: inquire::Select::raw_prompt
+pub fn prompt_note<T>(
+    items: &[T],
+    label: impl Fn(&T) -> String,
+    starting_filter: Option<&str>,
+) -> Result<Option<usize>> {
+    if items.is_empty() {
+        return Err(anyhow!("no notes to choose from"));
+    }
+    let labels: Vec<String> = items.iter().map(label).collect();
+    let mut ask = || {
+        let mut select = Select::new("Open", labels.clone())
+            .with_help_message("type to filter, ↑↓ to move, enter to open, Esc to cancel");
+        // Seed the filter with what the user typed, so a reference that was
+        // too vague to resolve becomes the starting point rather than being
+        // thrown away and retyped.
+        if let Some(seed) = starting_filter {
+            select = select.with_starting_filter_input(seed);
+        }
+        select.raw_prompt().map(|option| option.index)
+    };
+    pick_one(&mut ask)
+}
+
+/// The ask-once loop behind [`prompt_note`], factored out for the same reason
+/// [`drive`] is: entering it otherwise needs a terminal on both ends, so the
+/// cancel arm and the propagate arm could only be exercised by hand.
+fn pick_one(
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+) -> Result<Option<usize>> {
+    match ask() {
+        Ok(index) => Ok(Some(index)),
+        Err(e) if leaves_quietly(&e) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Drive [`prompt_note`]'s selection from a canned answer. Test-only seam.
+#[doc(hidden)]
+pub fn pick_one_for_test(
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+) -> Result<Option<usize>> {
+    pick_one(ask)
+}

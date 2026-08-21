@@ -50,7 +50,7 @@ fn seed_colliding_slugs(root: &Path) {
 
 fn resolve_in(root: &Path, reference: &str) -> anyhow::Result<String> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    open::resolve(&vault, reference, date(2026, 8, 21))
+    open::resolve(&vault, reference, date(2026, 8, 21), false)
         .map(|p| p.as_path().to_string_lossy().into_owned())
 }
 
@@ -218,5 +218,232 @@ fn strip_vault_root_leaves_a_path_outside_the_vault_alone() {
     assert_eq!(
         open::strip_vault_root("/elsewhere/notes/foo.md", dir.path()),
         "/elsewhere/notes/foo.md"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Regressions from review
+// ---------------------------------------------------------------------
+
+/// The commonest reference there is, on a day not yet logged. Daily notes are
+/// scaffolded lazily, so this happens constantly — and answering it with
+/// "did you mean project:something-unrelated" is worse than useless.
+#[test]
+fn a_missing_daily_note_does_not_suggest_unrelated_notes() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(dir.path().join("projects/surrogate-model.md"), PROJECT).unwrap();
+
+    let err = resolve_in(dir.path(), "today").unwrap_err().to_string();
+
+    assert!(
+        !err.contains("did you mean"),
+        "a named file that is absent must not offer near matches: {err}"
+    );
+    assert!(
+        err.contains("cdno log"),
+        "should say what creates one: {err}"
+    );
+}
+
+/// ...and a missing *path* gets a different message again: nothing about the
+/// journal, because a path is not a journal note.
+#[test]
+fn a_missing_path_does_not_mention_the_journal() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let err = resolve_in(dir.path(), "projects/nope.md")
+        .unwrap_err()
+        .to_string();
+
+    assert!(!err.contains("cdno log"), "got: {err}");
+    assert!(!err.contains("did you mean"), "got: {err}");
+    assert!(err.contains("--list"), "got: {err}");
+}
+
+/// `exists()` is true for a directory, so without an explicit file check this
+/// handed back a path no editor can open and no `$(…)` can use.
+#[test]
+fn a_directory_is_not_a_note() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    for reference in ["projects/", "journal/2026", "actions"] {
+        let result = resolve_in(dir.path(), reference);
+        assert!(
+            result.is_err(),
+            "`{reference}` is a directory and must not resolve, got {result:?}"
+        );
+    }
+}
+
+/// The typed form is exactly what the ambiguity error tells people to type,
+/// so an incomplete one must still get a hint. Ranking the `project:` prefix
+/// along with the slug used to sink the score below the match threshold, so
+/// the form we recommend got the worst message.
+///
+/// Note the limit this does not claim to fix: matching is subsequence-based,
+/// so a *transposition* (`surrogate-modle`) cannot match `surrogate-model` by
+/// either name and gets the generic message. Truncations and omissions — far
+/// and away the common case when someone half-remembers a slug — do match.
+#[test]
+fn an_incomplete_typed_reference_still_gets_a_hint() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let err = resolve_in(dir.path(), "project:surrogate-mod")
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        err.contains("did you mean"),
+        "typed refs deserve hints too: {err}"
+    );
+    assert!(err.contains("project:surrogate-model"), "got: {err}");
+}
+
+/// The slug is scored as well as the title, because the thing people mistype
+/// is the slug — and a slug is not a subsequence of its own title once a
+/// hyphen stands where a space does.
+#[test]
+fn a_partial_slug_matches_even_though_it_is_not_a_subsequence_of_the_title() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let err = resolve_in(dir.path(), "surrogate-mod")
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("project:surrogate-model"), "got: {err}");
+}
+
+/// A path outside the vault is a user error, not a layer error: the raw
+/// `VaultPath` message ("path must be relative") is written for a programmer.
+#[test]
+fn a_path_outside_the_vault_is_a_readable_error() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    for reference in ["/elsewhere/notes/foo.md", "../foo.md"] {
+        let err = resolve_in(dir.path(), reference).unwrap_err().to_string();
+        assert!(
+            err.contains("outside this vault"),
+            "unreadable error for {reference}: {err}"
+        );
+        assert!(
+            !err.contains("must be relative"),
+            "leaked a layer error for {reference}: {err}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------
+// Second review round
+// ---------------------------------------------------------------------
+
+/// A flat and an expanded stewardship share both slug *and* type, so the
+/// typed form cannot tell them apart. Offering it twice would hand the user
+/// a suggestion that fails exactly as their input did.
+#[test]
+fn an_ambiguity_the_typed_form_cannot_resolve_names_paths_instead() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::write(
+        dir.path().join("stewardships/gym.md"),
+        "---\ntype: stewardship\ncontext: personal\ncreated: 2026-04-01\n---\n\n# Gym\n",
+    )
+    .unwrap();
+    let expanded = dir.path().join("stewardships/gym");
+    fs::create_dir_all(&expanded).unwrap();
+    fs::write(
+        expanded.join("_index.md"),
+        "---\ntype: stewardship\ncontext: personal\ncreated: 2026-04-01\n---\n\n# Gym\n",
+    )
+    .unwrap();
+
+    let err = resolve_in(dir.path(), "gym").unwrap_err().to_string();
+
+    assert!(
+        !err.contains("stewardship:gym or stewardship:gym"),
+        "every suggestion must be distinct: {err}"
+    );
+    assert!(err.contains("stewardships/gym.md"), "got: {err}");
+    assert!(err.contains("stewardships/gym/_index.md"), "got: {err}");
+    // And each suggestion must actually work.
+    assert_eq!(
+        resolve_in(dir.path(), "stewardships/gym.md").unwrap(),
+        "stewardships/gym.md"
+    );
+}
+
+/// The near-miss hint must not repeat a name either.
+#[test]
+fn the_near_miss_hint_does_not_repeat_a_suggestion() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::write(
+        dir.path().join("stewardships/gym.md"),
+        "---\ntype: stewardship\ncontext: personal\ncreated: 2026-04-01\n---\n\n# Gym\n",
+    )
+    .unwrap();
+    let expanded = dir.path().join("stewardships/gym");
+    fs::create_dir_all(&expanded).unwrap();
+    fs::write(
+        expanded.join("_index.md"),
+        "---\ntype: stewardship\ncontext: personal\ncreated: 2026-04-01\n---\n\n# Gym\n",
+    )
+    .unwrap();
+
+    let err = resolve_in(dir.path(), "gy").unwrap_err().to_string();
+
+    assert!(
+        !err.contains("stewardship:gym, stewardship:gym"),
+        "suggestions must be deduped: {err}"
+    );
+}
+
+/// The picker filters on the rendered label and is seeded with what the user
+/// typed — a slug. Without the slug in the label, the interactive fallback
+/// would filter to nothing, making it worse than the piped path.
+#[test]
+fn a_picker_row_carries_the_slug_so_the_seeded_filter_can_match_it() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let (vault, _report) = bootstrap::open_vault(dir.path()).unwrap();
+    let candidates = vault.list_note_candidates().unwrap();
+
+    let row = candidates
+        .iter()
+        .map(open::picker_label)
+        .find(|l| l.contains("Surrogate model"))
+        .expect("project row");
+
+    assert!(
+        row.contains("surrogate-model"),
+        "label must carry the slug: {row}"
+    );
+}
+
+/// `current_dir` resolves symlinks but `--vault` does not, so the same vault
+/// reached two ways spells its root differently — and the documented
+/// `$(cdno open --path …)` round-trip would fail with "outside this vault".
+#[test]
+fn an_absolute_path_under_a_symlinked_root_still_becomes_relative() {
+    let dir = tempdir().unwrap();
+    let real = dir.path().join("real");
+    fs::create_dir_all(real.join("projects")).unwrap();
+    let link = dir.path().join("link");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    // The path is spelled through the real directory; the root through the
+    // symlink. The textual comparison cannot match, so canonicalisation must.
+    let spelled = real.join("projects/surrogate-model.md");
+    fs::write(&spelled, "x").unwrap();
+
+    assert_eq!(
+        open::strip_vault_root(&spelled.to_string_lossy(), &link),
+        "projects/surrogate-model.md"
     );
 }

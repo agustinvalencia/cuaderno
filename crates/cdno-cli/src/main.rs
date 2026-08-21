@@ -155,7 +155,7 @@ enum Commands {
     /// Quick snapshot: active projects and their top next actions.
     Status,
 
-    /// Resolve a note reference and print the note's absolute path.
+    /// Open a note in your editor.
     ///
     /// A reference is a bare slug (`surrogate-model`), a type-scoped slug
     /// (`project:surrogate-model`) when one slug is used by two note types,
@@ -164,14 +164,29 @@ enum Commands {
     /// `today` and its neighbours always mean the journal, so a note
     /// genuinely named `today` is reached as `<type>:today`.
     Open {
-        /// The note to resolve. Omit and pass `--list` to see every note.
+        /// The note to open. Omit to pick from a list.
         #[arg(add = ArgValueCompleter::new(completions::complete_note_ref))]
         reference: Option<String>,
 
-        /// List every note as `path<TAB>title<TAB>type`, for piping to a
-        /// fuzzy finder. Takes no reference and resolves nothing.
+        /// Print the note's absolute path instead of opening it.
         #[arg(long)]
+        path: bool,
+
+        /// List every note as `path<TAB>title<TAB>type`, for piping to a
+        /// fuzzy finder. Takes no reference and opens nothing.
+        ///
+        /// Conflicts with a reference rather than quietly winning over one:
+        /// a wrapper script that passed both would otherwise get the whole
+        /// listing where it expected a single path.
+        #[arg(long, conflicts_with_all = ["reference", "path", "editor"])]
         list: bool,
+
+        /// Editor command template, with `{path}` marking where the note's
+        /// path goes (e.g. `code -g {path}`). Overrides `$CUADERNO_EDITOR`,
+        /// `$VISUAL`, and `$EDITOR`. There is no per-vault editor setting:
+        /// a vault can be cloned, so it must not name a program to run.
+        #[arg(long, value_name = "COMMAND")]
+        editor: Option<String>,
     },
 
     /// Guided review rituals. `review weekly` walks the retrospective
@@ -466,14 +481,28 @@ fn main() -> Result<()> {
                 cli.json,
             )
         }
-        Commands::Open { reference, list } => {
+        Commands::Open {
+            reference,
+            path,
+            list,
+            editor,
+        } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             // An absolute path from a previous `--path`/`--list` round-trip
             // has to become vault-relative before the domain sees it; the
             // domain has no idea where the vault sits on disk.
             let reference =
                 reference.map(|r| cdno_cli::commands::open::strip_vault_root(&r, &root));
-            commands::open::run(&root, Local::now().date_naive(), reference, list, cli.json)
+            commands::open::run(
+                &root,
+                Local::now().date_naive(),
+                reference,
+                editor,
+                path,
+                list,
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Review { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
@@ -619,7 +648,15 @@ fn main() -> Result<()> {
         } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::search::run(
-                &root, &query, note_type, from, to, portfolio, limit, cli.json,
+                &root,
+                &query,
+                note_type,
+                from,
+                to,
+                portfolio,
+                limit,
+                cli.no_interactive,
+                cli.json,
             )
         }
         Commands::Completions { shell } => {
