@@ -133,3 +133,24 @@ fn lint_resolves_an_on_disk_attachment_embed_through_the_filesystem() {
         "unexpected error: {err}"
     );
 }
+
+#[test]
+fn severity_decides_the_style_and_the_two_do_not_share_one() {
+    // Inverting the mapping — errors rendered as warnings and warnings as
+    // errors — is invisible to every other test this command has, because
+    // they all read the literal `[error]` / `[warning]` text, which the
+    // inversion leaves untouched.
+    use cdno_cli::commands::lint::severity_role;
+    use cdno_cli::output::style::{Palette, Role};
+    use cdno_domain::lint::LintSeverity;
+
+    assert_eq!(severity_role(LintSeverity::Error), Role::Error);
+    assert_eq!(severity_role(LintSeverity::Warning), Role::Warn);
+
+    let palette = Palette::forced();
+    assert_ne!(
+        palette.paint(severity_role(LintSeverity::Error), "x"),
+        palette.paint(severity_role(LintSeverity::Warning), "x"),
+        "an error must not read like a warning"
+    );
+}

@@ -1,0 +1,200 @@
+//! Shared CLI output formatting (#153).
+//!
+//! One place that presets how `cdno` renders tabular output, so every
+//! list-style command looks the same and the house style is tunable
+//! here rather than re-derived per command.
+//!
+//! Why this lives in `cdno-cli` and not the domain: the domain returns
+//! plain data; presentation is the CLI's job. We deliberately do *not*
+//! derive presentation traits on `cdno-domain` types — that would leak a
+//! formatting dependency into the layer the MCP server and Tauri app also
+//! depend on. `comfy-table`'s runtime API keeps the coupling here, in the
+//! binary. (The MCP stdout channel is JSON-RPC and never touches this
+//! module — table code is only ever on the CLI path.)
+
+pub mod card;
+pub mod style;
+
+use std::io::IsTerminal;
+
+use comfy_table::{ColumnConstraint, ContentArrangement, Table, presets};
+
+/// Width assumed when stdout is not a terminal (piped, redirected, or a
+/// test calling a `render` helper directly). Wide enough to keep most
+/// rows on one line, narrow enough that genuinely long cells still wrap
+/// instead of running off forever — and fixed, so piped/test output is
+/// deterministic.
+pub const NON_TTY_WIDTH: u16 = 100;
+
+/// Narrowest width we will believe from a terminal.
+///
+/// A pty opened without a window size, and some CI and `script`-style
+/// wrappers, report zero columns. Passing that to comfy-table is not a
+/// cosmetic problem: `set_width(0)` wraps every cell to one character
+/// per line, turning a table into a vertical column of letters. Anything
+/// under this is treated as "the terminal does not know", not as a very
+/// narrow screen.
+pub const MIN_CREDIBLE_WIDTH: u16 = 20;
+
+/// The column count every renderer lays out against: the real terminal
+/// width on a tty, the fixed [`NON_TTY_WIDTH`] otherwise.
+///
+/// comfy-table can measure the terminal itself, but the card renderer
+/// draws its own gutter and cannot; routing both through one function
+/// means a table and the cards beside it can never disagree about how
+/// wide the screen is.
+pub fn render_width() -> u16 {
+    credible_width(terminal_columns())
+}
+
+/// The terminal's column count, or `None` when stdout is not a terminal.
+///
+/// Distinct from [`render_width`], which substitutes a usable number:
+/// callers that need to know the terminal is *genuinely* too small to
+/// draw in — rather than laying out against a fallback — need the raw
+/// answer.
+pub fn terminal_columns() -> Option<u16> {
+    if !std::io::stdout().is_terminal() {
+        return None;
+    }
+    crossterm::terminal::size().ok().map(|(cols, _rows)| cols)
+}
+
+/// Decide a usable width from whatever the terminal reported.
+///
+/// Split out from [`render_width`] because the interesting branch is
+/// unreachable from a test: the suite runs off a tty, so `render_width`
+/// returns [`NON_TTY_WIDTH`] before it ever queries the terminal, and a
+/// test calling it can only ever re-confirm the fallback. This takes the
+/// reported value as an argument so the guard itself can be exercised.
+pub fn credible_width(reported: Option<u16>) -> u16 {
+    match reported {
+        Some(cols) if cols >= MIN_CREDIBLE_WIDTH => cols,
+        _ => NON_TTY_WIDTH,
+    }
+}
+
+/// A borderless table preset to the cuaderno house style: no rules or
+/// frame, dynamic column arrangement so long cells wrap to the available
+/// width, and the shared [`render_width`].
+///
+/// Styling is bridged to our own gate rather than left to comfy-table's
+/// tty sniffing: without this a `Cell::fg` would silently do nothing
+/// under `--color always | less`, and would still paint under `NO_COLOR`
+/// on a terminal. Subcommands add rows and render with [`render`].
+pub fn styled_table() -> Table {
+    table_with_styling(style::colour_enabled())
+}
+
+/// [`styled_table`], with the colour decision passed in.
+///
+/// The gate is a process global resolved from a terminal the suite does
+/// not have, so `styled_table` can only ever be observed in its
+/// colour-off configuration — under which swapping `enforce_styling` for
+/// `force_no_tty`, or dropping `style_text_only`, changes nothing. Both
+/// branches are reachable here.
+pub fn table_with_styling(colour: bool) -> Table {
+    let mut table = Table::new();
+    table
+        .load_preset(presets::NOTHING)
+        .set_content_arrangement(ContentArrangement::Dynamic)
+        .set_width(render_width());
+    if colour {
+        table.enforce_styling();
+    } else {
+        table.force_no_tty();
+    }
+    // Style the text, not the cell padding. comfy-table's default wraps
+    // the *padded* cell in the SGR span, which puts the trailing spaces
+    // inside the escape — where [`render`]'s `trim_end` cannot reach
+    // them, silently voiding its no-trailing-whitespace contract the
+    // moment colour is on.
+    table.style_text_only();
+    table
+}
+
+/// Pin the given columns to their content width so they never wrap, and
+/// the free-text column(s) absorb all the wrapping instead. Without this,
+/// `ContentArrangement::Dynamic` balances width across every column and
+/// will happily wrap a slug or a short badge mid-token once a third
+/// column competes for space — identifiers should stay whole and only the
+/// prose column should reflow. Call after the rows are added (columns
+/// don't exist until then).
+pub fn no_wrap_columns(table: &mut Table, columns: &[usize]) {
+    for &index in columns {
+        if let Some(column) = table.column_mut(index) {
+            column.set_constraint(ColumnConstraint::ContentWidth);
+        }
+    }
+}
+
+/// Render a table to a string with trailing whitespace stripped from each
+/// line. comfy-table pads every cell out to its column width, which on a
+/// borderless table leaves a ragged trail of spaces running to the table
+/// edge; trimming keeps the inter-column alignment but drops that trail,
+/// so output is clean to read, copy, and diff. Prefer this over calling
+/// `Table::to_string()` directly.
+pub fn render(table: &Table) -> String {
+    let rendered = table.to_string();
+    let mut out = String::with_capacity(rendered.len());
+    for (i, line) in rendered.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+    }
+    out
+}
+
+/// Emit a write verb's result. With `json`, prints a `{path, message}`
+/// object (the same shape as the MCP `WriteResultDto`) so scripted
+/// callers get a stable, parseable result; otherwise prints the
+/// human-readable `message` line (#227). Write verbs route their success
+/// output through here instead of `println!` so `--json` isn't a silent
+/// no-op on them.
+pub fn emit_write_result(json: bool, path: &str, message: &str) -> anyhow::Result<()> {
+    if json {
+        let payload = serde_json::json!({ "path": path, "message": message });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{message}");
+    }
+    Ok(())
+}
+
+/// Replace control characters in note content with something that
+/// occupies the columns it appears to.
+///
+/// Vault content is arbitrary text, and three classes of character
+/// break a layout that measures display width:
+///
+/// - **Tab** measures as zero columns but renders as up to eight, so a
+///   line with tabs overflows the terminal by however many it contains.
+///   Expanded to a single space — cards reflow text anyway, so column
+///   alignment inside a body block was never meaningful.
+/// - **Carriage return** returns the cursor to column zero, painting
+///   over the gutter bar that the card is built around.
+/// - **Escape** and other C0 controls let note content drive the
+///   terminal — colours that never reset, cursor moves, even
+///   `ESC[2J`. Content is data, not instructions.
+///
+/// Applied to every piece of note-derived text the CLI lays out: card
+/// titles, badges and bodies, and the `show` renderers' fields. Card
+/// *titles* matter as much as bodies — `cdno search` uses a note's H1 as
+/// its title, so an H1 carrying escapes reached the terminal raw, and its
+/// width was miscounted, throwing the shared badge column off.
+///
+/// This does not make cdno a sanitiser for every surface — `cdno note`
+/// and the raw markdown are untouched, and were never filtered.
+pub fn sanitise(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            // Space, not a replacement character: `wrap_block` trims
+            // each segment afterwards, so a trailing CR (every line of
+            // CRLF content) disappears instead of leaving a visible mark.
+            '\t' | '\r' => ' ',
+            c if c.is_control() => '\u{fffd}',
+            c => c,
+        })
+        .collect()
+}

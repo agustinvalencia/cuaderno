@@ -68,11 +68,47 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # domain crates never see prompts.
 inquire = { version = "0.7", features = ["date", "editor"] }
 
-# Tabular CLI output with automatic content wrapping. Default features
-# include `tty` (terminal-width auto-detection via crossterm) and
-# `custom_styling`. CLI-only — presentation never leaks into the domain
-# layer, and the MCP stdout JSON-RPC channel never touches table code.
+# Tabular CLI output with automatic content wrapping. The only default
+# feature is `tty` (terminal-width auto-detection via crossterm);
+# `custom_styling` is *not* on, so a cell must be styled through
+# `Cell::fg`/`add_attribute` rather than by baking ANSI into its text —
+# comfy-table measures column widths from the raw cell content and
+# pre-baked escapes corrupt that arithmetic. CLI-only: presentation never
+# leaks into the domain layer, and the MCP stdout JSON-RPC channel never
+# touches table code.
 comfy-table = "7.2"
+
+# Terminal-width detection for the card renderer, which lays out its own
+# gutter and therefore cannot lean on comfy-table's internal measurement.
+# Pinned to the version comfy-table already depends on so the graph gains
+# no third crossterm; Cargo unions features additively, so asking for
+# none here cannot subtract from what comfy-table asked for. (inquire
+# carries its own, older, copy — that duplication predates this.)
+crossterm = { version = "0.29", default-features = false }
+
+# Word wrapping for the card renderer. `unicode-width` measures display
+# columns so wide characters are counted as two; `unicode-linebreak`
+# supplies the UAX #14 break opportunities, without which text that has
+# no ASCII spaces — Chinese and Japanese — is treated as one unbreakable
+# word and never wraps at all. (Thai, Lao and Khmer are spaceless too but
+# are UAX #14 class SA, which needs dictionary segmentation this crate
+# does not implement; see `output/card.rs`.) `smawk` is left off: that is
+# the optimal-fit algorithm, and a terminal card wants the greedy
+# first-fit pass (see `WrapAlgorithm::FirstFit` in `output/card.rs`).
+textwrap = { version = "0.16", default-features = false, features = [
+    "unicode-width",
+    "unicode-linebreak",
+] }
+
+# ANSI styling for human-readable CLI output. `anstyle` is the style
+# value type (const builders, no global state); `colorchoice` holds the
+# process-wide `--color` decision; `anstyle-query` implements the
+# NO_COLOR / CLICOLOR / CLICOLOR_FORCE precedence so we don't re-derive
+# it. All three already build as part of clap's `color` feature, so this
+# adds no new crates. CLI-only, like every other presentation dependency.
+anstyle = "1.0"
+colorchoice = "1.0"
+anstyle-query = "1.1"
 
 # Binary-only error glue. Library crates use thiserror; the CLI
 # translates structured errors into human-readable output here.

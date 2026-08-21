@@ -257,7 +257,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 10, 0),
         ProjectCommands::Show {
-            slug: "alpha".to_owned(),
+            slug: Some("alpha".to_owned()),
         },
         true,
         false,
@@ -279,7 +279,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 12, 0),
         ProjectCommands::Show {
-            slug: "alpha".to_owned(),
+            slug: Some("alpha".to_owned()),
         },
         true,
         false,
@@ -294,7 +294,7 @@ fn show_succeeds_for_active_parked_and_completed() {
         dir.path(),
         moment(2026, 5, 2, 13, 0),
         ProjectCommands::Show {
-            slug: "done".to_owned(),
+            slug: Some("done".to_owned()),
         },
         true,
         false,
@@ -324,7 +324,7 @@ fn show_renders_no_open_actions_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,
@@ -352,7 +352,7 @@ fn show_renders_state_none_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,
@@ -370,7 +370,7 @@ fn show_renders_top_action_without_energy_branch() {
         dir.path(),
         moment(2026, 5, 2, 11, 0),
         ProjectCommands::Show {
-            slug: "x".to_owned(),
+            slug: Some("x".to_owned()),
         },
         true,
         false,
@@ -618,4 +618,149 @@ fn waiting_add_in_non_interactive_errors_when_missing_description() {
     .expect_err("missing --description should error");
     let msg = format!("{err:#}");
     assert!(msg.contains("--description"), "error message: {msg}");
+}
+
+// ---------------------------------------------------------------------
+// Rendering.
+//
+// `render_list` and `render_show` are pure, so these assert on the text
+// directly rather than through a subprocess — which is also the only way
+// tarpaulin sees them.
+// ---------------------------------------------------------------------
+
+use cdno_cli::commands::project::{render_list, render_show};
+use cdno_domain::ProjectSummary;
+use cdno_domain::frontmatter::ProjectStatus;
+
+fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
+    ProjectSummary {
+        slug: slug.to_owned(),
+        status: ProjectStatus::Active,
+        context,
+        state_snippet: state.to_owned(),
+        top_action: None,
+    }
+}
+
+#[test]
+fn an_empty_list_says_so_in_the_house_shape() {
+    // Every empty listing in the CLI is a title then an indented dim
+    // parenthetical; this one used to be a bare sentence with no title,
+    // no indent, and no colour.
+    let out = render_list(&[]);
+    assert_eq!(
+        out,
+        "Active projects\n  (none — create one with `cdno project create`)\n"
+    );
+    assert!(
+        !out.contains('▎'),
+        "an empty listing draws no card: {out:?}"
+    );
+}
+
+#[test]
+fn the_list_counts_projects_and_agrees_with_itself_on_plurals() {
+    let one = render_list(&[summary("alpha", Context::Work, "state")]);
+    assert!(one.starts_with("1 active project\n"), "{one}");
+
+    let two = render_list(&[
+        summary("alpha", Context::Work, "state"),
+        summary("beta", Context::Personal, "state"),
+    ]);
+    assert!(two.starts_with("2 active projects\n"), "{two}");
+}
+
+#[test]
+fn each_project_becomes_a_card_carrying_its_state() {
+    let out = render_list(&[
+        summary(
+            "alpha",
+            Context::Work,
+            "Kicked off; waiting on the data drop.",
+        ),
+        summary("beta", Context::Family, "Venue booked."),
+    ]);
+    assert!(out.contains("▎ alpha"), "{out}");
+    assert!(
+        out.contains("▎ Kicked off; waiting on the data drop."),
+        "{out}"
+    );
+    assert!(out.contains("▎ Venue booked."), "{out}");
+    // Each card carries the project's top action; dropping the `next:`
+    // line entirely used to pass the whole suite.
+    assert!(
+        out.lines().any(|l| l.starts_with("▎ next: ")),
+        "every card needs its next action:\n{out}"
+    );
+    // The badge is the context, and both badges share a column.
+    let alpha = out.lines().find(|l| l.contains("alpha")).unwrap();
+    let beta = out.lines().find(|l| l.contains("beta")).unwrap();
+    assert_eq!(alpha.find("work"), beta.find("family"), "{out}");
+}
+
+#[test]
+fn a_project_with_no_state_says_so_rather_than_rendering_a_gap() {
+    let out = render_list(&[summary("alpha", Context::Work, "   ")]);
+    assert!(out.contains("(no state recorded)"), "{out}");
+}
+
+#[test]
+fn the_list_never_leaves_trailing_whitespace() {
+    // A wall of prose is what this command exists to fix; a ragged right
+    // edge would undo half of it.
+    let out = render_list(&[summary(
+        "alpha",
+        Context::Work,
+        "A state long enough to wrap across more than one line of the card body, \
+         so the padding path is genuinely exercised rather than skipped.",
+    )]);
+    assert!(!out.lines().any(|l| l.ends_with(' ')), "{out:?}");
+}
+
+#[test]
+fn show_keeps_its_line_shape_rather_than_becoming_a_card() {
+    // Cards are for lists. A detail view has no boundary to mark, so it
+    // must not grow a gutter.
+    let out = render_show(&summary("alpha", Context::Work, "Kicked off."));
+    assert!(!out.contains('▎'), "show must not draw a gutter:\n{out}");
+    assert!(out.starts_with("[alpha] (active)"), "{out}");
+    assert!(out.contains("  State:\n    Kicked off."), "{out}");
+    assert!(out.contains("  Top: (no open actions)"), "{out}");
+}
+
+#[test]
+fn show_names_an_absent_state() {
+    let out = render_show(&summary("alpha", Context::Work, ""));
+    assert!(out.contains("  State: (none)"), "{out}");
+}
+
+#[test]
+fn a_rendered_listing_actually_uses_the_context_accent() {
+    // `Accent::for_context` being right is not the same as the renderer
+    // using it: replacing the accent with a constant at the call site
+    // left every test green, because `render_list` reads the process
+    // colour gate and the suite has no terminal. `with_colour` forces the
+    // gate for the length of the call so the choice is observable.
+    use cdno_cli::output::style::with_colour;
+    let summaries = [
+        summary("alpha", Context::Work, "state one"),
+        summary("beta", Context::Family, "state two"),
+    ];
+    let out = with_colour(true, || render_list(&summaries));
+
+    let gutter_of = |slug: &str| -> String {
+        out.lines()
+            .find(|l| l.contains(slug))
+            .map(|l| l.split('▎').next().unwrap_or("").to_owned())
+            .expect("a card header")
+    };
+    assert_ne!(
+        gutter_of("alpha"),
+        gutter_of("beta"),
+        "a work project and a family project must not share a gutter colour:\n{out}"
+    );
+    assert!(
+        out.contains('\u{1b}'),
+        "forcing colour should paint:\n{out}"
+    );
 }

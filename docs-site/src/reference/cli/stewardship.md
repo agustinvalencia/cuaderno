@@ -42,6 +42,10 @@ cdno stewardship create --name "Health" --context personal --tracking   # expand
 
 List every stewardship with its variant, tracking count, and staleness badge. Honours `--json`.
 
+In a terminal this then offers to open one of the stewardships it just listed, printing what `cdno
+stewardship show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
+`--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
+
 ```bash
 cdno stewardship list
 cdno stewardship list --json | jq '.[] | {slug, variant}'

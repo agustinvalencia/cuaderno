@@ -335,3 +335,38 @@ fn questions_list_skips_non_active() {
     let out = questions::render(&active);
     assert!(out.contains("none"));
 }
+
+#[test]
+fn a_rendered_question_listing_uses_the_domain_accent() {
+    // Research and life questions sit in one listing, so their gutters
+    // must differ. Replacing the accent with a constant at the call site
+    // is invisible without forcing the colour gate.
+    use cdno_cli::commands::questions;
+    use cdno_cli::output::style::with_colour;
+    use cdno_domain::QuestionSummary;
+    use cdno_domain::frontmatter::{QuestionDomain, QuestionStatus};
+
+    let q = |slug: &str, domain: QuestionDomain| QuestionSummary {
+        slug: slug.to_owned(),
+        domain,
+        status: QuestionStatus::Active,
+        question_text: format!("Is {slug} true?"),
+        updated: chrono::NaiveDate::from_ymd_opt(2026, 8, 20).unwrap(),
+    };
+    let active = [
+        q("research-one", QuestionDomain::Research),
+        q("life-one", QuestionDomain::Life),
+    ];
+    let out = with_colour(true, || questions::render(&active));
+    let gutter_of = |slug: &str| -> String {
+        out.lines()
+            .find(|l| l.contains(slug))
+            .map(|l| l.split('▎').next().unwrap_or("").to_owned())
+            .expect("a card header")
+    };
+    assert_ne!(
+        gutter_of("research-one"),
+        gutter_of("life-one"),
+        "research and life must be distinguishable:\n{out}"
+    );
+}

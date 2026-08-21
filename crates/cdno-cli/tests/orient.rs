@@ -108,3 +108,35 @@ fn orient_on_a_fresh_vault_shows_empty_placeholders() {
     assert!(out.contains("(none — create one"), "empty projects:\n{out}");
     assert!(out.contains("nothing queued"), "empty suggestion:\n{out}");
 }
+
+#[test]
+fn orient_renders_each_project_as_a_card_with_its_next_action() {
+    // The existing assertions in this file are substrings that survived
+    // the table-to-card conversion untouched — which also means they
+    // would survive the `next:` line being blanked, or the gutter being
+    // dropped. This pins the card shape itself.
+    let dir = tempdir().unwrap();
+    seed_alpha_vault(dir.path());
+    let out = orient::build_orientation(dir.path(), today(), None).expect("orientation");
+
+    let header = out
+        .lines()
+        .map(str::trim_end)
+        .find(|l| l.strip_prefix("▎ ").is_some_and(|r| r.starts_with("alpha")))
+        .expect("a card header for alpha");
+    assert!(header.ends_with("work"), "context is the badge: {header:?}");
+    assert!(
+        out.lines().any(|l| l.starts_with("▎ next: ")),
+        "the top action reads as a body line:\n{out}"
+    );
+    // Commitments stay tabular — short aligned fields are what a table
+    // is for, and turning them into cards was never the intent.
+    let commitments = out
+        .lines()
+        .skip_while(|l| !l.starts_with("Commitments"))
+        .take_while(|l| !l.starts_with("Active projects"));
+    assert!(
+        commitments.filter(|l| l.starts_with('▎')).count() == 0,
+        "the commitments section must not grow a gutter:\n{out}"
+    );
+}

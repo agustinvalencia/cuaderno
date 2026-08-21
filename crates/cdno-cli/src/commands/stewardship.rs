@@ -19,6 +19,8 @@ use cdno_domain::{StewardshipSummary, StewardshipVariant, Vault};
 
 use crate::bootstrap;
 use crate::completions;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role};
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -88,7 +90,7 @@ pub fn run(
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
-    let interactive = prompt::is_interactive(no_interactive || json);
+    let interactive = prompt::reports_interactively(no_interactive, json);
     match command {
         StewardshipCommands::Create {
             name,
@@ -104,6 +106,13 @@ pub fn run(
                 println!("{}", serde_json::to_string_pretty(&summaries)?);
             } else {
                 print!("{}", render_list(&summaries));
+                prompt::drill_down(
+                    &summaries,
+                    "Inspect a stewardship",
+                    interactive,
+                    |s| s.slug.clone(),
+                    |s| show(&vault, at, Some(s.slug.clone()), interactive, false),
+                )?;
             }
             Ok(())
         }
@@ -281,32 +290,47 @@ fn load_for_show(
 /// Render `cdno stewardship list` output. Public so tests can
 /// assert on the formatted text without capturing stdout.
 pub fn render_list(summaries: &[StewardshipSummary]) -> String {
+    let palette = Palette::active();
+    let header = palette.paint(Role::Heading, "Stewardships");
     if summaries.is_empty() {
-        return "Stewardships\n  (none \u{2014} create one with `cdno stewardship create`)\n"
-            .to_owned();
+        return format!(
+            "{header}\n  {}\n",
+            palette.paint(
+                Role::Muted,
+                "(none \u{2014} create one with `cdno stewardship create`)"
+            )
+        );
     }
-    // slug / name / variant / tracking-activity columns (#153).
-    let mut table = crate::output::styled_table();
-    for s in summaries {
-        let variant_badge = match s.variant {
-            StewardshipVariant::Flat => "[flat]",
-            StewardshipVariant::Expanded => "[expanded]",
-        };
-        let activity_badge = match (s.tracking_count, s.staleness_days) {
-            (0, _) => "no tracking yet".to_owned(),
-            (n, Some(d)) => format!("{n} tracking, last {d} days ago"),
-            (n, None) => format!("{n} tracking"),
-        };
-        table.add_row(vec![
-            s.slug.clone(),
-            s.name.clone(),
-            variant_badge.to_owned(),
-            activity_badge,
-        ]);
-    }
-    // Keep slug, variant, and activity badge whole; only the name reflows.
-    crate::output::no_wrap_columns(&mut table, &[0, 2, 3]);
-    format!("Stewardships\n{}\n", crate::output::render(&table))
+    // Four competing columns is one too many to scan: the name is prose
+    // and the two badges are short, so the card puts the variant in the
+    // badge slot and lets the name and tracking activity read as body.
+    let cards: Vec<Card> = summaries
+        .iter()
+        .map(|s| {
+            // Bare, like every other card badge. The brackets were a
+            // leftover from when this was a table column and nothing but
+            // punctuation marked it as a separate field.
+            let variant_badge = match s.variant {
+                StewardshipVariant::Flat => "flat",
+                StewardshipVariant::Expanded => "expanded",
+            };
+            let activity_badge = match (s.tracking_count, s.staleness_days) {
+                (0, _) => "no tracking yet".to_owned(),
+                (n, Some(d)) => format!("{n} tracking, last {d} days ago"),
+                (n, None) => format!("{n} tracking"),
+            };
+            let accent = Accent::for_staleness(s.tracking_count, s.staleness_days);
+            Card::new(&s.slug)
+                .badge(variant_badge)
+                .accent(accent)
+                .prose(&s.name)
+                .meta(activity_badge)
+        })
+        .collect();
+    format!(
+        "{header}\n\n{}",
+        render_cards(&cards, &palette, crate::output::render_width())
+    )
 }
 
 /// Render `cdno stewardship show` output. Public for test access.
@@ -326,8 +350,18 @@ pub fn render_show(
         Some(StewardshipVariant::Expanded) => "expanded",
         None => "?",
     };
-    let mut out = format!("{slug} \u{2014} {name} [{variant_label}]\n");
-    out.push_str(&format!("Context: {}\n", fm.context.as_str()));
+    // A detail view: colour only, no gutter.
+    let palette = Palette::active();
+    let name = crate::output::sanitise(name);
+    let mut out = format!(
+        "{} \u{2014} {name} [{}]\n",
+        palette.paint(Role::Slug, slug),
+        palette.paint(Role::Badge, variant_label)
+    );
+    out.push_str(&format!(
+        "Context: {}\n",
+        palette.paint(Role::Badge, fm.context.as_str())
+    ));
     if let Some(s) = summary {
         match (s.tracking_count, s.staleness_days) {
             (0, _) => out.push_str("Tracking: (none yet)\n"),

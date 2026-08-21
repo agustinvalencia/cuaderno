@@ -79,6 +79,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # tarpaulin builds every test binary with `-Clink-dead-code` and full
+      # debug info, and the Tauri dependency tree is large enough that the
+      # combination fills the runner's disk — rustc dies with `IO failure on
+      # output stream: No space left on device` partway through `cdno-mcp`.
+      # Reclaiming the preinstalled toolchains we do not use buys ~25 GB.
+      - name: Free disk space for tarpaulin
+        run: |
+          df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup
+          df -h / | tail -1
       - run: sudo apt-get update && sudo apt-get install -y $TAURI_LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

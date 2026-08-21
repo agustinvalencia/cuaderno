@@ -22,6 +22,7 @@ use cdno_domain::{ActionListEntry, AttachedAction, Vault};
 
 use crate::bootstrap;
 use crate::completions;
+use crate::output::style::{Palette, Role};
 use crate::prompt;
 
 #[derive(Debug, Subcommand)]
@@ -95,7 +96,7 @@ pub fn run(
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
-    let interactive = prompt::is_interactive(no_interactive || json);
+    let interactive = prompt::reports_interactively(no_interactive, json);
 
     match command {
         ActionCommands::Add {
@@ -333,16 +334,29 @@ fn yesno(b: bool) -> &'static str {
 /// Render `cdno action list` output. Pure so tests can exercise the
 /// formatting without going through stdout.
 pub fn render_list(project: &str, entries: &[ActionListEntry]) -> String {
-    let mut out = format!("Actions for projects/{project}.md\n");
+    // Bullets, not cards: an action is one short line, so a gutter and a
+    // header per item would cost three lines to say what one already
+    // says. Colour carries the status instead.
+    let palette = Palette::active();
+    let title = palette.paint(Role::Heading, &format!("Actions for projects/{project}.md"));
     if entries.is_empty() {
-        out.push_str("  (no open actions)\n");
+        // Empty states hug their title everywhere; the blank line
+        // separates a title from *content*.
+        let mut out = format!("{title}\n");
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(Role::Muted, "(no open actions)")
+        ));
         return out;
     }
+    let mut out = format!("{title}\n\n");
     for entry in entries {
         out.push_str("  - ");
-        out.push_str(&entry.text);
+        out.push_str(&crate::output::sanitise(&entry.text));
         if let Some(att) = &entry.attached {
-            out.push_str(&format!("  [{}]", status_label(att)));
+            let label = status_label(att);
+            let role = status_role(att.status);
+            out.push_str(&format!("  {}", palette.paint(role, &format!("[{label}]"))));
         }
         out.push('\n');
     }
@@ -354,5 +368,20 @@ fn status_label(att: &AttachedAction) -> &'static str {
         ActionStatus::Active => "active",
         ActionStatus::Blocked => "blocked",
         ActionStatus::Completed => "completed",
+    }
+}
+
+/// The style an action's status reads in.
+///
+/// Named rather than inlined so the mapping can be asserted. Collapsing
+/// all three to one role is invisible to any test that reads the literal
+/// `[blocked]` text — which is every test this command has — and the
+/// renderer bakes in the process palette, so a rendered listing carries
+/// no colour under test to compare.
+pub fn status_role(status: ActionStatus) -> Role {
+    match status {
+        ActionStatus::Active => Role::Meta,
+        ActionStatus::Blocked => Role::Warn,
+        ActionStatus::Completed => Role::Success,
     }
 }

@@ -2,7 +2,10 @@ use std::path::Path;
 
 use anyhow::{Result, bail};
 
+use cdno_domain::lint::LintSeverity;
+
 use crate::bootstrap;
+use crate::output::style::Role;
 
 /// Validate every indexed note and print a report.
 ///
@@ -25,12 +28,19 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
         return Ok(());
     }
 
+    // One issue per line, grep-friendly, exactly as before — the literal
+    // text is unchanged and only the severity tag and path are painted.
+    // That contract survives colour for free: stdout is not a terminal
+    // precisely when the output is being piped into `grep`, which is
+    // when the gate turns painting off.
+    let palette = crate::output::style::Palette::active();
     for issue in &report.issues {
+        let role = severity_role(issue.severity);
         println!(
-            "[{}] {}: {}",
-            issue.severity.as_str(),
-            issue.path,
-            issue.message
+            "{} {}: {}",
+            palette.paint(role, &format!("[{}]", issue.severity.as_str())),
+            palette.paint(Role::Meta, &issue.path.to_string()),
+            crate::output::sanitise(&issue.message)
         );
     }
 
@@ -47,4 +57,17 @@ pub fn run(root: &Path, strict: bool) -> Result<()> {
         "found {errors} error(s), {warnings} warning(s) (warnings are non-fatal; use --strict to fail)"
     );
     Ok(())
+}
+
+/// The style a lint severity reads in.
+///
+/// A named function rather than an inline match so the mapping can be
+/// asserted: inverting it — errors rendered as warnings and warnings as
+/// errors — is invisible to a test that only reads the literal
+/// `[error]` / `[warning]` text, which is every test this command has.
+pub fn severity_role(severity: LintSeverity) -> Role {
+    match severity {
+        LintSeverity::Error => Role::Error,
+        LintSeverity::Warning => Role::Warn,
+    }
 }

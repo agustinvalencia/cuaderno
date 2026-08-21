@@ -20,24 +20,104 @@ use std::io::IsTerminal;
 
 use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
-use inquire::{Confirm, DateSelect, Editor, Select, Text};
+use inquire::{Confirm, DateSelect, Editor, InquireError, Select, Text};
 
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, EnergyLevel, QuestionDomain, QuestionStatus};
 use cdno_domain::recurrence::Recurrence;
 
-/// `true` when interactive prompts are available — `stdout` is a TTY
-/// **and** the user hasn't opted out via `--no-interactive`. Handlers
-/// use this to decide whether a missing `Option` argument turns into a
-/// prompt or an error.
+/// `true` when interactive prompts are available — **both** `stdin` and
+/// `stdout` are TTYs and the user hasn't opted out via
+/// `--no-interactive`. Handlers use this to decide whether a missing
+/// `Option` argument turns into a prompt or an error.
+///
+/// Both streams matter, and testing only `stdout` is a real bug rather
+/// than a theoretical one: `inquire` reads from stdin, so a caller with
+/// a terminal on stdout but not on stdin (`cdno orient < /dev/null`, a
+/// background job, a supervisor or pty wrapper that only allocates one
+/// end) would pass this check, reach the prompt, and get
+/// `InquireError::NotTTY` — turning a read-only listing into a non-zero
+/// exit. Requiring both also upgrades every *write* verb's failure in
+/// that situation from inquire's opaque error to the `missing required
+/// flag` message this module exists to produce.
 pub fn is_interactive(no_interactive: bool) -> bool {
-    !no_interactive && std::io::stdout().is_terminal()
+    is_interactive_from(
+        no_interactive,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+/// The decision itself, over plain booleans.
+///
+/// Split out because the interesting cases are unreachable from a test:
+/// the suite's subprocesses get a null stdin *and* a piped stdout, so
+/// they only ever exercise "neither is a terminal" — under which the
+/// stdout-only version this replaced short-circuits identically, and
+/// reverting the fix passes. The regression it guards is the one
+/// combination a test cannot arrange without a pty.
+pub fn is_interactive_from(no_interactive: bool, stdin_tty: bool, stdout_tty: bool) -> bool {
+    !no_interactive && stdin_tty && stdout_tty
+}
+
+/// Whether a command may prompt: a write verb before it mutates, or a
+/// read verb after its listing.
+///
+/// `--json` implies non-interactive: a prompt writes to stdout, which
+/// would corrupt the result a scripted caller is parsing. Folding that
+/// into one named function rather than repeating
+/// `is_interactive(no_interactive || json)` at every call site means the
+/// composition can be tested — spelled out, every test in the crate runs
+/// off a tty, so dropping the `|| json` term changes no outcome under
+/// test and the mutation passes at every site.
+pub fn reports_interactively(no_interactive: bool, json: bool) -> bool {
+    reports_interactively_from(
+        no_interactive,
+        json,
+        std::io::stdin().is_terminal(),
+        std::io::stdout().is_terminal(),
+    )
+}
+
+/// [`reports_interactively`] over plain booleans.
+///
+/// The tty terms have to be arguments for the `json` term to be testable
+/// at all: off a tty the whole expression is false regardless, so a test
+/// that asserts `reports_interactively(false, true)` is false passes
+/// just as well with the `json` term deleted.
+pub fn reports_interactively_from(
+    no_interactive: bool,
+    json: bool,
+    stdin_tty: bool,
+    stdout_tty: bool,
+) -> bool {
+    is_interactive_from(no_interactive || json, stdin_tty, stdout_tty)
+}
+
+/// Whether a terminal reporting `columns` is wide enough to draw a
+/// picker in. `None` means stdout is not a terminal, where the question
+/// does not arise.
+pub fn picker_fits(columns: Option<u16>) -> bool {
+    !columns.is_some_and(|cols| cols < MIN_PICKER_WIDTH)
 }
 
 /// Build a clear "missing flag" error for the non-interactive path so
 /// piped / scripted invocations fail fast rather than hanging.
 pub fn missing_flag(flag: &str) -> anyhow::Error {
     anyhow!("missing required flag: --{flag} (provide it explicitly or run interactively in a TTY)")
+}
+
+/// The same, for a verb whose argument is a positional rather than a
+/// flag (see the read-verb exception in `docs/cli-ergonomics.md`).
+///
+/// Separate from [`missing_flag`] because that one hardcodes the `--`
+/// prefix, and telling someone to pass `--slug` to a command that has no
+/// such flag sends them to `--help` for nothing.
+pub fn missing_positional(name: &str) -> anyhow::Error {
+    let upper = name.to_uppercase();
+    anyhow!(
+        "missing required argument: <{upper}> (provide it explicitly or run interactively in a TTY)"
+    )
 }
 
 /// `clap` value-parser for a repeatable `--var name=value` flag (#238):
@@ -445,4 +525,164 @@ pub fn prompt_context() -> Result<Context> {
         .position(|l| l == &pick)
         .expect("picked label was in the offered list");
     Ok(Context::ALL[idx])
+}
+
+/// Narrowest terminal we will draw a picker in.
+///
+/// The same threshold as [`crate::output::MIN_CREDIBLE_WIDTH`], for the
+/// same reason: below it a terminal cannot be laid out in, and inquire
+/// underflows rather than degrading.
+const MIN_PICKER_WIDTH: u16 = crate::output::MIN_CREDIBLE_WIDTH;
+
+/// Offer a repeated drill-down into a report that has already been
+/// printed: pick a row, see its detail, pick again, until Esc.
+///
+/// This is the read-verb counterpart to the gather-then-confirm flow
+/// above, and the rules differ because nothing is being mutated:
+///
+/// - **The listing renders first, unconditionally.** The prompt is
+///   purely additive, so a reader who pipes the output, passes
+///   `--no-interactive`, or hits Esc immediately sees exactly what they
+///   saw before this existed.
+/// - **No confirm step**, for the same reason `cdno action list` has
+///   none — there is nothing to confirm.
+/// - **Esc and Ctrl-C exit silently, with status 0.** Contrast
+///   `cdno triage`, which announces `Triage stopped.`: there a mutating
+///   drain was abandoned part-way and saying so earns its line. Here
+///   nothing happened, and a message every time would be noise.
+/// - **A failure to render one detail does not end the session** —
+///   it goes to stderr and the loop continues, matching triage's
+///   per-item tolerance.
+///
+/// Callers pass [`reports_interactively`], so `--json`,
+/// `--no-interactive`, and either stream not being a terminal are all
+/// excluded by one named expression.
+pub fn drill_down<T>(
+    items: &[T],
+    label: &str,
+    interactive: bool,
+    row_label: impl Fn(&T) -> String,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
+    if !interactive || items.is_empty() {
+        return Ok(());
+    }
+    // A terminal too narrow to draw a picker in gets the listing and
+    // nothing else. inquire lays its own frame out against the real
+    // terminal width and underflows below a couple of columns — a panic
+    // in debug builds, an escape-soup redraw in release. The listing is
+    // already on screen, so declining to ask costs the reader nothing.
+    if !picker_fits(crate::output::terminal_columns()) {
+        return Ok(());
+    }
+    let labels: Vec<String> = items.iter().map(&row_label).collect();
+    // `raw_prompt` returns the chosen index rather than the chosen
+    // string. The older pickers in this module recover the index by
+    // searching for the label, which silently returns the wrong row when
+    // two labels are equal — and a report's rows are titles and question
+    // text, which genuinely can repeat.
+    let mut ask = || {
+        Select::new(label, labels.clone())
+            .with_help_message("↑↓ to move, enter to inspect, Esc to leave")
+            .raw_prompt()
+            .map(|option| option.index)
+    };
+    drive(items, &labels, &mut ask, show)
+}
+
+/// The drill-down loop, with asking factored out.
+///
+/// `ask` supplies the next chosen index, or the reason there isn't one.
+/// Splitting it this way is what makes the loop testable: entering it
+/// otherwise requires a terminal on both ends, so every branch below —
+/// the cancel arm, the propagate arm, and the tolerance of a failing
+/// `show` — could only be exercised by hand.
+fn drive<T>(
+    items: &[T],
+    labels: &[String],
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
+    loop {
+        println!();
+        match ask() {
+            Ok(index) => {
+                if let Err(e) = show(&items[index]) {
+                    // One unreadable row should not end the session, the
+                    // same way `cdno triage` keeps draining after a
+                    // failed item.
+                    eprintln!("Could not show `{}`: {e:#}", labels[index]);
+                }
+            }
+            Err(e) if leaves_quietly(&e) => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+/// Whether a failed prompt means "stop asking", rather than "the command
+/// failed".
+///
+/// Cancellation is the ordinary way out and must exit 0. `NotTTY` and IO
+/// failures mean we cannot ask at all: [`is_interactive`] should have
+/// kept us out of the loop, but if something slipped through, the
+/// listing is already printed and there is nothing to report — returning
+/// an error there would turn a read-only listing into a non-zero exit,
+/// which is exactly the regression this arm exists to prevent.
+pub fn leaves_quietly(error: &InquireError) -> bool {
+    matches!(
+        error,
+        InquireError::OperationCanceled
+            | InquireError::OperationInterrupted
+            | InquireError::NotTTY
+            | InquireError::IO(_)
+    )
+}
+
+/// Drive a drill-down from a canned sequence of answers. Test-only seam
+/// for [`drive`], which is otherwise unreachable without a terminal.
+#[doc(hidden)]
+pub fn drive_for_test<T>(
+    items: &[T],
+    labels: &[String],
+    ask: &mut dyn FnMut() -> std::result::Result<usize, InquireError>,
+    show: impl Fn(&T) -> Result<()>,
+) -> Result<()> {
+    drive(items, labels, ask, show)
+}
+
+/// Fuzzy-pick an active or parked project.
+///
+/// [`prompt_project`] offers only active projects because the verbs that
+/// use it act on live work. `cdno project show` reads, and reading a
+/// parked project is exactly what someone reaching for it is likely to
+/// want.
+///
+/// Completed projects are deliberately absent: `project show <slug>`
+/// still resolves one by name, but `Vault` exposes no listing for them
+/// (`active_projects` and `parked_projects` filter on status), so there
+/// is nothing to offer without a new domain query. Naming that here so
+/// the gap reads as known rather than overlooked.
+pub fn prompt_any_project(vault: &Vault) -> Result<String> {
+    let mut all = vault.active_projects()?;
+    all.extend(vault.parked_projects()?);
+    if all.is_empty() {
+        return Err(anyhow!(
+            "no projects — create one with `cdno project create`",
+        ));
+    }
+    let labels: Vec<String> = all
+        .iter()
+        .map(|(path, fm)| format!("{} ({})", slug_of(path), fm.context.as_str()))
+        .collect();
+    let pick = Select::new("Project", labels.clone()).raw_prompt()?;
+    Ok(slug_of(&all[pick.index].0).to_owned())
+}
+
+/// The slug a note's path encodes, or `""` when the path has no stem.
+fn slug_of(path: &cdno_core::path::VaultPath) -> &str {
+    path.as_path()
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
 }

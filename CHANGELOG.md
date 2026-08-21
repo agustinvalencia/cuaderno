@@ -6,6 +6,55 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Gutter-bar cards, colour, and interactive reports for the CLI** (#530). `cdno project list` printed a
+  slug, a context, and a paragraph of project state at the same weight on the same indented line, so
+  five projects arrived as one undifferentiated block of text — you could not see where one project
+  ended and the next began without reading it. Every listing that carries prose now renders as a
+  card instead: a coloured bar down the left of every line an item owns, the slug as a title, a badge
+  aligned into a column shared across the set, and the text wrapped underneath. The bar's colour is
+  keyed to the note's context, so a mixed list separates before a word is read. `project list`,
+  `portfolio list`, `stewardship list`, `questions`, `search`, and the active-projects section of
+  `orient` are cards; `status`, `commitments`, and the evidence and lapsed-habit tables keep their
+  columns, because short aligned fields are what a table is good at. `show` verbs keep their line
+  shape and gain only colour — a gutter earns its two columns by marking where one item ends and the
+  next begins, and a detail view has one item.
+
+  Colour is decided once, by a new global `--color <auto|always|never>` (`--colour` too), honouring
+  `NO_COLOR`, `CLICOLOR`, and `CLICOLOR_FORCE` in that order of precedence; `NO_COLOR` deliberately
+  outranks `CLICOLOR_FORCE`, because the first is a preference a person exports about their own
+  terminal and the second is usually a harness overreaching. Off a terminal nothing is painted, which
+  is why the existing output assertions needed almost no changes and why `cdno lint`'s deliberately
+  grep-friendly line format survives untouched: colour is off precisely when the output is going into
+  a pipe. `--json` is never coloured and never prompts, whatever the flag says.
+
+  In a terminal, `project list`, `portfolio list`, `stewardship list`, `orient`, and `status` now
+  follow their output with a picker: choose a row, see the detail its `show` verb would print, and be
+  asked again until Esc. The listing is always printed first, so the prompt only ever adds to what
+  you would otherwise have seen, and it is suppressed by piped output, `--no-interactive`, and
+  `--json` alike — the same gate every write verb already used. `cdno project show`'s slug became an
+  optional positional so it can prompt like its `portfolio` and `stewardship` siblings; existing
+  invocations parse unchanged.
+
+  `note list` was left exactly as it was, on purpose. It prints one bare path per line because it
+  exists to be piped into other tools, and a header, a gutter, or a colour would buy nothing and
+  break that.
+
+  `cdno project list`'s header changed from `N active project(s):` to `N active projects`, so anything
+  grepping that line needs updating. `cdno project show`'s slug became an optional positional — every
+  existing invocation still parses, and omitting it in a terminal now offers a picker of active and
+  parked projects (completed ones are still addressable by name, but there is no listing to offer).
+
+  `note list` was deliberately left alone: it prints one bare path per line so it can be piped into
+  other tools, and a header, a gutter, or colour would buy nothing there and break that.
+
+  New dependencies: `textwrap` and `unicode-linebreak` for width-aware wrapping — the second supplies
+  the UAX #14 break opportunities, without which text with no ASCII spaces (Chinese, Japanese)
+  is treated as one unbreakable word and never wraps. `anstyle`, `colorchoice`, and `anstyle-query`
+  carry the styling and the environment precedence, and `crossterm` reports the terminal width; those
+  four were already compiled as part of clap and comfy-table, so the change adds two crates in total.
+
 ### Fixed
 
 - **A freshly created stewardship warned on its own scaffolding** (#515). The shipped template
@@ -50,6 +99,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and the remedy is to reword the question; whether those creates should disambiguate instead is
   tracked in #529, since the slug doubles as the key correlating a portfolio with its question.
 
+||||||| parent of 9d03ee7 (Document colour, cards, and interactive reports)
 ## [0.34.0] - 2026-08-08
 
 ### Added

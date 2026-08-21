@@ -46,6 +46,21 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH", value_hint = clap::ValueHint::DirPath)]
     vault: Option<PathBuf>,
 
+    /// When to colour human-readable output. `auto` colours only when
+    /// stdout is a terminal, and honours `NO_COLOR`, `CLICOLOR`, and
+    /// `CLICOLOR_FORCE`; `always` colours even when redirected (for
+    /// piping into a pager); `never` never does. JSON output is never
+    /// coloured whatever this says.
+    #[arg(
+        long,
+        alias = "colour",
+        global = true,
+        value_enum,
+        default_value_t,
+        value_name = "WHEN"
+    )]
+    color: cdno_cli::output::style::ColourChoice,
+
     /// Emit machine-readable JSON instead of the formatted table.
     /// Read verbs (`commitments`, `questions`, `status`, `orient`,
     /// `search`, and the `list`/`show` verbs of `project`, `portfolio`,
@@ -56,6 +71,10 @@ struct Cli {
     /// result and run non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
+    ///
+    /// Also suppresses the interactive report a read verb would
+    /// otherwise offer after its listing, and all colour — a prompt or
+    /// an escape sequence on stdout would corrupt the JSON.
     #[arg(long, global = true)]
     json: bool,
 
@@ -354,6 +373,9 @@ fn main() -> Result<()> {
     CompleteEnv::with_factory(Cli::command).complete();
 
     let cli = Cli::parse();
+    // The single point where colour is decided: every renderer asks
+    // `output::style` from here on, and nothing else threads a flag.
+    cdno_cli::output::style::init(cli.color);
     match cli.command {
         Commands::Init { path } => {
             let target = match path {
@@ -403,11 +425,22 @@ fn main() -> Result<()> {
         }
         Commands::Orient { energy } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::orient::run(&root, Local::now().date_naive(), energy, cli.json)
+            commands::orient::run(
+                &root,
+                Local::now().date_naive(),
+                energy,
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::status::run(&root, Local::now().date_naive(), cli.json)
+            commands::status::run(
+                &root,
+                Local::now().date_naive(),
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Review { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

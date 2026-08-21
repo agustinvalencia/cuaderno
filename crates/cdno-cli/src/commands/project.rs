@@ -17,6 +17,8 @@ use cdno_domain::frontmatter::{Context as ProjectContext, ProjectStatus};
 
 use crate::bootstrap;
 use crate::completions;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role};
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommands {
@@ -70,9 +72,15 @@ pub enum ProjectCommands {
     List,
 
     /// Show a compact summary of a single project (any status).
+    ///
+    /// The slug stays a positional — `cdno project show alpha` is what
+    /// people type — but is now optional, so an interactive run prompts
+    /// for it like `portfolio show` and `stewardship show` already do.
+    /// A trailing optional positional only *adds* the omitted form, so
+    /// every existing invocation parses unchanged.
     Show {
         #[arg(add = ArgValueCompleter::new(completions::complete_any_project))]
-        slug: String,
+        slug: Option<String>,
     },
 
     /// Manage project milestones.
@@ -153,7 +161,7 @@ pub fn run(
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
-    let interactive = crate::prompt::is_interactive(no_interactive || json);
+    let interactive = crate::prompt::reports_interactively(no_interactive, json);
     match command {
         ProjectCommands::Create {
             title,
@@ -167,28 +175,38 @@ pub fn run(
         ProjectCommands::Park { slug } => park(&vault, at, slug, interactive, json)?,
         ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive, json)?,
         ProjectCommands::List => {
-            let active = vault.active_projects().context("listing active projects")?;
+            // One pass for both branches: the summaries the card renderer
+            // needs are exactly the ones `--json` serialises, so fetching
+            // them unconditionally costs nothing and keeps the two views
+            // provably describing the same data.
+            let summaries = active_summaries(&vault)?;
             if json {
-                // Serialise the per-project summaries (the same data the
-                // text renderer fetches), not the raw frontmatter tuples.
-                let summaries = active
-                    .iter()
-                    .map(|(path, _fm)| {
-                        let slug = path
-                            .as_path()
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("");
-                        vault.project_summary(slug)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-                    .context("loading project summaries")?;
                 println!("{}", serde_json::to_string_pretty(&summaries)?);
             } else {
-                print_active_list(&vault, &active)?;
+                print!("{}", render_list(&summaries));
+                // The listing is already on screen; in a terminal, offer
+                // to open one of them rather than making the reader
+                // retype a slug they can see.
+                crate::prompt::drill_down(
+                    &summaries,
+                    "Inspect a project",
+                    interactive,
+                    |s| format!("{} ({})", s.slug, s.context.as_str()),
+                    |s| {
+                        print!("{}", render_show(s));
+                        Ok(())
+                    },
+                )?;
             }
         }
         ProjectCommands::Show { slug } => {
+            // Read-only, so no confirm step even when the slug was
+            // prompted for — nothing is being mutated.
+            let slug = match slug {
+                Some(s) => s,
+                None if interactive => crate::prompt::prompt_any_project(&vault)?,
+                None => return Err(crate::prompt::missing_positional("slug")),
+            };
             let summary = vault
                 .project_summary(&slug)
                 .context("loading project summary")?;
@@ -196,7 +214,7 @@ pub fn run(
                 // Same ProjectSummary shape as `project list` elements.
                 println!("{}", serde_json::to_string_pretty(&summary)?);
             } else {
-                print_summary(&summary);
+                print!("{}", render_show(&summary));
             }
         }
         ProjectCommands::Milestone { action } => match action {
@@ -539,56 +557,141 @@ pub fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
         .map_err(|e| format!("expected YYYY-MM-DD, got `{s}`: {e}"))
 }
 
-/// Render `cdno project list` output. Iterates the active projects
-/// and calls `project_summary` per slug to surface a one-line state
-/// hint alongside the path.
-fn print_active_list(
-    vault: &cdno_domain::Vault,
-    active: &[(cdno_core::path::VaultPath, cdno_domain::ProjectFrontmatter)],
-) -> Result<()> {
-    if active.is_empty() {
-        println!("No active projects.");
-        return Ok(());
-    }
-    println!("{} active project(s):", active.len());
-    for (path, fm) in active {
-        let slug = path
-            .as_path()
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("?");
-        let summary = vault
-            .project_summary(slug)
-            .with_context(|| format!("loading summary for {slug}"))?;
-        let state_first_line = summary.state_snippet.lines().next().unwrap_or("(no state)");
-        println!("  {slug} [{}] — {state_first_line}", fm.context.as_str());
-    }
-    Ok(())
+/// The summary of every active project, in listing order.
+///
+/// Both `cdno project list` views need exactly this, so it is fetched
+/// once rather than per-branch — and `ProjectSummary` already carries
+/// the slug, so the frontmatter tuples' paths are only a source of
+/// ordering here.
+fn active_summaries(vault: &cdno_domain::Vault) -> Result<Vec<cdno_domain::ProjectSummary>> {
+    let active = vault.active_projects().context("listing active projects")?;
+    active
+        .iter()
+        .map(|(path, _fm)| {
+            let slug = path
+                .as_path()
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            vault
+                .project_summary(slug)
+                .with_context(|| format!("loading summary for {slug}"))
+        })
+        .collect()
 }
 
-/// Render `cdno project show <slug>` output: a compact block with
-/// the project's status, current state snippet (up to 2 lines), and
-/// top action.
-fn print_summary(summary: &cdno_domain::ProjectSummary) {
+/// Render `cdno project list` as one card per project.
+///
+/// A project's state is prose — often several sentences — so the old
+/// single indented line put the slug, its context, and a paragraph of
+/// text at the same weight, and five projects read as one block. The
+/// card gives each project a coloured gutter keyed to its context, its
+/// slug as the title, and the state wrapped underneath, so the reader
+/// can find a boundary without reading a word.
+///
+/// Pure, like every other `render_*` in this crate: the caller prints
+/// it, and tests assert on it without capturing stdout.
+pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
+    let palette = Palette::active();
+    if summaries.is_empty() {
+        // Same shape as every other empty listing: a painted title, then
+        // an indented dim parenthetical. This used to be a bare
+        // `No active projects.` with no title, no indent, and no colour
+        // — the only empty state in the CLI that looked like that. The
+        // title stays constant whether or not there are any, as
+        // `Portfolios` and `Stewardships` do; the parenthetical is what
+        // carries the emptiness.
+        return format!(
+            "{}\n  {}\n",
+            palette.paint(Role::Heading, "Active projects"),
+            palette.paint(
+                Role::Muted,
+                "(none — create one with `cdno project create`)"
+            )
+        );
+    }
+    let cards: Vec<Card> = summaries
+        .iter()
+        .map(|summary| {
+            let mut card = Card::new(&summary.slug)
+                .badge(summary.context.as_str())
+                .accent(Accent::for_context(summary.context));
+            card = if summary.state_snippet.trim().is_empty() {
+                card.muted("(no state recorded)")
+            } else {
+                card.prose(&summary.state_snippet)
+            };
+            card.meta(format!(
+                "next: {}",
+                crate::commands::orient::project_next(summary)
+            ))
+        })
+        .collect();
+
+    format!(
+        "{}\n\n{}",
+        palette.paint(
+            Role::Heading,
+            &format!(
+                "{} active project{}",
+                summaries.len(),
+                if summaries.len() == 1 { "" } else { "s" }
+            )
+        ),
+        render_cards(&cards, &palette, crate::output::render_width()),
+    )
+}
+
+/// Render `cdno project show <slug>`: a compact block with the
+/// project's status, current state snippet (up to 2 lines), and top
+/// action.
+///
+/// Deliberately *not* a card. A gutter earns its two columns by marking
+/// where one record ends and the next begins; a detail view renders one
+/// record and has no boundary to mark, so this keeps its line shape and
+/// gains only colour.
+pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
+    let palette = Palette::active();
     let status_word = match summary.status {
         ProjectStatus::Active => "active",
         ProjectStatus::Parked => "parked",
         ProjectStatus::Completed => "completed",
     };
-    println!("[{}] ({status_word})", summary.slug);
-    if summary.state_snippet.is_empty() {
-        println!("  State: (none)");
+    let mut out = format!(
+        "[{}] ({})\n",
+        palette.paint(Role::Slug, &summary.slug),
+        palette.paint(Role::Badge, status_word),
+    );
+    // `trim()`, matching `render_list` and `orient`: a state of nothing
+    // but whitespace is an absent state, and rendering it literally
+    // produced an empty `State:` block with trailing spaces in it.
+    if summary.state_snippet.trim().is_empty() {
+        out.push_str(&format!(
+            "  State: {}\n",
+            palette.paint(Role::Muted, "(none)")
+        ));
     } else {
-        println!("  State:");
+        out.push_str(&format!("  {}\n", palette.paint(Role::Heading, "State:")));
         for line in summary.state_snippet.lines() {
-            println!("    {line}");
+            // Same sanitising the listing applies. Without it, picking a
+            // row out of `project list` would hand back the escapes the
+            // listing had just neutralised.
+            out.push_str(&format!("    {}\n", crate::output::sanitise(line)));
         }
     }
-    match &summary.top_action {
-        Some(action) => match action.energy {
-            Some(energy) => println!("  Top: {} ({})", action.text, energy.as_str()),
-            None => println!("  Top: {}", action.text),
-        },
-        None => println!("  Top: (no open actions)"),
-    }
+    let top = match &summary.top_action {
+        Some(action) => {
+            let text = crate::output::sanitise(&action.text);
+            match action.energy {
+                Some(energy) => format!("{text} ({})", energy.as_str()),
+                None => text,
+            }
+        }
+        None => palette.paint(Role::Muted, "(no open actions)"),
+    };
+    out.push_str(&format!(
+        "  {} {top}\n",
+        palette.paint(Role::Heading, "Top:")
+    ));
+    out
 }

@@ -559,9 +559,37 @@ fn project_list_prints_each_active_project_with_state() {
         .args(["project", "list"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("alpha [work]"))
-        .stdout(predicate::str::contains("beta [personal]"))
-        .stdout(predicate::str::contains("Just started."));
+        // Each project is a card: a gutter on every line it owns, its
+        // slug as the title, and its context as a badge aligned into a
+        // column shared with the other cards.
+        .stdout(predicate::function(|out: &str| {
+            card_header(out, "alpha").is_some_and(|line| line.ends_with("work"))
+        }))
+        .stdout(predicate::function(|out: &str| {
+            card_header(out, "beta").is_some_and(|line| line.ends_with("personal"))
+        }))
+        .stdout(predicate::function(|out: &str| {
+            // The badge column is shared, so both badges start together.
+            let alpha = card_header(out, "alpha").and_then(|l| l.find("work"));
+            let beta = card_header(out, "beta").and_then(|l| l.find("personal"));
+            alpha.is_some() && alpha == beta
+        }))
+        .stdout(predicate::str::contains("▎ Just started."));
+}
+
+/// The card header line whose *title* is `slug`.
+///
+/// Deliberately structural rather than `contains`: every body line of
+/// every card also starts with the gutter, so a `contains` match returns
+/// the first line mentioning the slug — which may be another project's
+/// state text ("Ping alpha about the work"), or the header of a card
+/// whose slug merely has this one as a prefix. Both produce a passing
+/// assertion about the wrong line.
+fn card_header<'a>(out: &'a str, slug: &str) -> Option<&'a str> {
+    out.lines().map(str::trim_end).find(|line| {
+        line.strip_prefix("▎ ")
+            .is_some_and(|rest| rest.split_whitespace().next() == Some(slug))
+    })
 }
 
 #[test]
@@ -774,7 +802,10 @@ fn project_list_says_no_active_projects_when_vault_is_empty() {
         .args(["project", "list"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("No active projects"));
+        // The title is constant whether or not there are any, as `Portfolios`
+        // and `Stewardships` are; the parenthetical carries the emptiness.
+        .stdout(predicate::str::contains("Active projects"))
+        .stdout(predicate::str::contains("(none — create one"));
 }
 
 #[test]
@@ -2018,4 +2049,149 @@ fn normalise_check_flags_then_normalise_reorders_frontmatter() {
         .args(["normalise", "--check"])
         .assert()
         .success();
+}
+
+// ---------------------------------------------------------------------
+// Colour.
+//
+// Everything else in this file runs with colour off, because a
+// subprocess writing to a pipe is never a terminal. These two pin the
+// other side of that gate.
+// ---------------------------------------------------------------------
+
+/// A vault with one project, for the colour tests below.
+fn vault_with_a_project() -> tempfile::TempDir {
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "create", "--title", "Alpha", "--context", "work"])
+        .assert()
+        .success();
+    dir
+}
+
+#[test]
+fn color_always_paints_even_off_a_terminal() {
+    let dir = vault_with_a_project();
+    let out = cdno()
+        .current_dir(dir.path())
+        .args(["project", "list", "--color", "always"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        out.contains('\u{1b}'),
+        "--color always must paint into a pipe:\n{out:?}"
+    );
+}
+
+#[test]
+fn json_output_is_never_coloured() {
+    // The highest-consequence assertion in this file. Roughly forty
+    // tests parse `--json` stdout with serde; a single escape byte
+    // reaching that path is a parse failure, not a mismatch. `--color
+    // always` is the most hostile setting we can hand it.
+    let dir = vault_with_a_project();
+    let out = cdno()
+        .current_dir(dir.path())
+        .args(["project", "list", "--json", "--color", "always"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out.clone()).unwrap();
+    assert!(
+        !text.contains('\u{1b}'),
+        "JSON must stay clean under --color always:\n{text:?}"
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&out).expect("JSON should parse");
+    assert!(parsed.is_array(), "project list --json is an array");
+}
+
+#[test]
+fn no_color_beats_a_forced_colour_environment() {
+    let dir = vault_with_a_project();
+    let out = cdno()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR_FORCE", "1")
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8(out).unwrap();
+    assert!(
+        !out.contains('\u{1b}'),
+        "NO_COLOR is a user preference and outranks a harness's CLICOLOR_FORCE:\n{out:?}"
+    );
+}
+
+/// Run `project list` in a vault with one project and return stdout.
+fn list_stdout(configure: impl FnOnce(&mut assert_cmd::Command)) -> String {
+    let dir = vault_with_a_project();
+    let mut cmd = cdno();
+    cmd.current_dir(dir.path()).args(["project", "list"]);
+    configure(&mut cmd);
+    let out = cmd.assert().success().get_output().stdout.clone();
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn clicolor_zero_turns_colour_off() {
+    // The `CLICOLOR` rung was the one the ladder never exercised:
+    // replacing it with `true` passed the whole suite, so the CLI would
+    // have ignored `CLICOLOR=0` silently.
+    let out = list_stdout(|c| {
+        c.env("CLICOLOR", "0").env("CLICOLOR_FORCE", "1");
+    });
+    assert!(
+        !out.contains('\u{1b}'),
+        "CLICOLOR=0 must suppress colour:\n{out:?}"
+    );
+}
+
+#[test]
+fn clicolor_force_paints_without_an_explicit_flag() {
+    // The complement: forcing colour on through the environment alone,
+    // with stdout a pipe and no `--color always`.
+    let out = list_stdout(|c| {
+        c.env_remove("NO_COLOR").env("CLICOLOR_FORCE", "1");
+    });
+    assert!(
+        out.contains('\u{1b}'),
+        "CLICOLOR_FORCE should paint into a pipe:\n{out:?}"
+    );
+}
+
+#[test]
+fn color_never_beats_a_forcing_environment() {
+    let out = list_stdout(|c| {
+        c.env("CLICOLOR_FORCE", "1").args(["--color", "never"]);
+    });
+    assert!(
+        !out.contains('\u{1b}'),
+        "an explicit --color never outranks the environment:\n{out:?}"
+    );
+}
+
+#[test]
+fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
+    // `assert_cmd` gives the child a null stdin, so this is the
+    // stdin-not-a-tty half of the guard. The stdout-is-a-tty half needs a
+    // pty and is covered by hand; what matters here is that the prompt
+    // path can never turn a read-only listing into a non-zero exit.
+    let dir = vault_with_a_project();
+    cdno()
+        .current_dir(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active project"));
 }

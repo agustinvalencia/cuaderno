@@ -39,6 +39,10 @@ cdno portfolio create --question "Sparse vs dense attention OOD" --project proje
 
 List every portfolio with its evidence count and staleness. Honours `--json`.
 
+In a terminal this then offers to open one of the portfolios it just listed, printing what `cdno
+portfolio show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
+`--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
+
 ```bash
 cdno portfolio list
 cdno portfolio list --json | jq '.[] | {slug, evidence_count}'

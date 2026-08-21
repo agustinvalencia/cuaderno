@@ -20,19 +20,39 @@ use cdno_domain::{
 };
 
 use crate::bootstrap;
+use crate::output::card::{Card, render_cards};
+use crate::output::style::{Accent, Palette, Role, cell};
 
 /// Render the daily orientation for the vault at `root` as of `today`.
-pub fn run(root: &Path, today: NaiveDate, energy: Option<EnergyLevel>, json: bool) -> Result<()> {
+pub fn run(
+    root: &Path,
+    today: NaiveDate,
+    energy: Option<EnergyLevel>,
+    no_interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    let ctx = vault
+        .orientation_context(today)
+        .context("building orientation context")?;
     if json {
-        let (vault, _report) = bootstrap::open_vault(root)?;
-        let ctx = vault
-            .orientation_context(today)
-            .context("building orientation context")?;
         println!("{}", serde_json::to_string_pretty(&ctx)?);
         return Ok(());
     }
-    print!("{}", build_orientation(root, today, energy)?);
-    Ok(())
+    print!("{}", render(&ctx, today, energy));
+    // `--json` implies non-interactive: a prompt writes to stdout, which
+    // would corrupt the result a scripted caller is parsing.
+    let interactive = crate::prompt::reports_interactively(no_interactive, json);
+    crate::prompt::drill_down(
+        &ctx.projects,
+        "Inspect a project",
+        interactive,
+        |p| format!("{} ({})", p.slug, p.context.as_str()),
+        |p| {
+            print!("{}", crate::commands::project::render_show(p));
+            Ok(())
+        },
+    )
 }
 
 /// Open the vault, build the orientation context, and render it to a
@@ -51,15 +71,30 @@ pub fn build_orientation(
 }
 
 fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel>) -> String {
-    let mut out = format!("Orientation — {}\n\n", today.format("%A %-d %B %Y"));
+    let palette = Palette::active();
+    let mut out = format!(
+        "{}\n\n",
+        palette.paint(
+            Role::Heading,
+            &format!("Orientation — {}", today.format("%A %-d %B %Y"))
+        )
+    );
 
-    out.push_str("Commitments (due within 48h, plus overdue)\n");
+    out.push_str(&heading(
+        &palette,
+        "Commitments (due within 48h, plus overdue)",
+    ));
     if ctx.commitments.is_empty() {
-        out.push_str("  (nothing due)\n");
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(Role::Muted, "(nothing due)")
+        ));
     } else {
+        // Genuinely tabular — three short, aligned fields per row — so
+        // this stays a table and gains only colour.
         let mut table = crate::output::styled_table();
         for c in &ctx.commitments {
-            table.add_row(commitment_cells(c));
+            table.add_row(commitment_row(c));
         }
         // date and source stay whole; the title reflows.
         crate::output::no_wrap_columns(&mut table, &[0, 2]);
@@ -68,31 +103,48 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
     }
     out.push('\n');
 
-    out.push_str("Active projects\n");
+    out.push_str(&heading(&palette, "Active projects"));
     if ctx.projects.is_empty() {
-        out.push_str("  (none — create one with `cdno project create`)\n");
+        out.push_str(&format!(
+            "  {}\n",
+            palette.paint(
+                Role::Muted,
+                "(none — create one with `cdno project create`)"
+            )
+        ));
     } else {
-        // Each project is one row: the slug stays whole in its own
-        // column, and a single detail cell carries the state line plus
-        // the `next:` action, both wrapping to the terminal.
-        let mut table = crate::output::styled_table();
-        for p in &ctx.projects {
-            let detail = format!("{}\nnext: {}", state_line(p), project_next(p));
-            table.add_row(vec![p.slug.clone(), detail]);
-        }
-        crate::output::no_wrap_columns(&mut table, &[0]);
-        out.push_str(&crate::output::render(&table));
-        out.push('\n');
+        // A project carries prose, so it gets a card rather than a row:
+        // the state and the `next:` action read as one item behind a
+        // context-coloured gutter instead of as a wrapped table cell.
+        let cards: Vec<Card> = ctx
+            .projects
+            .iter()
+            .map(|p| {
+                Card::new(&p.slug)
+                    .badge(p.context.as_str())
+                    .accent(Accent::for_context(p.context))
+                    .prose(state_line(p))
+                    .meta(format!("next: {}", project_next(p)))
+            })
+            .collect();
+        out.push_str(&render_cards(
+            &cards,
+            &palette,
+            crate::output::render_width(),
+        ));
     }
     out.push('\n');
 
     // Lapsed habits arrive in Phase 3; only render the section once
     // there's something to show.
     if !ctx.lapsed_habits.is_empty() {
-        out.push_str("Lapsed habits\n");
+        out.push_str(&heading(&palette, "Lapsed habits"));
         let mut table = crate::output::styled_table();
         for h in &ctx.lapsed_habits {
-            table.add_row(vec![h.stewardship.clone(), h.detail.clone()]);
+            table.add_row(vec![
+                cell(Role::Slug, &h.stewardship),
+                cell(Role::Warn, &h.detail),
+            ]);
         }
         crate::output::no_wrap_columns(&mut table, &[0]);
         out.push_str(&crate::output::render(&table));
@@ -100,10 +152,28 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
         out.push('\n');
     }
 
-    out.push_str("Suggested start\n");
+    out.push_str(&heading(&palette, "Suggested start"));
     out.push_str(&format!("  {}\n", suggestion(ctx, energy)));
 
     out
+}
+
+/// A section heading on its own line. Shared so every section of the
+/// orientation reads at the same weight.
+pub(crate) fn heading(palette: &Palette, text: &str) -> String {
+    format!("{}\n", palette.paint(Role::Heading, text))
+}
+
+/// [`commitment_cells`] as styled table cells: the date and the overdue
+/// marker are what the reader scans for, so they carry the colour.
+pub(crate) fn commitment_row(c: &CommitmentEntry) -> Vec<comfy_table::Cell> {
+    let cells = commitment_cells(c);
+    let source_role = if c.is_overdue { Role::Warn } else { Role::Meta };
+    vec![
+        cell(Role::Meta, &cells[0]),
+        cell(Role::Prose, &cells[1]),
+        cell(source_role, &cells[2]),
+    ]
 }
 
 /// The cells for one commitment row: `date` / `title` / `source`, with
