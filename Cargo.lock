@@ -571,7 +571,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-cli"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "anstyle",
  "anstyle-query",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-core"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "chrono",
  "globset",
@@ -615,7 +615,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-domain"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "cdno-core",
  "chrono",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-mcp"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -658,7 +658,7 @@ dependencies = [
 
 [[package]]
 name = "cdno-tauri"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
