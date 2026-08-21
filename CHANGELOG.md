@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.35.1] - 2026-08-21
+
 ### Changed
 
 - **The MCP server states the method, not just the mechanics** (#533). Tool descriptions were precise
