@@ -6,6 +6,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno open` — reach a note without leaving the tool.** Every retrieval verb ended by printing a
+  path you then copy-pasted into an editor; the last step of the loop happened outside the tool.
+  `cdno open <reference>` resolves a bare slug, a type-scoped slug (`project:surrogate-model`), a
+  calendar word (`today`/`yesterday`/`tomorrow`), a date, an ISO week, a month, or a vault-relative
+  path, and prints the note's absolute path. `cdno open --list` emits every note as
+  `path<TAB>title<TAB>type`.
+
+  Reaching for `fzf` instead never quite worked: it wants the shell to be *in* the vault, and it can
+  only match filenames, which here are slugs — a note titled "Surrogate model" lives at
+  `projects/surrogate-model.md`, so the words you remember match nothing. The listing carries each
+  note's title from the index, and because `open` accepts absolute paths, the round-trip composes
+  from any directory:
+
+  ```bash
+  cdno open "$(cdno open --list | fzf --with-nth=2.. --delimiter='\t' | cut -f1)"
+  ```
+
+  `open` never guesses. A slug matching two notes — a stewardship and a portfolio can genuinely
+  share one, since `stewardships/gym.md` and `portfolios/gym/_index.md` are both `gym` — is an
+  error naming each type-scoped form rather than a coin flip, because opening the wrong note is a
+  mistake you discover only after typing into it. A reference that looks like a path never falls
+  back to fuzzy matching, so a typo is "no such file" rather than a near-miss opened on your behalf.
+  A miss names the closest few notes instead of dumping the vault.
+
+### Changed
+
+- **Said out loud that search already covers titles.** `cdno search` has weighted a title match ten
+  times a body match since the FTS index landed (#172), but nothing ever said so: the CLI help, the
+  domain docstring, and the `search_notes` MCP description all called it a *content* search, and the
+  user guide mentioned `title` only as an output field. The natural conclusion was that finding a
+  note by name needed a second command — it does not. All four now state the weighting, which
+  matters most for the MCP description, since a tool description is the only instruction surface an
+  agent ever sees.
+
 ## [0.35.1] - 2026-08-21
 
 ### Changed

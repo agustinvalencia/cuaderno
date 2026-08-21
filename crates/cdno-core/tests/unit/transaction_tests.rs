@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use cdno_core::error::{IndexError, StoreError, TransactionError};
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteEntry, VaultIndex,
+    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteCandidate, NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -407,6 +407,9 @@ impl VaultIndex for FailingIndex {
     }
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
         self.inner.list_all_paths()
+    }
+    fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
+        self.inner.list_candidates()
     }
     fn replace_deadlines(
         &self,

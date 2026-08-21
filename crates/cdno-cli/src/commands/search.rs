@@ -1,5 +1,5 @@
 //! `cdno search <query> [--type T] [--from D] [--to D] [--portfolio P]
-//! [--limit N]` — full-text content search over the vault.
+//! [--limit N]` — full-text search over the vault's note titles and bodies.
 //!
 //! Thin terminal surface over [`cdno_domain::Vault::search`]: it maps the
 //! CLI flags onto a [`SearchFilters`] and renders the ranked hits. The

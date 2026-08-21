@@ -3,6 +3,11 @@
 Full-text search across all notes, ranked best-first, with optional filters by note type, date
 window, and portfolio.
 
+**Titles are searched too, and weighted ten times a body match.** A note whose *title* contains
+your words ranks above one that merely mentions them, so you do not need a separate command to
+look one up by name. When you already know which note you want and can name its slug or date,
+[`cdno open`](open.md) resolves it directly instead of ranking.
+
 ```text
 cdno search [OPTIONS] <QUERY>
 ```

@@ -300,6 +300,32 @@ pub struct NoteEntry {
     pub indexed_at_ns: u64,
 }
 
+/// A note as an addressable candidate: enough to label it in a picker and
+/// open it, and nothing else.
+///
+/// This is a read-side projection, deliberately not a [`NoteEntry`]. Two
+/// reasons, and the first is the load-bearing one:
+///
+/// 1. **The title comes from `notes_fts.title`, the note's body H1 — not
+///    [`NoteEntry::title`]**, which is the frontmatter `title:` field and is
+///    absent on essentially every Cuaderno note (see
+///    [`crate::extractors::first_h1`], and note that
+///    `cdno_domain::vault::index_entry` writes `title: None` unconditionally).
+///    A candidate list built off `NoteEntry` would be label-less.
+/// 2. `NoteEntry` carries the full frontmatter JSON blob, which would be
+///    deserialised for every note in the vault to reach a field this never
+///    reads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteCandidate {
+    pub path: VaultPath,
+    pub note_type: String,
+    /// The note's body H1. `None` when the note has no FTS row yet or has no
+    /// H1 — a candidate with a weaker label still beats one that vanished, so
+    /// callers render a fallback rather than dropping the row.
+    pub title: Option<String>,
+    pub mtime_ns: u64,
+}
+
 /// One row of the `deadlines` table, scoped to a single note.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeadlineEntry {
@@ -404,6 +430,13 @@ pub trait VaultIndex: Send + Sync {
     /// Return every path currently in the index. Used by reconciliation
     /// to find orphans (index rows with no corresponding file on disk).
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError>;
+    /// Every indexed note as a [`NoteCandidate`], most-recently-modified
+    /// first. The listing behind `cdno open`'s picker and `--list`.
+    ///
+    /// Ordering is part of the contract: recency is the useful default for a
+    /// navigation surface, and the secondary sort on path keeps the result
+    /// deterministic when two notes share an mtime.
+    fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError>;
 
     // deadlines -------------------------------------------------------
     fn replace_deadlines(
@@ -577,6 +610,45 @@ impl VaultIndex for SqliteIndex {
             out.push(VaultPath::new(path_str).map_err(|e| {
                 IndexError::Query(format!("invalid stored path in list_all_paths: {e}"))
             })?);
+        }
+        Ok(out)
+    }
+
+    fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
+        let conn = self.lock_conn();
+        // LEFT, not INNER: `search` inner-joins because an FTS row with no
+        // surviving note is garbage, but the converse is not — a note with no
+        // FTS row is a real, openable note that simply has no title to show
+        // yet (freshly written before the heal pass, or genuinely H1-less).
+        // Dropping it here would make it unreachable through `cdno open`.
+        //
+        // The `path` tiebreak is deliberate: mtimes collide readily (a batch
+        // write, a fresh `cdno init`), and an unstable order would make tests
+        // flake and the picker reshuffle between invocations.
+        let mut stmt = conn.prepare(
+            "SELECT n.path, n.note_type, f.title, n.mtime_ns \
+             FROM notes n LEFT JOIN notes_fts f ON f.path = n.path \
+             ORDER BY n.mtime_ns DESC, n.path ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, i64>(3)? as u64,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (path_str, note_type, title, mtime_ns) = row?;
+            out.push(NoteCandidate {
+                path: VaultPath::new(path_str).map_err(|e| {
+                    IndexError::Query(format!("invalid stored path in list_candidates: {e}"))
+                })?,
+                note_type,
+                title,
+                mtime_ns,
+            });
         }
         Ok(out)
     }
@@ -1153,6 +1225,32 @@ impl VaultIndex for MemoryIndex {
         let state = self.lock_state();
         let mut out: Vec<VaultPath> = state.notes.keys().cloned().collect();
         out.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+        Ok(out)
+    }
+
+    fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
+        let state = self.lock_state();
+        // Mirrors the SQL's LEFT JOIN: a note with no `fts` entry still
+        // appears, with `title: None`.
+        let mut out: Vec<NoteCandidate> = state
+            .notes
+            .values()
+            .map(|entry| NoteCandidate {
+                path: entry.path.clone(),
+                note_type: entry.note_type.clone(),
+                title: state
+                    .fts
+                    .get(&entry.path)
+                    .and_then(|(title, _body)| title.clone()),
+                mtime_ns: entry.mtime_ns,
+            })
+            .collect();
+        // Same key as the SQL: mtime descending, then path ascending.
+        out.sort_by(|a, b| {
+            b.mtime_ns
+                .cmp(&a.mtime_ns)
+                .then_with(|| a.path.as_path().cmp(b.path.as_path()))
+        });
         Ok(out)
     }
 

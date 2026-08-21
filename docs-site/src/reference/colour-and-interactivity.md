@@ -60,6 +60,14 @@ standing to override it. An explicit `--color` outranks all three.
 **`--json` output is never coloured**, whatever any of the above says. Scripts can pass `--color always`
 safely.
 
+## Plain output
+
+`cdno open` is deliberately outside all of the above. It prints one absolute path, and `--list`
+prints one tab-separated row per note — no cards, no colour, no alignment, whatever the terminal
+is. Both are written to be consumed by another program (`$(…)`, `fzf`, `cut`), and a colour escape
+or a padded column would corrupt them. The tab is load-bearing: it is what `fzf --delimiter='\t'`
+splits on.
+
 ## Interactive reports
 
 In a terminal, `project list`, `portfolio list`, `stewardship list`, `orient`, and `status` follow

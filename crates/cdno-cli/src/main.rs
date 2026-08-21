@@ -63,7 +63,7 @@ struct Cli {
 
     /// Emit machine-readable JSON instead of the formatted table.
     /// Read verbs (`commitments`, `questions`, `status`, `orient`,
-    /// `search`, and the `list`/`show` verbs of `project`, `portfolio`,
+    /// `search`, `open`, and the `list`/`show` verbs of `project`, `portfolio`,
     /// `stewardship`, plus `action list`) emit their listing/detail;
     /// write verbs (`log`, `capture`, `file`, `track`, and the
     /// create/update verbs of `project`, `action`, `portfolio`,
@@ -154,6 +154,25 @@ enum Commands {
 
     /// Quick snapshot: active projects and their top next actions.
     Status,
+
+    /// Resolve a note reference and print the note's absolute path.
+    ///
+    /// A reference is a bare slug (`surrogate-model`), a type-scoped slug
+    /// (`project:surrogate-model`) when one slug is used by two note types,
+    /// a calendar word (`today`, `yesterday`, `tomorrow`), a date
+    /// (`2026-08-21`, `2026-W34`, `2026-08`), or a vault-relative path.
+    /// `today` and its neighbours always mean the journal, so a note
+    /// genuinely named `today` is reached as `<type>:today`.
+    Open {
+        /// The note to resolve. Omit and pass `--list` to see every note.
+        #[arg(add = ArgValueCompleter::new(completions::complete_note_ref))]
+        reference: Option<String>,
+
+        /// List every note as `path<TAB>title<TAB>type`, for piping to a
+        /// fuzzy finder. Takes no reference and resolves nothing.
+        #[arg(long)]
+        list: bool,
+    },
 
     /// Guided review rituals. `review weekly` walks the retrospective
     /// sections (Wins, Challenges, One Improvement) into this week's note
@@ -326,9 +345,14 @@ enum Commands {
         weeks: u32,
     },
 
-    /// Full-text search across all notes, ranked best-first. Free-text
-    /// query with optional filters by note type, date window, and
-    /// portfolio.
+    /// Full-text search across all notes, ranked best-first. Matches note
+    /// titles *and* bodies, with a title hit weighted ten times a body hit,
+    /// so a note whose title you half-remember surfaces above one that
+    /// merely mentions the words. Free-text query with optional filters by
+    /// note type, date window, and portfolio.
+    ///
+    /// To reach a note you can already name, `cdno open` resolves a slug,
+    /// date, or path directly.
     Search {
         /// Search text. Matched case-insensitively; terms are ANDed.
         /// Quotes and operators are treated as literal words.
@@ -441,6 +465,15 @@ fn main() -> Result<()> {
                 cli.no_interactive,
                 cli.json,
             )
+        }
+        Commands::Open { reference, list } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            // An absolute path from a previous `--path`/`--list` round-trip
+            // has to become vault-relative before the domain sees it; the
+            // domain has no idea where the vault sits on disk.
+            let reference =
+                reference.map(|r| cdno_cli::commands::open::strip_vault_root(&r, &root));
+            commands::open::run(&root, Local::now().date_naive(), reference, list, cli.json)
         }
         Commands::Review { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

@@ -1,4 +1,4 @@
-//! `Vault::search` — full-text content search with optional filters.
+//! `Vault::search` — full-text search over titles and bodies, with filters.
 //!
 //! Wraps the core FTS5 index (`VaultIndex::search`, #172 PR 1) with two
 //! things the raw primitive deliberately leaves out:

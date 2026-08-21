@@ -68,6 +68,14 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # domain crates never see prompts.
 inquire = { version = "0.7", features = ["date", "editor"] }
 
+# The same fuzzy matcher inquire's `Select` uses by default (it is a
+# default feature, and we do not disable defaults). Pinned to inquire's
+# own version deliberately: `cdno open` scores candidates itself to decide
+# whether a reference matches exactly one note, and if that scoring ever
+# diverged from the picker's, the two surfaces would disagree about what
+# "matches" — auto-opening one note while the picker ranks another first.
+fuzzy-matcher = "0.3"
+
 # Tabular CLI output with automatic content wrapping. The only default
 # feature is `tty` (terminal-width auto-detection via crossterm);
 # `custom_styling` is *not* on, so a cell must be styled through

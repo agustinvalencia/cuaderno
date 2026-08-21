@@ -509,3 +509,113 @@ fn archival_snapshot_returns_none_when_absent() {
             .is_none()
     );
 }
+
+// ---------------------------------------------------------------------
+// list_candidates — the listing behind `cdno open`
+// ---------------------------------------------------------------------
+
+/// The regression this method exists to prevent.
+///
+/// `NoteEntry.title` is the *frontmatter* `title:` field, which Cuaderno
+/// notes do not carry — the human title is the body H1, and it lives only
+/// in `notes_fts.title`. A candidate listing built off `NoteEntry` would
+/// hand back a blank label for every note in a real vault, so this asserts
+/// the H1 wins even when the two disagree.
+#[test]
+fn list_candidates_takes_its_title_from_the_fts_h1_not_the_frontmatter() {
+    let (_d, idx) = store();
+    let mut n = sample_note("projects/surrogate-model.md", "project");
+    // What a hand-authored note might carry, and what cdno's own writer
+    // never does (`index_entry.rs` sets this to None unconditionally).
+    n.title = Some("frontmatter title that must not win".to_owned());
+    idx.upsert_note(&n).unwrap();
+    idx.replace_fts(
+        &vp("projects/surrogate-model.md"),
+        Some("Surrogate model"),
+        "# Surrogate model\n\nBody text.",
+    )
+    .unwrap();
+
+    let candidates = idx.list_candidates().unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].title.as_deref(), Some("Surrogate model"));
+    assert_eq!(candidates[0].note_type, "project");
+}
+
+/// The LEFT join, not an INNER one: a note whose FTS row has not landed
+/// yet is still openable, so it must still be listed — merely unlabelled.
+#[test]
+fn list_candidates_keeps_a_note_that_has_no_fts_row() {
+    let (_d, idx) = store();
+    idx.upsert_note(&sample_note("actions/write-it-up.md", "action"))
+        .unwrap();
+
+    let candidates = idx.list_candidates().unwrap();
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].title, None);
+    assert_eq!(
+        candidates[0].path.as_path().to_str(),
+        Some("actions/write-it-up.md")
+    );
+}
+
+#[test]
+fn list_candidates_orders_by_mtime_descending_then_path() {
+    let (_d, idx) = store();
+    let mut old = sample_note("projects/older.md", "project");
+    old.mtime_ns = 1_000;
+    let mut newer = sample_note("projects/newer.md", "project");
+    newer.mtime_ns = 9_000;
+    // Same mtime as `newer`, to exercise the path tiebreak. Without it the
+    // order would depend on SQLite's row order and the picker would
+    // reshuffle between invocations.
+    let mut tie = sample_note("projects/aaa-tie.md", "project");
+    tie.mtime_ns = 9_000;
+    for n in [&old, &newer, &tie] {
+        idx.upsert_note(n).unwrap();
+    }
+
+    let paths: Vec<String> = idx
+        .list_candidates()
+        .unwrap()
+        .iter()
+        .map(|c| c.path.as_path().to_string_lossy().into_owned())
+        .collect();
+
+    assert_eq!(
+        paths,
+        vec![
+            "projects/aaa-tie.md".to_owned(),
+            "projects/newer.md".to_owned(),
+            "projects/older.md".to_owned(),
+        ]
+    );
+}
+
+/// `MemoryIndex` is what the whole `cdno-domain` suite runs against, so a
+/// divergence here would mean the domain tests pass against behaviour the
+/// real index does not have.
+#[test]
+fn list_candidates_agrees_between_the_sqlite_and_memory_indexes() {
+    let (_d, sqlite) = store();
+    let memory = cdno_core::index::MemoryIndex::new();
+
+    let mut a = sample_note("projects/surrogate-model.md", "project");
+    a.mtime_ns = 2_000;
+    let mut b = sample_note("actions/no-fts-row.md", "action");
+    b.mtime_ns = 1_000;
+
+    for idx in [&sqlite as &dyn VaultIndex, &memory as &dyn VaultIndex] {
+        idx.upsert_note(&a).unwrap();
+        idx.upsert_note(&b).unwrap();
+        idx.replace_fts(&a.path, Some("Surrogate model"), "# Surrogate model\n")
+            .unwrap();
+    }
+
+    assert_eq!(
+        sqlite.list_candidates().unwrap(),
+        memory.list_candidates().unwrap()
+    );
+}
