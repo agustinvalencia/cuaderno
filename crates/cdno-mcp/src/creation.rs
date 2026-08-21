@@ -21,7 +21,7 @@ use crate::server::CuadernoServer;
 #[tool_router(router = creation_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Create a new project map. Below the active-project cap (default 5) the project is created active; at or above the cap it's created parked (`projects/_parked/<slug>`) so you can capture it without parking another first — the cap is enforced on activation, not creation. `context` is a kebab-case Context (`work`, `household`, `personal`, …). `core_question` is an optional bare wikilink target (e.g. `questions/research/foo`) linking the project to the question it answers."
+        description = "Create a new project map for a piece of *finite* work — something with a deliverable that can be finished. If the thing never completes (health, finances, household, a recurring service), it is a stewardship: use create_stewardship, because active projects are capped and a perpetual responsibility would consume a slot permanently. Below the active-project cap (default 5) the project is created active; at or above the cap it's created parked (`projects/_parked/<slug>`) so you can capture it without parking another first — the cap is enforced on activation, not creation. `context` is a kebab-case Context (`work`, `household`, `personal`, …). `core_question` is an optional bare wikilink target (e.g. `questions/research/foo`) linking the project to the question it answers."
     )]
     pub async fn create_project(
         &self,
@@ -50,7 +50,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a portfolio (evidence folder + `_index.md`) for a question or topic. `project` optionally links it to a project — pass the bare wikilink target (e.g. `projects/surrogate-model`); resolve a real one (e.g. via `get_orientation`) rather than inventing it. When that project note exists, its `## Links` is backfilled with the portfolio in the same commit (and the portfolio's `project:` frontmatter is set either way); an unknown target sets the frontmatter only, not rejected. If a research/life question note already exists for the same `question` text, the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question (pass the question's text verbatim so the slugs match). Use `link_portfolio_to_question` / `link_portfolio_to_project` to wire them when the slugs differ or the portfolio already exists."
+        description = "Create a portfolio — a dossier that accumulates evidence for one question over months. Reach for this when you are gathering material rather than delivering an outcome; delivering is a project. Do not organise inside a portfolio, and file evidence as it arises. Creates an evidence folder + `_index.md` for a question or topic. `project` optionally links it to a project — pass the bare wikilink target (e.g. `projects/surrogate-model`); resolve a real one (e.g. via `get_orientation`) rather than inventing it. When that project note exists, its `## Links` is backfilled with the portfolio in the same commit (and the portfolio's `project:` frontmatter is set either way); an unknown target sets the frontmatter only, not rejected. If a research/life question note already exists for the same `question` text, the two are linked both ways in the same commit — the question's `## Related Portfolios` gains the new portfolio and the portfolio's `## Related Questions` gains the question (pass the question's text verbatim so the slugs match). Use `link_portfolio_to_question` / `link_portfolio_to_project` to wire them when the slugs differ or the portfolio already exists."
     )]
     pub async fn create_portfolio(
         &self,
@@ -120,7 +120,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a research or life question note. `domain` is `research` or `life`."
+        description = "Create a research or life question note. A question is open-ended and sits *above* projects — it may spawn several over time and outlives them, so phrase it as a question that would change the situation if answered, not as a topic or a task. `domain` is `research` or `life`."
     )]
     pub async fn create_question(
         &self,
@@ -171,7 +171,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a stewardship. With `expanded: true` it's a folder stewardship (`stewardships/<slug>/_index.md` with a lazy `tracking/`); otherwise a flat file. `context` is a kebab-case Context."
+        description = "Create a stewardship — a dashboard for a perpetual responsibility such as health, finances, household or a recurring service. The distinction that matters: projects end, stewardships do not, and stewardships deliberately do not compete for the capped project slots. If the thing has a completion state, use create_project instead. With `expanded: true` it's a folder stewardship (`stewardships/<slug>/_index.md` with a lazy `tracking/`); otherwise a flat file. `context` is a kebab-case Context."
     )]
     pub async fn create_stewardship(
         &self,

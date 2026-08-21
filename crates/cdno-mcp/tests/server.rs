@@ -29,13 +29,28 @@ fn server_announces_name_and_tools_capability() {
         info.capabilities.tools.is_some(),
         "tools capability must be advertised so MCP clients call tools/list"
     );
+    let instructions = info.instructions.as_deref().unwrap_or_default();
     assert!(
-        info.instructions
-            .as_deref()
-            .map(|s| s.contains("Cuaderno MCP server"))
-            .unwrap_or(false),
-        "instructions should mention the server"
+        instructions.contains("Cuaderno"),
+        "instructions should identify the server"
     );
+    // The instructions are the only surface that can teach the method to an
+    // agent arriving with no skill loaded, and the distinctions below are the
+    // ones it otherwise gets wrong — filing a perpetual responsibility as a
+    // project, or a note per task. Losing them would be silent: every tool
+    // would still work, and the vault would fill with the wrong note types.
+    for phrase in [
+        "PROJECTS END, STEWARDSHIPS DO NOT",
+        "add_action",
+        "promote_action",
+        "APPEND-ONLY",
+    ] {
+        assert!(
+            instructions.contains(phrase),
+            "instructions must still state {phrase:?} — that is the judgement \
+             an agent cannot get from the tool schemas"
+        );
+    }
 }
 
 #[test]
