@@ -238,6 +238,7 @@ are worth migrating.
 
 | Verb | Convention applied |
 |---|---|
+| `cdno open` (reference is a trailing optional positional) | rule 5 exception |
 | `cdno action add / promote / complete / list` | #113 |
 | `cdno project create / state / park / activate / milestone add+done / waiting add+resolve` | #114 (split across two PRs) |
 | `cdno commit create / done` | #114 |
@@ -245,9 +246,17 @@ are worth migrating.
 | `cdno project show` (slug now an optional positional) | rule 5 exception |
 
 **Drill-down (rule 5) applied**: `project list`, `portfolio list`,
-`stewardship list`, `orient`, `status`. Deferred where no `show` verb
-exists to open: `questions`, `commitments`, `search`, `action list` —
+`stewardship list`, `orient`, `status`, and `search` — the last via
+`cdno open`, which is the "verb to open with" the rest of this note was
+waiting on. Still deferred: `questions`, `commitments`, `action list` —
 `prompt::drill_down` is generic, so these need no redesign when one does.
+
+`search`'s drill-down differs from the others in one way, and deliberately:
+it hands off instead of looping. The `show`-style pickers return to the list
+because a report is inspected repeatedly, whereas once an editor has the
+file, coming back to the search hits is not what anyone wants. `cdno open`'s
+own picker is the same shape, and both use `prompt::prompt_note` rather than
+`prompt::drill_down`.
 
 **Picker prompts available**: project (active), any project (active + parked, for read verbs), parked project, action bullet, open milestone, energy, life-domain context, date, hard/soft.
 **Plain text prompts** (fuzzy pickers deferred): `waiting resolve` query, `commit done` slug — both pending the matching domain queries (open waiting items per project, active commitments listing).

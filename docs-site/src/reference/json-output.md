@@ -36,6 +36,35 @@ Ranked best-first; each hit:
 
 A lower `score` ranks earlier (best match first). No matches → `[]`.
 
+## `open --json` → the resolved path
+
+```bash
+cdno open today --json
+```
+```json
+{ "path": "/home/you/vault/journal/2026/daily/2026-08-21.md" }
+```
+
+Absolute, so the value composes from any directory. A reference that resolves to nothing — or to
+more than one note — is an error, not an empty result.
+
+## `open --list --json` → an array of candidates
+
+Every note in the vault, most-recently-modified first. The plain-text form of the same listing is
+tab-separated for piping into a fuzzy finder; `--json` is for programmatic consumers.
+
+```json
+[
+  {
+    "path": "projects/surrogate-model.md",
+    "title": "Surrogate model",
+    "type": "project"
+  }
+]
+```
+
+`title` is the note's body H1, and is `null` for a note that has none.
+
 ## `list` verbs → arrays of summaries
 
 ```bash

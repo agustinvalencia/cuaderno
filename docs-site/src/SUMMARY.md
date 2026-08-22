@@ -43,6 +43,7 @@
 - [triage](reference/cli/triage.md)
 - [orient](reference/cli/orient.md)
 - [status](reference/cli/status.md)
+- [open](reference/cli/open.md)
 - [weekly](reference/cli/weekly.md)
 - [monthly](reference/cli/monthly.md)
 - [commitments](reference/cli/commitments.md)

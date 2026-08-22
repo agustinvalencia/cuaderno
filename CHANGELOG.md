@@ -6,6 +6,73 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno open` — reach a note without leaving the tool.** Every retrieval verb ended by printing a
+  path you then copy-pasted into an editor; the last step of the loop happened outside the tool.
+  `cdno open <reference>` resolves a bare slug, a type-scoped slug (`project:surrogate-model`), a
+  calendar word (`today`/`yesterday`/`tomorrow`), a date, an ISO week, a month, or a vault-relative
+  path, and prints the note's absolute path. `cdno open --list` emits every note as
+  `path<TAB>title<TAB>type`.
+
+  Reaching for `fzf` instead never quite worked: it wants the shell to be *in* the vault, and it can
+  only match filenames, which here are slugs — a note titled "Surrogate model" lives at
+  `projects/surrogate-model.md`, so the words you remember match nothing. The listing carries each
+  note's title from the index, and because `open` accepts absolute paths, the round-trip composes
+  from any directory:
+
+  ```bash
+  cdno open "$(cdno open --list | fzf --with-nth=2.. --delimiter='\t' | cut -f1)"
+  ```
+
+  `open` never guesses. A slug matching two notes — a stewardship and a portfolio can genuinely
+  share one, since `stewardships/gym.md` and `portfolios/gym/_index.md` are both `gym` — is an
+  error naming each type-scoped form rather than a coin flip, because opening the wrong note is a
+  mistake you discover only after typing into it. A reference that looks like a path never falls
+  back to fuzzy matching, so a typo is "no such file" rather than a near-miss opened on your behalf.
+  A miss names the closest few notes instead of dumping the vault.
+
+- **`cdno open` opens.** With a reference it hands the note to your editor; with none it offers a
+  picker over every note, most-recently-edited first. `--path` prints instead, and when stdout is
+  not a terminal printing is what happens anyway — no editor is ever launched into a pipe.
+
+  Which editor comes from `--editor`, then `$CUADERNO_EDITOR`, then `$VISUAL`/`$EDITOR`, then the
+  OS default. `{path}` marks where the note's path goes; leave it out and the path is appended, so
+  a bare `nvim` works. A value whose first word contains `://` goes to the OS instead, with the
+  path percent-encoded — without that, the first vault under `~/Google Drive/` breaks.
+
+  **There is deliberately no per-vault editor setting.** An `[editor]` section in
+  `.cuaderno/config.toml` was built and then removed before release: a vault is a git repository,
+  and `--vault` exists so cdno can be pointed at one you did not create, so a setting naming a
+  program to run cannot live in data that gets cloned. Constraining it to a bare binary name would
+  not have helped either — `sh` is a binary name, and `sh <the note>` executes the note's own
+  contents, which in a cloned vault the author also wrote. Every source is now something the person
+  at the keyboard controls. A per-directory shell hook (`direnv` and friends) covers the
+  different-editor-per-vault case, keeping the decision on your machine.
+
+  cdno does not guess whether your editor is a terminal or a GUI one — `code -w` blocks and `code`
+  does not, and a guess would be wrong in a way you could not override. It waits, which is right
+  for every terminal editor and harmless for a GUI one that returns immediately. A non-zero editor
+  exit propagates, the way `git commit` treats an abandoned edit.
+
+  Opening an archived action warns first: its text was frozen at archival and `cdno lint` flags an
+  edit to it. Appending is still fine, and the warning does not stop you.
+
+- **`cdno search` results can be opened.** In a terminal, search now follows its hits with a picker
+  — `docs/cli-ergonomics.md` had recorded this as deferred "where no `show` verb exists to open",
+  and `cdno open` is that verb. It hands off rather than looping, unlike the `show`-style
+  drill-downs: once an editor has the file, returning to the hit list is not what anyone wants.
+
+### Changed
+
+- **Said out loud that search already covers titles.** `cdno search` has weighted a title match ten
+  times a body match since the FTS index landed (#172), but nothing ever said so: the CLI help, the
+  domain docstring, and the `search_notes` MCP description all called it a *content* search, and the
+  user guide mentioned `title` only as an output field. The natural conclusion was that finding a
+  note by name needed a second command — it does not. All four now state the weighting, which
+  matters most for the MCP description, since a tool description is the only instruction surface an
+  agent ever sees.
+
 ## [0.35.1] - 2026-08-21
 
 ### Changed

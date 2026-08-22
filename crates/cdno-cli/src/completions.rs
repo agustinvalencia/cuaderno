@@ -242,3 +242,38 @@ fn slug_from_path(path: &cdno_core::path::VaultPath) -> Option<String> {
         .and_then(|s| s.to_str())
         .map(str::to_owned)
 }
+
+/// Note references for `cdno open`.
+///
+/// Offers every note's bare slug plus the three calendar words. Deliberately
+/// *not* the type-scoped forms as well: doubling the candidate list to
+/// pre-empt the rare ambiguity would bury the common case, and the ambiguity
+/// error names the typed form when it actually happens.
+///
+/// Slugs are offered even when two notes share one — completing permissively
+/// is the right side to err on here, exactly as `complete_question` notes:
+/// the wrong pick fails at execute time with a message that says what to type
+/// instead.
+pub fn complete_note_ref(_current: &OsStr) -> Vec<CompletionCandidate> {
+    let Some(vault) = try_open_vault() else {
+        return Vec::new();
+    };
+    let Ok(candidates) = vault.list_note_candidates() else {
+        return Vec::new();
+    };
+    let mut out: Vec<CompletionCandidate> = ["today", "yesterday", "tomorrow"]
+        .into_iter()
+        .map(CompletionCandidate::new)
+        .collect();
+    // `open::slug_of`, not the local `slug_from_path`: the latter takes the
+    // bare file stem, which would offer `_index` for every portfolio and
+    // expanded stewardship instead of the name they are addressed by.
+    let mut slugs: Vec<String> = candidates
+        .iter()
+        .map(|c| crate::commands::open::slug_of(&c.path))
+        .collect();
+    slugs.sort_unstable();
+    slugs.dedup();
+    out.extend(slugs.into_iter().map(CompletionCandidate::new));
+    out
+}

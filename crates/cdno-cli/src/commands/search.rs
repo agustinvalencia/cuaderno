@@ -1,5 +1,5 @@
 //! `cdno search <query> [--type T] [--from D] [--to D] [--portfolio P]
-//! [--limit N]` — full-text content search over the vault.
+//! [--limit N]` — full-text search over the vault's note titles and bodies.
 //!
 //! Thin terminal surface over [`cdno_domain::Vault::search`]: it maps the
 //! CLI flags onto a [`SearchFilters`] and renders the ranked hits. The
@@ -31,6 +31,7 @@ pub fn run(
     to: Option<NaiveDate>,
     portfolio: Option<String>,
     limit: usize,
+    no_interactive: bool,
     json: bool,
 ) -> Result<()> {
     let mut filters = SearchFilters {
@@ -51,9 +52,57 @@ pub fn run(
         let results = search_hits(root, query, &filters, limit)?;
         println!("{}", serde_json::to_string_pretty(&results)?);
     } else {
-        print!("{}", build_search(root, query, &filters, limit)?);
+        let results = search_hits(root, query, &filters, limit)?;
+        print!("{}", render(query, &results));
+        // The drill-down `docs/cli-ergonomics.md` recorded as deferred
+        // "where no `show` verb exists to open". `cdno open` is that verb, so
+        // the listing can now be acted on: pick a hit, open it.
+        //
+        // Rule 5's shape, unchanged: the listing prints first and
+        // unconditionally, so a reader who pipes the output or hits Esc sees
+        // exactly what they saw before this existed.
+        let interactive = crate::prompt::reports_interactively(no_interactive, json);
+        if interactive
+            && !results.is_empty()
+            && crate::prompt::picker_fits(crate::output::terminal_columns())
+        {
+            open_a_hit(root, &results)?;
+        }
     }
     Ok(())
+}
+
+/// Offer to open one of the hits.
+///
+/// Unlike the `show`-style drill-downs, this hands off rather than looping:
+/// once an editor has the file, returning to the list is not what anyone
+/// wants. Esc leaves silently with status 0.
+fn open_a_hit(root: &Path, results: &[SearchResultEntry]) -> Result<()> {
+    // Indices, not labels: two hits genuinely can share a title, and every
+    // daily note's title is its own date.
+    let Some(index) = crate::prompt::prompt_note(
+        results,
+        |r| {
+            format!(
+                "{}  ({})",
+                crate::output::sanitise(r.title.as_deref().unwrap_or("(untitled)")),
+                r.note_type
+            )
+        },
+        None,
+    )?
+    else {
+        return Ok(());
+    };
+
+    let path = results[index].path.clone();
+    let absolute = std::path::absolute(root.join(path.as_path()))
+        .with_context(|| format!("resolving an absolute path for {path}"))?;
+    // Re-open rather than threading a vault down from `search_hits`: this
+    // runs at most once per invocation, behind a human pressing enter, so the
+    // second reconcile costs nothing anyone can feel.
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    crate::commands::open::open_in_editor(vault, &path, &absolute, None)
 }
 
 /// Open the vault and run the search. The shared seam behind both output

@@ -585,9 +585,12 @@ dependencies = [
  "colorchoice",
  "comfy-table",
  "crossterm 0.29.0",
+ "fuzzy-matcher",
  "inquire",
+ "open",
  "predicates",
  "serde_json",
+ "shlex",
  "tempfile",
  "textwrap",
 ]

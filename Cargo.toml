@@ -68,6 +68,26 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 # domain crates never see prompts.
 inquire = { version = "0.7", features = ["date", "editor"] }
 
+# The same fuzzy matcher inquire's `Select` uses by default (it is a
+# default feature, and we do not disable defaults). `cdno open` uses it to
+# build its "did you mean" hint, and sharing inquire's version keeps that
+# hint consistent with what the picker would rank first for the same string
+# — a reference that resolves to nothing should suggest the note the picker
+# would have put at the top. Note that nothing auto-opens on a fuzzy score:
+# a miss offers the picker or the hint, never a guess.
+fuzzy-matcher = "0.3"
+
+# Hands a path or URI to the OS's default handler. Used by `cdno open` for
+# the no-editor-configured fallback and for `obsidian://`-style templates,
+# where the OS association is a better answer than guessing at `vi`.
+open = "5"
+
+# POSIX-ish argv splitting for the editor command template. cdno never
+# invokes a shell, so this supplies quoting rules only — it is what lets
+# `/Applications/Sublime Text.app/…` be one argument without also making
+# `; rm -rf ~` a second command.
+shlex = "1"
+
 # Tabular CLI output with automatic content wrapping. The only default
 # feature is `tty` (terminal-width auto-detection via crossterm);
 # `custom_styling` is *not* on, so a cell must be styled through

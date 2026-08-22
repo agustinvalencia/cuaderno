@@ -451,7 +451,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full-text search across all notes by content, ranked best-first. Optional filters: `note_type` (e.g. `project`, `evidence`, `daily`), a `from`/`to` ISO date window (matched against the note's date), and `portfolio`. Free-text `query` is matched case-insensitively with terms ANDed. Returns `{ path, note_type, title, snippet, score }` per hit — `snippet` brackets the matched terms; lower `score` is a better match."
+        description = "Full-text search across all notes, ranked best-first. Matches note **titles as well as bodies**, with a title hit weighted ten times a body hit — so this is also how you find a note whose title you half-remember, not only one whose contents you recall. Optional filters: `note_type` (e.g. `project`, `evidence`, `daily`), a `from`/`to` ISO date window (matched against the note's date), and `portfolio`. Free-text `query` is matched case-insensitively with terms ANDed. Returns `{ path, note_type, title, snippet, score }` per hit — `snippet` brackets the matched terms; lower `score` is a better match."
     )]
     pub async fn search_notes(
         &self,

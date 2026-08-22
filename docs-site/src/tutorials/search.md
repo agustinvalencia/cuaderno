@@ -3,6 +3,17 @@
 Cuaderno keeps a full-text index of every note, so you can find anything fast — ranked best-first,
 with filters by type, date, and portfolio. The command is [`cdno search`](../reference/cli/search.md).
 
+The index covers each note's **title as well as its body**, and a title match counts for ten times
+a body match. So searching for words you remember from a note's heading surfaces that note first,
+even if a dozen other notes mention the same words in passing — there is no separate
+"search by title" command to remember.
+
+If you already know exactly which note you want, [`cdno open`](../reference/cli/open.md) takes you
+straight there by slug, date, or path, without ranking anything.
+
+In a terminal, `cdno search` also follows its results with a picker: choose a hit and it opens in
+your editor. The results print first either way, so piping or redirecting the output is unaffected.
+
 ## Basic search
 
 ```bash

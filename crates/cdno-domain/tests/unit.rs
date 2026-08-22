@@ -13,6 +13,7 @@ mod unit {
     mod lint_tests;
     mod monthly_tests;
     mod normalise_tests;
+    mod note_ref_tests;
     mod note_type_tests;
     mod notes_tests;
     mod orient_tests;

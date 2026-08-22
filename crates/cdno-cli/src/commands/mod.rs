@@ -10,6 +10,7 @@ pub mod log;
 pub mod monthly;
 pub mod normalise;
 pub mod note;
+pub mod open;
 pub mod orient;
 pub mod portfolio;
 pub mod project;
