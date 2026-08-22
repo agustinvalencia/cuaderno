@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-08-22
+
 ### Added
 
 - **`cdno open` — reach a note without leaving the tool.** Every retrieval verb ended by printing a
