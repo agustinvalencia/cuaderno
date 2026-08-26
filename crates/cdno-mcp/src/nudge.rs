@@ -25,6 +25,11 @@
 //! The default location is `<vault>/.git/cdno-sync.nudge`. Under `.git/`
 //! on purpose — git will not track it and no sync tool that mirrors the
 //! working tree will carry it, so the signal can never become content.
+//! That is also why the sentinel is written with `std::fs` rather than
+//! through a `VaultStore`: the store refuses any path with a `.git`
+//! component outright (GH #303's control-plane deny-list), and rightly
+//! so. The sentinel is not vault content, takes no vault write lock,
+//! and must never be reachable from a tool argument.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

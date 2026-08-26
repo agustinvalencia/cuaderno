@@ -39,6 +39,25 @@
 //! timeouts are transient — the loop logs and continues. Only a git
 //! binary that cannot be executed at all, repeated `MAX_CONSECUTIVE`
 //! times, stops the loop.
+//!
+//! # Modes (GH #541)
+//!
+//! Three, and the third is the only one that is not just an interval:
+//!
+//! | mode | who commits | how it is selected |
+//! |---|---|---|
+//! | interval | this server | the default; `--git-checkpoint-interval-secs N` |
+//! | disabled | nobody | `--git-checkpoint-interval-secs 0` — [`spawn`] is never called |
+//! | nudge-only | an external sync agent | [`CheckpointMode::NudgeOnly`] |
+//!
+//! What must survive all three is the #303 property: every mutation
+//! ends up in a commit somebody can diff and revert. Only the *actor*
+//! changes, so [`spawn`] logs which actor is expected — loudly, and at
+//! `warn` for nudge-only, because there the trail depends on a process
+//! this one cannot see.
+//!
+//! Only `cdno-mcp-server` spawns a sweep at all; the stdio binary has
+//! none, so none of this configuration surface exists there.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -46,8 +65,39 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use cdno_core::store::{FsVaultStore, VaultStore};
 
+use crate::nudge::SharedNudge;
+
 /// Consecutive hard failures (git not executable) before giving up.
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// What the sweep does when it finds the tree dirty (GH #541).
+///
+/// The disabled mode is not a variant: it is the absence of a sweep,
+/// expressed at the call site by not calling [`spawn`] at all.
+///
+/// Whichever mode is chosen, the #303 property must hold — every
+/// mutation ends up in a commit that can be diffed and reverted. The
+/// modes differ only in **which actor** makes that commit, which is why
+/// [`spawn`] says so in the startup log rather than leaving an operator
+/// to infer it from a flag.
+#[derive(Clone)]
+pub enum CheckpointMode {
+    /// This server commits: `add -A` + `commit` on every dirty sweep.
+    /// The out-of-the-box behaviour, and self-sufficient — no second
+    /// actor need exist.
+    Commit,
+    /// This server commits **nothing** and instead touches the
+    /// sync-nudge sentinel (GH #540) whenever the tree is dirty, so an
+    /// external sync agent commits promptly.
+    ///
+    /// For deployments where an agent already owns the repository's
+    /// history: per-minute checkpoint commits would fight it, producing
+    /// two git actors in one working tree and burying the agent's
+    /// coalesced, unit-of-thought commits under machine noise. The cost
+    /// is that the recovery trail now depends on that agent actually
+    /// running — hence the startup warning.
+    NudgeOnly(SharedNudge),
+}
 
 /// Outcome of one sweep, distinguishing transient trouble (keep
 /// looping) from a hard, likely-permanent fault (count toward giving
@@ -66,7 +116,7 @@ enum Pass {
 /// vault is not a real git repository — a `.git` *file* (worktree /
 /// submodule pointer) is refused too, since `git -C` would then commit
 /// an external repo (PR #306 security review, finding 3).
-pub fn spawn(root: PathBuf, every: Duration) {
+pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
     match std::fs::symlink_metadata(root.join(".git")) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => {
@@ -93,6 +143,24 @@ pub fn spawn(root: PathBuf, every: Duration) {
         tracing::warn!(error = %e, "could not write .git/info/exclude; wip temp files may be committed");
     }
 
+    // Say plainly WHO is expected to commit. The #303 recovery trail is
+    // only as real as the actor that writes it, and in nudge-only mode
+    // that actor is not this process — an operator reading the log
+    // must not have to infer that from a flag name.
+    match &mode {
+        CheckpointMode::Commit => tracing::info!(
+            every_secs = every.as_secs(),
+            "git checkpoint sweep: THIS SERVER commits the recovery trail (mode=commit)"
+        ),
+        CheckpointMode::NudgeOnly(nudge) => tracing::warn!(
+            every_secs = every.as_secs(),
+            sentinel = %nudge.path().display(),
+            "git checkpoint sweep: mode=nudge-only — this server commits NOTHING. An EXTERNAL \
+             sync agent must watch the sentinel and commit; if none is running, remote writes \
+             have no commit-level recovery trail"
+        ),
+    }
+
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(every);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -100,11 +168,12 @@ pub fn spawn(root: PathBuf, every: Duration) {
         loop {
             interval.tick().await;
             let repo = root.clone();
-            let pass = tokio::task::spawn_blocking(move || checkpoint_once(&repo)).await;
+            let mode = mode.clone();
+            let pass = tokio::task::spawn_blocking(move || checkpoint_once(&repo, &mode)).await;
             match pass {
                 Ok(Pass::Ok(Some(summary))) => {
                     consecutive_failures = 0;
-                    tracing::info!(%summary, "git checkpoint committed");
+                    tracing::info!(%summary, "git checkpoint sweep acted");
                 }
                 Ok(Pass::Ok(None)) => {
                     consecutive_failures = 0;
@@ -139,7 +208,7 @@ pub fn spawn(root: PathBuf, every: Duration) {
 /// `Pass` classification so the loop can distinguish transient from
 /// fatal; the lock guarantees no half-applied transaction or temp
 /// sibling is committed.
-fn checkpoint_once(root: &Path) -> Pass {
+fn checkpoint_once(root: &Path, mode: &CheckpointMode) -> Pass {
     // Serialise against all vault writers (this process's transactions
     // and any cross-process cdno CLI) via the same flock they take.
     let store = FsVaultStore::new(root);
@@ -150,7 +219,11 @@ fn checkpoint_once(root: &Path) -> Pass {
         Err(e) => return Pass::Transient(format!("vault write lock: {e}")),
     };
 
-    match git_commit_if_dirty(root) {
+    let outcome = match mode {
+        CheckpointMode::Commit => git_commit_if_dirty(root),
+        CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge),
+    };
+    match outcome {
         Ok(summary) => Pass::Ok(summary),
         Err(CheckpointError::GitExit(msg)) => Pass::Transient(msg),
         Err(CheckpointError::Exec(e)) => Pass::Fatal(e),
@@ -211,6 +284,39 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
     Ok(Some(message))
 }
 
+/// Nudge-only sweep (GH #541): look, never touch the history.
+///
+/// Reads `git status --porcelain` exactly as the committing sweep does
+/// — including the `.git/info/exclude` rule, so an in-flight atomic-write
+/// temp sibling never counts as dirty and cannot produce a spurious
+/// nudge — and touches the sentinel when anything is dirty. `Ok(None)`
+/// when clean.
+///
+/// Deliberately unconditional on *what* is dirty: coalescing (does this
+/// change deserve a commit yet?) is the external agent's judgement, and
+/// duplicating it here would put the decision in two places. The
+/// sentinel is a hint, and a redundant hint costs the agent one wakeup.
+///
+/// Assumes the caller holds the vault write lock, so the tree it
+/// observes is not mid-transaction.
+fn nudge_if_dirty(root: &Path, nudge: &SharedNudge) -> Result<Option<String>, CheckpointError> {
+    let status = run_git(root, &["status", "--porcelain"])?;
+    if !status.status.success() {
+        return Err(CheckpointError::GitExit(format!(
+            "git status: {}",
+            String::from_utf8_lossy(&status.stderr).trim()
+        )));
+    }
+    if status.stdout.is_empty() {
+        return Ok(None);
+    }
+    let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
+    nudge.touch();
+    Ok(Some(format!(
+        "nudged the sync agent ({dirty_paths} dirty path(s), nothing committed here)"
+    )))
+}
+
 /// Idempotently add the atomic-write temp-file prefix to the repo's
 /// local `.git/info/exclude` (not the tracked `.gitignore`, so the
 /// user's ignore file is untouched). Ensures `git add -A` never stages
@@ -258,6 +364,7 @@ fn run_git(root: &Path, args: &[&str]) -> Result<std::process::Output, Checkpoin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nudge::SENTINEL_FILE_NAME;
     use tempfile::TempDir;
 
     fn init_repo(dir: &Path) {
@@ -315,6 +422,58 @@ mod tests {
         assert!(
             !tracked.contains(&wip),
             "the in-flight temp file must never be committed: {tracked}"
+        );
+    }
+
+    #[test]
+    fn nudge_only_mode_touches_the_sentinel_and_commits_nothing() {
+        // GH #541: the whole point of the mode. A dirty tree must
+        // produce a sentinel touch and leave history untouched, so the
+        // external agent stays the only git actor in the repo.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let head_before = run_git(dir.path(), &["rev-parse", "--verify", "HEAD"]).unwrap();
+        assert!(
+            !head_before.status.success(),
+            "a fresh repo has no commits yet"
+        );
+
+        let sentinel = dir.path().join(".git").join(SENTINEL_FILE_NAME);
+        let nudge: SharedNudge =
+            std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
+        std::fs::write(dir.path().join("note.md"), "dirty").unwrap();
+
+        let summary = nudge_if_dirty(dir.path(), &nudge).unwrap();
+        assert!(summary.is_some(), "a dirty tree must nudge");
+        assert!(sentinel.exists(), "the sentinel must be touched");
+
+        let log = run_git(dir.path(), &["rev-parse", "--verify", "HEAD"]).unwrap();
+        assert!(
+            !log.status.success(),
+            "nudge-only must create no commit, but HEAD now resolves"
+        );
+        // And the tree is still dirty — nothing was staged either.
+        let status = run_git(dir.path(), &["status", "--porcelain"]).unwrap();
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("note.md"),
+            "nudge-only must not stage anything"
+        );
+    }
+
+    #[test]
+    fn nudge_only_mode_leaves_a_clean_tree_alone() {
+        // No dirt, no nudge: an agent woken on every tick would be
+        // exactly the polling this replaces.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let sentinel = dir.path().join(".git").join(SENTINEL_FILE_NAME);
+        let nudge: SharedNudge =
+            std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
+
+        assert!(nudge_if_dirty(dir.path(), &nudge).unwrap().is_none());
+        assert!(
+            !sentinel.exists(),
+            "a clean tree must not touch the sentinel"
         );
     }
 

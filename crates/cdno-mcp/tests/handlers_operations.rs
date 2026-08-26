@@ -5,8 +5,10 @@
 //! `Parameters(input)`, decode the JSON payload of the returned
 //! `CallToolResult`, and assert on shape + side effects.
 //!
-//! Operation handlers all return a `WriteResultDto { path, message }`
-//! and have a side effect on the vault — we assert both.
+//! Operation handlers all return a `WriteResultDto { path, message,
+//! verification }` and have a side effect on the vault — we assert
+//! both. The `verification` half (GH #539) has its own target,
+//! `handlers_verification.rs`; nothing here needs to restate it.
 
 use std::sync::Arc;
 
