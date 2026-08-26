@@ -58,6 +58,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Clients caching the tool catalogue need a reconnect to see the new result shape (the HTTP
   transport is stateless, so there is no `tools/list_changed` to push).
 
+### Fixed
+
+- **The git checkpoint sweep could conclude someone else's merge** (#546). The sweep commits
+  whenever the working tree is dirty, but a tree can be dirty because a merge is unresolved — an
+  external sync agent pulling in a second clone's work, or an operator running `git merge` by hand
+  and stepping away mid-conflict. `git add -A` stages unmerged (`UU`) paths without complaint, and
+  `git commit` while `.git/MERGE_HEAD` exists *concludes* the merge, embedding raw `<<<<<<<`
+  conflict markers as note content — which the server then serves to clients as if it were real
+  content. A 60-second sweep tick landing in that window would "resolve" the conflict by committing
+  the markers.
+
+  The sweep now checks, before staging: `.git/MERGE_HEAD` existence and `git diff --diff-filter=U`
+  for any unmerged path — two signals because a live conflict and a merge that stopped fully
+  auto-resolved but not yet committed look different on disk, and both must be left alone. Either
+  signal skips the tick as a transient outcome (retried next tick, does not count toward the
+  consecutive-failure kill switch) in both `commit` and `nudge-only` mode: the merge belongs to
+  whoever started it, and nudging an external agent to act on it is no safer than committing it
+  directly. The first tick that finds a merge in progress logs at `warn`; later ticks of the same
+  still-unresolved merge log at `debug`, so a long conflict does not spam the log.
+
 ## [0.36.0] - 2026-08-22
 
 ### Added

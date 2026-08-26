@@ -10,7 +10,7 @@
 //!
 //! # Correctness (PR #306 review)
 //!
-//! Two hazards, handled separately (PR #306 review, F1):
+//! Three hazards, handled separately (PR #306 review, F1; GH #546):
 //!
 //! - **In-flight temp files.** Atomic writes stage a temp sibling
 //!   ([`cdno_core::store::WIP_TEMP_PREFIX`]) next to their target.
@@ -18,6 +18,25 @@
 //!   by locking: the loop adds the prefix to `.git/info/exclude` once
 //!   at startup, so `git status`/`add -A` ignore wip files regardless
 //!   of any lock or platform.
+//! - **A merge in progress, started by someone else** (GH #546). A tree
+//!   dirty because a merge is unresolved is not a tree the sweep may
+//!   act on: `git add -A` stages unmerged (`UU`) paths, and `git commit`
+//!   while `.git/MERGE_HEAD` exists *concludes* that merge — embedding
+//!   raw `<<<<<<<` conflict markers as note content, served to clients
+//!   as if it were real content. Reachable whenever another actor (an
+//!   external sync agent, or an operator's own `git merge`) touches the
+//!   same working tree the sweep watches. Checked before staging, on
+//!   every tick, via two independent signals — `.git/MERGE_HEAD`
+//!   existence and `git diff --name-only --diff-filter=U` — because a
+//!   merge that is conflicted and one that is fully auto-resolved but
+//!   not yet committed look different (the latter has no unmerged
+//!   paths) and both must be left alone. Treated as transient (retry
+//!   next tick, does not count toward [`MAX_CONSECUTIVE_FAILURES`]) in
+//!   both [`CheckpointMode::Commit`] and [`CheckpointMode::NudgeOnly`]:
+//!   the merge belongs to whoever started it. The first tick that finds
+//!   a merge logs at `warn`; later ticks of the same still-unresolved
+//!   merge log at `debug`, so a conflict left overnight does not spam
+//!   the log with an identical warning every 60s.
 //! - **Half-applied multi-file transactions.** A transaction applies
 //!   its ops one atomic rename at a time while holding the vault write
 //!   lock. The checkpoint takes the **same lock** around
@@ -60,6 +79,8 @@
 //! none, so none of this configuration surface exists there.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -165,11 +186,18 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
         let mut interval = tokio::time::interval(every);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut consecutive_failures: u32 = 0;
+        // Shared across ticks (not reset per-call) so the merge-in-progress
+        // warning fires once per episode rather than once per tick — see
+        // `warn_merge_once`.
+        let merge_warned = Arc::new(AtomicBool::new(false));
         loop {
             interval.tick().await;
             let repo = root.clone();
             let mode = mode.clone();
-            let pass = tokio::task::spawn_blocking(move || checkpoint_once(&repo, &mode)).await;
+            let merge_warned = merge_warned.clone();
+            let pass =
+                tokio::task::spawn_blocking(move || checkpoint_once(&repo, &mode, &merge_warned))
+                    .await;
             match pass {
                 Ok(Pass::Ok(Some(summary))) => {
                     consecutive_failures = 0;
@@ -208,7 +236,7 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
 /// `Pass` classification so the loop can distinguish transient from
 /// fatal; the lock guarantees no half-applied transaction or temp
 /// sibling is committed.
-fn checkpoint_once(root: &Path, mode: &CheckpointMode) -> Pass {
+fn checkpoint_once(root: &Path, mode: &CheckpointMode, merge_warned: &AtomicBool) -> Pass {
     // Serialise against all vault writers (this process's transactions
     // and any cross-process cdno CLI) via the same flock they take.
     let store = FsVaultStore::new(root);
@@ -220,8 +248,8 @@ fn checkpoint_once(root: &Path, mode: &CheckpointMode) -> Pass {
     };
 
     let outcome = match mode {
-        CheckpointMode::Commit => git_commit_if_dirty(root),
-        CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge),
+        CheckpointMode::Commit => git_commit_if_dirty(root, merge_warned),
+        CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge, merge_warned),
     };
     match outcome {
         Ok(summary) => Pass::Ok(summary),
@@ -239,7 +267,10 @@ enum CheckpointError {
 
 /// Commit everything if the tree is dirty. `Ok(None)` when clean.
 /// Assumes the caller holds the vault write lock.
-fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
+fn git_commit_if_dirty(
+    root: &Path,
+    merge_warned: &AtomicBool,
+) -> Result<Option<String>, CheckpointError> {
     let status = run_git(root, &["status", "--porcelain"])?;
     if !status.status.success() {
         return Err(CheckpointError::GitExit(format!(
@@ -248,8 +279,22 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
         )));
     }
     if status.stdout.is_empty() {
+        // Clean: any merge episode that was in progress has ended
+        // (concluded by someone else, or aborted) — rearm the warning.
+        merge_warned.store(false, Ordering::Relaxed);
         return Ok(None);
     }
+
+    // GH #546: a dirty tree caused by someone else's unresolved merge
+    // must never be staged or committed here — see the module doc.
+    if let Some(reason) = merge_in_progress(root)? {
+        warn_merge_once(merge_warned, &reason);
+        return Err(CheckpointError::GitExit(format!(
+            "merge in progress, skipping sweep: {reason}"
+        )));
+    }
+    merge_warned.store(false, Ordering::Relaxed);
+
     let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
 
     let add = run_git(root, &["add", "-A"])?;
@@ -299,7 +344,21 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
 ///
 /// Assumes the caller holds the vault write lock, so the tree it
 /// observes is not mid-transaction.
-fn nudge_if_dirty(root: &Path, nudge: &SharedNudge) -> Result<Option<String>, CheckpointError> {
+///
+/// Also skips during a merge in progress (GH #546), same as the
+/// committing sweep. Nudging does not itself write history, but the
+/// external agent it wakes typically does — and the whole point of the
+/// merge guard is that a dirty-because-conflicted tree is not this
+/// server's call to hand off for action. A redundant defensive check
+/// here costs nothing (nudge-only deployments already tolerate the
+/// external agent implementing the same guard on its own side, per the
+/// module doc), and it means the "nothing committed here" framing of a
+/// nudge is never sent while a merge is genuinely unresolved.
+fn nudge_if_dirty(
+    root: &Path,
+    nudge: &SharedNudge,
+    merge_warned: &AtomicBool,
+) -> Result<Option<String>, CheckpointError> {
     let status = run_git(root, &["status", "--porcelain"])?;
     if !status.status.success() {
         return Err(CheckpointError::GitExit(format!(
@@ -308,13 +367,86 @@ fn nudge_if_dirty(root: &Path, nudge: &SharedNudge) -> Result<Option<String>, Ch
         )));
     }
     if status.stdout.is_empty() {
+        merge_warned.store(false, Ordering::Relaxed);
         return Ok(None);
     }
+
+    if let Some(reason) = merge_in_progress(root)? {
+        warn_merge_once(merge_warned, &reason);
+        return Err(CheckpointError::GitExit(format!(
+            "merge in progress, not nudging: {reason}"
+        )));
+    }
+    merge_warned.store(false, Ordering::Relaxed);
+
     let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
     nudge.touch();
     Ok(Some(format!(
         "nudged the sync agent ({dirty_paths} dirty path(s), nothing committed here)"
     )))
+}
+
+/// Detect a merge that another actor started and has not concluded
+/// (GH #546). Two independent signals, because they catch different
+/// states:
+///
+/// - `.git/MERGE_HEAD` exists whenever a merge is stopped short of a
+///   commit — including the case where every conflict was resolved by
+///   hand and staged, which leaves **no** unmerged paths.
+/// - `git diff --name-only --diff-filter=U` reports any path still
+///   sitting in one of the unmerged stages (`DD AU UD UA DU AA UU` per
+///   `git status --porcelain`, but asking git directly here is less
+///   error-prone than re-deriving that table from porcelain codes).
+///
+/// Either signal alone is enough to skip; checking both means a
+/// same-tick race between "conflict just got resolved" and "commit not
+/// yet run" can't slip through.
+///
+/// `Ok(None)` means no merge is in progress. Assumes `root/.git` is a
+/// directory, which [`spawn`] already guarantees before any sweep runs.
+fn merge_in_progress(root: &Path) -> Result<Option<String>, CheckpointError> {
+    if root.join(".git").join("MERGE_HEAD").exists() {
+        return Ok(Some(
+            "a merge is in progress (.git/MERGE_HEAD present)".to_string(),
+        ));
+    }
+
+    let unmerged = run_git(root, &["diff", "--name-only", "--diff-filter=U"])?;
+    if !unmerged.status.success() {
+        return Err(CheckpointError::GitExit(format!(
+            "git diff --diff-filter=U: {}",
+            String::from_utf8_lossy(&unmerged.stderr).trim()
+        )));
+    }
+    if unmerged.stdout.is_empty() {
+        return Ok(None);
+    }
+    let n = unmerged.stdout.iter().filter(|&&b| b == b'\n').count();
+    Ok(Some(format!("{n} unmerged path(s) present")))
+}
+
+/// Log the merge-in-progress finding exactly once per episode: `warn`
+/// on the tick that first notices it, `debug` on every tick after that
+/// while the same merge is still unresolved. A conflict can sit for
+/// hours (an operator stepped away, or an external sync agent is slow
+/// to finish resolving), and the sweep ticks every interval (60s by
+/// default) — logging `warn` on every one of those ticks would drown
+/// the log in an identical line without adding information after the
+/// first. `merge_warned` is reset to `false` the moment the tree is
+/// next seen clean or merge-free, so a *new* episode warns again.
+fn warn_merge_once(merge_warned: &AtomicBool, reason: &str) {
+    if merge_warned.swap(true, Ordering::Relaxed) {
+        tracing::debug!(
+            %reason,
+            "git checkpoint sweep: merge still in progress — skipping (already warned)"
+        );
+    } else {
+        tracing::warn!(
+            %reason,
+            "git checkpoint sweep: merge in progress — skipping this tick, nothing committed \
+             (further ticks during the same merge are logged at debug)"
+        );
+    }
 }
 
 /// Idempotently add the atomic-write temp-file prefix to the repo's
@@ -377,12 +509,21 @@ mod tests {
         }
     }
 
+    /// A fresh, never-warned merge-guard latch, for tests that don't care
+    /// about the once-per-episode logging behaviour.
+    fn latch() -> AtomicBool {
+        AtomicBool::new(false)
+    }
+
     #[test]
     fn clean_repo_yields_no_commit() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         // A brand-new repo with no files is clean.
-        assert!(matches!(git_commit_if_dirty(dir.path()), Ok(None)));
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
     }
 
     #[test]
@@ -391,10 +532,13 @@ mod tests {
         init_repo(dir.path());
         std::fs::write(dir.path().join("note.md"), "hi").unwrap();
 
-        let summary = git_commit_if_dirty(dir.path()).unwrap();
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
         assert!(summary.is_some(), "a dirty tree must commit");
         // Idempotent: immediately after, the tree is clean.
-        assert!(matches!(git_commit_if_dirty(dir.path()), Ok(None)));
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
     }
 
     #[test]
@@ -412,7 +556,7 @@ mod tests {
         let wip = format!("{}abcd", cdno_core::store::WIP_TEMP_PREFIX);
         std::fs::write(dir.path().join(&wip), "garbage-in-flight").unwrap();
 
-        let summary = git_commit_if_dirty(dir.path()).unwrap();
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
         assert!(summary.is_some(), "the real note should commit");
 
         // The committed tree contains the note but not the wip file.
@@ -443,7 +587,7 @@ mod tests {
             std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
         std::fs::write(dir.path().join("note.md"), "dirty").unwrap();
 
-        let summary = nudge_if_dirty(dir.path(), &nudge).unwrap();
+        let summary = nudge_if_dirty(dir.path(), &nudge, &latch()).unwrap();
         assert!(summary.is_some(), "a dirty tree must nudge");
         assert!(sentinel.exists(), "the sentinel must be touched");
 
@@ -470,7 +614,11 @@ mod tests {
         let nudge: SharedNudge =
             std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
 
-        assert!(nudge_if_dirty(dir.path(), &nudge).unwrap().is_none());
+        assert!(
+            nudge_if_dirty(dir.path(), &nudge, &latch())
+                .unwrap()
+                .is_none()
+        );
         assert!(
             !sentinel.exists(),
             "a clean tree must not touch the sentinel"
@@ -501,10 +649,235 @@ mod tests {
         // separately gates on `.git` existing; this asserts the
         // classification for defence in depth.)
         let dir = TempDir::new().unwrap();
-        match git_commit_if_dirty(dir.path()) {
+        match git_commit_if_dirty(dir.path(), &latch()) {
             Err(CheckpointError::GitExit(_)) => {}
             other => panic!("expected GitExit outside a repo, got {other:?}"),
         }
+    }
+
+    /// Set up two branches that edit the same line of the same file, then
+    /// start a merge and let it stop conflicted. Returns the path to the
+    /// conflicted file and the name of the branch merged in.
+    fn seed_conflicted_merge(dir: &Path) {
+        let base_branch = String::from_utf8(
+            run_git(dir, &["symbolic-ref", "--short", "HEAD"])
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        std::fs::write(dir.join("note.md"), "base\n").unwrap();
+        assert!(run_git(dir, &["add", "-A"]).unwrap().status.success());
+        assert!(
+            run_git(dir, &["commit", "-m", "base"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        assert!(
+            run_git(dir, &["checkout", "-b", "feature"])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(dir.join("note.md"), "feature change\n").unwrap();
+        assert!(
+            run_git(dir, &["commit", "-am", "feature"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        assert!(
+            run_git(dir, &["checkout", &base_branch])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(dir.join("note.md"), "base change\n").unwrap();
+        assert!(
+            run_git(dir, &["commit", "-am", "base change"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        let merge = run_git(dir, &["merge", "feature"]).unwrap();
+        assert!(
+            !merge.status.success(),
+            "the merge must conflict for the test to be meaningful"
+        );
+        assert!(
+            dir.join(".git").join("MERGE_HEAD").exists(),
+            "test setup: MERGE_HEAD must exist after a conflicted merge"
+        );
+    }
+
+    #[test]
+    fn conflicted_merge_is_skipped_not_committed() {
+        // GH #546: a tree dirty because of someone else's unresolved
+        // merge must never be swept. `git add -A` would stage the
+        // unmerged path and `git commit` would conclude the merge,
+        // embedding raw `<<<<<<<` conflict markers as note content.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("merge"),
+                    "message should name the merge: {msg}"
+                );
+            }
+            other => panic!("expected a transient skip for a merge in progress, got {other:?}"),
+        }
+
+        // The merge is still unresolved: not concluded, not staged.
+        assert!(
+            dir.path().join(".git").join("MERGE_HEAD").exists(),
+            "the sweep must not conclude someone else's merge"
+        );
+        let content = std::fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(
+            content.contains("<<<<<<<"),
+            "conflict markers must remain unresolved, got: {content}"
+        );
+        let status = run_git(dir.path(), &["status", "--porcelain"]).unwrap();
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("UU"),
+            "the path must remain unmerged, not staged by the sweep"
+        );
+    }
+
+    #[test]
+    fn merge_head_without_unmerged_paths_is_still_skipped() {
+        // Second signal: a merge that stopped with every conflict
+        // resolved and staged by hand, but not yet committed, has zero
+        // unmerged paths — only `.git/MERGE_HEAD` still marks it as an
+        // in-progress merge belonging to someone else. Must be skipped
+        // exactly like a live conflict; checking only `diff-filter=U`
+        // would miss this state.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        // Resolve by hand and stage, but do not commit.
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        assert!(
+            run_git(dir.path(), &["add", "-A"])
+                .unwrap()
+                .status
+                .success()
+        );
+        let unmerged = run_git(dir.path(), &["diff", "--name-only", "--diff-filter=U"]).unwrap();
+        assert!(
+            unmerged.stdout.is_empty(),
+            "test setup: all conflicts should be resolved and staged"
+        );
+        assert!(dir.path().join(".git").join("MERGE_HEAD").exists());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(_)) => {}
+            other => panic!(
+                "expected a transient skip for MERGE_HEAD with no unmerged paths, got {other:?}"
+            ),
+        }
+        assert!(
+            dir.path().join(".git").join("MERGE_HEAD").exists(),
+            "the merge must still be unconcluded"
+        );
+    }
+
+    #[test]
+    fn ordinary_dirty_tree_still_commits_with_the_merge_guard_present() {
+        // The merge guard must not silently disable checkpointing: an
+        // everyday dirty tree (no merge involved) commits exactly as
+        // before.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("note.md"), "ordinary edit").unwrap();
+
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
+        assert!(
+            summary.is_some(),
+            "an ordinary dirty tree must still commit"
+        );
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn nudge_only_mode_does_not_nudge_during_a_merge() {
+        // Same guard, nudge-only mode: waking the external agent during
+        // an unresolved merge invites it to act on a conflicted tree,
+        // which is exactly the hazard this issue closes on the
+        // committing side.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        let sentinel = dir.path().join(".git").join(SENTINEL_FILE_NAME);
+        let nudge: SharedNudge =
+            std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
+
+        match nudge_if_dirty(dir.path(), &nudge, &latch()) {
+            Err(CheckpointError::GitExit(_)) => {}
+            other => panic!("expected a transient skip for a merge in progress, got {other:?}"),
+        }
+        assert!(
+            !sentinel.exists(),
+            "the sweep must not nudge during someone else's merge"
+        );
+    }
+
+    #[test]
+    fn merge_warning_fires_once_per_episode() {
+        // Keep-the-log-useful requirement: the latch must flip to
+        // "warned" on first detection and stay flipped across repeated
+        // ticks of the same still-unresolved merge, then reset once the
+        // tree is clean again.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        let warned = latch();
+        assert!(!warned.load(Ordering::Relaxed));
+        assert!(git_commit_if_dirty(dir.path(), &warned).is_err());
+        assert!(
+            warned.load(Ordering::Relaxed),
+            "first detection must flip the latch"
+        );
+        // A second tick against the same unresolved merge must not
+        // un-flip it.
+        assert!(git_commit_if_dirty(dir.path(), &warned).is_err());
+        assert!(warned.load(Ordering::Relaxed));
+
+        // Resolve and commit to conclude the merge properly (as the
+        // rightful owner would), then confirm a clean tree rearms it.
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        assert!(
+            run_git(dir.path(), &["add", "-A"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(
+            run_git(dir.path(), &["commit", "--no-edit"])
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(matches!(git_commit_if_dirty(dir.path(), &warned), Ok(None)));
+        assert!(
+            !warned.load(Ordering::Relaxed),
+            "a clean tree must rearm the latch for the next episode"
+        );
     }
 
     impl std::fmt::Debug for CheckpointError {
