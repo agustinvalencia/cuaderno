@@ -60,6 +60,33 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **A stalled git checkpoint sweep now says so instead of going quiet** (#548). The sweep is the
+  recovery trail for remote writes, and it runs its work on tokio's blocking pool. If that pool
+  cannot hand it a thread — a process at the host's thread or PID limit is the observed way in — the
+  tick never runs, and the loop's outcomes all describe a tick that *did* run: there was no
+  "did not run" to log. The loop simply waited on the tick forever, the interval never fired again,
+  and the vault stopped being committed in complete silence, while the HTTP endpoint stayed up and
+  every tool call kept answering, so nothing outside could tell either. Reported after a container
+  ran four days that way undetected.
+
+  A tick that overruns three sweep intervals (never less than 30 seconds) now logs at **error**,
+  naming thread exhaustion as the suspicion, saying plainly that nothing is being committed, and
+  admitting that a wedged `git` looks identical from inside the process. It repeats while the tick
+  stays stuck, so any window of the log shows it rather than only the one containing the first
+  report, and logs the recovery when the tick finally completes. The tick itself is never cancelled
+  or superseded — a second sweep would put two actors on the vault write lock and consume another
+  blocking thread that is, in the suspected case, exactly what is unavailable.
+
+- **`cdno-mcp-server` bounds its blocking-thread pool** (#548). The runtime is now built explicitly
+  rather than by `#[tokio::main]`, with `max_blocking_threads` set to 16: enough for the eight
+  concurrent tool calls the transport admits plus the reconciliation pass, the checkpoint sweep and
+  the JWKS client's DNS lookups. tokio's default is 512, which in a container sized with
+  `pids_limit` in the tens is not a limit at all — whatever makes blocking work pile up is free to
+  convert into OS threads until the *cgroup* runs out and nothing in the container can fork,
+  healthcheck included. Bounded, the same overload arrives as a queue on a fixed pool. The resolved
+  budget (`1 + workers + max_blocking_threads`) is logged at startup so a `pids_limit` can be sized
+  by reading it rather than by knowing tokio's defaults.
+
 - **The git checkpoint sweep could conclude someone else's merge, cherry-pick, revert, or rebase**
   (#546). The sweep commits whenever the working tree is dirty, but a tree can be dirty because a
   git operation is paused mid-way — an external sync agent pulling in a second clone's work, or an
