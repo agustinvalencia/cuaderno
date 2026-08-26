@@ -58,6 +58,35 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Clients caching the tool catalogue need a reconnect to see the new result shape (the HTTP
   transport is stateless, so there is no `tools/list_changed` to push).
 
+### Fixed
+
+- **The git checkpoint sweep could conclude someone else's merge, cherry-pick, revert, or rebase**
+  (#546). The sweep commits whenever the working tree is dirty, but a tree can be dirty because a
+  git operation is paused mid-way — an external sync agent pulling in a second clone's work, or an
+  operator running `git merge`/`cherry-pick`/`revert`/`rebase` by hand and stepping away
+  mid-conflict. `git add -A` stages unmerged (`UU`) paths without complaint, and `git commit` while
+  `.git/MERGE_HEAD` (or its cherry-pick, revert, or rebase siblings) exists does not make an
+  ordinary commit — it *concludes* that operation, using the sweep's generic message in place of
+  whatever the real actor intended. For a merge this embeds raw `<<<<<<<` conflict markers as note
+  content, served to clients as if it were real content; for cherry-pick, revert, or rebase it also
+  leaves the real actor's next `--continue` looking at git state it no longer recognises. A
+  60-second sweep tick landing in that window would silently "resolve" it by committing.
+
+  The sweep now checks, before staging: `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`,
+  `.git/REVERT_HEAD`, `.git/rebase-merge`/`.git/rebase-apply` (the latter also covers `git am`), and
+  `git diff --diff-filter=U` for any unmerged path left by an operation with no head marker of its
+  own (a conflicted `git stash pop`). Each operation's own marker is checked directly rather than
+  inferred from unmerged paths, because "every conflict resolved and staged by hand, `--continue`
+  not yet run" leaves zero unmerged paths and would otherwise be missed. A hit skips the tick as a
+  transient outcome (retried next tick, does not count toward the consecutive-failure kill switch)
+  in both `commit` and `nudge-only` mode: the operation belongs to whoever started it, and nudging
+  an external agent to act on it is no safer than committing it directly.
+
+  The first tick that finds a paused operation logs at `warn`; later ticks of the same
+  still-unresolved state log at `debug` — except every 15 minutes, when it warns again, so a marker
+  left behind by a crashed process stays visible instead of decaying into permanent silence while an
+  ordinary conflict, resolved within a tick or two, never sees a second warning.
+
 ## [0.36.0] - 2026-08-22
 
 ### Added

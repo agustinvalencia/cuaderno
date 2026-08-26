@@ -10,7 +10,7 @@
 //!
 //! # Correctness (PR #306 review)
 //!
-//! Two hazards, handled separately (PR #306 review, F1):
+//! Three hazards, handled separately (PR #306 review, F1; GH #546):
 //!
 //! - **In-flight temp files.** Atomic writes stage a temp sibling
 //!   ([`cdno_core::store::WIP_TEMP_PREFIX`]) next to their target.
@@ -18,6 +18,51 @@
 //!   by locking: the loop adds the prefix to `.git/info/exclude` once
 //!   at startup, so `git status`/`add -A` ignore wip files regardless
 //!   of any lock or platform.
+//! - **A git operation paused mid-way by someone else** (GH #546; scope
+//!   widened past merge alone in panel review of the first version). A
+//!   tree dirty because a merge, cherry-pick, revert, `git am`, or
+//!   rebase is unresolved is not a tree the sweep may act on: `git add
+//!   -A` stages unmerged (`UU`) paths without complaint, and `git
+//!   commit` while `.git/MERGE_HEAD` (or the sibling markers below)
+//!   exists does not make an ordinary commit — it *concludes* that
+//!   operation, using the sweep's generic message in place of whatever
+//!   the real actor intended, and can embed raw `<<<<<<<` conflict
+//!   markers as note content, served to clients as if it were real
+//!   content. A concluded cherry-pick/revert/rebase also leaves the
+//!   real actor's next `--continue` looking at git state it no longer
+//!   recognises (`git cherry-pick --continue` failing with "no
+//!   cherry-pick or revert in progress", a rebase left on a detached
+//!   HEAD). Reachable whenever another actor (an external sync agent,
+//!   or an operator's own git use) touches the same working tree the
+//!   sweep watches.
+//!
+//!   Checked before staging, on every tick, via [`git_operation_in_progress`]:
+//!   `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD`,
+//!   `.git/rebase-merge`/`.git/rebase-apply` (the latter also covers
+//!   `git am`, which reuses it), and — as a fallback for an operation
+//!   with no head marker of its own, namely a conflicted `git stash
+//!   pop` — `git diff --name-only --diff-filter=U`. Each operation's
+//!   own marker is checked directly rather than inferred from `git
+//!   status`, because "every conflict resolved and staged, but
+//!   `--continue`/commit not yet run" has **no** unmerged paths and
+//!   would otherwise be missed. (`git merge --squash` is deliberately
+//!   not covered: it sets no marker because it *intends* the caller to
+//!   make an ordinary commit.)
+//!
+//!   Any hit is treated as transient (retry next tick, does not count
+//!   toward [`MAX_CONSECUTIVE_FAILURES`]) in both [`CheckpointMode::Commit`]
+//!   and [`CheckpointMode::NudgeOnly`]: the operation belongs to whoever
+//!   started it. The first tick that finds one logs at `warn`; later
+//!   ticks of the same still-unresolved state log at `debug` — **except**
+//!   every [`RE_WARN_INTERVAL_SECS`], when it warns again. A once-only
+//!   warning would decay into silence for a *stale* marker left behind
+//!   by a crashed process, in a vault that otherwise keeps churning:
+//!   before this guard existed such a tree would (wrongly) get
+//!   committed; after it, a bare once-per-episode warning would mean
+//!   the recovery trail stops **silently** and forever, which is worse.
+//!   The periodic re-warn keeps a stuck state visible without spamming
+//!   the ordinary case of a conflict a human resolves within a tick or
+//!   two.
 //! - **Half-applied multi-file transactions.** A transaction applies
 //!   its ops one atomic rename at a time while holding the vault write
 //!   lock. The checkpoint takes the **same lock** around
@@ -60,6 +105,8 @@
 //! none, so none of this configuration surface exists there.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -165,11 +212,21 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
         let mut interval = tokio::time::interval(every);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut consecutive_failures: u32 = 0;
+        // Shared across ticks (not reset per-call): holds the unix
+        // timestamp of the last paused-git-operation warning, `0` when
+        // none is outstanding, so `warn_paused_op` can log once per
+        // episode plus a periodic re-warn rather than once per tick —
+        // see `warn_paused_op`.
+        let paused_op_warned = Arc::new(AtomicU64::new(0));
         loop {
             interval.tick().await;
             let repo = root.clone();
             let mode = mode.clone();
-            let pass = tokio::task::spawn_blocking(move || checkpoint_once(&repo, &mode)).await;
+            let paused_op_warned = paused_op_warned.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                checkpoint_once(&repo, &mode, &paused_op_warned)
+            })
+            .await;
             match pass {
                 Ok(Pass::Ok(Some(summary))) => {
                     consecutive_failures = 0;
@@ -208,7 +265,7 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
 /// `Pass` classification so the loop can distinguish transient from
 /// fatal; the lock guarantees no half-applied transaction or temp
 /// sibling is committed.
-fn checkpoint_once(root: &Path, mode: &CheckpointMode) -> Pass {
+fn checkpoint_once(root: &Path, mode: &CheckpointMode, paused_op_warned: &AtomicU64) -> Pass {
     // Serialise against all vault writers (this process's transactions
     // and any cross-process cdno CLI) via the same flock they take.
     let store = FsVaultStore::new(root);
@@ -220,8 +277,8 @@ fn checkpoint_once(root: &Path, mode: &CheckpointMode) -> Pass {
     };
 
     let outcome = match mode {
-        CheckpointMode::Commit => git_commit_if_dirty(root),
-        CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge),
+        CheckpointMode::Commit => git_commit_if_dirty(root, paused_op_warned),
+        CheckpointMode::NudgeOnly(nudge) => nudge_if_dirty(root, nudge, paused_op_warned),
     };
     match outcome {
         Ok(summary) => Pass::Ok(summary),
@@ -239,7 +296,10 @@ enum CheckpointError {
 
 /// Commit everything if the tree is dirty. `Ok(None)` when clean.
 /// Assumes the caller holds the vault write lock.
-fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
+fn git_commit_if_dirty(
+    root: &Path,
+    paused_op_warned: &AtomicU64,
+) -> Result<Option<String>, CheckpointError> {
     let status = run_git(root, &["status", "--porcelain"])?;
     if !status.status.success() {
         return Err(CheckpointError::GitExit(format!(
@@ -248,8 +308,24 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
         )));
     }
     if status.stdout.is_empty() {
+        // Clean: any paused-operation episode has ended (concluded by
+        // someone else, or aborted) — rearm the warning.
+        paused_op_warned.store(0, Ordering::Relaxed);
         return Ok(None);
     }
+
+    // GH #546: a dirty tree caused by someone else's paused git
+    // operation must never be staged or committed here — see the
+    // module doc.
+    if let Some(op) = git_operation_in_progress(root)? {
+        warn_paused_op(paused_op_warned, &op);
+        return Err(CheckpointError::GitExit(format!(
+            "skipping sweep, {}",
+            op.reason
+        )));
+    }
+    paused_op_warned.store(0, Ordering::Relaxed);
+
     let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
 
     let add = run_git(root, &["add", "-A"])?;
@@ -299,7 +375,23 @@ fn git_commit_if_dirty(root: &Path) -> Result<Option<String>, CheckpointError> {
 ///
 /// Assumes the caller holds the vault write lock, so the tree it
 /// observes is not mid-transaction.
-fn nudge_if_dirty(root: &Path, nudge: &SharedNudge) -> Result<Option<String>, CheckpointError> {
+///
+/// Also skips while a git operation is paused (GH #546), same as the
+/// committing sweep. Nudging does not write history itself, but the
+/// external agent it wakes typically does — and this sweep has no
+/// evidence either way about whether that agent's own commit path
+/// guards against concluding someone else's paused
+/// merge/cherry-pick/revert/rebase, so it is not a safe assumption to
+/// make on the agent's behalf. Skipping costs nothing here: the tree
+/// stays dirty and is nudged normally on the next tick once the
+/// operation ends or is aborted, so the only effect is that the
+/// "nothing committed here" framing of a nudge is never sent while the
+/// tree is genuinely unsafe to act on.
+fn nudge_if_dirty(
+    root: &Path,
+    nudge: &SharedNudge,
+    paused_op_warned: &AtomicU64,
+) -> Result<Option<String>, CheckpointError> {
     let status = run_git(root, &["status", "--porcelain"])?;
     if !status.status.success() {
         return Err(CheckpointError::GitExit(format!(
@@ -308,13 +400,162 @@ fn nudge_if_dirty(root: &Path, nudge: &SharedNudge) -> Result<Option<String>, Ch
         )));
     }
     if status.stdout.is_empty() {
+        paused_op_warned.store(0, Ordering::Relaxed);
         return Ok(None);
     }
+
+    if let Some(op) = git_operation_in_progress(root)? {
+        warn_paused_op(paused_op_warned, &op);
+        return Err(CheckpointError::GitExit(format!(
+            "not nudging, {}",
+            op.reason
+        )));
+    }
+    paused_op_warned.store(0, Ordering::Relaxed);
+
     let dirty_paths = status.stdout.iter().filter(|&&b| b == b'\n').count();
     nudge.touch();
     Ok(Some(format!(
         "nudged the sync agent ({dirty_paths} dirty path(s), nothing committed here)"
     )))
+}
+
+/// A paused git operation found on disk: a human-readable description
+/// for the log, and — when the operation has a single marker file or
+/// directory an operator could remove to force it away — that marker's
+/// `.git`-relative path, so the warning can name exactly what to remove
+/// rather than gesturing at "some git state".
+struct PausedGitOp {
+    reason: String,
+    marker: Option<&'static str>,
+}
+
+/// Detect any git operation another actor left paused mid-way (GH #546;
+/// scope widened past merge alone in panel review — see the module
+/// doc). Checked in order, each entry catching a state the others miss:
+///
+/// - `.git/MERGE_HEAD`, `.git/CHERRY_PICK_HEAD`, `.git/REVERT_HEAD` —
+///   a merge, cherry-pick, or revert stopped short of a commit. Checked
+///   as marker files directly, **not** inferred from unmerged paths:
+///   "every conflict resolved and staged by hand, `--continue`/commit
+///   not yet run" leaves zero unmerged paths and would otherwise slip
+///   through.
+/// - `.git/rebase-merge`, `.git/rebase-apply` (directories) — a rebase
+///   in progress; `git am` reuses `rebase-apply` and is covered by the
+///   same check.
+/// - `git diff --name-only --diff-filter=U`, as a fallback for an
+///   operation with no head marker of its own — a conflicted `git
+///   stash pop` is the practical example. Asking git directly here is
+///   less error-prone than re-deriving the unmerged porcelain codes
+///   (`DD AU UD UA DU AA UU`) by hand.
+///
+/// `git merge --squash` is deliberately not covered: it sets no marker
+/// because it *intends* the caller to make an ordinary commit, so there
+/// is nothing here to protect it from.
+///
+/// `Ok(None)` means no paused operation was found. Assumes `root/.git`
+/// is a directory, which [`spawn`] already guarantees before any sweep
+/// runs.
+fn git_operation_in_progress(root: &Path) -> Result<Option<PausedGitOp>, CheckpointError> {
+    let git_dir = root.join(".git");
+
+    for (marker, label) in [
+        ("MERGE_HEAD", "a merge"),
+        ("CHERRY_PICK_HEAD", "a cherry-pick"),
+        ("REVERT_HEAD", "a revert"),
+    ] {
+        if git_dir.join(marker).exists() {
+            return Ok(Some(PausedGitOp {
+                reason: format!("{label} is in progress (.git/{marker} present)"),
+                marker: Some(marker),
+            }));
+        }
+    }
+    for marker in ["rebase-merge", "rebase-apply"] {
+        if git_dir.join(marker).is_dir() {
+            return Ok(Some(PausedGitOp {
+                reason: format!("a rebase is in progress (.git/{marker} present)"),
+                marker: Some(marker),
+            }));
+        }
+    }
+
+    let unmerged = run_git(root, &["diff", "--name-only", "--diff-filter=U"])?;
+    if !unmerged.status.success() {
+        return Err(CheckpointError::GitExit(format!(
+            "git diff --diff-filter=U: {}",
+            String::from_utf8_lossy(&unmerged.stderr).trim()
+        )));
+    }
+    if unmerged.stdout.is_empty() {
+        return Ok(None);
+    }
+    let n = unmerged.stdout.iter().filter(|&&b| b == b'\n').count();
+    Ok(Some(PausedGitOp {
+        reason: format!(
+            "{n} unmerged path(s) present with no operation marker (e.g. a conflicted `git stash pop`)"
+        ),
+        marker: None,
+    }))
+}
+
+/// How long to wait before repeating the paused-operation warning while
+/// the same state persists (panel review of the first version of
+/// GH #546's fix). Warning only once per episode meant a *stale* marker
+/// — left behind by a crashed process, in a vault that otherwise keeps
+/// churning — got exactly one warning ever and then silently stopped
+/// recording forever: worse than the bug the guard fixes, since before
+/// it existed that tree would at least (wrongly) get committed. 15
+/// minutes: long enough that an ordinary conflict, resolved by a human
+/// within a tick or two, never sees a second warning; short enough that
+/// a marker still present after it is unusual and worth saying again
+/// rather than decaying into a `debug` line nobody sees by default.
+const RE_WARN_INTERVAL_SECS: u64 = 15 * 60;
+
+fn epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Pure decision, kept separate from the clock so it is unit-testable
+/// without sleeping: `0` means "not warned yet this episode" (fresh, or
+/// just rearmed by a clean tree) and always warns.
+fn due_for_rewarn(last_warned_secs: u64, now_secs: u64) -> bool {
+    last_warned_secs == 0 || now_secs.saturating_sub(last_warned_secs) >= RE_WARN_INTERVAL_SECS
+}
+
+/// Log a paused-operation finding: `warn` the first time in an episode
+/// and again every [`RE_WARN_INTERVAL_SECS`] while it persists, `debug`
+/// on every tick in between. `last_warned` is rearmed to `0` by the
+/// caller the instant the tree is next seen clean or operation-free, so
+/// a *new* episode always warns immediately.
+fn warn_paused_op(last_warned: &AtomicU64, op: &PausedGitOp) {
+    let now = epoch_secs();
+    if due_for_rewarn(last_warned.load(Ordering::Relaxed), now) {
+        last_warned.store(now, Ordering::Relaxed);
+        let guidance = match op.marker {
+            Some(marker) => format!(
+                "if this is stale (e.g. left behind by a crashed process), remove .git/{marker} \
+                 to let checkpoints resume"
+            ),
+            None => {
+                "resolve and stage the conflicted path(s) to let checkpoints resume".to_string()
+            }
+        };
+        tracing::warn!(
+            reason = %op.reason,
+            guidance = %guidance,
+            "git checkpoint sweep: paused git operation found — skipping this tick, nothing is \
+             being committed while this persists"
+        );
+    } else {
+        tracing::debug!(
+            reason = %op.reason,
+            "git checkpoint sweep: paused git operation still present — skipping (recently warned)"
+        );
+    }
 }
 
 /// Idempotently add the atomic-write temp-file prefix to the repo's
@@ -377,12 +618,38 @@ mod tests {
         }
     }
 
+    /// A fresh, never-warned paused-op warning state, for tests that
+    /// don't care about the warning cadence.
+    fn latch() -> AtomicU64 {
+        AtomicU64::new(0)
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) {
+        assert!(
+            run_git(dir, args).unwrap().status.success(),
+            "git {args:?} failed"
+        );
+    }
+
+    fn git_output(dir: &Path, args: &[&str]) -> String {
+        String::from_utf8(run_git(dir, args).unwrap().stdout).unwrap()
+    }
+
+    fn current_branch(dir: &Path) -> String {
+        git_output(dir, &["symbolic-ref", "--short", "HEAD"])
+            .trim()
+            .to_string()
+    }
+
     #[test]
     fn clean_repo_yields_no_commit() {
         let dir = TempDir::new().unwrap();
         init_repo(dir.path());
         // A brand-new repo with no files is clean.
-        assert!(matches!(git_commit_if_dirty(dir.path()), Ok(None)));
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
     }
 
     #[test]
@@ -391,10 +658,13 @@ mod tests {
         init_repo(dir.path());
         std::fs::write(dir.path().join("note.md"), "hi").unwrap();
 
-        let summary = git_commit_if_dirty(dir.path()).unwrap();
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
         assert!(summary.is_some(), "a dirty tree must commit");
         // Idempotent: immediately after, the tree is clean.
-        assert!(matches!(git_commit_if_dirty(dir.path()), Ok(None)));
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
     }
 
     #[test]
@@ -412,7 +682,7 @@ mod tests {
         let wip = format!("{}abcd", cdno_core::store::WIP_TEMP_PREFIX);
         std::fs::write(dir.path().join(&wip), "garbage-in-flight").unwrap();
 
-        let summary = git_commit_if_dirty(dir.path()).unwrap();
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
         assert!(summary.is_some(), "the real note should commit");
 
         // The committed tree contains the note but not the wip file.
@@ -443,7 +713,7 @@ mod tests {
             std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
         std::fs::write(dir.path().join("note.md"), "dirty").unwrap();
 
-        let summary = nudge_if_dirty(dir.path(), &nudge).unwrap();
+        let summary = nudge_if_dirty(dir.path(), &nudge, &latch()).unwrap();
         assert!(summary.is_some(), "a dirty tree must nudge");
         assert!(sentinel.exists(), "the sentinel must be touched");
 
@@ -470,7 +740,11 @@ mod tests {
         let nudge: SharedNudge =
             std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
 
-        assert!(nudge_if_dirty(dir.path(), &nudge).unwrap().is_none());
+        assert!(
+            nudge_if_dirty(dir.path(), &nudge, &latch())
+                .unwrap()
+                .is_none()
+        );
         assert!(
             !sentinel.exists(),
             "a clean tree must not touch the sentinel"
@@ -501,10 +775,498 @@ mod tests {
         // separately gates on `.git` existing; this asserts the
         // classification for defence in depth.)
         let dir = TempDir::new().unwrap();
-        match git_commit_if_dirty(dir.path()) {
+        match git_commit_if_dirty(dir.path(), &latch()) {
             Err(CheckpointError::GitExit(_)) => {}
             other => panic!("expected GitExit outside a repo, got {other:?}"),
         }
+    }
+
+    /// Set up two branches that edit the same line of the same file, then
+    /// start a merge and let it stop conflicted. Returns the path to the
+    /// conflicted file and the name of the branch merged in.
+    fn seed_conflicted_merge(dir: &Path) {
+        let base_branch = String::from_utf8(
+            run_git(dir, &["symbolic-ref", "--short", "HEAD"])
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        std::fs::write(dir.join("note.md"), "base\n").unwrap();
+        assert!(run_git(dir, &["add", "-A"]).unwrap().status.success());
+        assert!(
+            run_git(dir, &["commit", "-m", "base"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        assert!(
+            run_git(dir, &["checkout", "-b", "feature"])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(dir.join("note.md"), "feature change\n").unwrap();
+        assert!(
+            run_git(dir, &["commit", "-am", "feature"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        assert!(
+            run_git(dir, &["checkout", &base_branch])
+                .unwrap()
+                .status
+                .success()
+        );
+        std::fs::write(dir.join("note.md"), "base change\n").unwrap();
+        assert!(
+            run_git(dir, &["commit", "-am", "base change"])
+                .unwrap()
+                .status
+                .success()
+        );
+
+        let merge = run_git(dir, &["merge", "feature"]).unwrap();
+        assert!(
+            !merge.status.success(),
+            "the merge must conflict for the test to be meaningful"
+        );
+        assert!(
+            dir.join(".git").join("MERGE_HEAD").exists(),
+            "test setup: MERGE_HEAD must exist after a conflicted merge"
+        );
+    }
+
+    #[test]
+    fn conflicted_merge_is_skipped_not_committed() {
+        // GH #546: a tree dirty because of someone else's unresolved
+        // merge must never be swept. `git add -A` would stage the
+        // unmerged path and `git commit` would conclude the merge,
+        // embedding raw `<<<<<<<` conflict markers as note content.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("merge"),
+                    "message should name the merge: {msg}"
+                );
+            }
+            other => panic!("expected a transient skip for a merge in progress, got {other:?}"),
+        }
+
+        // The merge is still unresolved: not concluded, not staged.
+        assert!(
+            dir.path().join(".git").join("MERGE_HEAD").exists(),
+            "the sweep must not conclude someone else's merge"
+        );
+        let content = std::fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(
+            content.contains("<<<<<<<"),
+            "conflict markers must remain unresolved, got: {content}"
+        );
+        let status = run_git(dir.path(), &["status", "--porcelain"]).unwrap();
+        assert!(
+            String::from_utf8_lossy(&status.stdout).contains("UU"),
+            "the path must remain unmerged, not staged by the sweep"
+        );
+    }
+
+    #[test]
+    fn merge_head_without_unmerged_paths_is_still_skipped() {
+        // Second signal: a merge that stopped with every conflict
+        // resolved and staged by hand, but not yet committed, has zero
+        // unmerged paths — only `.git/MERGE_HEAD` still marks it as an
+        // in-progress merge belonging to someone else. Must be skipped
+        // exactly like a live conflict; checking only `diff-filter=U`
+        // would miss this state.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        // Resolve by hand and stage, but do not commit.
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        assert!(
+            run_git(dir.path(), &["add", "-A"])
+                .unwrap()
+                .status
+                .success()
+        );
+        let unmerged = run_git(dir.path(), &["diff", "--name-only", "--diff-filter=U"]).unwrap();
+        assert!(
+            unmerged.stdout.is_empty(),
+            "test setup: all conflicts should be resolved and staged"
+        );
+        assert!(dir.path().join(".git").join("MERGE_HEAD").exists());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(_)) => {}
+            other => panic!(
+                "expected a transient skip for MERGE_HEAD with no unmerged paths, got {other:?}"
+            ),
+        }
+        assert!(
+            dir.path().join(".git").join("MERGE_HEAD").exists(),
+            "the merge must still be unconcluded"
+        );
+    }
+
+    #[test]
+    fn ordinary_dirty_tree_still_commits_with_the_merge_guard_present() {
+        // The merge guard must not silently disable checkpointing: an
+        // everyday dirty tree (no merge involved) commits exactly as
+        // before.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("note.md"), "ordinary edit").unwrap();
+
+        let summary = git_commit_if_dirty(dir.path(), &latch()).unwrap();
+        assert!(
+            summary.is_some(),
+            "an ordinary dirty tree must still commit"
+        );
+        assert!(matches!(
+            git_commit_if_dirty(dir.path(), &latch()),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn nudge_only_mode_does_not_nudge_during_a_merge() {
+        // Same guard, nudge-only mode: waking the external agent during
+        // an unresolved merge invites it to act on a conflicted tree,
+        // which is exactly the hazard this issue closes on the
+        // committing side.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        let sentinel = dir.path().join(".git").join(SENTINEL_FILE_NAME);
+        let nudge: SharedNudge =
+            std::sync::Arc::new(crate::nudge::SyncNudge::new(sentinel.clone()));
+
+        match nudge_if_dirty(dir.path(), &nudge, &latch()) {
+            Err(CheckpointError::GitExit(_)) => {}
+            other => panic!("expected a transient skip for a merge in progress, got {other:?}"),
+        }
+        assert!(
+            !sentinel.exists(),
+            "the sweep must not nudge during someone else's merge"
+        );
+    }
+
+    #[test]
+    fn merge_warning_fires_once_per_episode() {
+        // Keep-the-log-useful requirement: the state must record a warn
+        // timestamp on first detection and hold it across repeated ticks
+        // of the same still-unresolved merge, then reset once the tree
+        // is clean again.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        let warned = latch();
+        assert_eq!(warned.load(Ordering::Relaxed), 0);
+        assert!(git_commit_if_dirty(dir.path(), &warned).is_err());
+        let first_warn = warned.load(Ordering::Relaxed);
+        assert_ne!(
+            first_warn, 0,
+            "first detection must record a warn timestamp"
+        );
+
+        // A second tick against the same unresolved merge, still inside
+        // the re-warn interval, must not move the timestamp.
+        assert!(git_commit_if_dirty(dir.path(), &warned).is_err());
+        assert_eq!(warned.load(Ordering::Relaxed), first_warn);
+
+        // Resolve and commit to conclude the merge properly (as the
+        // rightful owner would), then confirm a clean tree rearms it.
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        git_ok(dir.path(), &["add", "-A"]);
+        git_ok(dir.path(), &["commit", "--no-edit"]);
+        assert!(matches!(git_commit_if_dirty(dir.path(), &warned), Ok(None)));
+        assert_eq!(
+            warned.load(Ordering::Relaxed),
+            0,
+            "a clean tree must rearm the state for the next episode"
+        );
+    }
+
+    #[test]
+    fn due_for_rewarn_boundaries() {
+        // Pure-function coverage for the periodic re-warn decision: `0`
+        // (never warned) always fires; inside the interval it doesn't;
+        // at or past the interval it does again.
+        assert!(due_for_rewarn(0, 1_000));
+        assert!(!due_for_rewarn(1_000, 1_000));
+        assert!(!due_for_rewarn(1_000, 1_000 + RE_WARN_INTERVAL_SECS - 1));
+        assert!(due_for_rewarn(1_000, 1_000 + RE_WARN_INTERVAL_SECS));
+    }
+
+    #[test]
+    fn stale_paused_state_re_warns_instead_of_going_silent_forever() {
+        // Panel-review scenario this exists for: a marker left behind by
+        // a crashed process persists across every tick, forever. A bare
+        // once-per-episode latch would warn exactly once and then never
+        // again — silently losing the recovery trail's visibility. This
+        // proves the warning fires again once the interval has passed,
+        // by fast-forwarding the recorded timestamp rather than
+        // sleeping for real.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_merge(dir.path());
+
+        let state = latch();
+        assert!(git_commit_if_dirty(dir.path(), &state).is_err());
+        let first_warn = state.load(Ordering::Relaxed);
+        assert_ne!(first_warn, 0);
+
+        // Still within the interval: must not re-warn.
+        assert!(git_commit_if_dirty(dir.path(), &state).is_err());
+        assert_eq!(state.load(Ordering::Relaxed), first_warn);
+
+        // Simulate the interval having elapsed since the last warning.
+        state.store(first_warn - RE_WARN_INTERVAL_SECS, Ordering::Relaxed);
+        assert!(git_commit_if_dirty(dir.path(), &state).is_err());
+        assert!(
+            state.load(Ordering::Relaxed) >= first_warn,
+            "a stale marker must re-warn once the interval elapses, not stay silent forever"
+        );
+    }
+
+    /// Seed a conflicting cherry-pick: two branches touch the same
+    /// line, `git cherry-pick` of the feature branch's tip stops with
+    /// `.git/CHERRY_PICK_HEAD` set and the path unmerged.
+    fn seed_conflicted_cherry_pick(dir: &Path) {
+        let base_branch = current_branch(dir);
+
+        std::fs::write(dir.join("note.md"), "base\n").unwrap();
+        git_ok(dir, &["add", "-A"]);
+        git_ok(dir, &["commit", "-m", "base"]);
+
+        git_ok(dir, &["checkout", "-b", "feature"]);
+        std::fs::write(dir.join("note.md"), "feature change\n").unwrap();
+        git_ok(dir, &["commit", "-am", "feature"]);
+        let feature_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+        git_ok(dir, &["checkout", &base_branch]);
+        std::fs::write(dir.join("note.md"), "base change\n").unwrap();
+        git_ok(dir, &["commit", "-am", "base change"]);
+
+        let cp = run_git(dir, &["cherry-pick", feature_sha.trim()]).unwrap();
+        assert!(
+            !cp.status.success(),
+            "the cherry-pick must conflict for the test to be meaningful"
+        );
+        assert!(
+            dir.join(".git").join("CHERRY_PICK_HEAD").exists(),
+            "test setup: CHERRY_PICK_HEAD must exist after a conflicted cherry-pick"
+        );
+    }
+
+    /// Seed a conflicting revert: three commits on one line, reverting
+    /// the middle one against the tip's divergent content stops with
+    /// `.git/REVERT_HEAD` set and the path unmerged.
+    fn seed_conflicted_revert(dir: &Path) {
+        std::fs::write(dir.join("note.md"), "v1\n").unwrap();
+        git_ok(dir, &["add", "-A"]);
+        git_ok(dir, &["commit", "-m", "v1"]);
+
+        std::fs::write(dir.join("note.md"), "v2\n").unwrap();
+        git_ok(dir, &["commit", "-am", "v2"]);
+        let v2_sha = git_output(dir, &["rev-parse", "HEAD"]);
+
+        std::fs::write(dir.join("note.md"), "v3\n").unwrap();
+        git_ok(dir, &["commit", "-am", "v3"]);
+
+        let revert = run_git(dir, &["revert", "--no-edit", v2_sha.trim()]).unwrap();
+        assert!(
+            !revert.status.success(),
+            "the revert must conflict for the test to be meaningful"
+        );
+        assert!(
+            dir.join(".git").join("REVERT_HEAD").exists(),
+            "test setup: REVERT_HEAD must exist after a conflicted revert"
+        );
+    }
+
+    #[test]
+    fn conflicted_cherry_pick_is_skipped_not_committed() {
+        // GH #546 (panel review): a plain commit during a paused
+        // cherry-pick does not just make an ordinary commit — it
+        // concludes the cherry-pick with the sweep's generic message,
+        // and a later `git cherry-pick --continue` fails with "no
+        // cherry-pick or revert in progress".
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_cherry_pick(dir.path());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("cherry-pick"),
+                    "message should name the cherry-pick: {msg}"
+                );
+            }
+            other => panic!("expected a transient skip for a paused cherry-pick, got {other:?}"),
+        }
+        assert!(
+            dir.path().join(".git").join("CHERRY_PICK_HEAD").exists(),
+            "the sweep must not conclude someone else's cherry-pick"
+        );
+    }
+
+    #[test]
+    fn cherry_pick_head_without_unmerged_paths_is_still_skipped() {
+        // The reviewer's repro: resolve and stage the conflict by hand,
+        // but do NOT run `--continue`. No unmerged paths remain — only
+        // `.git/CHERRY_PICK_HEAD` still marks the cherry-pick as paused
+        // — so this is the state a diff-filter=U-only check would miss.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_cherry_pick(dir.path());
+
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        git_ok(dir.path(), &["add", "-A"]);
+        let unmerged = run_git(dir.path(), &["diff", "--name-only", "--diff-filter=U"]).unwrap();
+        assert!(
+            unmerged.stdout.is_empty(),
+            "test setup: the conflict should be resolved and staged"
+        );
+        assert!(dir.path().join(".git").join("CHERRY_PICK_HEAD").exists());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("cherry-pick"),
+                    "message should name the cherry-pick: {msg}"
+                );
+            }
+            other => panic!(
+                "expected a transient skip for CHERRY_PICK_HEAD with no unmerged paths, got {other:?}"
+            ),
+        }
+        assert!(
+            dir.path().join(".git").join("CHERRY_PICK_HEAD").exists(),
+            "the sweep must not conclude someone else's cherry-pick"
+        );
+    }
+
+    #[test]
+    fn conflicted_revert_is_skipped_not_committed() {
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_revert(dir.path());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("revert"),
+                    "message should name the revert: {msg}"
+                );
+            }
+            other => panic!("expected a transient skip for a paused revert, got {other:?}"),
+        }
+        assert!(
+            dir.path().join(".git").join("REVERT_HEAD").exists(),
+            "the sweep must not conclude someone else's revert"
+        );
+    }
+
+    #[test]
+    fn revert_head_without_unmerged_paths_is_still_skipped() {
+        // Symmetric with cherry-pick: resolved and staged, `--continue`
+        // (i.e. `git revert --continue`) never run.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        seed_conflicted_revert(dir.path());
+
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        git_ok(dir.path(), &["add", "-A"]);
+        let unmerged = run_git(dir.path(), &["diff", "--name-only", "--diff-filter=U"]).unwrap();
+        assert!(
+            unmerged.stdout.is_empty(),
+            "test setup: the conflict should be resolved and staged"
+        );
+        assert!(dir.path().join(".git").join("REVERT_HEAD").exists());
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("revert"),
+                    "message should name the revert: {msg}"
+                );
+            }
+            other => panic!(
+                "expected a transient skip for REVERT_HEAD with no unmerged paths, got {other:?}"
+            ),
+        }
+        assert!(
+            dir.path().join(".git").join("REVERT_HEAD").exists(),
+            "the sweep must not conclude someone else's revert"
+        );
+    }
+
+    #[test]
+    fn rebase_state_without_unmerged_paths_is_still_skipped() {
+        // Rebase has no MERGE_HEAD at all — it marks itself with
+        // `.git/rebase-merge` or `.git/rebase-apply` — and a same-state
+        // commit here would be absorbed by `--continue` as "already
+        // applied", replacing the original message and leaving HEAD
+        // detached mid-rebase.
+        let dir = TempDir::new().unwrap();
+        init_repo(dir.path());
+        let base_branch = current_branch(dir.path());
+
+        std::fs::write(dir.path().join("note.md"), "base\n").unwrap();
+        git_ok(dir.path(), &["add", "-A"]);
+        git_ok(dir.path(), &["commit", "-m", "base"]);
+
+        git_ok(dir.path(), &["checkout", "-b", "feature"]);
+        std::fs::write(dir.path().join("note.md"), "feature change\n").unwrap();
+        git_ok(dir.path(), &["commit", "-am", "feature"]);
+
+        git_ok(dir.path(), &["checkout", &base_branch]);
+        std::fs::write(dir.path().join("note.md"), "base change\n").unwrap();
+        git_ok(dir.path(), &["commit", "-am", "base change"]);
+
+        git_ok(dir.path(), &["checkout", "feature"]);
+        let rebase = run_git(dir.path(), &["rebase", &base_branch]).unwrap();
+        assert!(
+            !rebase.status.success(),
+            "the rebase must conflict for the test to be meaningful"
+        );
+        let rebase_merge = dir.path().join(".git").join("rebase-merge");
+        let rebase_apply = dir.path().join(".git").join("rebase-apply");
+        assert!(
+            rebase_merge.is_dir() || rebase_apply.is_dir(),
+            "test setup: a conflicted rebase must leave a state directory"
+        );
+
+        // Resolve and stage, but do not `--continue`.
+        std::fs::write(dir.path().join("note.md"), "resolved\n").unwrap();
+        git_ok(dir.path(), &["add", "-A"]);
+
+        match git_commit_if_dirty(dir.path(), &latch()) {
+            Err(CheckpointError::GitExit(msg)) => {
+                assert!(
+                    msg.contains("rebase"),
+                    "message should name the rebase: {msg}"
+                );
+            }
+            other => panic!("expected a transient skip for a paused rebase, got {other:?}"),
+        }
+        assert!(
+            rebase_merge.is_dir() || rebase_apply.is_dir(),
+            "the sweep must not conclude someone else's rebase"
+        );
     }
 
     impl std::fmt::Debug for CheckpointError {
