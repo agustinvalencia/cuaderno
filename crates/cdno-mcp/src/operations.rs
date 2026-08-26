@@ -33,8 +33,15 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Logged to {}", path);
-        self.verified_write(path, message, WriteShape::Appended)
-            .await
+        // The section comes from the domain, never a literal here: the
+        // MCP layer must not carry its own opinion about where a log
+        // line lands (see `WriteShape::AppendedToSection`).
+        self.verified_write(
+            path,
+            message,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+        )
+        .await
     }
 
     #[tool(

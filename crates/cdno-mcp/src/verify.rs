@@ -17,7 +17,8 @@
 //!
 //! It proves the target is readable and non-empty after the write, and
 //! it hands the caller the bytes, the fingerprint, and (for the
-//! log-append shape) the trailing text now on disk. It does **not**
+//! log-append shape) the tail of the section that was written to. It
+//! does **not**
 //! diff against an intended content: the handlers do not have one — the
 //! domain composes the final bytes (the log line's clock stamp, the
 //! template render, the section fold). Content-level judgement stays
@@ -48,10 +49,10 @@ use crate::dto::{WriteResultDto, WriteVerificationDto};
 use crate::server::CuadernoServer;
 use crate::util::json_result;
 
-/// How much trailing text an append-shaped result carries back. Big
+/// How much of the appended-to section a result carries back. Big
 /// enough for the appended log line plus the surrounding context that
-/// makes it legible, small enough that it never becomes the bulk of a
-/// tool result.
+/// makes it legible, small enough that a long-running day's `## Logs`
+/// never becomes the bulk of a tool result.
 const TAIL_BYTES: usize = 512;
 
 /// What the write did to its target, which is what decides how it can
@@ -61,17 +62,27 @@ pub(crate) enum WriteShape {
     /// The file was created or rewritten in place. Verified by
     /// re-reading it whole.
     Rewritten,
-    /// Content was appended at the **end** of the file. Verified like
-    /// [`Rewritten`](Self::Rewritten), and additionally carries the
-    /// trailing window back so the caller can see what landed.
+    /// Content was appended to the **named level-2 section**. Verified
+    /// like [`Rewritten`](Self::Rewritten), and additionally carries
+    /// the tail of that section back so the caller can see what landed.
     ///
-    /// Only for writes that genuinely land at EOF. The daily note's
-    /// `## Logs` section is pinned to the bottom (`cdno-domain`'s
-    /// `log` module), so `append_to_log` qualifies; a tool that appends
-    /// a bullet into a mid-file section does not, and uses
-    /// [`Rewritten`](Self::Rewritten) — a tail that is not the changed
-    /// part would be worse than no tail at all.
-    Appended,
+    /// The heading must be the one the domain actually appends to, and
+    /// must come from the domain rather than be restated here — pass
+    /// [`cdno_domain::DAILY_LOGS_SECTION`], not a literal. The section
+    /// is then located in the re-read content with the same
+    /// `MarkdownDocument` lookup the domain used to write it, so the
+    /// window is the changed region wherever in the file it sits.
+    ///
+    /// This deliberately does **not** assume the section is at the end
+    /// of the file. An earlier version took the last N bytes instead,
+    /// on the reasoning that the daily note's `## Logs` is pinned to the
+    /// bottom. That holds only for the built-in template:
+    /// `Vault::daily_anchor_section` pins whichever section the
+    /// *effective* template ends with, so a custom daily template
+    /// ending in `## Reflection` left the log line mid-file and the
+    /// window showed the wrong text while claiming to be what landed.
+    /// A silently wrong answer is worse than no answer.
+    AppendedToSection(&'static str),
     /// The write **deleted** its target. Verified by confirming the
     /// file is gone; there is nothing to hash.
     Removed,
@@ -109,7 +120,7 @@ fn verify(
     path: &VaultPath,
     shape: WriteShape,
 ) -> Result<WriteVerificationDto, ErrorData> {
-    if shape == WriteShape::Removed {
+    if matches!(shape, WriteShape::Removed) {
         return match vault.read_note_raw(path) {
             Err(DomainError::Store(cdno_core::error::StoreError::NotFound(_))) => {
                 Ok(WriteVerificationDto {
@@ -143,10 +154,28 @@ fn verify(
         bytes_written: content.len() as u64,
         content_hash: Some(cdno_core::hash::content_hash(&content)),
         appended_tail: match shape {
-            WriteShape::Appended => Some(tail(&content, TAIL_BYTES).to_owned()),
+            WriteShape::AppendedToSection(heading) => section_tail(&content, heading),
             WriteShape::Rewritten | WriteShape::Removed => None,
         },
     })
+}
+
+/// The tail of the named level-2 section of `content`, bounded to
+/// [`TAIL_BYTES`].
+///
+/// Uses `MarkdownDocument` — the same parser and the same unique-heading
+/// lookup the domain used to perform the append — so this cannot
+/// disagree with the write about where the section is.
+///
+/// Returns `None` rather than a guess when the section cannot be
+/// located (an unparseable note, a heading that is missing or appears
+/// twice). The write itself is already verified by this point; only the
+/// extra evidence is unavailable, and a window pointing at the wrong
+/// bytes would be worse than an absent one.
+fn section_tail(content: &str, heading: &str) -> Option<String> {
+    let doc = cdno_core::markdown::MarkdownDocument::parse(content).ok()?;
+    let section = doc.section(heading).ok()?;
+    Some(tail(section, TAIL_BYTES).to_owned())
 }
 
 /// The last `max_bytes` of `s`, moved forward to the nearest character

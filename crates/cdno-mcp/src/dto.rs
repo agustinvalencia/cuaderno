@@ -1110,10 +1110,13 @@ pub struct WriteVerificationDto {
     /// xxh3-64 fingerprint of the whole file, lowercase hex, 16 chars.
     /// `null` for a removal.
     pub content_hash: Option<String>,
-    /// For an append-shaped write (the daily log), the trailing text of
-    /// the file as read back — so the caller can see the line that
-    /// landed rather than trusting the summary. `null` for every other
-    /// shape, where the tail is not the part that changed.
+    /// For an append-shaped write (`append_to_log`), the tail of the
+    /// **section that was appended to**, as read back — so the caller
+    /// can see the line that landed rather than trusting the summary.
+    /// Scoped to the section, not the end of the file, because a custom
+    /// daily template can leave `## Logs` mid-note. `null` for every
+    /// other shape, and `null` if the section could not be located,
+    /// since a window over the wrong bytes would be worse than none.
     pub appended_tail: Option<String>,
 }
 

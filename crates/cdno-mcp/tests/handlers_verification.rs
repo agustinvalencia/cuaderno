@@ -201,6 +201,88 @@ async fn an_append_shaped_write_returns_the_tail_that_landed() {
     );
 }
 
+/// A custom daily template whose LAST `##` heading is not `Logs`.
+///
+/// The domain pins the template's last section to the bottom of the
+/// note, whichever it is — `cdno-domain`'s `daily_anchor_section`, and
+/// the case `daily_anchor_follows_a_custom_templates_last_section` in
+/// `cdno-domain/tests/unit/templating_tests.rs` is written against this
+/// exact shape. So with this template the appended log line lands in
+/// the MIDDLE of the file, and the last N bytes of the file are the
+/// Reflection filler below.
+const DAILY_TEMPLATE_ANCHORED_ELSEWHERE: &str = concat!(
+    "---\ntype: daily\ndate: {{date}}\n---\n\n# {{heading}}\n\n## Logs\n\n## Reflection\n\n",
+    // ~1 KB of filler, so the trailing window cannot reach back into
+    // the Logs section by accident and mask the bug.
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+    "reflection filler reflection filler reflection filler reflection filler\n",
+);
+
+#[tokio::test]
+async fn the_tail_is_the_appended_section_not_the_end_of_the_file() {
+    // Regression (PR #549 review): the tail used to be the last N bytes
+    // of the file, on the assumption that a log line always lands at
+    // EOF. That holds only for the built-in template. With the daily
+    // note anchored on a different section the line lands mid-file, and
+    // the old tail showed the Reflection filler while claiming to be
+    // "the text that landed" — a silently wrong answer, which is worse
+    // than no answer.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &VaultPath::new(".cuaderno/templates/daily.md").unwrap(),
+            DAILY_TEMPLATE_ANCHORED_ELSEWHERE,
+        )
+        .expect("seed the custom daily template");
+    let server = server_over(Arc::clone(&store));
+
+    let result = server
+        .append_to_log(Parameters(AppendToLogInput {
+            text: "a distinctive marker".to_owned(),
+        }))
+        .await
+        .expect("append_to_log succeeds");
+
+    // The write itself is fine either way — this is about the evidence.
+    let payload = decode(&result);
+    let path = VaultPath::new(payload["path"].as_str().unwrap()).unwrap();
+    let on_disk = store.read_file(&path).expect("the note exists");
+    assert!(
+        on_disk.contains("a distinctive marker"),
+        "the line must have landed:\n{on_disk}"
+    );
+    assert!(
+        on_disk.trim_end().ends_with("reflection filler"),
+        "this template must anchor on Reflection, or the test proves nothing:\n{on_disk}"
+    );
+
+    let tail = payload["verification"]["appended_tail"]
+        .as_str()
+        .expect("an append-shaped write still carries a tail")
+        .to_owned();
+    assert!(
+        tail.contains("a distinctive marker"),
+        "the tail must show the line that landed, not the end of the file: {tail:?}"
+    );
+    assert!(
+        !tail.contains("reflection filler"),
+        "the tail must be scoped to the section written to: {tail:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_rewrite_shaped_write_carries_no_tail() {
     // The tail is only meaningful where the change is at EOF; offering

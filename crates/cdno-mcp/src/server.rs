@@ -220,7 +220,8 @@ impl ServerHandler for CuadernoServer {
                 and schemas, including user-defined ones.\n\n\
                 Every write tool re-reads its target before answering and returns a \
                 `verification` object — `bytes_written`, a `content_hash`, and, for \
-                append-shaped writes, the `appended_tail` that landed. A write that \
+                append-shaped writes, an `appended_tail` showing the tail of the \
+                section the text went into. A write that \
                 cannot be read back comes back as an ERROR, so a successful write \
                 result is evidence the change is on disk and does not need a \
                 follow-up read to confirm. If a write does error as unverified, \
