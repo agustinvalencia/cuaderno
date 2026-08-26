@@ -27,6 +27,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   Clients caching the tool catalogue need a reconnect to see the new result shape (the HTTP
   transport is stateless, so there is no `tools/list_changed` to push).
 
+- **`cdno-mcp-server --sync-nudge` — wake a sync agent the moment a write lands.** A deployment that
+  pairs the server with an external sync agent (a commit-and-push loop on an always-on host, with a
+  second clone on a laptop) left that agent polling: a write landing just after a poll waited out
+  the whole interval. With `--sync-nudge`, every *verified* write rewrites a sentinel file the agent
+  can watch — launchd `WatchPaths`, `inotify`, `fswatch` — so it reacts at once.
+
+  Off by default, one-way (the server never reads the sentinel), and never fatal: a sentinel that
+  cannot be written is logged and skipped rather than failing a write that already succeeded. A
+  failed or unverified write leaves it untouched, so the signal always means "something landed". The
+  default path is `<vault>/.git/cdno-sync.nudge` — under `.git/`, where nothing can track or mirror
+  it — and `--sync-nudge-path` moves it. The file holds a timestamp and never vault content.
+  ([#540](https://github.com/agustinvalencia/cuaderno/issues/540))
+
 ## [0.36.0] - 2026-08-22
 
 ### Added

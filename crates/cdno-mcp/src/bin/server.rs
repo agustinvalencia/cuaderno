@@ -142,6 +142,26 @@ struct ServeArgs {
     )]
     git_checkpoint_interval_secs: u64,
 
+    /// Touch a sentinel file after every *verified* write (GH #539/#540)
+    /// so an external sync agent reacts immediately instead of waiting
+    /// out its own timer. Off by default; the signal is one-way (this
+    /// server never reads the sentinel) and never fails a write.
+    ///
+    /// The sentinel lives at `<vault>/.git/cdno-sync.nudge` — under
+    /// `.git/`, so it can never be tracked or synced — unless
+    /// `--sync-nudge-path` moves it.
+    #[arg(long, env = "CDNO_MCP_SYNC_NUDGE")]
+    sync_nudge: bool,
+
+    /// Where the sync-nudge sentinel lives, overriding the default
+    /// `<vault>/.git/cdno-sync.nudge`. Setting this does not by itself
+    /// enable nudging — pass `--sync-nudge` for that.
+    ///
+    /// Parent directories are never created: a path whose directory is
+    /// absent simply logs and is skipped.
+    #[arg(long, env = "CDNO_MCP_SYNC_NUDGE_PATH")]
+    sync_nudge_path: Option<PathBuf>,
+
     /// Cloudflare Access team URL (e.g.
     /// `https://<team>.cloudflareaccess.com`) — the JWT issuer and
     /// the JWKS host. Setting this (with `--access-aud`) activates
@@ -262,7 +282,24 @@ async fn main() -> Result<()> {
             tracing::info!("read-only mode: mutating tools are not registered");
             CuadernoServer::read_only(vault)
         } else {
-            CuadernoServer::new(vault)
+            let server = CuadernoServer::new(vault);
+            // Opt-in (GH #540). Left off, nothing in this process ever
+            // writes a sentinel — which is the right default, since a
+            // deployment without a sync agent has nobody to signal.
+            if args.sync_nudge {
+                let sentinel = Arc::new(cdno_mcp::SyncNudge::new(
+                    args.sync_nudge_path
+                        .clone()
+                        .unwrap_or_else(|| cdno_mcp::SyncNudge::default_path(&root)),
+                ));
+                tracing::info!(
+                    sentinel = %sentinel.path().display(),
+                    "post-write sync nudge enabled: every verified write touches the sentinel"
+                );
+                server.with_sync_nudge(sentinel)
+            } else {
+                server
+            }
         };
         tracing::info!(
             tools = server.advertised_tools().len(),

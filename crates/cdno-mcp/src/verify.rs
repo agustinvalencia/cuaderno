@@ -82,8 +82,8 @@ impl CuadernoServer {
     /// success result with verification attached or a tool error.
     ///
     /// This is the single place a write result is built, so every
-    /// mutating tool inherits verification without touching its
-    /// handler.
+    /// mutating tool inherits verification (and, when configured, the
+    /// post-write sync nudge — GH #540) without touching its handler.
     pub(crate) async fn verified_write(
         &self,
         path: VaultPath,
@@ -94,6 +94,10 @@ impl CuadernoServer {
         let verification = self
             .with_vault(move |vault| verify(vault, &target, shape))
             .await??;
+        // Only a *verified* write nudges the sync agent (GH #540): the
+        // sentinel means "something landed", so an error path must
+        // never reach here.
+        self.nudge_sync_agent();
         json_result(WriteResultDto::new(path.to_string(), message, verification))
     }
 }

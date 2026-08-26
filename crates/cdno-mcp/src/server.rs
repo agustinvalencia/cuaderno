@@ -57,6 +57,10 @@ pub struct CuadernoServer {
     // (`context`/`operations`/`creation`/`lifecycle`) reach the vault
     // exclusively through [`CuadernoServer::with_vault`] (GH #303).
     vault: Arc<Vault>,
+    // Optional post-write sync-nudge sentinel (GH #540). `None` unless
+    // a caller opted in via `with_sync_nudge` — which only
+    // `cdno-mcp-server` does; the stdio binary has no agent to signal.
+    sync_nudge: Option<crate::nudge::SharedNudge>,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -74,7 +78,26 @@ impl CuadernoServer {
         tool_router.merge(Self::operations_router());
         tool_router.merge(Self::creation_router());
         tool_router.merge(Self::lifecycle_router());
-        Self { vault, tool_router }
+        Self {
+            vault,
+            sync_nudge: None,
+            tool_router,
+        }
+    }
+
+    /// Attach a sync-nudge sentinel (GH #540): after every **verified**
+    /// write this server touches it, so an external sync agent commits
+    /// without waiting for its own timer. Opt-in — a server built
+    /// without this call never writes a sentinel.
+    pub fn with_sync_nudge(mut self, nudge: crate::nudge::SharedNudge) -> Self {
+        self.sync_nudge = Some(nudge);
+        self
+    }
+
+    /// The configured sentinel, if any. Read only by
+    /// [`CuadernoServer::nudge_sync_agent`].
+    pub(crate) fn sync_nudge(&self) -> Option<&crate::nudge::SharedNudge> {
+        self.sync_nudge.as_ref()
     }
 
     /// Read-only variant: only the context-gathering read tools
@@ -87,6 +110,9 @@ impl CuadernoServer {
     pub fn read_only(vault: Arc<Vault>) -> Self {
         Self {
             vault,
+            // No mutating tool exists on this server, so nothing could
+            // ever reach the nudge; leaving it `None` says so.
+            sync_nudge: None,
             tool_router: Self::context_router(),
         }
     }
