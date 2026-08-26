@@ -191,7 +191,14 @@ impl ServerHandler for CuadernoServer {
                 get_*_context, queries) and writes (append_to_log, \
                 update_project_state, the create/complete pairs). Call \
                 list_note_types before creating notes — it reports the vault's types \
-                and schemas, including user-defined ones.",
+                and schemas, including user-defined ones.\n\n\
+                Every write tool re-reads its target before answering and returns a \
+                `verification` object — `bytes_written`, a `content_hash`, and, for \
+                append-shaped writes, the `appended_tail` that landed. A write that \
+                cannot be read back comes back as an ERROR, so a successful write \
+                result is evidence the change is on disk and does not need a \
+                follow-up read to confirm. If a write does error as unverified, \
+                re-read the note before retrying: it may have landed anyway.",
             )
             // ServerInfo::default already enables an empty capability
             // set; flip the `tools` flag on so clients know we serve

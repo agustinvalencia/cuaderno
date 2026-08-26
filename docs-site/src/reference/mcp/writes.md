@@ -3,6 +3,49 @@
 Tools that mutate the vault. Each returns a result describing what was written. The same business
 rules as the CLI apply (append-only notes, auto-logged project state, the project cap).
 
+## Every write is verified
+
+A tool result that only said "success" could not be told apart from a write that silently never
+landed — which over a remote connection is exactly how a lost note goes unnoticed. So every write
+tool re-reads its target before answering, and the result carries the evidence:
+
+```json
+{
+  "path": "journal/2026/daily/2026-08-26.md",
+  "message": "Logged to journal/2026/daily/2026-08-26.md",
+  "verification": {
+    "verified": "content",
+    "bytes_written": 412,
+    "content_hash": "84bc0919e867576f",
+    "appended_tail": "- **09:14**: baseline sweep finished\n"
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `verified` | `content` — the file was re-read; or `removed`, for `discard_inbox_item`, where the check is that the file is gone |
+| `bytes_written` | Size of the file on disk after the write. `0` for a removal |
+| `content_hash` | The note's content hash (below) — `null` for a removal |
+| `appended_tail` | The trailing text now on disk, for append-shaped writes (`append_to_log`). `null` elsewhere, where the tail is not the part that changed |
+
+**If the target cannot be read back, the tool returns an error rather than a success.** The wording
+says the write is *unverified*, not failed: it may still have landed, so the right response is to
+re-read the note, not to blindly repeat the write.
+
+### The content hash
+
+`content_hash` is the same non-cryptographic xxh3-64 fingerprint (16 lowercase hex characters) the
+index uses for change detection, so a client can recompute it over a note it has read and compare.
+Two uses in practice:
+
+- confirm a note is byte-identical to the one the server saw;
+- notice a **no-op**. `update_project_state` with a state that already matches deliberately writes
+  nothing and still reports success — an unchanged `content_hash` across two calls is how you tell.
+
+It is a change detector, not tamper evidence: it does not defend against someone who also chooses
+the content.
+
 ## Logging, capture, triage
 
 | Tool | Inputs | Effect |

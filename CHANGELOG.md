@@ -6,6 +6,27 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Every MCP write now proves it landed.** A write tool used to report success from the fact that
+  the domain call returned, so a write that silently never reached disk was indistinguishable from
+  one that did — over a remote connection, that is how a lost note goes unnoticed until much later.
+  Each mutating tool now re-reads its target before answering and returns a `verification` object:
+  `bytes_written`, a `content_hash` (the same xxh3-64 fingerprint the index uses, so a client can
+  recompute it), and, for the append-shaped `append_to_log`, the `appended_tail` that actually
+  landed. `discard_inbox_item` is verified the other way round — the check is that the file is gone.
+
+  A target that cannot be read back is now an **error**, not a success. The message says the write
+  is *unverified* rather than failed, because it may have landed anyway: the right response is to
+  re-read the note, not to repeat the write. ([#539](https://github.com/agustinvalencia/cuaderno/issues/539))
+
+  The hash also makes the deliberate no-ops visible: `update_project_state` with an unchanged state
+  writes nothing and still reports success, and an identical `content_hash` across two calls is how
+  a caller can now tell.
+
+  Clients caching the tool catalogue need a reconnect to see the new result shape (the HTTP
+  transport is stateless, so there is no `tools/list_changed` to push).
+
 ## [0.36.0] - 2026-08-22
 
 ### Added
