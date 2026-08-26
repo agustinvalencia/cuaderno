@@ -1,6 +1,12 @@
-//! End-to-end test for the git-checkpoint recoverability loop
+//! End-to-end tests for the git-checkpoint recoverability loop
 //! (GH #303): a dirty vault served by `cdno-mcp-server` gains a
-//! `cdno-mcp checkpoint` commit within one checkpoint interval.
+//! `cdno-mcp checkpoint` commit within one checkpoint interval — and,
+//! in nudge-only mode (GH #541), gains a sentinel touch and no commit
+//! at all.
+//!
+//! The mode's logic is unit-tested in `checkpoint.rs`; what these cover
+//! is the wiring — that the flag reaches the sweep and that the
+//! sentinel the sweep touches is the one the operator configured.
 
 use std::io::Read;
 use std::path::Path;
@@ -121,5 +127,97 @@ fn dirty_vault_gets_a_checkpoint_commit() {
     assert!(
         status.stdout.is_empty(),
         "tree should be clean after the checkpoint; log was:\n{committed}"
+    );
+}
+
+#[test]
+fn nudge_only_mode_signals_the_agent_and_never_commits() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    cdno_cli::commands::init::run(dir.path()).expect("cdno init");
+    assert!(git(dir.path(), &["init", "-q"]).status.success());
+    assert!(git(dir.path(), &["add", "-A"]).status.success());
+    assert!(
+        git(dir.path(), &["commit", "-q", "-m", "baseline"])
+            .status
+            .success()
+    );
+    let baseline = String::from_utf8_lossy(&git(dir.path(), &["rev-parse", "HEAD"]).stdout)
+        .trim()
+        .to_owned();
+
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let sentinel = dir.path().join(".git").join("cdno-sync.nudge");
+    let bin = env!("CARGO_BIN_EXE_cdno-mcp-server");
+    let mut child = Command::new(bin)
+        .args([
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            "--read-only",
+            "--reconcile-interval-secs",
+            "0",
+            "--git-checkpoint-interval-secs",
+            "1",
+            "--git-checkpoint-mode",
+            "nudge-only",
+        ])
+        .env("CUADERNO_VAULT_PATH", dir.path())
+        .env("RUST_LOG", "off")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn cdno-mcp-server");
+
+    std::fs::write(dir.path().join("inbox/nudge-probe.md"), "dirty").unwrap();
+
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            let mut err = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                let _ = pipe.read_to_string(&mut err);
+            }
+            panic!("cdno-mcp-server exited with {status} instead of nudging; stderr:\n{err}");
+        }
+        if sentinel.exists() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "no sentinel at {} after {:?} at a 1s sweep interval",
+                sentinel.display(),
+                started.elapsed()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // Give the sweep a couple more ticks: a mode that commits would
+    // have done so by now, so this is what makes "never commits" mean
+    // more than "had not got round to it yet".
+    std::thread::sleep(Duration::from_millis(2500));
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let head = String::from_utf8_lossy(&git(dir.path(), &["rev-parse", "HEAD"]).stdout)
+        .trim()
+        .to_owned();
+    assert_eq!(head, baseline, "nudge-only mode must create no commit");
+
+    // Still dirty: nothing was staged either, so the external agent
+    // finds the change exactly as it was left. (`inbox/` is empty at
+    // `init`, so git never tracked it and reports the collapsed
+    // `?? inbox/` rather than the file — hence the directory, not the
+    // filename, is what to look for.)
+    let status = git(dir.path(), &["status", "--porcelain"]);
+    let status = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        status.contains("inbox/"),
+        "nudge-only mode must leave the change for the external agent; status was:\n{status}"
     );
 }

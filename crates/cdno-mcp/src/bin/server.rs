@@ -142,6 +142,45 @@ struct ServeArgs {
     )]
     git_checkpoint_interval_secs: u64,
 
+    /// What the checkpoint sweep does with a dirty tree (GH #541).
+    /// `commit` (default) commits it here. `nudge-only` commits
+    /// nothing and instead touches the sync-nudge sentinel, for a
+    /// deployment where an external sync agent owns the repository's
+    /// history and two git actors in one working tree would fight.
+    ///
+    /// Whichever you pick, something must still commit: that is the
+    /// recovery trail for remote writes. `nudge-only` without an agent
+    /// running is equivalent to no trail at all, and is warned about at
+    /// startup.
+    #[arg(
+        long,
+        env = "CDNO_MCP_GIT_CHECKPOINT_MODE",
+        value_enum,
+        default_value_t = CheckpointModeArg::Commit
+    )]
+    git_checkpoint_mode: CheckpointModeArg,
+
+    /// Touch a sentinel file after every *verified* write (GH #539/#540)
+    /// so an external sync agent reacts immediately instead of waiting
+    /// out its own timer. Off by default; the signal is one-way (this
+    /// server never reads the sentinel) and never fails a write.
+    ///
+    /// The sentinel lives at `<vault>/.git/cdno-sync.nudge` — under
+    /// `.git/`, so it can never be tracked or synced — unless
+    /// `--sync-nudge-path` moves it.
+    #[arg(long, env = "CDNO_MCP_SYNC_NUDGE")]
+    sync_nudge: bool,
+
+    /// Where the sync-nudge sentinel lives, overriding the default
+    /// `<vault>/.git/cdno-sync.nudge`. Setting this does NOT by itself
+    /// enable per-write nudging — pass `--sync-nudge` for that — but it
+    /// is the path `--git-checkpoint-mode nudge-only` will use.
+    ///
+    /// Parent directories are never created: a path whose directory is
+    /// absent simply logs and is skipped.
+    #[arg(long, env = "CDNO_MCP_SYNC_NUDGE_PATH")]
+    sync_nudge_path: Option<PathBuf>,
+
     /// Cloudflare Access team URL (e.g.
     /// `https://<team>.cloudflareaccess.com`) — the JWT issuer and
     /// the JWKS host. Setting this (with `--access-aud`) activates
@@ -152,6 +191,17 @@ struct ServeArgs {
     /// The Access application's AUD tag (expected `aud` claim).
     #[arg(long, env = "CDNO_ACCESS_AUD", requires = "access_team_url")]
     access_aud: Option<String>,
+}
+
+/// CLI spelling of [`cdno_mcp::checkpoint::CheckpointMode`]. Separate
+/// from the library enum because the library variant carries the
+/// sentinel handle, which only exists once the vault root is resolved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+enum CheckpointModeArg {
+    /// This server commits dirty state itself.
+    Commit,
+    /// This server commits nothing; it nudges an external sync agent.
+    NudgeOnly,
 }
 
 #[tokio::main]
@@ -245,15 +295,35 @@ async fn main() -> Result<()> {
             );
         }
 
+        // One sentinel handle, shared by the post-write nudge (#540)
+        // and the nudge-only sweep (#541) — two producers of the same
+        // signal, so they must agree on the path without the operator
+        // configuring it twice.
+        let sentinel: cdno_mcp::nudge::SharedNudge = Arc::new(cdno_mcp::SyncNudge::new(
+            args.sync_nudge_path
+                .clone()
+                .unwrap_or_else(|| cdno_mcp::SyncNudge::default_path(&root)),
+        ));
+
         if args.git_checkpoint_interval_secs > 0 {
+            let mode = match args.git_checkpoint_mode {
+                CheckpointModeArg::Commit => cdno_mcp::checkpoint::CheckpointMode::Commit,
+                CheckpointModeArg::NudgeOnly => {
+                    cdno_mcp::checkpoint::CheckpointMode::NudgeOnly(sentinel.clone())
+                }
+            };
+            // `spawn` logs which actor is expected to commit in this
+            // mode — that message is the operator-facing half of #541.
             cdno_mcp::checkpoint::spawn(
                 root.clone(),
                 Duration::from_secs(args.git_checkpoint_interval_secs),
+                mode,
             );
         } else {
             tracing::warn!(
                 "git checkpoints disabled (--git-checkpoint-interval-secs 0); \
-                 remote writes will have no commit-level recovery trail"
+                 nothing in this process commits, so remote writes have no commit-level \
+                 recovery trail unless an external sync agent provides one"
             );
         }
 
@@ -262,7 +332,16 @@ async fn main() -> Result<()> {
             tracing::info!("read-only mode: mutating tools are not registered");
             CuadernoServer::read_only(vault)
         } else {
-            CuadernoServer::new(vault)
+            let server = CuadernoServer::new(vault);
+            if args.sync_nudge {
+                tracing::info!(
+                    sentinel = %sentinel.path().display(),
+                    "post-write sync nudge enabled: every verified write touches the sentinel"
+                );
+                server.with_sync_nudge(sentinel.clone())
+            } else {
+                server
+            }
         };
         tracing::info!(
             tools = server.advertised_tools().len(),

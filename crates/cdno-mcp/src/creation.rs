@@ -10,13 +10,12 @@ use rmcp::{tool, tool_router};
 
 use cdno_domain::frontmatter::{Context, QuestionDomain};
 
-use crate::dto::WriteResultDto;
-
 use crate::input::*;
 
-use crate::util::{into_mcp_error, invalid_argument, json_result};
+use crate::util::{into_mcp_error, invalid_argument};
 
 use crate::server::CuadernoServer;
+use crate::verify::WriteShape;
 
 #[tool_router(router = creation_router, vis = "pub")]
 impl CuadernoServer {
@@ -43,10 +42,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created project at {}", path),
-        ))
+        let message = format!("Created project at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -69,10 +67,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created portfolio at {}", path),
-        ))
+        let message = format!("Created portfolio at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -88,13 +85,12 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.link_portfolio_to_question(&portfolio, &question))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!(
-                "Linked portfolio '{}' to question '{}' ({})",
-                input.portfolio, input.question, path
-            ),
-        ))
+        let message = format!(
+            "Linked portfolio '{}' to question '{}' ({})",
+            input.portfolio, input.question, path
+        );
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -110,13 +106,12 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.link_portfolio_to_project(&portfolio, &project))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!(
-                "Linked portfolio '{}' to project '{}' ({})",
-                input.portfolio, input.project, path
-            ),
-        ))
+        let message = format!(
+            "Linked portfolio '{}' to project '{}' ({})",
+            input.portfolio, input.project, path
+        );
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -136,10 +131,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created question at {}", path),
-        ))
+        let message = format!("Created question at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -164,10 +158,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created {} note at {}", type_name, path),
-        ))
+        let message = format!("Created {} note at {}", type_name, path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -191,9 +184,8 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created stewardship at {}", path),
-        ))
+        let message = format!("Created stewardship at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 }

@@ -18,6 +18,12 @@
 //!   annotated with rmcp's `#[tool]`. The `#[tool_router]` macro
 //!   builds the dispatch table; the `ServerHandler` impl wires it
 //!   into the MCP protocol surface.
+//! - `verify` — the single place a mutating tool's result is built
+//!   (GH #539). Every write is read back before it is reported, so a
+//!   write that did not land surfaces as a tool error rather than as a
+//!   success the client cannot check.
+//! - [`nudge`] — the optional post-write sentinel (GH #540) an external
+//!   sync agent can watch. Off unless `cdno-mcp-server` enables it.
 //!
 //! # Concurrency note
 //!
@@ -42,11 +48,14 @@ mod creation;
 pub mod dto;
 pub mod input;
 mod lifecycle;
+pub mod nudge;
 mod operations;
 pub mod server;
 pub mod smoke;
 pub mod startup;
 mod util;
+mod verify;
 
+pub use nudge::SyncNudge;
 pub use server::CuadernoServer;
 pub use smoke::SmokeServer;

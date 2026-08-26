@@ -37,9 +37,85 @@ inside a container).
 | `--smoke` | — | off | Serve a single `echo` tool holding **no vault handle** — prove tunnel/auth infrastructure end-to-end with zero vault exposure |
 | `--read-only` | — | off | Advertise only the context-gathering read tools; mutating tools are absent from the dispatch table entirely |
 | `--reconcile-interval-secs <n>` | `CDNO_MCP_RECONCILE_INTERVAL_SECS` | `300` | Periodic index reconciliation; `0` disables |
-| `--git-checkpoint-interval-secs <n>` | `CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS` | `60` | Commit-if-dirty git sweep of the vault — makes every remote write diffable and revertible. `0` disables; warns and no-ops when the vault isn't a git repo |
+| `--git-checkpoint-interval-secs <n>` | `CDNO_MCP_GIT_CHECKPOINT_INTERVAL_SECS` | `60` | How often the git sweep runs. `0` disables it; warns and no-ops when the vault isn't a git repo |
+| `--git-checkpoint-mode <mode>` | `CDNO_MCP_GIT_CHECKPOINT_MODE` | `commit` | What the sweep does with a dirty tree: `commit` here, or `nudge-only` — see [The recovery trail](#the-recovery-trail) |
+| `--sync-nudge` | `CDNO_MCP_SYNC_NUDGE` | off | Touch a sentinel file after every verified write so an external sync agent reacts at once instead of on its own timer — see [Pairing with a sync agent](#pairing-with-a-sync-agent) |
+| `--sync-nudge-path <path>` | `CDNO_MCP_SYNC_NUDGE_PATH` | `<vault>/.git/cdno-sync.nudge` | Where that sentinel lives. Setting it does not by itself enable nudging |
 | `--access-team-url <url>` | `CDNO_ACCESS_TEAM_URL` | — | Cloudflare Access team URL (JWT issuer + JWKS host). Requires `--access-aud`; activates origin JWT validation and lifts the loopback-only restriction |
 | `--access-aud <tag>` | `CDNO_ACCESS_AUD` | — | The Access application's AUD tag (expected `aud` claim). Requires `--access-team-url` |
+
+## The recovery trail
+
+Exposing write tools remotely means anything a confused or prompt-injected session does lands in
+your vault. The damage limit is that **every mutation ends up in a git commit** you can diff and
+revert. The sweep is what provides it: on an interval it takes the vault write lock, and if the tree
+is dirty it commits everything as `cdno-mcp checkpoint (N path(s))`. It is a sweep rather than a
+per-write hook, so out-of-band edits — the CLI, your editor, a sync tool — join the trail too.
+
+What must hold is that *something* commits. Which actor does is configurable:
+
+| Mode | Who commits | How |
+|------|-------------|-----|
+| **interval** (default) | this server | `--git-checkpoint-interval-secs <n>`, default `60` |
+| **nudge-only** | an external sync agent | `--git-checkpoint-mode nudge-only` |
+| **disabled** | nobody | `--git-checkpoint-interval-secs 0` |
+
+Reach for **nudge-only** when an agent already owns the repository's history. Per-minute checkpoint
+commits would fight it: two git actors in one working tree, and the agent's coalesced,
+unit-of-thought commits buried under machine noise. In this mode the sweep still runs and still
+takes the lock, but it commits nothing — on a dirty tree it touches the
+[sync-nudge sentinel](#pairing-with-a-sync-agent) and leaves the change exactly where it found it,
+unstaged, for the agent to pick up.
+
+```bash
+cdno-mcp-server --vault /srv/vault --git-checkpoint-mode nudge-only
+```
+
+The sentinel path is the one `--sync-nudge-path` sets, so the sweep and the per-write nudge always
+agree on it. You do not need `--sync-nudge` as well: that flag governs the *per-write* signal, and
+the two are useful together (writes nudge immediately; the sweep catches anything that arrived out
+of band) but independent.
+
+**Both non-default modes hand the trail to somebody else, and the server says so at startup** —
+nudge-only logs a warning naming the sentinel and stating that this process commits nothing, and
+`0` warns that nothing in the process commits at all. If no agent is running, either is equivalent
+to having no recovery trail.
+
+Only `cdno-mcp-server` sweeps. The stdio binary has no checkpoint loop and none of these flags.
+
+## Pairing with a sync agent
+
+A common shape is two clones of the vault repository — an always-on host running this server, and a
+laptop — with an external agent on the host owning the commit-and-push loop. That agent normally
+polls: it wakes on its own timer, sees a dirty tree, and commits. A write that landed a second after
+the last poll waits out the whole interval.
+
+`--sync-nudge` closes that gap. After every write the server has [verified](writes.md#every-write-is-verified),
+it rewrites a sentinel file, changing both its modification time and its contents. The agent watches
+that one path — launchd `WatchPaths`, `inotifywait`, `fswatch`, whatever it already uses — and acts
+immediately.
+
+```bash
+cdno-mcp-server --vault /srv/vault --sync-nudge
+# → touches /srv/vault/.git/cdno-sync.nudge after each verified write
+```
+
+The contract is deliberately narrow:
+
+- **Off by default.** A deployment with no agent has nobody to signal.
+- **One-way.** The server writes the sentinel and never reads it, so an agent that is absent,
+  stopped, or slow costs nothing but latency.
+- **Only after a verified write.** A write that failed, or that could not be read back, leaves the
+  sentinel alone — an agent woken by writes that did not happen learns to ignore the signal.
+- **Never fatal.** A sentinel that cannot be written is logged and skipped; the write still succeeds.
+- **Never content.** The file holds a unix timestamp and nothing else. It names no note.
+
+It lives under `.git/` on purpose: git will not track it, and no tool that mirrors the working tree
+will carry it, so the signal cannot leak into the vault or across machines. `--sync-nudge-path`
+moves it if your agent needs it elsewhere; parent directories are never created.
+
+Only `cdno-mcp-server` has this. The stdio binary is a local session with no agent on the other side
+of it, and offers no such flag.
 
 ## Index freshness
 

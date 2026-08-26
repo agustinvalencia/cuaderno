@@ -57,6 +57,10 @@ pub struct CuadernoServer {
     // (`context`/`operations`/`creation`/`lifecycle`) reach the vault
     // exclusively through [`CuadernoServer::with_vault`] (GH #303).
     vault: Arc<Vault>,
+    // Optional post-write sync-nudge sentinel (GH #540). `None` unless
+    // a caller opted in via `with_sync_nudge` — which only
+    // `cdno-mcp-server` does; the stdio binary has no agent to signal.
+    sync_nudge: Option<crate::nudge::SharedNudge>,
     // Merged dispatch table (the four per-group `#[tool_router]`s).
     // `#[tool_handler(router = self.tool_router)]` reads it at runtime;
     // dead-code analysis can't trace the proc-macro-generated reads.
@@ -74,7 +78,26 @@ impl CuadernoServer {
         tool_router.merge(Self::operations_router());
         tool_router.merge(Self::creation_router());
         tool_router.merge(Self::lifecycle_router());
-        Self { vault, tool_router }
+        Self {
+            vault,
+            sync_nudge: None,
+            tool_router,
+        }
+    }
+
+    /// Attach a sync-nudge sentinel (GH #540): after every **verified**
+    /// write this server touches it, so an external sync agent commits
+    /// without waiting for its own timer. Opt-in — a server built
+    /// without this call never writes a sentinel.
+    pub fn with_sync_nudge(mut self, nudge: crate::nudge::SharedNudge) -> Self {
+        self.sync_nudge = Some(nudge);
+        self
+    }
+
+    /// The configured sentinel, if any. Read only by
+    /// [`CuadernoServer::nudge_sync_agent`].
+    pub(crate) fn sync_nudge(&self) -> Option<&crate::nudge::SharedNudge> {
+        self.sync_nudge.as_ref()
     }
 
     /// Read-only variant: only the context-gathering read tools
@@ -87,6 +110,9 @@ impl CuadernoServer {
     pub fn read_only(vault: Arc<Vault>) -> Self {
         Self {
             vault,
+            // No mutating tool exists on this server, so nothing could
+            // ever reach the nudge; leaving it `None` says so.
+            sync_nudge: None,
             tool_router: Self::context_router(),
         }
     }
@@ -191,7 +217,15 @@ impl ServerHandler for CuadernoServer {
                 get_*_context, queries) and writes (append_to_log, \
                 update_project_state, the create/complete pairs). Call \
                 list_note_types before creating notes — it reports the vault's types \
-                and schemas, including user-defined ones.",
+                and schemas, including user-defined ones.\n\n\
+                Every write tool re-reads its target before answering and returns a \
+                `verification` object — `bytes_written`, a `content_hash`, and, for \
+                append-shaped writes, an `appended_tail` showing the tail of the \
+                section the text went into. A write that \
+                cannot be read back comes back as an ERROR, so a successful write \
+                result is evidence the change is on disk and does not need a \
+                follow-up read to confirm. If a write does error as unverified, \
+                re-read the note before retrying: it may have landed anyway.",
             )
             // ServerInfo::default already enables an empty capability
             // set; flip the `tools` flag on so clients know we serve

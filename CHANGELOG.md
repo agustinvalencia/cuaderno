@@ -6,6 +6,58 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno-mcp-server --git-checkpoint-mode nudge-only` — let an external agent own the commits.**
+  The git checkpoint sweep is the recovery trail for remote writes: every mutation ends up in a
+  commit you can diff and revert. But in a deployment where a sync agent already owns the
+  repository's history, a checkpoint commit every minute fights it — two git actors in one working
+  tree, and the agent's coalesced commits buried under machine noise.
+
+  `nudge-only` keeps the sweep and drops the commits: it still runs on the interval and still takes
+  the vault write lock, but on a dirty tree it touches the sync-nudge sentinel and leaves the change
+  unstaged for the agent. It shares `--sync-nudge-path` with the per-write nudge, so the two signals
+  cannot disagree about where the sentinel is.
+
+  The property that must survive is that *something* commits, so the server now says at startup
+  which actor is expected to: `commit` mode logs that this server does it, and both `nudge-only` and
+  `--git-checkpoint-interval-secs 0` **warn** that it does not.
+  (#541)
+
+- **`cdno-mcp-server --sync-nudge` — wake a sync agent the moment a write lands.** A deployment that
+  pairs the server with an external sync agent (a commit-and-push loop on an always-on host, with a
+  second clone on a laptop) left that agent polling: a write landing just after a poll waited out
+  the whole interval. With `--sync-nudge`, every *verified* write rewrites a sentinel file the agent
+  can watch — launchd `WatchPaths`, `inotify`, `fswatch` — so it reacts at once.
+
+  Off by default, one-way (the server never reads the sentinel), and never fatal: a sentinel that
+  cannot be written is logged and skipped rather than failing a write that already succeeded. A
+  failed or unverified write leaves it untouched, so the signal always means "something landed". The
+  default path is `<vault>/.git/cdno-sync.nudge` — under `.git/`, where nothing can track or mirror
+  it — and `--sync-nudge-path` moves it. The file holds a timestamp and never vault content.
+  (#540)
+
+- **Every MCP write now proves it landed.** A write tool used to report success from the fact that
+  the domain call returned, so a write that silently never reached disk was indistinguishable from
+  one that did — over a remote connection, that is how a lost note goes unnoticed until much later.
+  Each mutating tool now re-reads its target before answering and returns a `verification` object:
+  `bytes_written`, a `content_hash` (the same xxh3-64 fingerprint the index uses, so a client can
+  recompute it), and, for `append_to_log`, an `appended_tail` carrying the tail of the `## Logs`
+  section the line went into — scoped to that section rather than the end of the file, since a custom
+  daily template can leave `## Logs` mid-note. `discard_inbox_item` is verified the other way round —
+  the check is that the file is gone.
+
+  A target that cannot be read back is now an **error**, not a success. The message says the write
+  is *unverified* rather than failed, because it may have landed anyway: the right response is to
+  re-read the note, not to repeat the write. (#539)
+
+  The hash also makes the deliberate no-ops visible: `update_project_state` with an unchanged state
+  writes nothing and still reports success, and an identical `content_hash` across two calls is how
+  a caller can now tell.
+
+  Clients caching the tool catalogue need a reconnect to see the new result shape (the HTTP
+  transport is stateless, so there is no `tools/list_changed` to push).
+
 ## [0.36.0] - 2026-08-22
 
 ### Added

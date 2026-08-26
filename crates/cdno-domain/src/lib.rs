@@ -24,11 +24,11 @@ pub use vault::slug::slugify;
 pub use vault::{
     ActionListEntry, AttachedAction, BacklinkRef, CommitmentEntry, CommitmentSource,
     CompletedActionEntry, ConfigDocument, ConfigSaveError, ConfigValidationError, CurrentFocus,
-    DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, Miss, MonthlyNoteView,
-    MonthlySection, NormaliseReport, NoteRef, OrientationContext, PeriodRef, PlaceholderSource,
-    PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary, QuestionBacklinks,
-    QuestionSummary, RefResolution, RelativeDay, SearchFilters, SearchResultEntry,
-    StewardshipSummary, StewardshipVariant, TemplateContent, TemplatePlaceholder,
-    TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry, TrackingEntryDraft, Vault,
-    WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
+    DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView, DailySection, InboxItem, LapsedHabit, Miss,
+    MonthlyNoteView, MonthlySection, NormaliseReport, NoteRef, OrientationContext, PeriodRef,
+    PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectStateChange, ProjectSummary,
+    QuestionBacklinks, QuestionSummary, RefResolution, RelativeDay, SearchFilters,
+    SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplateContent,
+    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TopAction, TrackingEntry,
+    TrackingEntryDraft, Vault, WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
 };

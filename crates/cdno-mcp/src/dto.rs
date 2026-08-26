@@ -1082,26 +1082,74 @@ impl From<cdno_domain::InboxItem> for InboxItemDto {
     }
 }
 
+/// Evidence that the write actually landed on disk (GH #539).
+///
+/// A tool result that only says "success" is indistinguishable from a
+/// write that silently did not land — the failure mode this type
+/// exists to close. Every field is read back from the store *after*
+/// the domain call returned, so it describes what is on disk rather
+/// than what the server intended to put there.
+///
+/// The hash is **not** tamper evidence: it is
+/// [`cdno_core::hash::content_hash`], the same non-cryptographic
+/// xxh3-64 fingerprint the index already uses for change detection,
+/// reused here so a caller can compare a note against the index or
+/// against its own earlier read without a second hashing scheme in the
+/// tree. It detects a write that did not land or landed differently; it
+/// does not defend against an adversary who also chooses the content.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct WriteVerificationDto {
+    /// What the server checked after the write: `"content"` — the file
+    /// was re-read and is described by the fields below — or
+    /// `"removed"`, for the one op that deletes its target
+    /// (`discard_inbox_item`), where the check is that it is gone.
+    pub verified: String,
+    /// Size of the file on disk after the write, in bytes. `0` for a
+    /// removal.
+    pub bytes_written: u64,
+    /// xxh3-64 fingerprint of the whole file, lowercase hex, 16 chars.
+    /// `null` for a removal.
+    pub content_hash: Option<String>,
+    /// For an append-shaped write (`append_to_log`), the tail of the
+    /// **section that was appended to**, as read back — so the caller
+    /// can see the line that landed rather than trusting the summary.
+    /// Scoped to the section, not the end of the file, because a custom
+    /// daily template can leave `## Logs` mid-note. `null` for every
+    /// other shape, and `null` if the section could not be located,
+    /// since a window over the wrong bytes would be worse than none.
+    pub appended_tail: Option<String>,
+}
+
 /// Uniform output shape for every operation tool — carries the
 /// vault-relative path of the file the op touched (the new evidence
-/// note, the updated project map, the appended-to daily, …) plus a
-/// short human-readable summary line that mirrors the CLI's success
-/// message. JSON-object shape (not a bare string) keeps the schema
-/// extensible: future fields like `affected_ids` or `warnings` slot
-/// in without breaking clients.
+/// note, the updated project map, the appended-to daily, …), a short
+/// human-readable summary line that mirrors the CLI's success message,
+/// and read-back [verification](WriteVerificationDto) of what is
+/// actually on disk. JSON-object shape (not a bare string) keeps the
+/// schema extensible: future fields like `affected_ids` or `warnings`
+/// slot in without breaking clients.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct WriteResultDto {
     /// Vault-relative path of the file the op touched.
     pub path: String,
     /// Short summary line — what the CLI would print on success.
     pub message: String,
+    /// Proof the write landed. A result carrying this field has been
+    /// read back; a write that could not be verified comes back as a
+    /// tool error instead, never as a success.
+    pub verification: WriteVerificationDto,
 }
 
 impl WriteResultDto {
-    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn new(
+        path: impl Into<String>,
+        message: impl Into<String>,
+        verification: WriteVerificationDto,
+    ) -> Self {
         Self {
             path: path.into(),
             message: message.into(),
+            verification,
         }
     }
 }

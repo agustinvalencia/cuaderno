@@ -11,13 +11,12 @@ use rmcp::{tool, tool_router};
 use cdno_domain::frontmatter::{Context, EnergyLevel};
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
-use crate::dto::WriteResultDto;
-
 use crate::input::*;
 
-use crate::util::{into_mcp_error, invalid_argument, json_result};
+use crate::util::{into_mcp_error, invalid_argument};
 
 use crate::server::CuadernoServer;
+use crate::verify::WriteShape;
 
 #[tool_router(router = operations_router, vis = "pub")]
 impl CuadernoServer {
@@ -33,10 +32,16 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.log_to_daily_note(at, &input.text))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Logged to {}", path),
-        ))
+        let message = format!("Logged to {}", path);
+        // The section comes from the domain, never a literal here: the
+        // MCP layer must not carry its own opinion about where a log
+        // line lands (see `WriteShape::AppendedToSection`).
+        self.verified_write(
+            path,
+            message,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+        )
+        .await
     }
 
     #[tool(
@@ -51,10 +56,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.capture_to_inbox(at, &input.text))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Captured to {}", path),
-        ))
+        let message = format!("Captured to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -69,10 +73,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.discard_inbox_item(at, &input.slug))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Discarded {}", path),
-        ))
+        let message = format!("Discarded {}", path);
+        self.verified_write(path, message, WriteShape::Removed)
+            .await
     }
 
     #[tool(
@@ -95,10 +98,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Added milestone to {}", path),
-        ))
+        let message = format!("Added milestone to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -113,10 +115,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.complete_milestone(at, &input.project, &input.query))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Completed milestone on {}", path),
-        ))
+        let message = format!("Completed milestone on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -131,10 +132,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.add_waiting_on(at, &input.project, &input.description))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Added waiting-on to {}", path),
-        ))
+        let message = format!("Added waiting-on to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -149,10 +149,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.resolve_waiting_on(at, &input.project, &input.query))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Resolved waiting-on on {}", path),
-        ))
+        let message = format!("Resolved waiting-on on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -193,10 +192,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Filed evidence at {}", path),
-        ))
+        let message = format!("Filed evidence at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -225,7 +223,8 @@ impl CuadernoServer {
             message.push('\n');
             message.push_str(warning);
         }
-        json_result(WriteResultDto::new(path.to_string(), message))
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -245,10 +244,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?
             .primary;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Set frontmatter on {}", path),
-        ))
+        let message = format!("Set frontmatter on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -286,10 +284,9 @@ impl CuadernoServer {
         } else {
             "Added action bullet to"
         };
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("{label} {}", path),
-        ))
+        let message = format!("{label} {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -307,10 +304,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Promoted action note at {}", path),
-        ))
+        let message = format!("Promoted action note at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -329,10 +325,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?
             .primary;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Completed action on {}", path),
-        ))
+        let message = format!("Completed action on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -360,10 +355,9 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Created commitment at {}", path),
-        ))
+        let message = format!("Created commitment at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -378,10 +372,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.complete_commitment(at, &input.commitment))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Completed commitment, archived to {}", path),
-        ))
+        let message = format!("Completed commitment, archived to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -424,10 +417,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let path = outcome.primary;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Tracked at {}", path),
-        ))
+        let message = format!("Tracked at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -450,10 +442,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let verb = if append { "Appended to" } else { "Updated" };
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("{verb} {} on {}", section.heading(), path),
-        ))
+        let message = format!("{verb} {} on {}", section.heading(), path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -476,10 +467,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let verb = if append { "Appended to" } else { "Updated" };
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("{verb} {} on {}", section.heading(), path),
-        ))
+        let message = format!("{verb} {} on {}", section.heading(), path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -502,9 +492,8 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let verb = if append { "Appended to" } else { "Updated" };
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("{verb} {} on {}", section.heading(), path),
-        ))
+        let message = format!("{verb} {} on {}", section.heading(), path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 }

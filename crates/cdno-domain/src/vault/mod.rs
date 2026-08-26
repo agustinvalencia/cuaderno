@@ -62,7 +62,18 @@ mod write_outcome;
 /// The level-2 heading of a daily note's running history. Shared across
 /// the modules that read it (`context`), write it (`log`), and keep it
 /// pinned to the bottom (`daily`) so the heading text lives in one place.
-pub(in crate::vault) const DAILY_LOGS_SECTION: &str = "Logs";
+///
+/// **Public**, unlike the rest of this module's shared vocabulary,
+/// because an interface layer that wants to show a caller the log line
+/// it just wrote has to name the section `log_to_daily_note` appends
+/// to — and must not restate it. `cdno-mcp`'s write verification does
+/// exactly that. Restating `"Logs"` there once produced a real defect:
+/// the MCP layer assumed the section was always last in the file, which
+/// is true only of the built-in template (see
+/// [`Vault::daily_anchor_section`], which pins whichever section the
+/// effective template ends with). Depending on this constant is the
+/// compile-time tie that keeps the two from drifting apart again.
+pub const DAILY_LOGS_SECTION: &str = "Logs";
 
 /// The ISO-week label `YYYY-Www` for the week containing `date` — e.g.
 /// `2026-W01`. The year is the ISO week-numbering year (which can differ

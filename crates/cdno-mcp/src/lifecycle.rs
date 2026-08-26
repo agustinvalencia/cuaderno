@@ -16,10 +16,10 @@ use rmcp::{tool, tool_router};
 use cdno_domain::frontmatter::QuestionStatus;
 use cdno_domain::recurrence::Recurrence;
 
-use crate::dto::WriteResultDto;
 use crate::input::{AddPeriodicCommitmentInput, ProjectSlugInput, SetQuestionStatusInput};
 use crate::server::CuadernoServer;
-use crate::util::{into_mcp_error, invalid_argument, json_result};
+use crate::util::{into_mcp_error, invalid_argument};
+use crate::verify::WriteShape;
 
 #[tool_router(router = lifecycle_router, vis = "pub")]
 impl CuadernoServer {
@@ -35,10 +35,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.park_project(at, &input.project))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Parked project at {}", path),
-        ))
+        let message = format!("Parked project at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -53,10 +52,9 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.activate_project(at, &input.project))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Activated project at {}", path),
-        ))
+        let message = format!("Activated project at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -82,7 +80,8 @@ impl CuadernoServer {
         } else {
             format!("{path} is already {}", status.as_str())
         };
-        json_result(WriteResultDto::new(path.to_string(), message))
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 
     #[tool(
@@ -107,9 +106,8 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(WriteResultDto::new(
-            path.to_string(),
-            format!("Added periodic commitment to {}", path),
-        ))
+        let message = format!("Added periodic commitment to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
     }
 }
