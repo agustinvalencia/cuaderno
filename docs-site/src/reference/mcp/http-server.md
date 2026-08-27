@@ -83,6 +83,50 @@ to having no recovery trail.
 
 Only `cdno-mcp-server` sweeps. The stdio binary has no checkpoint loop and none of these flags.
 
+### When the sweep stops
+
+The sweep's job is to be the thing you can fall back on, so it must never fail quietly. Two ways it
+can stop, both loud:
+
+- **A tick that runs and finds trouble** — a non-zero `git`, the vault write lock busy, someone
+  else's paused merge or rebase — logs and retries on the next tick. Only a `git` that cannot be
+  executed at all, five times running, disables the loop, with an error saying so.
+- **A tick that never runs at all.** The sweep does its work on a pool of worker threads, and if the
+  process cannot get one, the tick is queued and the loop waits. Nothing is committed and, until
+  this was fixed, nothing was logged either — the endpoint stayed up and tool calls kept answering,
+  so nothing outside could tell. A tick that overruns three sweep intervals (never less than 30
+  seconds) now logs:
+
+  ```
+  ERROR git checkpoint sweep STALLED: a tick has not completed, no further tick can start, and so
+  NOTHING in this process is committing — writes are no longer being recorded. ...
+  ```
+
+  It repeats while the tick stays stuck, and logs a recovery line if it completes. Alert on it: the
+  two realistic causes are a process out of threads (see
+  [Thread budget](#thread-budget-and-pids_limit)) and a wedged `git` invocation, and the process
+  cannot tell them apart from inside — but either way the vault has stopped being recorded.
+
+## Thread budget and `pids_limit`
+
+A container sized with `pids_limit` counts every OS thread this process holds, not just processes.
+The server bounds itself so that number is knowable, and logs it at startup:
+
+```
+INFO runtime thread budget workers=8 max_blocking_threads=16 max_os_threads=25
+```
+
+`max_os_threads` is the ceiling: one main thread, one async worker per CPU the process can see, and
+a fixed pool of 16 for the blocking work (vault reads and writes, the reconciliation pass, the
+checkpoint sweep). Size `pids_limit` above that number with room for whatever else shares the
+container — a healthcheck that shells out needs to fork too, and a container that cannot fork
+reports `unhealthy` and refuses `docker exec` while the server itself carries on serving.
+
+Note that `workers` follows the CPUs the process can *see*, which on Linux is CPU affinity, not a
+cgroup CPU quota: a small container on a large host still gets a worker per host core. Read the
+number off the log line rather than assuming it.
+
+
 ## Pairing with a sync agent
 
 A common shape is two clones of the vault repository — an always-on host running this server, and a

@@ -85,6 +85,18 @@
 //! binary that cannot be executed at all, repeated `MAX_CONSECUTIVE`
 //! times, stops the loop.
 //!
+//! # Stall watchdog (GH #548)
+//!
+//! Every outcome above describes a tick that **ran**. A tick that never
+//! runs — `spawn_blocking` unable to obtain a thread on a process at
+//! the host's thread/PID limit is the observed way in — produces no
+//! outcome at all: the loop waits on the join handle, the interval
+//! never fires again, and the recovery trail stops in total silence.
+//! Nothing else in this server exposes that: the HTTP endpoint stays
+//! up and tool calls keep answering, so no external probe can tell.
+//! [`await_tick`] therefore reports at `error` when a tick overruns
+//! [`stall_timeout`], and keeps saying so until it completes.
+//!
 //! # Modes (GH #541)
 //!
 //! Three, and the third is the only one that is not just an interval:
@@ -107,7 +119,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use cdno_core::store::{FsVaultStore, VaultStore};
@@ -116,6 +128,24 @@ use crate::nudge::SharedNudge;
 
 /// Consecutive hard failures (git not executable) before giving up.
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
+
+/// How many sweep intervals a single tick may overrun before the loop
+/// declares it stalled. Three, so a stall report always means at least
+/// two ticks' worth of checkpoints have already been missed and it is
+/// never one slow `git status` on a cold cache.
+const STALL_MULTIPLIER: u32 = 3;
+
+/// Floor under [`stall_timeout`]. A very short configured interval
+/// (`--git-checkpoint-interval-secs 1`, common in tests and in
+/// impatient deployments) must not turn an ordinary `git add`+`commit`
+/// on a large tree into a stall report.
+const MIN_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long one tick may run before [`await_tick`] reports it stalled,
+/// and how often it repeats that report while the tick stays stuck.
+fn stall_timeout(every: Duration) -> Duration {
+    std::cmp::max(every.saturating_mul(STALL_MULTIPLIER), MIN_STALL_TIMEOUT)
+}
 
 /// What the sweep does when it finds the tree dirty (GH #541).
 ///
@@ -208,6 +238,7 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
         ),
     }
 
+    let stall = stall_timeout(every);
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(every);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -223,10 +254,10 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
             let repo = root.clone();
             let mode = mode.clone();
             let paused_op_warned = paused_op_warned.clone();
-            let pass = tokio::task::spawn_blocking(move || {
+            let tick = tokio::task::spawn_blocking(move || {
                 checkpoint_once(&repo, &mode, &paused_op_warned)
-            })
-            .await;
+            });
+            let pass = await_tick(tick, stall).await;
             match pass {
                 Ok(Pass::Ok(Some(summary))) => {
                     consecutive_failures = 0;
@@ -259,6 +290,74 @@ pub fn spawn(root: PathBuf, every: Duration, mode: CheckpointMode) {
             }
         }
     });
+}
+
+/// Await one sweep tick, shouting if it does not finish (GH #548).
+///
+/// The loop's outcomes — commit, clean, transient, fatal — all describe
+/// a tick that **ran**. A tick that never runs produces none of them:
+/// [`spawn`]'s loop simply waits on the join handle forever, the
+/// interval never ticks again, and the recovery trail stops without a
+/// single line of log. The realistic way to get there is
+/// `spawn_blocking` unable to obtain a thread, on a process at the
+/// host's thread/PID limit.
+///
+/// That silence is the whole problem: the sweep is the one part of this
+/// server whose failure is otherwise invisible from outside, because the
+/// HTTP endpoint stays up and every tool call still answers, so no
+/// external probe can tell the difference.
+///
+/// Two deliberate non-behaviours:
+///
+/// - **The tick is never cancelled or superseded.** Starting a second
+///   sweep while the first is stuck would put two actors on the vault
+///   write lock and, in the thread-exhaustion case, consume another
+///   blocking thread that is already unobtainable. One tick in flight,
+///   loudly reported, is the honest state.
+/// - **No cause is claimed.** The message names thread exhaustion as
+///   the *suspicion* and a wedged `git` as the alternative, and says
+///   this process cannot distinguish them. What it does assert is the
+///   consequence, which it does know: nothing here is committing.
+///
+/// Repeats every `stall` while the tick stays stuck, so any log window
+/// shows the problem rather than only the window containing the first
+/// report; a stall that resolves logs the recovery.
+async fn await_tick(
+    mut tick: tokio::task::JoinHandle<Pass>,
+    stall: Duration,
+) -> Result<Pass, tokio::task::JoinError> {
+    let started = Instant::now();
+    let mut reported = false;
+    loop {
+        // `&mut` so a timeout leaves the handle intact: the tick keeps
+        // running and is awaited again on the next pass.
+        match tokio::time::timeout(stall, &mut tick).await {
+            Ok(result) => {
+                if reported {
+                    tracing::warn!(
+                        stalled_secs = started.elapsed().as_secs(),
+                        "git checkpoint sweep recovered: the stalled tick completed and \
+                         checkpoints are running again"
+                    );
+                }
+                return result;
+            }
+            Err(_elapsed) => {
+                reported = true;
+                tracing::error!(
+                    stalled_secs = started.elapsed().as_secs(),
+                    threshold_secs = stall.as_secs(),
+                    "git checkpoint sweep STALLED: a tick has not completed, no further tick can \
+                     start, and so NOTHING in this process is committing — writes are no longer \
+                     being recorded. The sweep runs on tokio's blocking pool, so the likeliest \
+                     cause is that no blocking thread is available (thread/PID exhaustion); a \
+                     wedged `git` invocation looks identical from here and this process cannot \
+                     tell the two apart. Check this process's OS thread count against the host's \
+                     limit."
+                );
+            }
+        }
+    }
 }
 
 /// One sweep under the vault write lock. `pub(crate)`-visible via the
@@ -1276,5 +1375,191 @@ mod tests {
                 CheckpointError::Exec(e) => write!(f, "Exec({e})"),
             }
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Stall watchdog (GH #548)
+    // -----------------------------------------------------------------
+
+    /// Collects the events a `tracing` subscriber sees, so a test can
+    /// assert on the log line itself rather than on a proxy counter —
+    /// "produces an error-level line rather than silence" *is* the
+    /// behaviour under test.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<std::sync::Mutex<Vec<(tracing::Level, String)>>>);
+
+    impl Captured {
+        fn errors(&self) -> Vec<String> {
+            self.matching(tracing::Level::ERROR)
+        }
+
+        fn matching(&self, level: tracing::Level) -> Vec<String> {
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(l, _)| *l == level)
+                .map(|(_, m)| m.clone())
+                .collect()
+        }
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Captured {
+        fn on_event(
+            &self,
+            event: &tracing::Event<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            struct Message(String);
+            impl tracing::field::Visit for Message {
+                fn record_debug(
+                    &mut self,
+                    field: &tracing::field::Field,
+                    value: &dyn std::fmt::Debug,
+                ) {
+                    if field.name() == "message" {
+                        self.0 = format!("{value:?}");
+                    }
+                }
+            }
+            let mut message = Message(String::new());
+            event.record(&mut message);
+            self.0
+                .lock()
+                .unwrap()
+                .push((*event.metadata().level(), message.0));
+        }
+    }
+
+    /// Run `f` with every `tracing` event it emits on this thread
+    /// captured.
+    fn with_captured_logs<T>(f: impl FnOnce() -> T) -> (T, Captured) {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let captured = Captured::default();
+        let subscriber = tracing_subscriber::registry().with(captured.clone());
+        let out = tracing::subscriber::with_default(subscriber, f);
+        (out, captured)
+    }
+
+    /// A runtime whose blocking pool holds exactly `blocking_threads`
+    /// threads.
+    ///
+    /// Current-thread on purpose: `block_on` drives the future on the
+    /// calling thread, which is where [`with_captured_logs`]'s
+    /// thread-local dispatcher applies. On a multi-thread runtime
+    /// [`await_tick`] would run on a worker and its events would escape
+    /// capture, leaving a test that passes for the wrong reason.
+    fn runtime(blocking_threads: usize) -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(blocking_threads)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn stall_timeout_is_a_multiple_of_the_interval_above_the_floor() {
+        assert_eq!(
+            stall_timeout(Duration::from_secs(60)),
+            Duration::from_secs(180)
+        );
+    }
+
+    #[test]
+    fn stall_timeout_never_drops_below_the_floor() {
+        // A one-second sweep interval must not make a perfectly ordinary
+        // `git add`+`commit` look like a stall.
+        assert_eq!(stall_timeout(Duration::from_secs(1)), MIN_STALL_TIMEOUT);
+        assert_eq!(stall_timeout(Duration::from_millis(1)), MIN_STALL_TIMEOUT);
+    }
+
+    /// The other half of the discrimination: a sweep that does real
+    /// work for a while is not a stall. The tick deliberately takes
+    /// long enough that a watchdog which ignored its threshold — or
+    /// used one anywhere near a single sweep's duration — would fire.
+    #[test]
+    fn a_tick_that_takes_real_work_time_logs_nothing() {
+        let rt = runtime(4);
+        let (pass, captured) = with_captured_logs(|| {
+            rt.block_on(async {
+                let tick = tokio::task::spawn_blocking(|| {
+                    std::thread::sleep(Duration::from_millis(250));
+                    Pass::Ok(None)
+                });
+                await_tick(tick, Duration::from_secs(30)).await
+            })
+        });
+
+        assert!(matches!(pass, Ok(Pass::Ok(None))));
+        assert!(
+            captured.0.lock().unwrap().is_empty(),
+            "the watchdog must be silent in normal operation, got {:?}",
+            captured.0.lock().unwrap()
+        );
+    }
+
+    /// The #548 failure itself: the sweep's `spawn_blocking` can get no
+    /// thread, so the tick never runs. Reproduced by bounding the
+    /// blocking pool to one thread and occupying it — which is what a
+    /// process at the host's thread limit looks like from inside tokio.
+    #[test]
+    fn a_tick_that_cannot_get_a_blocking_thread_is_reported_at_error() {
+        let rt = runtime(1);
+        let (pass, captured) = with_captured_logs(|| {
+            rt.block_on(async {
+                // Occupy the only blocking thread, and wait until it has
+                // actually been taken so the tick below is queued rather
+                // than racing for it.
+                let (release, blocked) = std::sync::mpsc::channel::<()>();
+                let (occupied, taken) = std::sync::mpsc::channel::<()>();
+                let blocker = tokio::task::spawn_blocking(move || {
+                    occupied.send(()).unwrap();
+                    let _ = blocked.recv();
+                });
+                taken.recv().unwrap();
+
+                // This one has nowhere to run.
+                let tick = tokio::task::spawn_blocking(|| Pass::Ok(None));
+
+                // Free the pool well after the stall threshold, so the
+                // watchdog has to speak first and the test still ends.
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    let _ = release.send(());
+                });
+
+                let pass = await_tick(tick, Duration::from_millis(80)).await;
+                blocker.await.unwrap();
+                pass
+            })
+        });
+
+        // The tick did eventually run, once a thread came free.
+        assert!(matches!(pass, Ok(Pass::Ok(None))));
+
+        let errors = captured.errors();
+        assert!(
+            !errors.is_empty(),
+            "a starved tick must produce an error-level line, got {:?}",
+            captured.0.lock().unwrap()
+        );
+        let first = &errors[0];
+        assert!(
+            first.contains("STALLED"),
+            "the line must name the condition: {first}"
+        );
+        assert!(
+            first.contains("no longer being recorded"),
+            "the line must state the consequence, not just the symptom: {first}"
+        );
+
+        // And the recovery is reported too, so a log window that starts
+        // after the stall does not read as an unresolved outage.
+        let recovered = captured.matching(tracing::Level::WARN);
+        assert!(
+            recovered.iter().any(|m| m.contains("recovered")),
+            "a stall that ends must say so, got {recovered:?}"
+        );
     }
 }

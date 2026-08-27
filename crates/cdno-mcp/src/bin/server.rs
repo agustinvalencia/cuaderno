@@ -46,6 +46,17 @@
 //! does not apply), and an in-flight concurrency bound (tool handlers
 //! run blocking domain calls on runtime workers until GH #303).
 //!
+//! # Thread budget
+//!
+//! The runtime is built by hand rather than by `#[tokio::main]` for one
+//! reason: to bound the blocking pool (GH #548). A container sized with
+//! `pids_limit` counts every OS thread this process holds, and tokio's
+//! default ceiling of 512 blocking threads is far above any such budget
+//! — so overload would arrive as a cgroup that cannot fork (taking the
+//! healthcheck with it) rather than as a queue. See
+//! [`MAX_BLOCKING_THREADS`]; the resolved budget is logged at startup so
+//! it can be read off rather than inferred.
+//!
 //! # Index freshness
 //!
 //! Unlike a stdio session, this process is long-running while other
@@ -88,6 +99,42 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 /// extra requests only queue harder and buffer more bodies. Eight is
 /// generous for a single-operator server.
 const MAX_IN_FLIGHT: usize = 8;
+
+/// Ceiling on tokio's blocking-thread pool (GH #548).
+///
+/// Every OS thread this process can hold is `1 + worker_threads +
+/// max_blocking_threads`, and tokio's default for the last term is
+/// **512**. In a container with `pids_limit` in the tens that default
+/// is not a limit at all: whatever makes blocking work pile up — a
+/// burst, a slow disk, a wedged call — is free to convert into threads
+/// until the *cgroup* runs out, at which point the container cannot
+/// fork for anything, healthcheck included. Bounding it here makes
+/// overload express itself as a queue on a fixed pool instead, which
+/// is a state the process can survive and report.
+///
+/// The arithmetic behind the number: [`MAX_IN_FLIGHT`] (8) tool calls
+/// can be on the blocking pool at once — the concurrency layer admits
+/// no more — plus one reconciliation pass, one checkpoint sweep, and a
+/// couple for the JWKS client's DNS lookups, which hyper resolves via
+/// `spawn_blocking`. Twelve is the working set; sixteen leaves headroom
+/// so ordinary operation never queues.
+///
+/// This bounds the pool; it does not by itself keep the sweep alive. A
+/// pool that is bounded and *full* starves the sweep exactly as an
+/// exhausted one does — which is why the stall watchdog in
+/// [`cdno_mcp::checkpoint`] is the other half of #548 and not an
+/// alternative to this.
+const MAX_BLOCKING_THREADS: usize = 16;
+
+/// The bound has to sit above the work that can reach it, or ordinary
+/// load queues on the blocking pool — and a queued sweep is exactly the
+/// #548 silence the watchdog then has to shout about. Checked at compile
+/// time rather than in a test: both terms are constants, so there is no
+/// state in which this could be true at build time and false later.
+const _: () = assert!(
+    MAX_BLOCKING_THREADS >= MAX_IN_FLIGHT + 4,
+    "the blocking pool must absorb every in-flight tool call plus the background loops"
+);
 
 /// Streamable HTTP MCP server for a Cuaderno vault.
 ///
@@ -204,10 +251,39 @@ enum CheckpointModeArg {
     NudgeOnly,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Build the runtime by hand rather than via `#[tokio::main]`, purely
+/// to pin [`MAX_BLOCKING_THREADS`]; everything else is the macro's
+/// default multi-thread runtime.
+fn build_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .max_blocking_threads(MAX_BLOCKING_THREADS)
+        .build()
+        .context("building the tokio runtime")
+}
+
+fn main() -> Result<()> {
+    build_runtime()?.block_on(serve())
+}
+
+async fn serve() -> Result<()> {
     init_tracing();
     let args = ServeArgs::parse();
+
+    // The thread budget, said out loud once at startup: an operator
+    // sizing a container's `pids_limit` otherwise has to know tokio's
+    // defaults to work out what this process can demand. `workers` is
+    // what tokio derives from available parallelism — note that on
+    // Linux that reads CPU *affinity*, not the cgroup CPU quota, so a
+    // small container on a large host still gets a worker per host
+    // core.
+    let workers = std::thread::available_parallelism().map_or(0, |n| n.get());
+    tracing::info!(
+        workers,
+        max_blocking_threads = MAX_BLOCKING_THREADS,
+        max_os_threads = 1 + workers + MAX_BLOCKING_THREADS,
+        "runtime thread budget"
+    );
 
     // Origin authentication (GH #302): both CDNO_ACCESS_* values set
     // → build the verifier (fail-closed: construction performs the
@@ -489,4 +565,47 @@ fn init_tracing() {
         .with_ansi(false)
         .compact()
         .try_init();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The bound is real, not just declared: however much blocking work
+    /// is thrown at this runtime, no more than [`MAX_BLOCKING_THREADS`]
+    /// of it runs at once. That is what turns overload into a queue
+    /// instead of into OS threads the container's `pids_limit` counts.
+    #[test]
+    fn the_runtime_never_runs_more_blocking_work_than_the_bound() {
+        let runtime = build_runtime().unwrap();
+        let running = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        runtime.block_on(async {
+            let tasks: Vec<_> = (0..MAX_BLOCKING_THREADS * 4)
+                .map(|_| {
+                    let (running, peak) = (running.clone(), peak.clone());
+                    tokio::task::spawn_blocking(move || {
+                        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        // Long enough that the tasks genuinely overlap;
+                        // short enough to keep the test sub-second.
+                        std::thread::sleep(Duration::from_millis(20));
+                        running.fetch_sub(1, Ordering::SeqCst);
+                    })
+                })
+                .collect();
+            for task in tasks {
+                task.await.unwrap();
+            }
+        });
+
+        let peak = peak.load(Ordering::SeqCst);
+        assert!(peak > 1, "the test did not actually overlap any work");
+        assert!(
+            peak <= MAX_BLOCKING_THREADS,
+            "blocking work ran {peak} deep, above the {MAX_BLOCKING_THREADS} bound"
+        );
+    }
 }

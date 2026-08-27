@@ -421,3 +421,150 @@ async fn periodic_reconciliation_picks_up_out_of_band_edits() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
+
+// ---------------------------------------------------------------------
+// Thread budget (GH #548)
+// ---------------------------------------------------------------------
+
+/// How many OS threads `pid` currently holds, or `None` where this
+/// process cannot find out.
+///
+/// Deliberately no fallback guess: a thread-count assertion built on a
+/// number this function invented would be worse than no assertion.
+#[cfg(target_os = "linux")]
+fn thread_count(pid: u32) -> Option<usize> {
+    std::fs::read_dir(format!("/proc/{pid}/task"))
+        .ok()
+        .map(Iterator::count)
+}
+
+#[cfg(target_os = "macos")]
+fn thread_count(pid: u32) -> Option<usize> {
+    // `ps -M` lists one line per thread under a single header line.
+    let out = Command::new("ps")
+        .arg("-M")
+        .arg(pid.to_string())
+        .output()
+        .ok()?;
+    out.status.success().then(|| {
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .count()
+            .saturating_sub(1)
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn thread_count(_pid: u32) -> Option<usize> {
+    None
+}
+
+/// Long enough that tokio has retired every idle blocking thread: the
+/// pool's keep-alive is 10s, and this is sampled *after* the last
+/// request, so a thread still alive here is one that is not coming back.
+const BLOCKING_POOL_SETTLE: Duration = Duration::from_secs(15);
+
+/// The #548 acceptance criterion: many sessions, then back to baseline.
+///
+/// The reported symptom was a container whose task count climbed with
+/// use until it could no longer fork — at which point the checkpoint
+/// sweep stopped recording silently, because it too needs a blocking
+/// thread.
+///
+/// The load-bearing assertion is **no ratchet**: after the blocking pool
+/// settles, the count is back where it started, where a leak of even one
+/// thread per session would show as ~200. The ceiling assertion
+/// alongside it is a coarse sanity bound only — ordinary sequential load
+/// never approaches it, and the transport's own in-flight limit keeps
+/// even concurrent load well under it, so it cannot discriminate the
+/// blocking-pool bound. That bound is tested where it can fail, in the
+/// binary's own `the_runtime_never_runs_more_blocking_work_than_the_bound`.
+///
+/// Both background loops are switched off so the settle window is
+/// genuinely idle and the test does not depend on their default
+/// intervals.
+#[tokio::test]
+async fn many_sessions_leave_the_thread_count_at_baseline() {
+    const SESSIONS: usize = 200;
+
+    let dir = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    let server = HttpServer::spawn(
+        Some(dir.path()),
+        &[
+            "--reconcile-interval-secs",
+            "0",
+            "--git-checkpoint-interval-secs",
+            "0",
+        ],
+    );
+    let pid = server.child.id();
+
+    let Some(baseline) = thread_count(pid) else {
+        eprintln!("skipping: no thread count available on this platform");
+        return;
+    };
+    assert!(baseline > 1, "implausible baseline thread count {baseline}");
+
+    let client = reqwest::Client::new();
+    let mut peak = baseline;
+    for session in 0..SESSIONS {
+        // One session, as the transport sees it: a handshake, a
+        // catalogue read, a read tool and a write tool. The transport is
+        // stateless, so these share nothing but the process.
+        let (status, _) = post_mcp(
+            &client,
+            server.port,
+            &json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": { "name": "thread-budget", "version": "0" }
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, 200, "initialize failed on session {session}");
+
+        let _ = list_tool_names(&client, server.port).await;
+
+        for call in [
+            json!({ "name": "get_orientation", "arguments": {} }),
+            json!({ "name": "append_to_log", "arguments": { "text": format!("session {session}") } }),
+        ] {
+            let (status, resp) = post_mcp(
+                &client,
+                server.port,
+                &json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": call }),
+            )
+            .await;
+            assert_eq!(
+                status, 200,
+                "tools/call failed on session {session}: {resp}"
+            );
+        }
+
+        if let Some(now) = thread_count(pid) {
+            peak = peak.max(now);
+        }
+    }
+
+    // `MAX_BLOCKING_THREADS` (16) + the main thread + one worker per
+    // available core, with a little slack for sampling races.
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let ceiling = 1 + workers + 16 + 4;
+    assert!(
+        peak <= ceiling,
+        "thread count peaked at {peak} under {SESSIONS} sessions, above the {ceiling} the \
+         bounded blocking pool should guarantee (baseline {baseline})"
+    );
+
+    tokio::time::sleep(BLOCKING_POOL_SETTLE).await;
+    let settled = thread_count(pid).expect("thread count was available a moment ago");
+    assert!(
+        settled <= baseline + 2,
+        "after {SESSIONS} sessions and a settle the process holds {settled} threads, up from a \
+         baseline of {baseline} — threads are not being returned (peak during load was {peak})"
+    );
+}
