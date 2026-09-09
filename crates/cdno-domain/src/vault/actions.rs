@@ -23,6 +23,31 @@ use crate::error::DomainError;
 use crate::frontmatter::{ActionStatus, EnergyLevel};
 use crate::note_type::NoteType;
 
+/// How an action note is being closed, and therefore what
+/// [`Vault::stage_action_archival`] stamps on it.
+///
+/// A named type rather than a bool because the two outcomes are not
+/// opposites of one degree — they are different claims about what
+/// happened, and #559 exists because the tooling could only make the
+/// first one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::vault) enum ActionClosure {
+    /// The work was performed. Stamps `status: completed` and dates it.
+    Completed,
+    /// The work was abandoned, superseded or reprioritised. Stamps
+    /// `status: dropped` and leaves `completed` alone.
+    Dropped,
+}
+
+impl ActionClosure {
+    fn status(self) -> ActionStatus {
+        match self {
+            ActionClosure::Completed => ActionStatus::Completed,
+            ActionClosure::Dropped => ActionStatus::Dropped,
+        }
+    }
+}
+
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::projects::{NEXT_ACTIONS_SECTION, rewrite_field_in_frontmatter};
@@ -177,11 +202,20 @@ impl Vault {
         Ok(note_path)
     }
 
-    /// Stage the archival of a completed action note onto an existing
-    /// transaction: stamp `status: completed` + `completed: <today>`,
-    /// move `actions/<slug>.md` to `actions/_done/<year>/<slug>.md`,
-    /// and swap the index rows. Called from `complete_action` when the
-    /// completed bullet wikilinks an action note.
+    /// Stage the archival of a closed action note onto an existing
+    /// transaction: stamp the closing `status`, move
+    /// `actions/<slug>.md` to `actions/_done/<year>/<slug>.md`, and
+    /// swap the index rows. Called from `complete_action` and
+    /// `drop_action` when the closed bullet wikilinks an action note.
+    ///
+    /// `outcome` decides what is stamped, and the difference is the
+    /// point of #559: a completion also writes `completed: <today>`,
+    /// while a drop writes only `status: dropped` and leaves
+    /// `completed` untouched. A dropped action was never performed, so
+    /// giving it a completion date would put work into the weekly and
+    /// monthly reviews that nobody did — `completed_actions_between`
+    /// filters on both `status` and a present `completed`, so a drop
+    /// falls out of it on either count.
     ///
     /// **Drift guard**: a wikilink bullet whose note no longer exists
     /// is not an error — the bullet still completes, there's simply
@@ -195,6 +229,7 @@ impl Vault {
         &self,
         at: NaiveDateTime,
         action_slug: &str,
+        outcome: ActionClosure,
         tx: &mut VaultTransaction,
     ) -> Result<(), DomainError> {
         let active = Self::active_action_path(action_slug)?;
@@ -212,13 +247,18 @@ impl Vault {
         }
 
         let raw = self.store.read_file(&active)?;
-        let after_status =
-            rewrite_field_in_frontmatter(&raw, "status", ActionStatus::Completed.as_str())?;
-        let new_content = rewrite_field_in_frontmatter(
-            &after_status,
-            "completed",
-            &completion.format("%Y-%m-%d").to_string(),
-        )?;
+        let after_status = rewrite_field_in_frontmatter(&raw, "status", outcome.status().as_str())?;
+        let new_content = match outcome {
+            // A completion dates itself. A drop does not: `completed`
+            // stays as it was (`null` for any action that was never
+            // finished), so nothing downstream reads the drop as work.
+            ActionClosure::Completed => rewrite_field_in_frontmatter(
+                &after_status,
+                "completed",
+                &completion.format("%Y-%m-%d").to_string(),
+            )?,
+            ActionClosure::Dropped => after_status,
+        };
         let done_entry = build_index_entry_for(&done, &new_content, NoteType::Action.as_str())?;
 
         // Snapshot the file at archival so the append-only lint (#111)

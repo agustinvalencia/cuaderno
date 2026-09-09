@@ -499,3 +499,77 @@ fn a_rendered_listing_actually_uses_the_status_role() {
     assert_ne!(styling_of("done one"), styling_of("active one"));
     assert_ne!(styling_of("blocked one"), styling_of("done one"));
 }
+
+/// #559: the whole point is that the daily log must not claim the work
+/// was done.
+#[test]
+fn drop_logs_a_drop_not_a_completion() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Add {
+            project: Some("x".to_owned()),
+            title: Some("Prepare the demo proposal".to_owned()),
+            energy: Some(EnergyLevel::Deep),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ActionCommands::Drop {
+            project: Some("x".to_owned()),
+            query: Some("demo proposal".to_owned()),
+            reason: Some("superseded by the demo-planning action".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("drop");
+
+    let project = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        !project.contains("Prepare the demo proposal"),
+        "bullet not removed:\n{project}"
+    );
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("action dropped on [[x]]"),
+        "drop entry missing:\n{daily}"
+    );
+    assert!(
+        daily.contains("reason: superseded by the demo-planning action"),
+        "reason missing:\n{daily}"
+    );
+    assert!(
+        !daily.contains("action done on"),
+        "the vault must not assert work that never happened:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_in_non_interactive_errors_when_missing_query() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Drop {
+            project: Some("x".to_owned()),
+            query: None,
+            reason: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --query should error");
+    assert!(format!("{err:#}").contains("--query"), "{err:#}");
+}

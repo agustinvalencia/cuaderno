@@ -91,7 +91,7 @@ Reachable from the terminal via `cdno`:
 - `init` — scaffold a vault
 - `log` / `lint` / `capture` — daily-log writes, validation, inbox capture
 - `project create / state / core-question / park / activate / list / show / milestone {add,done} / waiting {add,resolve}`
-- `action add / promote / complete / list` (bullet form + manifest note form)
+- `action add / promote / complete / drop / list` (bullet form + manifest note form)
 - `commit create / complete` and `commitments` aggregated view
 - `orient` / `status` — morning views
 - `portfolio create / list / show` and `file` (file evidence into a portfolio; `--attach <path>` files a non-markdown artefact — PDF/image/video — by copying it in and scaffolding a linked evidence stub, `--move` to relocate instead, #154)

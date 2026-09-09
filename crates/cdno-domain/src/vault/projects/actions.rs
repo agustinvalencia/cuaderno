@@ -15,6 +15,7 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::WriteOutcome;
+use super::super::actions::ActionClosure;
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -196,7 +197,73 @@ impl Vault {
         // this and behaves exactly as before. Still one daily-log line,
         // not two.
         if let Some(action_slug) = parse_attached_action_slug(&removed_full_text) {
-            self.stage_action_archival(at, action_slug, &mut tx)?;
+            self.stage_action_archival(at, action_slug, ActionClosure::Completed, &mut tx)?;
+        }
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        let touched = tx.commit()?;
+
+        Ok(WriteOutcome::written(path, touched))
+    }
+
+    /// Remove an open action from an active project **without claiming
+    /// it was done** (#559), logging the drop to today's daily note.
+    ///
+    /// `complete_action` was the only verb that removed a bullet, and it
+    /// writes `action done on [[slug]] — <text>`. So an action that was
+    /// superseded, abandoned or reprioritised could only be cleared by
+    /// recording work that never happened — into the daily log, which is
+    /// the record the weekly review, the monthly scan and every later
+    /// verdict read back from. `docs-site/src/concepts/rlm.md` promises
+    /// "permission to park or drop"; this is actions getting it.
+    ///
+    /// Matching, ambiguity and the attached-note handling are identical
+    /// to [`complete_action`](Self::complete_action) — deliberately, so
+    /// there is nothing new to learn to use it. The differences are the
+    /// log prefix, the optional `reason`, and that the archived note is
+    /// stamped `status: dropped` with no completion date.
+    ///
+    /// `reason` is optional but wanted: "superseded by X" and "no longer
+    /// wanted" are different facts, and the distinction is exactly what
+    /// a later reader needs. Whitespace in it is flattened so the entry
+    /// stays one log line.
+    ///
+    /// Returns a [`WriteOutcome`] with the same shape as
+    /// `complete_action`: `primary` is the project map, `paths` every
+    /// file the commit wrote.
+    pub fn drop_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+        reason: Option<&str>,
+    ) -> Result<WriteOutcome, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let removed_idx = resolve_open_action(&lines, slug, query)?;
+        let removed_full_text = parse_open_action_text(lines[removed_idx])
+            .expect("matched line was previously parseable")
+            .to_owned();
+
+        let kept: Vec<&str> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| if i == removed_idx { None } else { Some(*l) })
+            .collect();
+        let new_section = kept.join("\n");
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        let log_entry = format_action_dropped_log_entry(slug, &removed_full_text, reason);
+
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        if let Some(action_slug) = parse_attached_action_slug(&removed_full_text) {
+            self.stage_action_archival(at, action_slug, ActionClosure::Dropped, &mut tx)?;
         }
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         let touched = tx.commit()?;
@@ -394,6 +461,14 @@ fn format_action_added_log_entry(slug: &str, action: &str, energy: EnergyLevel) 
 pub(in crate::vault) const LOG_STARTED_PREFIX: &str = "started ";
 /// The marker for the line recording that action being finished.
 pub(in crate::vault) const LOG_ACTION_DONE_PREFIX: &str = "action done on ";
+/// The marker for the line recording an action being **dropped** rather
+/// than performed (#559). A separate prefix, not a variation on the
+/// done one, because the whole point is that a later reader — a weekly
+/// review, a monthly scan, a person — can tell the two apart. Shared
+/// with [`Vault::current_focus`], which must clear an open start on a
+/// drop as well as on a completion, or an abandoned action stays "what
+/// you are on" for ever.
+pub(in crate::vault) const LOG_ACTION_DROPPED_PREFIX: &str = "action dropped on ";
 
 /// Build the daily-log entry recording an action being started.
 fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {
@@ -406,6 +481,50 @@ fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {
 /// energy bucket the action sat in.
 fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
     format!("{LOG_ACTION_DONE_PREFIX}[[{slug}]] — {action_text}")
+}
+
+/// Build the daily-log entry recording an action being dropped, with an
+/// optional reason.
+///
+/// The reason is the part a later reader actually needs: "superseded by
+/// the demo-planning action" and "no longer wanted" are different facts
+/// about the project, and only one of them suggests looking for a
+/// replacement.
+///
+/// It goes on an **indented continuation line**, the shape
+/// `update_project_state` established for its `was:` / `now:` bodies,
+/// rather than inline after the action text. That is load-bearing, not
+/// cosmetic: [`Vault::current_focus`] matches an open start against the
+/// closing entry by the action text that follows the em dash, so a
+/// reason appended inline would make every drop-with-a-reason fail to
+/// clear its start. `parse_log_lines` folds a continuation into the
+/// entry with a `"; "` delimiter, so the reader strips
+/// [`LOG_REASON_DELIMITED`] before comparing.
+///
+/// Whitespace in the reason is flattened so one drop stays one entry.
+fn format_action_dropped_log_entry(slug: &str, action_text: &str, reason: Option<&str>) -> String {
+    let base = format!("{LOG_ACTION_DROPPED_PREFIX}[[{slug}]] \u{2014} {action_text}");
+    match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
+        Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),
+        None => base,
+    }
+}
+
+/// Key introducing the reason on a dropped action's continuation line.
+pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
+
+/// The same key as it appears **after** `parse_log_lines` has folded the
+/// continuation into the entry text (it joins with `"; "`). The reader
+/// splits on this to recover the action text the start line carried.
+/// Defined next to the writer so the two cannot drift — the failure
+/// #453 was.
+pub(in crate::vault) const LOG_REASON_DELIMITED: &str = "; reason: ";
+
+/// Collapse every whitespace run — newlines included — to a single
+/// space, so a multi-line reason cannot split one log entry into
+/// several lines that no reader would parse as one.
+fn flatten_reason(reason: &str) -> String {
+    reason.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// If `line` is an open action bullet (`- [ ] <text>`), return the

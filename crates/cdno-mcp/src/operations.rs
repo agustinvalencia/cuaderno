@@ -367,6 +367,29 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Drop an action: closes it WITHOUT recording it as done. Use this whenever an action is superseded, abandoned or reprioritised -- `complete_action` writes `action done on ...` into the daily log, which is the record every weekly and monthly review reads back from, so completing something that was never performed makes the vault assert work that did not happen. Matches the bullet by substring `query` exactly as `complete_action` does, removes it, logs `action dropped on ...`, and (if an action note is attached) archives it to `actions/_done/<year>/` stamped `status: dropped` with no completion date. Pass `reason` whenever you know it -- \"superseded by X\" and \"no longer wanted\" are different facts, and only one of them tells a later reader to look for a replacement."
+    )]
+    pub async fn drop_action(
+        &self,
+        Parameters(input): Parameters<DropActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // Only the primary project path is surfaced here; the outcome's
+        // full touched set (which includes any archival move) is for the
+        // desktop echo journal (#315), not the MCP reply.
+        let path = self
+            .with_vault(move |vault| {
+                vault.drop_action(at, &input.project, &input.query, input.reason.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?
+            .primary;
+        let message = format!("Dropped action on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
         description = "Create a standalone commitment note with a due date and life context. Optional `project` and `stewardship` are bare origin-link slugs recording which project or stewardship the commitment relates to; that source can then list its related dated items. Omit both for a purely standalone commitment (the common case per design \u{00a7}5.9). The links are loose pointers \u{2014} the target's existence isn't validated."
     )]
     pub async fn create_commitment(

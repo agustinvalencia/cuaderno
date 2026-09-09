@@ -46,7 +46,9 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::ProjectSummary;
-use super::projects::actions::{LOG_ACTION_DONE_PREFIX, LOG_STARTED_PREFIX};
+use super::projects::actions::{
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_REASON_DELIMITED, LOG_STARTED_PREFIX,
+};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -921,6 +923,15 @@ impl Vault {
                 });
             } else if let Some((project, action)) =
                 parse_focus_marker(&text, LOG_ACTION_DONE_PREFIX)
+                    // A drop closes the action just as finally as a
+                    // completion does; only the claim about what
+                    // happened differs. Without this arm an abandoned
+                    // action would stay "what you are on" for ever,
+                    // since nothing else ever clears an open start.
+                    .or_else(|| {
+                        parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX)
+                            .map(|(project, action)| (project, strip_drop_reason(&action)))
+                    })
             {
                 open.retain(|f| !(f.project == project && f.action == action));
             }
@@ -938,6 +949,21 @@ pub struct CurrentFocus {
     pub action: String,
     /// When it was started, from the log line's own stamp.
     pub started: NaiveTime,
+}
+
+/// Recover the action text from a dropped-action entry that carried a
+/// reason.
+///
+/// `parse_log_lines` folds the reason's continuation line into the
+/// entry with a `"; "` delimiter, so a drop with a reason reads
+/// `<action text>; reason: <reason>`. The start line it has to match
+/// carries the action text alone, so the tail is stripped before
+/// comparison. An entry with no reason is returned unchanged.
+fn strip_drop_reason(action: &str) -> String {
+    match action.split_once(LOG_REASON_DELIMITED) {
+        Some((text, _reason)) => text.trim_end().to_owned(),
+        None => action.to_owned(),
+    }
 }
 
 /// Split `<prefix>[[project]] - action` into its project and action.

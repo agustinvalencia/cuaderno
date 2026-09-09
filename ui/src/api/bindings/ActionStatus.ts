@@ -2,10 +2,16 @@
 
 /**
  * Lifecycle state of an action note. Created `Active`; flipped to
- * `Completed` by `Vault::complete_action` in the same transaction
- * that removes the matching bullet from the project map and moves
- * the file to `actions/_done/<year>/`. `Blocked` is set explicitly
- * when external work is gating progress; the `blocker` frontmatter
- * field carries the human description.
+ * `Completed` by `Vault::complete_action`, or to `Dropped` by
+ * `Vault::drop_action`, in the same transaction that removes the
+ * matching bullet from the project map and moves the file to
+ * `actions/_done/<year>/`. `Blocked` is set explicitly when external
+ * work is gating progress; the `blocker` frontmatter field carries the
+ * human description.
+ *
+ * `Completed` and `Dropped` are both terminal, and the distinction is
+ * the whole point of the pair: one says the work was performed, the
+ * other that it was abandoned, superseded or reprioritised. Only
+ * `Completed` carries a `completed` date.
  */
-export type ActionStatus = "active" | "completed" | "blocked";
+export type ActionStatus = "active" | "completed" | "blocked" | "dropped";

@@ -41,6 +41,13 @@ fn vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
     (vault, store)
 }
 
+/// An active project map whose `## Next Actions` already holds the
+/// given bullets. `ACTIVE_PROJECT` above starts the section empty; the
+/// drop tests need plain (unattached) bullets to match against.
+fn project_with_bullets(bullets: &str) -> String {
+    format!("{ACTIVE_PROJECT}{bullets}")
+}
+
 fn read_action_frontmatter(store: &Arc<dyn VaultStore>, path: &VaultPath) -> ActionFrontmatter {
     let raw = store.read_file(path).unwrap();
     let (fm, _body) = Frontmatter::parse(&raw).unwrap();
@@ -716,5 +723,157 @@ fn promote_resolves_the_exact_bullet_like_completion_does() {
     assert!(
         content.contains("Draft the methods section (deep)"),
         "the sibling survives: {content}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Drop: closing an action WITHOUT claiming it was done (#559)
+// ---------------------------------------------------------------------
+
+#[test]
+fn drop_action_archives_its_note_as_dropped_not_completed() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let outcome = vault
+        .drop_action(
+            dt(2026, 5, 27, 17, 0),
+            "foo",
+            "demo-proposal",
+            Some("superseded by the demo-planning action"),
+        )
+        .expect("drop succeeds");
+
+    // Same archival mechanics as a completion: source and destination
+    // both in the touched set, so the desktop watcher cannot echo them.
+    assert!(outcome.touched());
+    let touched: std::collections::HashSet<_> = outcome.paths.iter().cloned().collect();
+    assert_eq!(
+        touched,
+        std::collections::HashSet::from([
+            vp("projects/foo.md"),
+            vp("actions/prepare-the-demo-proposal.md"),
+            vp("actions/_done/2026/prepare-the-demo-proposal.md"),
+            vp("journal/2026/daily/2026-05-27.md"),
+        ]),
+    );
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(
+        fm.status,
+        ActionStatus::Dropped,
+        "the note records abandonment, not completion"
+    );
+    assert_eq!(
+        fm.completed, None,
+        "a dropped action has no completion date \u{2014} it was never completed"
+    );
+}
+
+#[test]
+fn drop_action_logs_the_drop_and_its_reason_rather_than_a_completion() {
+    let body =
+        project_with_bullets("- [ ] Run feature set B (deep)\n- [ ] Draft methods (medium)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(
+            dt(2026, 5, 1, 16, 30),
+            "foo",
+            "feature set B",
+            Some("superseded by the ablation run"),
+        )
+        .expect("drop succeeds");
+
+    let raw = store.read_file(&vp("projects/foo.md")).unwrap();
+    assert!(
+        !raw.contains("Run feature set B"),
+        "bullet not removed:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Draft methods (medium)"),
+        "other action lost:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("- **16:30**: action dropped on [[foo]] \u{2014} Run feature set B (deep)"),
+        "drop entry missing:\n{daily}"
+    );
+    assert!(
+        daily.contains("reason: superseded by the ablation run"),
+        "reason missing:\n{daily}"
+    );
+    assert!(
+        !daily.contains("action done on"),
+        "a drop must never be logged as a completion:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_action_without_a_reason_logs_a_bare_entry() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(dt(2026, 5, 1, 16, 30), "foo", "feature set B", None)
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **16:30**: action dropped on [[foo]] \u{2014} Run feature set B (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+/// A newline in the reason would split one log entry into two lines,
+/// and the second would not parse as an entry at all.
+#[test]
+fn drop_action_flattens_a_multiline_reason_into_one_entry() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(
+            dt(2026, 5, 1, 16, 30),
+            "foo",
+            "feature set B",
+            Some("superseded\n\nby the ablation   run"),
+        )
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("reason: superseded by the ablation run"),
+        "whitespace runs collapse to single spaces:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_action_errors_when_action_not_found() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, _store) = vault_with(&[("projects/foo.md", &body)]);
+
+    let err = vault
+        .drop_action(dt(2026, 5, 1, 16, 30), "foo", "nothing like this", None)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ActionNotFound { .. }),
+        "got {err:?}"
     );
 }

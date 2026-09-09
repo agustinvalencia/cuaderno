@@ -84,6 +84,7 @@ the content.
 | `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
 | `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
 | `complete_action` | `project`, `query` | Complete an action; archives its note if any. |
+| `drop_action` | `project`, `query`, `reason?` | Close an action **without** recording it as done (superseded, abandoned, reprioritised); archives its note as `status: dropped`. |
 | `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |
 | `complete_milestone` | `project`, `query` | Complete a milestone (substring match). |
 | `add_waiting_on` | `project`, `description` | Add a waiting-on blocker. |

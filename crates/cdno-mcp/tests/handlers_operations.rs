@@ -24,7 +24,7 @@ use cdno_mcp::server::{
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
     CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
-    DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
+    DiscardInboxItemInput, DropActionInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
     ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetCoreQuestionInput,
     SetFrontmatterInput, SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
@@ -1518,6 +1518,56 @@ fn server_with_project() -> (CuadernoServer, Arc<dyn VaultStore>) {
             )
             .unwrap();
     })
+}
+
+#[tokio::test]
+async fn drop_action_closes_the_bullet_without_claiming_it_was_done() {
+    let (server, store) = server_with_project();
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Prepare the demo proposal".to_owned(),
+            energy: "deep".to_owned(),
+            with_note: false,
+            vars: None,
+        }))
+        .await
+        .expect("add_action");
+
+    server
+        .drop_action(Parameters(DropActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "demo proposal".to_owned(),
+            reason: Some("superseded by the demo-planning action".to_owned()),
+        }))
+        .await
+        .expect("drop_action");
+
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(!body.contains("Prepare the demo proposal"), "{body}");
+
+    // The handler stamps the real clock, so build the path the same way
+    // rather than hardcoding a date that would never match and leave the
+    // assertion silently unreached.
+    let today = chrono::Local::now().naive_local().date();
+    let daily = vp(&format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    ));
+    let daily = store.read_file(&daily).expect("the drop wrote a daily log");
+    assert!(
+        daily.contains("action dropped on [[surrogate-model]]"),
+        "drop entry missing:\n{daily}"
+    );
+    assert!(
+        daily.contains("reason: superseded by the demo-planning action"),
+        "reason missing:\n{daily}"
+    );
+    assert!(
+        !daily.contains("action done on"),
+        "a drop must never be logged as a completion:\n{daily}"
+    );
 }
 
 #[tokio::test]
