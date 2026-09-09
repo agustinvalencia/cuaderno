@@ -391,7 +391,7 @@ impl Vault {
     /// 28th as its anchor. Within a single call the original day is held
     /// (see [`Recurrence::nth_after`]); across calls it cannot be,
     /// because the bullet stores only the next date and not the day the
-    /// schedule nominally wants. Recording a nominal day is #571.
+    /// schedule nominally wants. Recording a nominal day is #570.
     ///
     /// From there it advances **until the result is strictly after
     /// `at`** — #558's open question, settled in #564. One occurrence
