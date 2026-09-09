@@ -33,6 +33,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 
 pub(in crate::vault) mod actions;
+mod core_question;
 mod lifecycle;
 mod milestones;
 mod state;

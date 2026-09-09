@@ -79,7 +79,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Add a milestone to an active project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`. `hard: true` records a hard deadline that the commitments aggregation surfaces; omit it (or `false`) for a soft target. The section is auto-created if missing."
+        description = "Add a milestone to an active project's `## Milestones`. `target_date` is ISO `YYYY-MM-DD`; omit it for a milestone gated by a condition rather than a date (\"all Round-1 replies received\") -- the bullet records `target: TBD` and stays out of the commitments aggregation. Never invent an estimate to fill the field: a fabricated date reads later as a commitment somebody made. `hard: true` records a hard deadline that the commitments aggregation surfaces, and requires `target_date`; omit it (or `false`) for a soft target. The section is auto-created if missing."
     )]
     pub async fn add_milestone(
         &self,
@@ -99,6 +99,26 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Added milestone to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Set or clear an active project's `core_question` after creation. `core_question` is the **bare** wikilink target (e.g. `questions/research/foo`), the same form `create_project` takes -- passing `[[...]]` is rejected. Omit `core_question` to detach the question, writing `core_question: null`. The previous value is auto-logged to today's daily note, so a project's changing question is traceable; setting the value it already holds is a no-op."
+    )]
+    pub async fn set_core_question(
+        &self,
+        Parameters(input): Parameters<SetCoreQuestionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let outcome = self
+            .with_vault(move |vault| {
+                vault.set_core_question(at, &input.project, input.core_question.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let path = outcome.primary;
+        let message = format!("Set core question on {}", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }

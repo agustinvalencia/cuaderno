@@ -83,7 +83,8 @@ the content.
 | `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
 | `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
 | `complete_action` | `project`, `query` | Complete an action; archives its note if any. |
-| `add_milestone` | `project`, `title`, `target_date`, `hard?` | Add a milestone; `hard` counts it in commitments. |
+| `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |
+| `set_core_question` | `project`, `core_question?` | Set the project's core question (bare target, not `[[…]]`); omit to detach. Auto-logs the previous value. |
 | `complete_milestone` | `project`, `query` | Complete a milestone (substring match). |
 | `add_waiting_on` | `project`, `description` | Add a waiting-on blocker. |
 | `resolve_waiting_on` | `project`, `query` | Resolve a waiting-on item (substring match). |

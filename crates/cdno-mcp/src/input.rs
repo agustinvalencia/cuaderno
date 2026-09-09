@@ -359,12 +359,29 @@ pub struct AddMilestoneInput {
     /// Active project slug.
     pub project: String,
     pub title: String,
-    /// ISO `YYYY-MM-DD`.
-    pub target_date: chrono::NaiveDate,
+    /// ISO `YYYY-MM-DD`. Omit for a milestone gated by a condition
+    /// rather than a date; the bullet records `target: TBD` and stays
+    /// out of the commitments aggregation (#521).
+    #[serde(default)]
+    pub target_date: Option<chrono::NaiveDate>,
     /// `true` records a *hard* deadline, which the commitments
     /// aggregation surfaces; omitted/`false` is a soft target.
+    /// Requires `target_date`.
     #[serde(default)]
     pub hard: bool,
+}
+
+/// Input for `set_core_question` (GH #523).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetCoreQuestionInput {
+    /// Active project slug.
+    pub project: String,
+    /// The question note as a **bare** wikilink target (e.g.
+    /// `questions/research/foo`), matching `create_project` — not
+    /// `[[...]]`, which is rejected. Omit to detach the current
+    /// question, writing `core_question: null`.
+    #[serde(default)]
+    pub core_question: Option<String>,
 }
 
 /// Input for `complete_milestone` (GH #213). `query` mirrors the

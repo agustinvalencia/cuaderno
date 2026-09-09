@@ -8,6 +8,30 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Milestones can be undated, and a project's core question can be changed.** Two halves of the
+  same gap: the write surface had verbs for creating and completing, and none for correcting.
+
+  `add_milestone` no longer forces a date. Some milestones are gated by a condition rather than a
+  date — "all Round-1 replies received" on a correspondence-driven project — and the only way to
+  record one was to invent an estimate, which then read like a commitment somebody made. Omitting
+  the date now writes `- [ ] <title> — target: TBD`, the shape the project template already seeds.
+  The readers needed no change: `extract_hard_deadlines` requires an ISO date, so an undated
+  milestone stays out of the commitments aggregation on its own, and `complete_milestone` already
+  stripped the target suffix whatever it held. `hard: true` with no date is rejected rather than
+  quietly downgraded — a hard deadline with no date is not a thing. `cdno project milestone add`
+  drops `--date` from its required set (interactively the calendar sits behind a yes/no), and the
+  MCP `target_date` becomes optional.
+
+  `core_question` was a first-class project field writable exactly once, at creation: `set_frontmatter`
+  refused it, so a project created without a question, or one whose question changed, could only be
+  fixed by hand-editing — the edit that desyncs the index. `cdno project core-question` and the MCP
+  `set_core_question` set or clear it, taking the same **bare** wikilink target `create_project`
+  takes, and auto-logging the previous value to today's daily note in the `was:` / `now:` shape
+  `update_project_state` established. Shipped as a verb rather than a default-config declaration
+  because `cdno init` rewrites `config.toml`, so a declaration-based fix regresses on a fresh
+  machine.
+  (#521, #523)
+
 - **`cdno-mcp-server --git-checkpoint-mode nudge-only` — let an external agent own the commits.**
   The git checkpoint sweep is the recovery trail for remote writes: every mutation ends up in a
   commit you can diff and revert. But in a deployment where a sync agent already owns the

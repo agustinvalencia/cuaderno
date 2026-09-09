@@ -1,6 +1,6 @@
 //! `cdno project` subcommands: thin clap-to-domain layer for the
-//! project surface (create, state, action/done, milestone, waiting,
-//! park/activate, list, show).
+//! project surface (create, state, core-question, action/done,
+//! milestone, waiting, park/activate, list, show).
 //!
 //! The clap argument types live here so `main.rs` stays a flat
 //! dispatcher; each subcommand maps directly onto a method on
@@ -13,7 +13,7 @@ use chrono::{NaiveDate, NaiveDateTime};
 use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
-use cdno_domain::frontmatter::{Context as ProjectContext, ProjectStatus};
+use cdno_domain::frontmatter::{Context as ProjectContext, ProjectStatus, QuestionStatus};
 
 use crate::bootstrap;
 use crate::completions;
@@ -52,6 +52,22 @@ pub enum ProjectCommands {
         /// New state text.
         #[arg(long)]
         text: Option<String>,
+    },
+
+    /// Set or clear the project's core question, auto-logging the change.
+    CoreQuestion {
+        /// Project slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        slug: Option<String>,
+        /// Question note to link, as a bare wikilink target
+        /// (e.g. `questions/research/foo`) — same form as
+        /// `cdno project create --question`, not `[[…]]`.
+        #[arg(long)]
+        question: Option<String>,
+        /// Detach the current question, writing `core_question: null`.
+        /// Mutually exclusive with --question.
+        #[arg(long, conflicts_with = "question")]
+        clear: bool,
     },
 
     /// Move an active project to projects/_parked/.
@@ -98,7 +114,7 @@ pub enum ProjectCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum MilestoneCommands {
-    /// Add a milestone with a target or hard date.
+    /// Add a milestone, with or without a target date.
     Add {
         /// Project slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
@@ -106,10 +122,12 @@ pub enum MilestoneCommands {
         /// Milestone title.
         #[arg(long)]
         title: Option<String>,
-        /// Target date (YYYY-MM-DD).
+        /// Target date (YYYY-MM-DD). Omit for a milestone gated by a
+        /// condition rather than a date; the bullet records `target: TBD`.
         #[arg(long, value_parser = parse_iso_date)]
         date: Option<NaiveDate>,
         /// Treat as a hard deadline (counted in commitments aggregation).
+        /// Requires --date.
         #[arg(long)]
         hard: bool,
     },
@@ -172,6 +190,11 @@ pub fn run(
         ProjectCommands::State { slug, text } => {
             state(&vault, at, slug, text, interactive, json)?;
         }
+        ProjectCommands::CoreQuestion {
+            slug,
+            question,
+            clear,
+        } => core_question(&vault, at, slug, question, clear, interactive, json)?,
         ProjectCommands::Park { slug } => park(&vault, at, slug, interactive, json)?,
         ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive, json)?,
         ProjectCommands::List => {
@@ -333,6 +356,66 @@ fn state(
     Ok(())
 }
 
+/// `cdno project core-question` — slug picker, then a picker over the
+/// vault's questions.
+///
+/// `--clear` and `--question` are the two ways to reach the domain's
+/// `Option`: `--clear` detaches (writes `core_question: null`),
+/// `--question` links. Neither flag in a non-interactive run is a
+/// missing-flag error rather than a silent detach — clearing a
+/// project's question is a real decision and must be asked for, never
+/// inferred from an omitted argument.
+fn core_question(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    question: Option<String>,
+    clear: bool,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let question = if clear {
+        None
+    } else {
+        Some(prompt::gather_or_error(
+            question,
+            "question",
+            interactive,
+            &mut prompted,
+            || {
+                prompt::prompt_question(
+                    vault,
+                    &[QuestionStatus::Active, QuestionStatus::Parked],
+                    "Core question",
+                )
+            },
+        )?)
+    };
+
+    if prompted {
+        let preview = question.as_deref().unwrap_or("(none — detaching)");
+        if !prompt::confirm_preview(&format!(
+            "About to set core question of project '{slug}':\n  {preview}"
+        ))? {
+            println!("Aborted.");
+            return Ok(());
+        }
+    }
+    // Report the primary path; the outcome's touched-path set and no-op
+    // signal are for the desktop echo journal (#315), not the CLI.
+    let outcome = vault
+        .set_core_question(at, &slug, question.as_deref())
+        .context("setting core question")?;
+    let path = &outcome.primary;
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
+    Ok(())
+}
+
 /// `cdno project park` — fuzzy slug picker over active projects.
 fn park(
     vault: &cdno_domain::Vault,
@@ -379,8 +462,19 @@ fn activate(
     Ok(())
 }
 
-/// `cdno project milestone add` — slug picker, title text, calendar
-/// date, hard/soft confirm.
+/// `cdno project milestone add` — slug picker, title text, optional
+/// calendar date, hard/soft confirm.
+///
+/// `--date` is genuinely optional (#521), so it does **not** go
+/// through `gather_or_error`: an omitted flag is a valid value (an
+/// undated, condition-gated milestone), not a missing one. Interactive
+/// runs still get the calendar, behind a yes/no so the undated case is
+/// reachable without knowing the flag exists; non-interactive runs
+/// take absence at face value rather than erroring.
+///
+/// The hard/soft question is only asked once a date exists, because
+/// `hard` with no date is rejected by the domain — offering the choice
+/// would be offering an error.
 #[allow(clippy::too_many_arguments)] // thin CLI gather→confirm→execute passthrough
 fn milestone_add(
     vault: &cdno_domain::Vault,
@@ -400,18 +494,30 @@ fn milestone_add(
     let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
         prompt::prompt_text("Milestone title")
     })?;
-    let date = prompt::gather_or_error(date, "date", interactive, &mut prompted, || {
-        prompt::prompt_date("Target date")
-    })?;
-    // Only ask about --hard when we're already in an interactive flow.
-    let hard = if prompted {
+    let date = match date {
+        Some(d) => Some(d),
+        None if interactive => {
+            prompted = true;
+            prompt::prompt_optional_date("Target date")?
+        }
+        // Non-interactive: an omitted `--date` means undated, and the
+        // bullet renders `target: TBD`.
+        None => None,
+    };
+    // Only ask about --hard when we're already in an interactive flow,
+    // and only when there is a date for it to qualify.
+    let hard = if prompted && date.is_some() {
         prompt::prompt_hard_soft()?
     } else {
         hard_flag
     };
+    let date_preview = match date {
+        Some(d) => d.to_string(),
+        None => "TBD (no target date)".to_owned(),
+    };
     if prompted
         && !prompt::confirm_preview(&format!(
-            "About to add milestone to '{slug}':\n  title: {title}\n  date:  {date}\n  hard:  {hard}"
+            "About to add milestone to '{slug}':\n  title: {title}\n  date:  {date_preview}\n  hard:  {hard}"
         ))?
     {
         println!("Aborted.");

@@ -1,7 +1,7 @@
 # `cdno project`
 
-Manage project maps: create, update state, add/complete milestones, manage waiting-on items,
-park/activate, and list/show. Next actions have their own verb, [`cdno action`](action.md).
+Manage project maps: create, update state, set the core question, add/complete milestones, manage
+waiting-on items, park/activate, and list/show. Next actions have their own verb, [`cdno action`](action.md).
 
 ```text
 cdno project [OPTIONS] <COMMAND>
@@ -13,6 +13,7 @@ cdno project [OPTIONS] <COMMAND>
 |------------|-------------|
 | [`create`](#cdno-project-create) | Create a new project map |
 | [`state`](#cdno-project-state) | Update the Current State (auto-logs the previous) |
+| [`core-question`](#cdno-project-core-question) | Set or clear the core question (auto-logs the previous) |
 | [`park`](#cdno-project-park) | Move a project to `_parked/` |
 | [`activate`](#cdno-project-activate) | Bring a parked project back (enforces the cap) |
 | [`list`](#cdno-project-list) | List active projects |
@@ -109,16 +110,48 @@ cdno project show surrogate-model --json
 
 ## `cdno project milestone`
 
-Manage milestones — dated markers of progress. A `--hard` milestone is a real deadline counted in
+Manage milestones — markers of progress. A `--hard` milestone is a real deadline counted in
 [`cdno commitments`](commitments.md).
 
-**`add`** — `--slug`, `--title`, `--date <YYYY-MM-DD>`, `--hard`
+**`add`** — `--slug`, `--title`, `--date <YYYY-MM-DD>` (optional), `--hard`
 **`done`** — `--slug`, `--query` (case-insensitive substring of the milestone title)
 
 ```bash
 cdno project milestone add --slug surrogate-model --title "Submit to ICML" --date 2026-01-22 --hard
+cdno project milestone add --slug surrogate-model --title "All Round-1 replies received"
 cdno project milestone done --slug surrogate-model --query "submit to icml"
 ```
+
+`--date` is optional. Some milestones are gated by a condition rather than a date — "all Round-1
+replies received" on a correspondence-driven project — and omitting the flag records the milestone
+as `target: TBD` rather than making you invent an estimate. An undated milestone does **not** appear
+in [`cdno commitments`](commitments.md), which is the point: a date you made up reads later like a
+commitment somebody made. It completes with `done` exactly like a dated one.
+
+Interactively, the calendar is offered behind a yes/no so the undated case is reachable without
+knowing the flag can be omitted.
+
+`--hard` requires `--date`: a hard deadline with no date is rejected rather than quietly downgraded
+to a soft target.
+
+## `cdno project core-question`
+
+Set or clear the project's core question after creation, auto-logging the previous value to today's
+daily note in the same `was:` / `now:` shape [`state`](#cdno-project-state) uses.
+
+**`core-question`** — `--slug`, and either `--question <target>` or `--clear`
+
+```bash
+cdno project core-question --slug surrogate-model --question questions/research/does-it-scale
+cdno project core-question --slug surrogate-model --clear
+```
+
+`--question` takes the **bare** wikilink target, the same form
+[`create --question`](#cdno-project-create) takes — `questions/research/foo`, not `[[…]]`, which is
+rejected rather than double-wrapped.
+
+Passing neither flag non-interactively is an error, not a silent detach: dropping a project's
+question is a decision and has to be asked for.
 
 ## `cdno project waiting`
 

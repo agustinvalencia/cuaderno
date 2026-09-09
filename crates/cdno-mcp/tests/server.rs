@@ -91,6 +91,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "promote_action",
         "complete_action",
         "add_milestone",
+        "set_core_question",
         "complete_milestone",
         "add_waiting_on",
         "resolve_waiting_on",
@@ -117,7 +118,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 46);
+    assert_eq!(tools.len(), 47);
 }
 
 #[test]

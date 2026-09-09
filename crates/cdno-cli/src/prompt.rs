@@ -98,7 +98,7 @@ pub fn reports_interactively_from(
 /// picker in. `None` means stdout is not a terminal, where the question
 /// does not arise.
 pub fn picker_fits(columns: Option<u16>) -> bool {
-    !columns.is_some_and(|cols| cols < MIN_PICKER_WIDTH)
+    columns.is_none_or(|cols| cols >= MIN_PICKER_WIDTH)
 }
 
 /// Build a clear "missing flag" error for the non-interactive path so
@@ -288,6 +288,21 @@ pub fn gather_or_error<T>(
 /// Calendar widget for picking an ISO date.
 pub fn prompt_date(prompt: &str) -> Result<NaiveDate> {
     Ok(DateSelect::new(prompt).prompt()?)
+}
+
+/// Calendar widget for a date the caller may legitimately not have,
+/// behind a yes/no gate. `Ok(None)` when the user declines.
+///
+/// Used where absence is a real value rather than a missing input — a
+/// milestone gated by a condition rather than a date (#521). The gate
+/// defaults to `true`, because most milestones do have a date and the
+/// dated path should stay one keystroke; declining is what makes the
+/// undated case reachable without knowing `--date` can be omitted.
+pub fn prompt_optional_date(prompt: &str) -> Result<Option<NaiveDate>> {
+    if !prompt_confirm(&format!("{prompt}? (no = undated)"), true)? {
+        return Ok(None);
+    }
+    Ok(Some(prompt_date(prompt)?))
 }
 
 /// Fuzzy-pick a *parked* project. Returns the project slug.
