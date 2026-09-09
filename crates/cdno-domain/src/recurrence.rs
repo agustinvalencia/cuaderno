@@ -96,12 +96,31 @@ impl Recurrence {
     /// target month's length, so e.g. monthly-on-the-31st never
     /// returns an invalid date.
     pub fn next_after(self, from: NaiveDate) -> NaiveDate {
+        self.nth_after(from, 1)
+    }
+
+    /// The `n`th occurrence after `from`, counted from `from` itself
+    /// rather than by stepping one cycle at a time.
+    ///
+    /// For day- and week-based recurrences the two are identical. For
+    /// month-based ones they are not, and the difference is a schedule
+    /// that holds versus one that decays: [`add_months`] clamps the day
+    /// to the target month's length, so stepping 31 January by one month
+    /// gives 28 February, and stepping *that* again gives 28 March. The
+    /// clamp becomes the new anchor and the original day is gone for
+    /// good. Counting `n` from the anchor instead re-derives each
+    /// occurrence from the same day-of-month, so 31 January yields
+    /// 28 February, 31 March, 30 April — clamped where a month is short,
+    /// restored where it is not.
+    ///
+    /// `n == 0` returns `from`.
+    pub fn nth_after(self, from: NaiveDate, n: u32) -> NaiveDate {
         match self {
-            Recurrence::Daily => from + Duration::days(1),
-            Recurrence::Weekly => from + Duration::weeks(1),
-            Recurrence::Monthly => add_months(from, 1),
-            Recurrence::EveryNMonths(n) => add_months(from, n),
-            Recurrence::Yearly => add_months(from, 12),
+            Recurrence::Daily => from + Duration::days(i64::from(n)),
+            Recurrence::Weekly => from + Duration::weeks(i64::from(n)),
+            Recurrence::Monthly => add_months(from, n),
+            Recurrence::EveryNMonths(months) => add_months(from, months * n),
+            Recurrence::Yearly => add_months(from, 12 * n),
         }
     }
 }

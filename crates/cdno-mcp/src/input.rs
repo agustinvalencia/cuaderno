@@ -220,6 +220,31 @@ pub struct CompleteCommitmentInput {
     pub commitment: String,
 }
 
+/// Input for `reschedule_commitment` (GH #430).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RescheduleCommitmentInput {
+    /// Bare slug of the active commitment to move.
+    pub commitment: String,
+    /// The new due date, ISO `YYYY-MM-DD`. Must differ from the current
+    /// one: an unchanged date would log a slip that never happened.
+    pub due: chrono::NaiveDate,
+}
+
+/// Input for `complete_periodic` (GH #558). `title` matches by
+/// case-insensitive substring, as the other completion verbs do.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompletePeriodicInput {
+    /// Bare slug of the stewardship holding the commitment.
+    pub stewardship: String,
+    /// Case-insensitive substring of the commitment's title.
+    pub title: String,
+    /// Date the work was actually done, ISO `YYYY-MM-DD`. Omitted =
+    /// today. The next date is computed from the commitment's own due
+    /// date regardless, so completing early never drags the schedule
+    /// earlier.
+    pub at: Option<chrono::NaiveDate>,
+}
+
 /// Input for `create_tracking_entry`. `routine` is the bare slug of
 /// a routine doc; domain wraps the wikilink and it only takes effect on
 /// a template with a `routine:` field (not the generic default).

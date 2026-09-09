@@ -948,3 +948,488 @@ fn commitment_source_serializes_with_a_homogeneous_kind_tag() {
     assert_eq!(standalone_json["source"]["kind"], "standalone_commitment");
     assert_eq!(standalone_json["source"]["slug"], "a-promise");
 }
+
+// ---- reschedule_commitment (#430) ----
+
+/// The point of the verb, and the reason delete-and-recreate was not
+/// good enough: the body and `created` survive, and the move is on the
+/// record with both dates.
+#[test]
+fn reschedule_commitment_moves_the_date_and_logs_both() {
+    let note = "---\ntype: commitment\ncontext: work\nstatus: active\ncreated: 2026-04-01\ndue: 2026-06-01\n---\n\n# Quarterly report\n\nChased Bob twice; he is waiting on finance.\n";
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", note)]);
+
+    vault
+        .reschedule_commitment(
+            dt(2026, 5, 20, 9, 30),
+            "quarterly-report",
+            NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .expect("reschedule succeeds");
+
+    let raw = store
+        .read_file(&vp("commitments/quarterly-report.md"))
+        .unwrap();
+    assert!(raw.contains("due: 2026-06-15"), "date moved:\n{raw}");
+    assert!(
+        raw.contains("created: 2026-04-01"),
+        "created is not reset:\n{raw}"
+    );
+    assert!(
+        raw.contains("Chased Bob twice"),
+        "the body survives, which delete-and-recreate destroyed:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-20.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **09:30**: commitment rescheduled on [[quarterly-report]] \u{2014} Quarterly report\n  was: 2026-06-01\n  now: 2026-06-15"),
+        "both dates on the record, in the was/now shape:\n{daily}"
+    );
+}
+
+/// Slippage is the signal worth seeing, so a commitment can move more
+/// than once and each move stands on its own in the log.
+#[test]
+fn reschedule_commitment_records_every_move_separately() {
+    let note = "---\ntype: commitment\ncontext: work\nstatus: active\ncreated: 2026-04-01\ndue: 2026-06-01\n---\n\n# Quarterly report\n";
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", note)]);
+
+    for (day, to) in [(20, (2026, 6, 15)), (21, (2026, 6, 30))] {
+        vault
+            .reschedule_commitment(
+                dt(2026, 5, day, 9, 30),
+                "quarterly-report",
+                NaiveDate::from_ymd_opt(to.0, to.1, to.2).unwrap(),
+            )
+            .expect("reschedule succeeds");
+    }
+
+    let second = store
+        .read_file(&vp("journal/2026/daily/2026-05-21.md"))
+        .unwrap();
+    assert!(
+        second.contains("was: 2026-06-15\n  now: 2026-06-30"),
+        "the second move starts where the first left off:\n{second}"
+    );
+}
+
+/// Moving to the date it already has would log a slip that never
+/// happened, so it is refused rather than written as a no-op.
+#[test]
+fn reschedule_commitment_refuses_an_unchanged_date_and_writes_nothing() {
+    let note = "---\ntype: commitment\ncontext: work\nstatus: active\ncreated: 2026-04-01\ndue: 2026-06-01\n---\n\n# Quarterly report\n";
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", note)]);
+
+    let err = vault
+        .reschedule_commitment(
+            dt(2026, 5, 20, 9, 30),
+            "quarterly-report",
+            NaiveDate::from_ymd_opt(2026, 6, 1).unwrap(),
+        )
+        .expect_err("an unchanged date is not a reschedule");
+    assert!(
+        matches!(err, DomainError::CommitmentAlreadyDue { .. }),
+        "got {err:?}"
+    );
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-20.md"))
+            .unwrap(),
+        "a rejected call logs nothing"
+    );
+}
+
+/// Pulling a date earlier is as real a change as pushing it back.
+#[test]
+fn reschedule_commitment_allows_moving_a_date_earlier() {
+    let note = "---\ntype: commitment\ncontext: work\nstatus: active\ncreated: 2026-04-01\ndue: 2026-06-01\n---\n\n# Quarterly report\n";
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", note)]);
+
+    vault
+        .reschedule_commitment(
+            dt(2026, 5, 20, 9, 30),
+            "quarterly-report",
+            NaiveDate::from_ymd_opt(2026, 5, 25).unwrap(),
+        )
+        .expect("earlier is a legitimate move");
+
+    let raw = store
+        .read_file(&vp("commitments/quarterly-report.md"))
+        .unwrap();
+    assert!(raw.contains("due: 2026-05-25"), "{raw}");
+}
+
+/// A fulfilled commitment lives in `_done/` and has no date left to
+/// move; the slug no longer resolves to an active note.
+#[test]
+fn reschedule_commitment_errors_on_a_completed_commitment() {
+    let note = "---\ntype: commitment\ncontext: work\nstatus: completed\ncreated: 2026-04-01\ndue: 2026-06-01\ncompleted: 2026-05-02\n---\n\n# Quarterly report\n";
+    let (vault, _store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", note)]);
+
+    let err = vault
+        .reschedule_commitment(
+            dt(2026, 5, 20, 9, 30),
+            "quarterly-report",
+            NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+        )
+        .expect_err("a completed commitment cannot be rescheduled");
+    assert!(
+        matches!(err, DomainError::CommitmentNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+// ---- complete_periodic (#558) ----
+
+/// The gap #558 reports: nothing could mark a periodic commitment done,
+/// so the reminder fired for ever until someone hand-edited the file.
+#[test]
+fn complete_periodic_rolls_the_date_forward_by_its_own_recurrence() {
+    let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-09-01\n- Budget review \u{2014} monthly \u{2014} next: 2026-05-30\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("- Dental check-up \u{2014} every 6 months \u{2014} next: 2027-03-01"),
+        "six months on, day preserved:\n{raw}"
+    );
+    assert!(
+        raw.contains("- Budget review \u{2014} monthly \u{2014} next: 2026-05-30"),
+        "the sibling line is untouched:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-09-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **09:30**: periodic done on [[health]] \u{2014} Dental check-up\n  was: 2026-09-01\n  now: 2027-03-01"),
+        "the completion and the new schedule are both on the record:\n{daily}"
+    );
+}
+
+/// The anchoring rule, and the reason it matters. Done a week early,
+/// every cycle, the schedule must not creep a week earlier each time.
+#[test]
+fn complete_periodic_anchors_the_roll_forward_to_the_due_date_not_the_completion() {
+    let lines = "- Dental check-up \u{2014} every 6 months \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    // Done a week early.
+    vault
+        .complete_periodic(dt(2026, 8, 25, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2027-03-01"),
+        "anchored to the due date (2026-09-01 + 6 months), not to 2026-08-25 \
+         which would give 2027-02-25 and drift a week earlier every cycle:\n{raw}"
+    );
+}
+
+/// A late completion must not leave `next:` in the past — that would
+/// report the commitment overdue the instant it was done.
+#[test]
+fn complete_periodic_advances_past_a_long_neglect_in_one_go() {
+    let lines = "- Budget review \u{2014} monthly \u{2014} next: 2026-01-15\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    // Five cycles missed.
+    vault
+        .complete_periodic(dt(2026, 6, 20, 9, 30), "finances", "budget")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/finances.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-07-15"),
+        "back on schedule and in the future, not five reminders deep:\n{raw}"
+    );
+}
+
+/// The date is rewritten from the right, so a title carrying the *same*
+/// date-shaped text is not the one that moves. The title must repeat the
+/// marker's date for this to distinguish anything: a title holding some
+/// other date leaves one occurrence on the line, which left-to-right and
+/// right-to-left search find alike.
+#[test]
+fn complete_periodic_rewrites_the_marker_date_not_one_inside_the_title() {
+    let lines = "- Review 2026-09-01 minutes \u{2014} yearly \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/admin.md",
+        &stewardship_with_periodics("Admin", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "admin", "minutes")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/admin.md")).unwrap();
+    assert!(
+        raw.contains("- Review 2026-09-01 minutes \u{2014} yearly \u{2014} next: 2027-09-01"),
+        "the title's date is untouched:\n{raw}"
+    );
+}
+
+/// A recurrence the parser cannot read cannot be rolled forward, and
+/// guessing a schedule is worse than refusing.
+#[test]
+fn complete_periodic_refuses_a_line_whose_recurrence_is_unreadable() {
+    let lines = "- Dental check-up \u{2014} twice a year \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect_err("an unreadable recurrence cannot be advanced");
+    assert!(
+        matches!(err, DomainError::PeriodicRecurrenceUnreadable { .. }),
+        "got {err:?}"
+    );
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-09-01"),
+        "nothing is written on the error path:\n{raw}"
+    );
+}
+
+/// Such a line must still parse everywhere else. Making the recurrence
+/// mandatory would have dropped it from `cdno commitments` — a silent
+/// regression in a view the weekly review depends on.
+#[test]
+fn a_line_with_an_unreadable_recurrence_still_reaches_the_commitments_view() {
+    let lines = "- Dental check-up \u{2014} twice a year \u{2014} next: 2026-09-01\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let items = vault
+        .commitments(NaiveDate::from_ymd_opt(2026, 8, 20).unwrap(), 30)
+        .expect("commitments");
+    assert!(
+        items.iter().any(|c| c.title.contains("Dental check-up")),
+        "the aggregation must be unaffected by #558's parser change: {items:?}"
+    );
+}
+
+#[test]
+fn complete_periodic_refuses_an_ambiguous_title_and_writes_nothing() {
+    let lines = "- Budget review \u{2014} monthly \u{2014} next: 2026-05-30\n- Budget forecast \u{2014} yearly \u{2014} next: 2026-06-30\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 5, 30, 9, 30), "finances", "budget")
+        .expect_err("two matches must not be resolved by guessing");
+    match err {
+        DomainError::AmbiguousPeriodic { candidates, .. } => {
+            assert_eq!(
+                candidates.len(),
+                2,
+                "both candidates offered: {candidates:?}"
+            );
+        }
+        other => panic!("got {other:?}"),
+    }
+    let raw = store.read_file(&vp("stewardships/finances.md")).unwrap();
+    assert!(raw.contains("next: 2026-05-30") && raw.contains("next: 2026-06-30"));
+}
+
+#[test]
+fn complete_periodic_errors_when_no_line_matches() {
+    let lines = "- Budget review \u{2014} monthly \u{2014} next: 2026-05-30\n";
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 5, 30, 9, 30), "finances", "dental")
+        .expect_err("no match");
+    assert!(
+        matches!(err, DomainError::PeriodicNotFound { .. }),
+        "got {err:?}"
+    );
+}
+
+/// The parser reads `%Y-%m-%d` loosely, so `next: 2026-9-1` is a valid
+/// 2026-09-01 that the line does not spell that way. Rewriting by
+/// searching for the *formatted* old date found nothing and silently
+/// returned the line unchanged — while the caller went on to log a move.
+/// The daily log is the vault's record of what happened; it must not
+/// assert a change absent from the file it describes.
+#[test]
+fn complete_periodic_moves_a_date_the_line_does_not_zero_pad() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-9-1\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-10-01"),
+        "the date must actually move, not just be logged as moved:\n{raw}"
+    );
+    assert!(!raw.contains("2026-9-1"), "the old date is gone:\n{raw}");
+}
+
+/// A trailing annotation may repeat the marker's date. Anchoring the
+/// rewrite at the last *date* rewrote the annotation and left the
+/// schedule alone; anchoring at the `next:` marker cannot.
+#[test]
+fn complete_periodic_rewrites_the_marker_not_a_trailing_annotation() {
+    let lines = "- Renew passport \u{2014} yearly \u{2014} next: 2026-09-01 (booked 2026-09-01)\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/admin.md",
+        &stewardship_with_periodics("Admin", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "admin", "passport")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/admin.md")).unwrap();
+    assert!(
+        raw.contains("next: 2027-09-01 (booked 2026-09-01)"),
+        "the schedule moves and the annotation is left as written:\n{raw}"
+    );
+}
+
+/// Counting cycles from the anchor rather than stepping one at a time.
+/// Stepping compounds the day clamp: 31 Jan becomes 28 Feb, and stepping
+/// *that* gives 28 Mar, losing the 31st for good. Counting re-derives
+/// each occurrence from the same day.
+#[test]
+fn complete_periodic_keeps_the_anchor_day_across_several_missed_cycles() {
+    let lines = "- Pay rent \u{2014} monthly \u{2014} next: 2026-01-31\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    // Three cycles missed: Feb, Mar, Apr.
+    vault
+        .complete_periodic(dt(2026, 4, 15, 9, 30), "finances", "rent")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/finances.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-04-30"),
+        "April is the first month landing after 15 April, clamped to its \
+         own length from the 31st anchor — not 2026-04-28, which is what \
+         compounding February's clamp gives:\n{raw}"
+    );
+}
+
+/// A line whose `next:` value is not a date cannot be advanced. Refusing
+/// is the point: the alternative was writing the file unchanged and
+/// logging a move anyway.
+#[test]
+fn complete_periodic_refuses_a_line_whose_next_value_is_not_a_date() {
+    // Parses as a periodic line (the parser takes the first token after
+    // the marker) but the token is not a date, so nothing is rewritable.
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: soon\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect_err("an unparseable next: cannot be advanced");
+    // The parser rejects it outright, so it never resolves to a match.
+    assert!(
+        matches!(err, DomainError::PeriodicNotFound { .. }),
+        "got {err:?}"
+    );
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(raw.contains("next: soon"), "unchanged:\n{raw}");
+}
+
+/// Every title contains the empty string, so an empty query would match
+/// the whole section and silently complete whichever line was alone.
+#[test]
+fn complete_periodic_refuses_an_empty_title() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "   ")
+        .expect_err("an empty query is not a match for everything");
+    assert!(
+        matches!(err, DomainError::EmptyField { field: "title" }),
+        "got {err:?}"
+    );
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(raw.contains("next: 2026-09-01"), "unchanged:\n{raw}");
+}
+
+/// The writer must locate the marker the way the parser did, or the two
+/// disagree on exactly the lines where it matters. A trailing annotation
+/// mentioning `next:` steals a right-anchored search...
+#[test]
+fn complete_periodic_is_not_fooled_by_an_annotation_mentioning_the_marker() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-09-01 (next: confirm with clinic)\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-10-01 (next: confirm with clinic)"),
+        "the schedule moves; the annotation is left alone:\n{raw}"
+    );
+}
+
+/// ...and a title mentioning `next:` steals a left-anchored one.
+#[test]
+fn complete_periodic_is_not_fooled_by_a_title_mentioning_the_marker() {
+    let lines = "- Plan next: quarter \u{2014} monthly \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/admin.md",
+        &stewardship_with_periodics("Admin", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "admin", "quarter")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/admin.md")).unwrap();
+    assert!(
+        raw.contains("- Plan next: quarter \u{2014} monthly \u{2014} next: 2026-10-01"),
+        "the title is untouched and the schedule moves:\n{raw}"
+    );
+}

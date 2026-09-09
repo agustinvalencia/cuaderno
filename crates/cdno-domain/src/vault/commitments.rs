@@ -25,6 +25,7 @@ use crate::frontmatter::{
     ProjectFrontmatter, StewardshipFrontmatter,
 };
 use crate::note_type::NoteType;
+use crate::recurrence::Recurrence;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
@@ -271,6 +272,250 @@ impl Vault {
         Ok(done_path)
     }
 
+    /// Move an active commitment's `due` date, logging the move to
+    /// today's daily note in a single committed transaction.
+    ///
+    /// Commitments slip. That is normal rather than an error state, but
+    /// until #430 the only route was to delete the note and recreate it,
+    /// which destroys the body — the notes on who was chased and why it
+    /// moved — and resets `created`, the one field that reveals how long
+    /// something has been slipping. It also desyncs the index between the
+    /// `rm` and the `reindex`.
+    ///
+    /// The log entry carries **both** dates in the `was:` / `now:` shape
+    /// `update_project_state` established:
+    ///
+    /// ```text
+    /// - **09:30**: commitment rescheduled on [[quarterly-report]] — Quarterly report
+    ///   was: 2026-06-01
+    ///   now: 2026-06-15
+    /// ```
+    ///
+    /// Recording the previous date is the whole point. A commitment moving
+    /// once is a checkpoint; a commitment moving for the fourth time is a
+    /// signal, and only the log makes that visible rather than silently
+    /// rewritten.
+    ///
+    /// Rescheduling to the date it already carries is refused
+    /// ([`DomainError::CommitmentAlreadyDue`]) rather than written as a
+    /// no-op: the log entry would assert a slip that never happened.
+    /// Moving a date *earlier* is allowed — work finishes ahead of
+    /// schedule, and a commitment pulled forward is as real a change as
+    /// one pushed back.
+    ///
+    /// Errors otherwise mirror [`Vault::complete_commitment`].
+    /// [`StoreError::NotFound`], with a slug hint, covers both an unknown
+    /// slug and a commitment already fulfilled: the latter lives at
+    /// `commitments/_done/<year>/<slug>.md`, so the path probe fails
+    /// before any status is read, and a fulfilled commitment has no date
+    /// left to move anyway. [`DomainError::CommitmentNotActive`] is the
+    /// narrower case of a note still at `commitments/<slug>.md` whose
+    /// frontmatter was hand-edited to a non-active status.
+    pub fn reschedule_commitment(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        new_due: NaiveDate,
+    ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
+        if !self.store.exists(&path)? {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{path}{}",
+                self.available_commitments_hint()
+            ))));
+        }
+
+        let raw = self.store.read_file(&path)?;
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let commitment = CommitmentFrontmatter::try_from(fm)?;
+        if commitment.status != CommitmentStatus::Active {
+            return Err(DomainError::CommitmentNotActive(slug.to_owned()));
+        }
+        let old_due = commitment.due;
+        if old_due == new_due {
+            return Err(DomainError::CommitmentAlreadyDue {
+                slug: slug.to_owned(),
+                due: old_due,
+            });
+        }
+
+        // Only `due` is touched; the helper preserves every other line,
+        // including the body that delete-and-recreate used to destroy.
+        let new_content =
+            rewrite_field_in_frontmatter(&raw, "due", &new_due.format("%Y-%m-%d").to_string())?;
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Commitment.as_str())?;
+
+        let title_for_log = body_title_or_slug(&new_content, slug);
+        let log_entry = format!(
+            "{LOG_COMMITMENT_RESCHEDULED_PREFIX}[[{slug}]] \u{2014} {title_for_log}\n  was: {}\n  now: {}",
+            old_due.format("%Y-%m-%d"),
+            new_due.format("%Y-%m-%d"),
+        );
+
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// Complete one occurrence of a stewardship's periodic commitment,
+    /// rolling its `next:` date forward by the line's own recurrence.
+    ///
+    /// A periodic commitment lives as a prose bullet, not a note, so
+    /// [`Vault::complete_commitment`] — which stamps frontmatter and moves
+    /// a file — has nothing to act on. Before #558 the reminder simply
+    /// kept firing until someone hand-edited the stewardship, the one
+    /// edit the vault asks you not to make.
+    ///
+    /// `query` matches the bullet title by case-insensitive substring,
+    /// as `drop_milestone` does, and ambiguity is an error carrying the
+    /// candidates rather than a guess. Note `complete_action` is *not*
+    /// quite the same: it tries an exact match first, so a query equal to
+    /// one title and a substring of another resolves there and is
+    /// ambiguous here. Worth aligning, but not by guessing in a verb that
+    /// silently moves a date.
+    ///
+    /// **The roll-forward starts from the due date, never from `at`.**
+    /// That is the difference between a schedule and a drift: a dental
+    /// check-up every 6 months, done a week early each time, would creep
+    /// a week earlier per cycle if the next date were computed from when
+    /// the work happened. Anchoring to the due date means a run of early
+    /// completions leaves the schedule where it was.
+    ///
+    /// One residual case, and it is the calendar's rather than this
+    /// verb's: a monthly commitment on the 31st has no 31st to land on in
+    /// February, so it clamps to the 28th, and the line then carries the
+    /// 28th as its anchor. Within a single call the original day is held
+    /// (see [`Recurrence::nth_after`]); across calls it cannot be,
+    /// because the bullet stores only the next date and not the day the
+    /// schedule nominally wants. Recording a nominal day is #570.
+    ///
+    /// From there it advances **until the result is strictly after
+    /// `at`** — #558's open question, settled in #564. One occurrence
+    /// completed late should not leave a `next:` still in the past, which
+    /// would report the commitment as overdue the moment it was done; and
+    /// a commitment neglected for five cycles should come back on
+    /// schedule rather than five reminders deep.
+    ///
+    /// The completion is logged in the `was:` / `now:` shape, so the
+    /// daily log records that the work happened *and* where the schedule
+    /// moved to:
+    ///
+    /// ```text
+    /// - **09:30**: periodic done on [[health]] — Dental check-up
+    ///   was: 2026-09-01
+    ///   now: 2027-03-01
+    /// ```
+    ///
+    /// Errors: [`StoreError::NotFound`] with a slug hint for an unknown
+    /// stewardship, [`DomainError::MissingSection`] when it has no
+    /// `## Periodic Commitments`, [`DomainError::PeriodicNotFound`] /
+    /// [`DomainError::AmbiguousPeriodic`] for the match, and
+    /// [`DomainError::PeriodicRecurrenceUnreadable`] when the line parses
+    /// but its recurrence does not — that one cannot be guessed, and
+    /// guessing a schedule is worse than refusing.
+    pub fn complete_periodic(
+        &self,
+        at: NaiveDateTime,
+        stewardship: &str,
+        query: &str,
+    ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let path = self.resolve_stewardship_by_slug(stewardship)?;
+
+        let raw = self.store.read_file(&path)?;
+        let mut doc = MarkdownDocument::parse(raw)?;
+        let section = doc.section(PERIODIC_COMMITMENTS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let needle = query.trim().to_lowercase();
+        // Every title contains the empty string, so an empty query would
+        // "match" the whole section and silently complete whichever line
+        // happened to be alone in it.
+        if needle.is_empty() {
+            return Err(DomainError::EmptyField { field: "title" });
+        }
+
+        let mut matches: Vec<(usize, PeriodicLine)> = Vec::new();
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(parsed) = parse_periodic_line(line)
+                && parsed.title.to_lowercase().contains(&needle)
+            {
+                matches.push((i, parsed));
+            }
+        }
+
+        if matches.is_empty() {
+            return Err(DomainError::PeriodicNotFound {
+                slug: stewardship.to_owned(),
+                query: query.to_owned(),
+            });
+        }
+        if matches.len() > 1 {
+            return Err(DomainError::AmbiguousPeriodic {
+                slug: stewardship.to_owned(),
+                query: query.to_owned(),
+                candidates: matches.into_iter().map(|(_, p)| p.title).collect(),
+            });
+        }
+
+        let (idx, parsed) = matches.remove(0);
+        let Some(recurrence) = parsed.recurrence else {
+            return Err(DomainError::PeriodicRecurrenceUnreadable {
+                slug: stewardship.to_owned(),
+                title: parsed.title,
+            });
+        };
+
+        let completed_on = at.date();
+        let old_next = parsed.next;
+        // Count cycles from the due date rather than stepping one at a
+        // time. Stepping compounds `add_months`' day clamp — 31 January
+        // becomes 28 February and then 28 March, losing the 31st for
+        // good — while counting re-derives each occurrence from the same
+        // anchor day. See `Recurrence::nth_after`.
+        let mut cycles = 1u32;
+        let mut new_next = recurrence.nth_after(old_next, cycles);
+        while new_next <= completed_on {
+            cycles += 1;
+            new_next = recurrence.nth_after(old_next, cycles);
+        }
+
+        // Rewrite only the date, in place. The rest of the line is the
+        // user's own prose — a title with its own em dashes, a trailing
+        // annotation — and re-rendering it from the parsed parts would
+        // quietly normalise all of it.
+        let old_date = old_next.format("%Y-%m-%d").to_string();
+        let new_date = new_next.format("%Y-%m-%d").to_string();
+        let mut new_lines: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
+        new_lines[idx] = rewrite_next_date(&new_lines[idx], &new_date).ok_or_else(|| {
+            DomainError::PeriodicDateUnwritable {
+                slug: stewardship.to_owned(),
+                line: lines[idx].trim().to_owned(),
+            }
+        })?;
+        doc.replace_section(PERIODIC_COMMITMENTS_SECTION, &new_lines.join("\n"))?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta =
+            build_index_entry_for(&path, &new_content, NoteType::Stewardship.as_str())?;
+
+        let slug = stewardship_slug_from_path(&path);
+        let log_entry = format!(
+            "{LOG_PERIODIC_DONE_PREFIX}[[{slug}]] \u{2014} {title}\n  was: {old_date}\n  now: {new_date}",
+            title = parsed.title,
+        );
+
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(path)
+    }
+
     /// " — available commitments: …" suffix for a commitment slug
     /// not-found, listing the *open* commitments (those still at
     /// `commitments/<slug>.md`). Fulfilled ones live under
@@ -384,7 +629,7 @@ impl Vault {
                 continue;
             };
             for line in section.lines() {
-                let Some((title, next)) = parse_periodic_line(line) else {
+                let Some(PeriodicLine { title, next, .. }) = parse_periodic_line(line) else {
                     continue;
                 };
                 if next < from || next > to {
@@ -650,13 +895,13 @@ fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
 /// recurrence is therefore read as part of the title. That is the
 /// direction worth being wrong in — a recurrence is a short controlled
 /// phrase, a title is free prose.
-pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, NaiveDate)> {
+pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<PeriodicLine> {
     let rest = line.trim_start().strip_prefix("- ")?;
     let (head, next_part) = split_at_next_marker(rest)?;
     // The recurrence is whatever sits between the last em dash of the head
     // and the marker; everything before it is the title. `split_at_next_marker`
     // guarantees the head holds at least one dash, so this never fails.
-    let (title, _recurrence) = head.rsplit_once('\u{2014}')?;
+    let (title, recurrence) = head.rsplit_once('\u{2014}')?;
     let title = title.trim().to_owned();
     if title.is_empty() {
         return None;
@@ -669,7 +914,29 @@ pub(in crate::vault) fn parse_periodic_line(line: &str) -> Option<(String, Naive
         .next()
         .unwrap_or(after_marker);
     let date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()?;
-    Some((title, date))
+    Some(PeriodicLine {
+        title,
+        recurrence: recurrence.trim().parse().ok(),
+        next: date,
+    })
+}
+
+/// One parsed `## Periodic Commitments` bullet.
+///
+/// `recurrence` is an `Option` on purpose. Before #558 the parser
+/// isolated the recurrence segment and discarded it, so a line whose
+/// recurrence is unreadable (`- Dental — twice a year — next: …`) still
+/// parsed, still appeared in `cdno commitments`, and was still accepted
+/// by lint. Making the field mandatory would quietly change all three:
+/// the entry would vanish from the aggregation, and lint would start
+/// reporting a line it has always allowed. So an unparseable recurrence
+/// yields `None` here and the line is otherwise unaffected — only
+/// [`Vault::complete_periodic`], which cannot roll a date forward
+/// without one, refuses it, and says so.
+pub(in crate::vault) struct PeriodicLine {
+    pub title: String,
+    pub recurrence: Option<Recurrence>,
+    pub next: NaiveDate,
 }
 
 /// Locate the em dash that introduces the `next:` segment, returning
@@ -695,4 +962,84 @@ pub(in crate::vault) fn split_at_next_marker(rest: &str) -> Option<(&str, &str)>
         .skip(1)
         .find(|(idx, dash)| rest[idx + dash.len()..].trim_start().starts_with("next:"))
         .map(|(idx, dash)| (&rest[..idx], rest[idx + dash.len()..].trim()))
+}
+
+/// The marker opening a daily-log line that records a commitment's due
+/// date being moved. A constant rather than an inline literal because
+/// #430's whole argument is that repeated slippage should be *visible*,
+/// which means something will eventually read these lines back; a reader
+/// keyed on a fresh literal would silently miss every entry written
+/// before it.
+const LOG_COMMITMENT_RESCHEDULED_PREFIX: &str = "commitment rescheduled on ";
+
+/// The marker opening a daily-log line that records one occurrence of a
+/// periodic commitment being completed. Distinct from
+/// `commitment completed`, which names a standalone commitment note that
+/// has been fulfilled and filed away; a periodic one recurs, so the entry
+/// says what happened *and*, on its continuation lines, where the
+/// schedule moved to.
+const LOG_PERIODIC_DONE_PREFIX: &str = "periodic done on ";
+
+/// Rewrite the date that follows the line's `next:` marker, leaving
+/// every other byte alone. `None` when the marker or its date cannot be
+/// located, so the caller can refuse rather than write a file that did
+/// not change.
+///
+/// The marker position comes from [`split_at_next_marker`] — the same
+/// function [`parse_periodic_line`] and the lint hint use — rather than
+/// from a fresh search. That is the point: a writer that located the
+/// marker its own way would disagree with the parser on exactly the
+/// lines where it matters. A plain `rfind("next:")` is stolen by a
+/// trailing annotation that mentions `next:`; a plain `find` is stolen
+/// by a title that does. Deriving it from the parser cannot drift from
+/// what was actually parsed.
+///
+/// Anchoring at the marker rather than at the old date's text also
+/// fixes two shapes that parse and lint cleanly today:
+///
+/// - a date `%Y-%m-%d` reads but the line does not spell that way —
+///   `next: 2026-9-1` parses as 2026-09-01, and searching for
+///   `"2026-09-01"` finds nothing;
+/// - a trailing annotation repeating the marker's date
+///   (`next: 2026-09-01 (booked 2026-09-01)`), where a right-anchored
+///   search rewrites the annotation instead of the schedule.
+///
+/// Either way the old code returned the line unchanged while the caller
+/// logged a move that never happened — the daily log, the vault's record
+/// of what occurred, asserting a change absent from the file it
+/// describes.
+fn rewrite_next_date(line: &str, new_date: &str) -> Option<String> {
+    let indent = line.len() - line.trim_start().len();
+    let rest = line[indent..].strip_prefix("- ")?;
+    let rest_at = indent + "- ".len();
+
+    // Re-derive the parser's own marker rather than searching afresh.
+    let (head, _) = split_at_next_marker(rest)?;
+    let after_dash_at = head.len() + '\u{2014}'.len_utf8();
+    let after_dash = &rest[after_dash_at..];
+    let marker_at = after_dash_at + (after_dash.len() - after_dash.trim_start().len());
+    let after_marker_at = marker_at
+        + rest[marker_at..]
+            .strip_prefix("next:")
+            .map(|_| "next:".len())?;
+
+    // The date is the first whitespace-delimited token after the marker.
+    let tail = &rest[after_marker_at..];
+    let lead = tail.len() - tail.trim_start().len();
+    let token_at = after_marker_at + lead;
+    let token = &rest[token_at..];
+    let token_len = token.find(char::is_whitespace).unwrap_or(token.len());
+    if token_len == 0 {
+        return None;
+    }
+    // Only rewrite something that is actually a date; a malformed line is
+    // refused, not mangled.
+    NaiveDate::parse_from_str(&token[..token_len], "%Y-%m-%d").ok()?;
+
+    let abs = rest_at + token_at;
+    let mut out = String::with_capacity(line.len() - token_len + new_date.len());
+    out.push_str(&line[..abs]);
+    out.push_str(new_date);
+    out.push_str(&line[abs + token_len..]);
+    Some(out)
 }

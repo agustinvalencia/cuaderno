@@ -439,6 +439,44 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Move an active commitment's `due` date and log the move to today's daily entry, recording BOTH the old and new dates. Use this rather than deleting and recreating the note: recreating destroys the body (the notes on who was chased and why it moved) and resets `created`, the field that shows how long something has been slipping. The new date must differ from the current one. Moving a date earlier is allowed."
+    )]
+    pub async fn reschedule_commitment(
+        &self,
+        Parameters(input): Parameters<RescheduleCommitmentInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .with_vault(move |vault| vault.reschedule_commitment(at, &input.commitment, input.due))
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Rescheduled commitment at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Complete one occurrence of a stewardship's periodic commitment, rolling its `next:` date forward by that line's own recurrence and logging the completion with both dates. A periodic commitment is a bullet in a stewardship's `## Periodic Commitments`, not a note, so `complete_commitment` does not apply to it. `title` is a case-insensitive substring. Pass `at` for work finished on another day: the roll-forward is anchored to the DUE date either way, so completing early never drags the schedule earlier, and a late completion advances until the next date is in the future."
+    )]
+    pub async fn complete_periodic(
+        &self,
+        Parameters(input): Parameters<CompletePeriodicInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let now = chrono::Local::now().naive_local();
+        let at = match input.at {
+            Some(date) => date.and_time(now.time()),
+            None => now,
+        };
+        let path = self
+            .with_vault(move |vault| vault.complete_periodic(at, &input.stewardship, &input.title))
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Completed periodic commitment, updated {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
         description = "Mark an active commitment as completed: stamps the `status` and `completed` frontmatter fields, moves the file to `commitments/_done/<year>/`, and logs to today's daily entry. All in one atomic transaction."
     )]
     pub async fn complete_commitment(

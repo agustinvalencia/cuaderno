@@ -99,6 +99,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "resolve_waiting_on",
         "create_commitment",
         "complete_commitment",
+        "reschedule_commitment",
+        "complete_periodic",
         "create_tracking_entry",
         "upsert_daily_section",
         "upsert_weekly_section",
@@ -120,7 +122,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 49);
+    assert_eq!(tools.len(), 51);
 }
 
 #[test]

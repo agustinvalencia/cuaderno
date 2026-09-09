@@ -253,3 +253,73 @@ fn commit_done_in_non_interactive_errors_when_missing_slug() {
     let msg = format!("{err:#}");
     assert!(msg.contains("--slug"), "error message: {msg}");
 }
+
+#[test]
+fn commit_reschedule_moves_the_date_and_keeps_the_body() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 28, 9, 0),
+        CommitCommands::Create {
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("commit create");
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 10, 15),
+        CommitCommands::Reschedule {
+            slug: Some("pay-rent".to_owned()),
+            due: Some(ymd(2026, 6, 10)),
+        },
+        true,
+        false,
+    )
+    .expect("commit reschedule");
+
+    let raw = std::fs::read_to_string(dir.path().join("commitments/pay-rent.md")).unwrap();
+    assert!(raw.contains("due: 2026-06-10"), "{raw}");
+    assert!(
+        raw.contains("created: 2026-05-28"),
+        "created survives:\n{raw}"
+    );
+
+    let daily =
+        std::fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-29.md")).unwrap();
+    assert!(
+        daily.contains("commitment rescheduled on [[pay-rent]]")
+            && daily.contains("was: 2026-06-01")
+            && daily.contains("now: 2026-06-10"),
+        "{daily}"
+    );
+}
+
+#[test]
+fn commit_reschedule_in_non_interactive_errors_when_missing_due() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+
+    let err = commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 10, 15),
+        CommitCommands::Reschedule {
+            slug: Some("pay-rent".to_owned()),
+            due: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --due should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--due"), "error message: {msg}");
+}

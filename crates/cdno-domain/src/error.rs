@@ -34,6 +34,15 @@ pub enum DomainError {
     #[error("commitment is not active: {0}")]
     CommitmentNotActive(String),
 
+    #[error(
+        "commitment '{slug}' is already due on {due} \u{2014} a reschedule must move the date, and \
+         writing an unchanged one would log a slip that never happened"
+    )]
+    CommitmentAlreadyDue {
+        slug: String,
+        due: chrono::NaiveDate,
+    },
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 
@@ -66,6 +75,30 @@ pub enum DomainError {
         query: String,
         candidates: Vec<String>,
     },
+
+    #[error("no periodic commitment matching '{query}' on stewardship '{slug}'")]
+    PeriodicNotFound { slug: String, query: String },
+
+    #[error(
+        "ambiguous periodic commitment match for '{query}' on stewardship '{slug}': {candidates:?}"
+    )]
+    AmbiguousPeriodic {
+        slug: String,
+        query: String,
+        candidates: Vec<String>,
+    },
+
+    #[error(
+        "periodic commitment '{title}' on stewardship '{slug}' has an unreadable recurrence \u{2014} \
+         fix the line to one of: daily, weekly, monthly, every N months, yearly"
+    )]
+    PeriodicRecurrenceUnreadable { slug: String, title: String },
+
+    #[error(
+        "periodic commitment line on stewardship '{slug}' has no rewritable `next:` date: `{line}` \
+         \u{2014} the schedule was left untouched rather than logging a move that did not happen"
+    )]
+    PeriodicDateUnwritable { slug: String, line: String },
 
     #[error("no waiting-on item matching '{query}' on project '{slug}'")]
     WaitingOnNotFound { slug: String, query: String },

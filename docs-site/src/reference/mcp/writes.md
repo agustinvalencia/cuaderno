@@ -97,6 +97,8 @@ the content.
 |------|--------|--------|
 | `create_commitment` | `title`, `due`, `context`, `project?`, `stewardship?`, `vars?` | Create a standalone commitment note. |
 | `complete_commitment` | `commitment` (slug) | Mark a commitment done and archive it. |
+| `reschedule_commitment` | `commitment`, `due` | Move an active commitment's due date, logging both the old and new dates. Refuses an unchanged date. |
+| `complete_periodic` | `stewardship`, `title`, `at?` | Complete one occurrence of a stewardship's periodic commitment, rolling `next:` forward by that line's recurrence. Anchored to the due date, so completing early never drags the schedule earlier. |
 | `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?`, `metrics?`, `date?` | File a tracking note under an expanded stewardship. `metrics` is a JSON object merged into the entry's frontmatter — a scalar per reading (`{"balance": 1240.5}`), or an array of flat records when one entry holds several comparable items (`{"detail": [{"subject": "harmony", "minutes": 25}]}`); a scalar whose key is declared under `[schemas.tracking.fields]` is type-checked, and a key naming the note's identity (`type`, `stewardship`, `activity`, `date`) is refused. `date` files the entry for a past day (bounded to 50 years back, 1 year ahead). A second call for the same `(activity, date)` **merges** into the first: content appended, metrics folded in. Records carrying a stable `id` replace the record with that `id`; records without one append, so re-sending a payload without ids double-counts summed metrics. Either way the write is journalled to today's daily log. |
 
 ## Frontmatter
