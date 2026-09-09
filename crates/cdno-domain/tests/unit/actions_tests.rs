@@ -41,6 +41,13 @@ fn vault_with(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>) {
     (vault, store)
 }
 
+/// An active project map whose `## Next Actions` already holds the
+/// given bullets. `ACTIVE_PROJECT` above starts the section empty; the
+/// drop tests need plain (unattached) bullets to match against.
+fn project_with_bullets(bullets: &str) -> String {
+    format!("{ACTIVE_PROJECT}{bullets}")
+}
+
 fn read_action_frontmatter(store: &Arc<dyn VaultStore>, path: &VaultPath) -> ActionFrontmatter {
     let raw = store.read_file(path).unwrap();
     let (fm, _body) = Frontmatter::parse(&raw).unwrap();
@@ -716,5 +723,419 @@ fn promote_resolves_the_exact_bullet_like_completion_does() {
     assert!(
         content.contains("Draft the methods section (deep)"),
         "the sibling survives: {content}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Drop: closing an action WITHOUT claiming it was done (#559)
+// ---------------------------------------------------------------------
+
+#[test]
+fn drop_action_archives_its_note_as_dropped_not_completed() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let outcome = vault
+        .drop_action(
+            dt(2026, 5, 27, 17, 0),
+            "foo",
+            "demo-proposal",
+            Some("superseded by the demo-planning action"),
+        )
+        .expect("drop succeeds");
+
+    // Same archival mechanics as a completion: source and destination
+    // both in the touched set, so the desktop watcher cannot echo them.
+    assert!(outcome.touched());
+    let touched: std::collections::HashSet<_> = outcome.paths.iter().cloned().collect();
+    assert_eq!(
+        touched,
+        std::collections::HashSet::from([
+            vp("projects/foo.md"),
+            vp("actions/prepare-the-demo-proposal.md"),
+            vp("actions/_done/2026/prepare-the-demo-proposal.md"),
+            vp("journal/2026/daily/2026-05-27.md"),
+        ]),
+    );
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(
+        fm.status,
+        ActionStatus::Dropped,
+        "the note records abandonment, not completion"
+    );
+    assert_eq!(
+        fm.completed, None,
+        "a dropped action has no completion date \u{2014} it was never completed"
+    );
+}
+
+#[test]
+fn drop_action_logs_the_drop_and_its_reason_rather_than_a_completion() {
+    let body =
+        project_with_bullets("- [ ] Run feature set B (deep)\n- [ ] Draft methods (medium)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(
+            dt(2026, 5, 1, 16, 30),
+            "foo",
+            "feature set B",
+            Some("superseded by the ablation run"),
+        )
+        .expect("drop succeeds");
+
+    let raw = store.read_file(&vp("projects/foo.md")).unwrap();
+    assert!(
+        !raw.contains("Run feature set B"),
+        "bullet not removed:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Draft methods (medium)"),
+        "other action lost:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("- **16:30**: action dropped on [[foo]] \u{2014} Run feature set B (deep)"),
+        "drop entry missing:\n{daily}"
+    );
+    assert!(
+        daily.contains("reason: superseded by the ablation run"),
+        "reason missing:\n{daily}"
+    );
+    assert!(
+        !daily.contains("action done on"),
+        "a drop must never be logged as a completion:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_action_without_a_reason_logs_a_bare_entry() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(dt(2026, 5, 1, 16, 30), "foo", "feature set B", None)
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **16:30**: action dropped on [[foo]] \u{2014} Run feature set B (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+/// A newline in the reason would split one log entry into two lines,
+/// and the second would not parse as an entry at all.
+#[test]
+fn drop_action_flattens_a_multiline_reason_into_one_entry() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &body)]);
+
+    vault
+        .drop_action(
+            dt(2026, 5, 1, 16, 30),
+            "foo",
+            "feature set B",
+            Some("superseded\n\nby the ablation   run"),
+        )
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("reason: superseded by the ablation run"),
+        "whitespace runs collapse to single spaces:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_action_errors_when_action_not_found() {
+    let body = project_with_bullets("- [ ] Run feature set B (deep)\n");
+    let (vault, _store) = vault_with(&[("projects/foo.md", &body)]);
+
+    let err = vault
+        .drop_action(dt(2026, 5, 1, 16, 30), "foo", "nothing like this", None)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ActionNotFound { .. }),
+        "got {err:?}"
+    );
+}
+
+/// The PR's central negative promise, tested against the user-visible
+/// query rather than a proxy: a dropped action must never turn up in
+/// the weekly or monthly "what did you finish" views.
+///
+/// End-to-end cover only. `completed_actions_between` filters on
+/// `status` *and* on the date, so this passes while either guard alone
+/// holds — it cannot localise a break. The two guards are pinned
+/// individually by `drop_action_clears_a_pre_existing_completed_date`
+/// and `a_stale_completion_date_on_an_open_action_is_not_completed_work`.
+#[test]
+fn a_dropped_action_never_appears_in_completed_actions() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("drop succeeds");
+
+    let completed = vault
+        .completed_actions_between(
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        )
+        .expect("completed_actions_between");
+    assert!(
+        completed.is_empty(),
+        "a drop is not an achievement: {completed:?}"
+    );
+}
+
+/// The one test that actually joins the drop writer to the focus
+/// reader. Every other test on this path feeds one side a fixture of
+/// what the other is assumed to emit, so the load-bearing invariant —
+/// the reason rides on its own indented continuation line, leaving the
+/// entry head carrying the action text alone — was left free: emitting
+/// it inline as `; reason: ...` instead kept the whole suite green
+/// while genuinely breaking the match, because `current_focus` reads
+/// heads and an inline reason lands in the head.
+#[test]
+fn a_real_drop_with_a_reason_clears_the_focus_it_opened() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    // A plain bullet, not an attached note: `start_action` logs the raw
+    // text it is handed while the close verbs log the *resolved* bullet
+    // text, so the two only coincide for a bullet that is its own text.
+    // With an attached note they never match and no close clears the
+    // focus — a pre-existing defect (`complete_action` behaves
+    // identically), filed separately rather than widened into this PR.
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .start_action(
+            dt(2026, 5, 26, 9, 30),
+            "foo",
+            "Prepare the demo proposal (deep)",
+        )
+        .expect("start succeeds");
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_some(),
+        "precondition: the start opened a focus"
+    );
+
+    vault
+        .drop_action(
+            dt(2026, 5, 26, 17, 0),
+            "foo",
+            "Prepare the demo proposal",
+            Some("superseded by the ablation run"),
+        )
+        .expect("drop succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "the drop the writer emitted must clear the start it names"
+    );
+
+    // Pin the shape the reader depends on, so a change to either side
+    // fails here rather than silently decoupling the two again.
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        daily.contains("\n  reason: superseded by the ablation run"),
+        "the reason belongs on its own continuation line: {daily}"
+    );
+}
+
+/// The absent-key tolerance must mean "the note asserts no completion",
+/// not "the rewriter could not find the line". `rewrite_field_in_frontmatter`
+/// scans for a column-0 `completed:` prefix while `Frontmatter` parses
+/// YAML, so a quoted key is invisible to the scan and visible to the
+/// parser. Swallowing on the scan alone archived the exact
+/// self-contradictory file — `status: dropped` carrying a completion
+/// date — that clearing the field exists to prevent.
+#[test]
+fn a_drop_refuses_to_archive_a_completion_date_the_rewriter_cannot_see() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "\"completed\": 2026-05-01"),
+        )
+        .unwrap();
+
+    let err = vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect_err("a completion date the arm cannot clear must not be archived");
+    assert!(
+        matches!(err, DomainError::MissingFrontmatterField(_)),
+        "got {err:?}"
+    );
+    assert!(
+        !store
+            .exists(&vp("actions/_done/2026/prepare-the-demo-proposal.md"))
+            .unwrap(),
+        "nothing is archived on the error path"
+    );
+}
+
+/// The drop path must not require a `completed:` key to exist.
+/// `completed` is optional in an action's frontmatter, so a note that
+/// omits it parses cleanly and lints clean — an ejected
+/// `.cuaderno/templates/action.md` may simply leave the line out. The
+/// first `completed: null` implementation rewrote the field
+/// unconditionally and so failed the whole verb on such a note: bullet
+/// not removed, nothing logged, note not archived. `complete_action`
+/// has always failed this way, but a drop is the escape hatch for when
+/// a completion is the wrong claim, so it must not inherit that.
+#[test]
+fn drop_action_survives_an_action_note_with_no_completed_field() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    let without = raw.replace("completed: null\n", "");
+    assert!(
+        !without.contains("completed:"),
+        "fixture must actually drop the key"
+    );
+    store.write_file(&note, &without).unwrap();
+
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("a drop must not require the key to be present");
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(fm.status, ActionStatus::Dropped);
+    assert_eq!(fm.completed, None);
+}
+
+/// The second of `completed_actions_between`'s two guards, pinned on its
+/// own. An action left `active` or `blocked` while carrying a stale
+/// completion date is not finished work, and only the `status` check
+/// keeps it out of the weekly and monthly views — the date check passes
+/// it straight through.
+#[test]
+fn a_stale_completion_date_on_an_open_action_is_not_completed_work() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "completed: 2026-05-27"),
+        )
+        .unwrap();
+
+    let completed = vault
+        .completed_actions_between(
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        )
+        .expect("completed_actions_between");
+    assert!(
+        completed.is_empty(),
+        "an action that is still open has not been finished, whatever \
+         date its frontmatter carries: {completed:?}"
+    );
+}
+
+/// A note hand-edited to carry a completion date while still active
+/// must not be archived as `dropped` *and* dated. The archival clears
+/// the field rather than leaving whatever was there, so the file cannot
+/// contradict itself and no reader has to check `status` first to be
+/// safe.
+#[test]
+fn drop_action_clears_a_pre_existing_completed_date() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "completed: 2026-01-05"),
+        )
+        .unwrap();
+
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("drop succeeds");
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(fm.status, ActionStatus::Dropped);
+    assert_eq!(
+        fm.completed, None,
+        "the stale completion date is cleared, not carried into the archive"
     );
 }

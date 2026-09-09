@@ -8,6 +8,30 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **An action can be dropped, not just completed.** `complete_action` was the only verb that removed
+  an action bullet, and it writes `action done on [[slug]] — <text>` to the daily log. So an action
+  that was superseded, abandoned or reprioritised could only be cleared by recording work that never
+  happened — into the record the weekly review, the monthly scan and every later verdict read back
+  from. The only repair was a correction line written by hand, undoing what the tool had just
+  written.
+
+  `cdno action drop` and the MCP `drop_action` close an action without that claim. Matching,
+  ambiguity and the attached-note handling are identical to completing one, so there is nothing new
+  to learn; what differs is the log prefix (`action dropped on `), an optional `--reason`, and that
+  an attached note is archived stamped `status: dropped` with no completion date. `ActionStatus`
+  gains a fourth, terminal variant to carry that.
+
+  Leaving `completed` unset is what keeps a dropped action out of `completed_actions_between`, and
+  so out of the weekly and monthly "what did you finish" views — a drop is not an achievement. The
+  reason goes on a continuation line rather than inline, because `current_focus` matches an open
+  `started ` entry against the closing one by its action text: appended inline, every
+  drop-with-a-reason would have failed to clear, leaving an abandoned action as "what you are on"
+  indefinitely.
+
+  `docs-site/src/concepts/rlm.md` has always promised "permission to park or drop"; actions now have
+  it in the tooling and not only in the guide.
+  (#559)
+
 - **Milestones can be undated, and a project's core question can be changed.** Two halves of the
   same gap: the write surface had verbs for creating and completing, and none for correcting.
 

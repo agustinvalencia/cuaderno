@@ -346,7 +346,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`."
+        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`. Use this ONLY when the work was actually performed. If it was superseded, abandoned or reprioritised, use `drop_action` instead -- completing it writes `action done on ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert work nobody did."
     )]
     pub async fn complete_action(
         &self,
@@ -362,6 +362,29 @@ impl CuadernoServer {
             .map_err(into_mcp_error)?
             .primary;
         let message = format!("Completed action on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Drop an action: closes it WITHOUT recording it as done. Use this whenever an action is superseded, abandoned or reprioritised -- `complete_action` writes `action done on ...` into the daily log, which is the record every weekly and monthly review reads back from, so completing something that was never performed makes the vault assert work that did not happen. Matches the bullet by substring `query` exactly as `complete_action` does, removes it, logs `action dropped on ...`, and (if an action note is attached) archives it to `actions/_done/<year>/` stamped `status: dropped` with no completion date. Pass `reason` whenever you know it -- \"superseded by X\" and \"no longer wanted\" are different facts, and only one of them tells a later reader to look for a replacement."
+    )]
+    pub async fn drop_action(
+        &self,
+        Parameters(input): Parameters<DropActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // Only the primary project path is surfaced here; the outcome's
+        // full touched set (which includes any archival move) is for the
+        // desktop echo journal (#315), not the MCP reply.
+        let path = self
+            .with_vault(move |vault| {
+                vault.drop_action(at, &input.project, &input.query, input.reason.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?
+            .primary;
+        let message = format!("Dropped action on {}", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }

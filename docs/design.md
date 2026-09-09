@@ -615,7 +615,7 @@ tags: [kan, ppo, sample-efficiency]
 
 | Field       | Required | Notes                                                                                          |
 |-------------|----------|------------------------------------------------------------------------------------------------|
-| `status`    | yes      | `active`, `completed`, or `blocked`                                                            |
+| `status`    | yes      | `active`, `completed`, `blocked`, or `dropped`                                                 |
 | `project`   | yes      | Slug of the parent project. Every action belongs to a project.                                 |
 | `energy`    | yes      | `deep`, `medium`, or `light`. Same vocabulary as bullet actions.                               |
 | `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits.             |

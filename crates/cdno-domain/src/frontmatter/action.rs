@@ -23,11 +23,17 @@ use serde::{Deserialize, Serialize};
 use super::project::EnergyLevel;
 
 /// Lifecycle state of an action note. Created `Active`; flipped to
-/// `Completed` by `Vault::complete_action` in the same transaction
-/// that removes the matching bullet from the project map and moves
-/// the file to `actions/_done/<year>/`. `Blocked` is set explicitly
-/// when external work is gating progress; the `blocker` frontmatter
-/// field carries the human description.
+/// `Completed` by `Vault::complete_action`, or to `Dropped` by
+/// `Vault::drop_action`, in the same transaction that removes the
+/// matching bullet from the project map and moves the file to
+/// `actions/_done/<year>/`. `Blocked` is set explicitly when external
+/// work is gating progress; the `blocker` frontmatter field carries the
+/// human description.
+///
+/// `Completed` and `Dropped` are both terminal, and the distinction is
+/// the whole point of the pair: one says the work was performed, the
+/// other that it was abandoned, superseded or reprioritised. Only
+/// `Completed` carries a `completed` date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
@@ -36,14 +42,23 @@ pub enum ActionStatus {
     Active,
     Completed,
     Blocked,
+    /// Abandoned, superseded or reprioritised — closed without having
+    /// been performed (#559). Distinct from `Completed` on purpose: the
+    /// daily log is the record every review reads back from, and
+    /// recording an abandoned action as done makes the vault assert work
+    /// that never happened. `completed` stays `None`, which is what
+    /// keeps a dropped action out of `completed_actions_between` and so
+    /// out of the weekly and monthly "what did you finish" views.
+    Dropped,
 }
 
 impl ActionStatus {
     /// Every variant in declaration order.
-    pub const ALL: [ActionStatus; 3] = [
+    pub const ALL: [ActionStatus; 4] = [
         ActionStatus::Active,
         ActionStatus::Completed,
         ActionStatus::Blocked,
+        ActionStatus::Dropped,
     ];
 
     /// Kebab-case YAML / CLI form.
@@ -52,6 +67,7 @@ impl ActionStatus {
             ActionStatus::Active => "active",
             ActionStatus::Completed => "completed",
             ActionStatus::Blocked => "blocked",
+            ActionStatus::Dropped => "dropped",
         }
     }
 }
@@ -59,7 +75,7 @@ impl ActionStatus {
 /// Error returned when a string does not match any [`ActionStatus`]
 /// variant.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("unknown action status: {0} (expected: active, completed, or blocked)")]
+#[error("unknown action status: {0} (expected: active, completed, blocked, or dropped)")]
 pub struct ParseActionStatusError(pub String);
 
 impl FromStr for ActionStatus {
@@ -88,7 +104,12 @@ impl FromStr for ActionStatus {
 /// commitments aggregation reads as the action's deadline source.
 ///
 /// `completed` is `Some(date)` for completed actions, `None` while
-/// active or blocked. The two move together with `status`. `blocker`
+/// active, blocked or dropped. A drop actively clears it rather than
+/// leaving whatever was there: a dropped action was closed without
+/// being performed, so it carries no completion date — the drop is
+/// recorded in the daily log and by the archive year, and
+/// `completed: null` is what keeps it out of the completed-actions
+/// query. `blocker`
 /// is `Some(description)` while `status: blocked`, `None` otherwise.
 /// `criteria` is free-form text describing what "done" looks like —
 /// optional because trivial cases are encoded by the title.

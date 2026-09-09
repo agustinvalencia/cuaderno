@@ -8,8 +8,8 @@
 //!   live, and what's its status?" operations.
 //! - [`state`] — `update_project_state`, with auto-logging of the
 //!   previous state to today's daily note.
-//! - [`actions`] — `add_action`, `complete_action` for the
-//!   `## Next Actions` section, plus the energy-tag parsing helpers.
+//! - [`actions`] — `add_action`, `complete_action`, `drop_action` for
+//!   the `## Next Actions` section, plus the energy-tag parsing helpers.
 //! - [`core_question`] — `set_core_question`, changing the project's
 //!   `core_question:` after creation and logging the previous value.
 //! - [`milestones`] — `add_milestone`, `complete_milestone` for the
@@ -52,7 +52,8 @@ pub use summary::{ProjectSummary, TopAction};
 pub(super) const CURRENT_STATE_SECTION: &str = "Current State";
 
 /// The heading whose body holds the project's open action checklist.
-/// Mutated by `add_action` (append) and `complete_action` (remove).
+/// Mutated by `add_action` (append) and by `complete_action` /
+/// `drop_action` (remove).
 pub(super) const NEXT_ACTIONS_SECTION: &str = "Next Actions";
 
 /// The heading whose body holds project blockers awaiting external

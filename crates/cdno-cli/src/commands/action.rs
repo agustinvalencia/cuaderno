@@ -77,8 +77,26 @@ pub enum ActionCommands {
         query: Option<String>,
     },
 
+    /// Drop a next action by case-insensitive substring match: closes it
+    /// WITHOUT recording it as done. For work that was superseded,
+    /// abandoned or reprioritised. A wikilinked bullet also archives its
+    /// note to `actions/_done/<year>/`, stamped `status: dropped`.
+    Drop {
+        /// Project slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        project: Option<String>,
+        /// Substring matching the action to drop.
+        #[arg(long)]
+        query: Option<String>,
+        /// Why it was dropped ("superseded by X", "no longer wanted").
+        /// Optional, but it is what a later reader needs: it is the
+        /// difference between looking for a replacement and not.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
     /// List a project's open action bullets, with the attached-note
-    /// status (active / blocked / completed) inline when present.
+    /// status (active / blocked / completed / dropped) inline when present.
     List {
         /// Project slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
@@ -124,6 +142,11 @@ pub fn run(
         ActionCommands::Complete { project, query } => {
             complete(&vault, at, project, query, interactive, json)
         }
+        ActionCommands::Drop {
+            project,
+            query,
+            reason,
+        } => drop_verb(&vault, at, project, query, reason, interactive, json),
         ActionCommands::List { project } => list(&vault, project, interactive, json),
     }
 }
@@ -306,6 +329,63 @@ fn complete(
     Ok(())
 }
 
+/// `cdno action drop` — the sibling of `complete`, for work that was
+/// closed without being done (#559).
+///
+/// Named `drop_verb` because `drop` is a prelude function; the clap
+/// variant is still `Drop` and the user-facing verb is still
+/// `cdno action drop`.
+///
+/// `--reason` is genuinely optional and never prompted for: absence is a
+/// valid value ("no reason recorded"), not a missing input, so it does
+/// not route through `gather_or_error` (see the genuinely-optional-field
+/// rule in `docs/cli-ergonomics.md`). It appears in the confirm preview
+/// so a prompted run still shows what will be written.
+fn drop_verb(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: Option<String>,
+    query: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
+        let entries = vault
+            .list_actions(&project)
+            .context("listing actions for the bullet picker")?;
+        let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
+        prompt::prompt_bullet(&project, &labels)
+    })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to DROP action on '{project}' (not complete it): '{query}'\n  reason: {}",
+            reason.as_deref().unwrap_or("(none)")
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // The CLI reports the primary path only; the outcome's full
+    // touched-path set is desktop-journal machinery (#315).
+    let project_path = vault
+        .drop_action(at, &project, &query, reason.as_deref())
+        .context("dropping action")?
+        .primary;
+    crate::output::emit_write_result(
+        json,
+        &project_path.to_string(),
+        &format!("Action dropped on {project_path}"),
+    )?;
+    Ok(())
+}
+
 fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -> Result<()> {
     // List is read-only — no confirm step even if we prompt for the
     // project, since nothing is being mutated.
@@ -368,20 +448,31 @@ fn status_label(att: &AttachedAction) -> &'static str {
         ActionStatus::Active => "active",
         ActionStatus::Blocked => "blocked",
         ActionStatus::Completed => "completed",
+        ActionStatus::Dropped => "dropped",
     }
 }
 
 /// The style an action's status reads in.
 ///
-/// Named rather than inlined so the mapping can be asserted. Collapsing
-/// all three to one role is invisible to any test that reads the literal
-/// `[blocked]` text — which is every test this command has — and the
-/// renderer bakes in the process palette, so a rendered listing carries
-/// no colour under test to compare.
+/// Named rather than inlined so the mapping can be asserted: a test
+/// that reads only the literal `[blocked]` text cannot see two roles
+/// collapse into one. `a_rendered_listing_actually_uses_the_status_role`
+/// renders under `with_colour(true, ..)` and compares SGR sequences, so
+/// collapsing `Blocked` into `Meta` fails there and in
+/// `action_statuses_are_distinguishable_in_the_rendered_listing`.
+///
+/// The mapping is deliberately not injective: `Active` and `Dropped`
+/// both read as `Role::Meta`, so colour does not separate that pair.
+/// What colour carries is the claim of achievement — only a real
+/// completion reads as `Success` — and that is what the tests pin.
 pub fn status_role(status: ActionStatus) -> Role {
     match status {
         ActionStatus::Active => Role::Meta,
         ActionStatus::Blocked => Role::Warn,
         ActionStatus::Completed => Role::Success,
+        // Neutral, not Success: a dropped action is closed, but nothing
+        // was achieved, and colouring it like a completion is the same
+        // false claim in a different medium.
+        ActionStatus::Dropped => Role::Meta,
     }
 }

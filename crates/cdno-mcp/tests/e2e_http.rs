@@ -175,7 +175,7 @@ async fn full_catalogue_and_tool_call_over_http() {
     // to look plausible.
     assert_eq!(
         names.len(),
-        47,
+        48,
         "HTTP catalogue diverged from the stdio pin: {names:?}"
     );
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");

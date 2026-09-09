@@ -156,6 +156,21 @@ pub struct ActionQueryInput {
     pub query: String,
 }
 
+/// Input for `drop_action` (GH #559) — like [`ActionQueryInput`] but
+/// carries the optional reason the drop is worth recording for.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DropActionInput {
+    pub project: String,
+    /// Case-insensitive substring of the bullet to drop.
+    pub query: String,
+    /// Why it was dropped, e.g. "superseded by the demo-planning
+    /// action". Optional, but strongly wanted: "superseded by X" and "no
+    /// longer wanted" are different facts, and the distinction is what a
+    /// later reader needs.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 /// Input for `promote_action` — like [`ActionQueryInput`] but carries the
 /// template `vars` the action-note template may prompt for.
 #[derive(Debug, Deserialize, JsonSchema)]

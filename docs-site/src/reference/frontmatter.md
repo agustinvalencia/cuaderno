@@ -48,7 +48,7 @@ core_question?: "[[questions/research/surrogate-cost]]"
 
 ```yaml
 type: action
-status: active         # active | completed | blocked
+status: active         # active | completed | blocked | dropped
 project: surrogate-model
 energy: deep           # deep | medium | light
 milestone?: "[[...]]"

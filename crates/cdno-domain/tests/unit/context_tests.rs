@@ -728,6 +728,19 @@ fn daily_with(date: NaiveDate, lines: &[&str]) -> String {
     format!("---\ndate: {date}\ntype: daily\n---\n\n# {date}\n\n## Logs\n{body}\n")
 }
 
+/// A daily note whose `## Logs` holds `body` exactly as given, so a
+/// test can write indented continuation lines. [`daily_with`] prefixes
+/// every line with `- `, which would turn a continuation into a sibling
+/// bullet and defeat the very thing the drop tests pin.
+fn focus_vault_raw(body: &str) -> Vault {
+    let note = format!(
+        "---\ndate: {d}\ntype: daily\n---\n\n# {d}\n\n## Logs\n{body}\n",
+        d = focus_day().format("%Y-%m-%d"),
+    );
+    let (vault, _store) = vault_with(&[("journal/2026/daily/2026-07-13.md", &note)]);
+    vault
+}
+
 fn focus_day() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 7, 13).unwrap()
 }
@@ -1823,5 +1836,86 @@ fn a_derived_metric_is_computed_per_record_then_grouped() {
         ),
         Some(10.0),
         "5*2.0 = 10, train's own total, independent of bus"
+    );
+}
+
+// ---------------------------------------------------------------------
+// current_focus and dropped actions (#559)
+//
+// A drop closes an action as finally as a completion does. Nothing else
+// clears an open start, so without this the abandoned action stays
+// "what you are on" for ever — and the failure is silent.
+// ---------------------------------------------------------------------
+
+#[test]
+fn current_focus_is_cleared_by_a_dropped_action() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**11:00**: action dropped on [[alpha]] \u{2014} Draft the methods section",
+    ]);
+
+    assert_eq!(
+        vault.current_focus(focus_day()).unwrap(),
+        None,
+        "a dropped action is no longer what you are on"
+    );
+}
+
+/// The reason rides on an indented continuation line precisely so the
+/// entry head still carries the action text alone.
+///
+/// This test feeds the reader a fixture, so it pins only the reader's
+/// half: it fails if `current_focus` goes back to folding entries, but
+/// NOT if the writer starts emitting the reason inline. The writer and
+/// reader are joined by
+/// `actions_tests::a_real_drop_with_a_reason_clears_the_focus_it_opened`.
+#[test]
+fn current_focus_is_cleared_by_a_drop_that_carries_a_reason() {
+    let vault = focus_vault_raw(
+        "- **09:30**: started [[alpha]] \u{2014} Draft the methods section\n\
+         - **11:00**: action dropped on [[alpha]] \u{2014} Draft the methods section\n\
+         \x20 reason: superseded by the ablation run",
+    );
+
+    assert_eq!(
+        vault.current_focus(focus_day()).unwrap(),
+        None,
+        "the reason must not perturb the action-text match"
+    );
+}
+
+#[test]
+fn a_drop_does_not_clear_an_unrelated_open_start() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:00**: action dropped on [[beta]] \u{2014} Something else entirely",
+    ]);
+
+    let focus = vault
+        .current_focus(focus_day())
+        .unwrap()
+        .expect("alpha's start is untouched");
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section");
+}
+
+/// An action whose own bullet text contains the reason delimiter. The
+/// first implementation split the folded entry on `"; reason: "`, which
+/// truncated this action's text and then cleared a *different* start.
+/// Matching on entry heads removes the ambiguity entirely.
+#[test]
+fn a_drop_does_not_clear_a_start_whose_text_merely_resembles_a_reason() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Ask Bob",
+        "**11:00**: action dropped on [[alpha]] \u{2014} Ask Bob; reason: unclear (deep)",
+    ]);
+
+    let focus = vault
+        .current_focus(focus_day())
+        .unwrap()
+        .expect("the plain 'Ask Bob' start survives");
+    assert_eq!(
+        focus.action, "Ask Bob",
+        "dropping a different bullet must not close this one"
     );
 }

@@ -20,7 +20,8 @@ This appends a checkbox bullet to the project's next-actions list, tagged with i
 cdno action list --project surrogate-model
 ```
 
-Bullets that have been promoted to notes show their status (active / blocked / completed) inline.
+Bullets that have been promoted to notes show their status (active / blocked / completed /
+dropped) inline.
 `--json` gives the structured list.
 
 ## Promote an action to a manifest note
@@ -49,6 +50,28 @@ action had a manifest note, that note is archived to `actions/_done/<year>/` and
 ```bash
 cdno action complete --project surrogate-model --query "feature set B"
 ```
+
+## Drop an action
+
+Not everything on the list gets done. When an action is superseded, abandoned or reprioritised,
+drop it rather than completing it:
+
+```bash
+cdno action drop --project surrogate-model --query "demo proposal" \
+    --reason "superseded by the demo-planning action"
+```
+
+This matches and archives exactly like `complete`, but the note is stamped `status: dropped` with no
+completion date, and the journal records `action dropped on …` instead of `action done on …`.
+
+The distinction matters more than it looks. The daily log is what the weekly review, the monthly
+scan and every later verdict read back from — so completing work that was never performed leaves
+your own vault asserting something untrue, and the only repair is a correction line written by hand.
+A dropped action also stays out of the completed-actions views, because it carries no completion
+date.
+
+`--reason` is optional and worth giving. "Superseded by X" and "no longer wanted" are different
+facts, and only one of them tells you to go looking for the replacement.
 
 ## Inline vs. manifest — when to promote
 

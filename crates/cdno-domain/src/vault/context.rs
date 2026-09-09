@@ -46,7 +46,9 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::ProjectSummary;
-use super::projects::actions::{LOG_ACTION_DONE_PREFIX, LOG_STARTED_PREFIX};
+use super::projects::actions::{
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
+};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -912,7 +914,17 @@ impl Vault {
         // clears its matching start wherever it sits, since a day can
         // interleave several.
         let mut open: Vec<CurrentFocus> = Vec::new();
-        for (time, text) in parse_log_lines(section) {
+        //
+        // Read the entry **heads** — first physical lines — not the
+        // folded entries `parse_log_lines` produces. Focus matching
+        // compares a closing entry's action text against the start's,
+        // and a folded entry carries its continuation lines appended
+        // after a `"; "`. Matching on the head keeps the comparison
+        // against exactly the text the writer emitted, so a `reason:`
+        // continuation cannot perturb it and no delimiter has to be
+        // stripped back off — which is what makes the reason's
+        // continuation line load-bearing rather than decorative.
+        for (time, text) in parse_log_entry_heads(section) {
             if let Some((project, action)) = parse_focus_marker(&text, LOG_STARTED_PREFIX) {
                 open.push(CurrentFocus {
                     project,
@@ -921,6 +933,12 @@ impl Vault {
                 });
             } else if let Some((project, action)) =
                 parse_focus_marker(&text, LOG_ACTION_DONE_PREFIX)
+                    // A drop closes the action just as finally as a
+                    // completion does; only the claim about what
+                    // happened differs. Without this arm an abandoned
+                    // action would stay "what you are on" for ever,
+                    // since nothing else ever clears an open start.
+                    .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
             {
                 open.retain(|f| !(f.project == project && f.action == action));
             }
@@ -938,6 +956,37 @@ pub struct CurrentFocus {
     pub action: String,
     /// When it was started, from the log line's own stamp.
     pub started: NaiveTime,
+}
+
+/// The `## Logs` entries as their **first physical lines** — `(time,
+/// text)` per `- **HH:MM**: text` line, with indented continuation
+/// lines skipped rather than folded in.
+///
+/// [`parse_log_lines`] folds a continuation into the entry it belongs
+/// to, joined with `"; "`, which is right for readers that want the
+/// whole entry. [`Vault::current_focus`] wants the opposite: it
+/// compares a closing entry's action text against an earlier start's,
+/// so it must see exactly what the writer emitted on that line. Folding
+/// would make a drop's `reason:` continuation part of the action text,
+/// and no amount of stripping it back off is safe — an action's own
+/// bullet text may contain the same delimiter, and after folding the
+/// two are indistinguishable.
+fn parse_log_entry_heads(section: &str) -> Vec<(NaiveTime, String)> {
+    let mut out = Vec::new();
+    for line in section.lines() {
+        let trimmed = line.trim_end();
+        let Some(rest) = trimmed.strip_prefix("- **") else {
+            continue;
+        };
+        let Some((hhmm, after)) = rest.split_once("**: ") else {
+            continue;
+        };
+        let Ok(time) = NaiveTime::parse_from_str(hhmm, "%H:%M") else {
+            continue;
+        };
+        out.push((time, after.to_owned()));
+    }
+    out
 }
 
 /// Split `<prefix>[[project]] - action` into its project and action.
