@@ -16,6 +16,22 @@ use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::MILESTONES_SECTION;
 
+/// Date marker for a milestone gated by a condition rather than a
+/// date. Matches the placeholder `crates/cdno-domain/templates/project.md`
+/// already seeds, so an undated milestone written by `add_milestone`
+/// and one sitting in a fresh project's template read identically.
+///
+/// Deliberately not an ISO date. The commitments aggregation reads
+/// `index.milestones_between`, whose rows come from
+/// `extract_milestones_from_body` via reconciliation; that parser
+/// yields `date: None` for a non-date marker, and both index
+/// implementations drop a null-dated row from the range query. So an
+/// undated milestone stays out of the aggregation with no
+/// special-casing. (`extract_hard_deadlines` fills the separate
+/// `deadlines` table, which has no reader in this crate — do not
+/// reason about the aggregation from it.)
+pub const UNDATED_TARGET: &str = "TBD";
+
 impl Vault {
     /// Append a milestone bullet to `## Milestones`, logging the
     /// addition to today's daily note in a single committed
@@ -25,19 +41,49 @@ impl Vault {
     /// true, otherwise `- [ ] <title> — target: YYYY-MM-DD`. Hard
     /// milestones with ISO dates are picked up by the commitments
     /// aggregation query (see `cdno_core::markdown::extract_hard_deadlines`).
+    ///
+    /// `target_date` is optional. Some milestones are gated by a
+    /// condition rather than a date ("all Round-1 replies received"),
+    /// and inventing an estimate pollutes the milestone list with
+    /// commitments nobody made. `None` renders the [`UNDATED_TARGET`]
+    /// marker the project template already seeds (`- [ ] <title> —
+    /// target: TBD`), a shape the read path already tolerates:
+    /// `extract_milestones_from_body` yields `date: None`, and the
+    /// range query behind the commitments aggregation drops a
+    /// null-dated row, so an undated milestone stays out of it with no
+    /// special-casing (#521). See [`UNDATED_TARGET`] for why that, and
+    /// not `extract_hard_deadlines`, is the mechanism.
+    ///
+    /// `is_hard` with no date is rejected
+    /// ([`DomainError::HardMilestoneRequiresDate`]) rather than
+    /// quietly downgraded — a hard deadline with no date is not a
+    /// thing, and erroring is clearer than guessing which half of the
+    /// call the user meant.
     pub fn add_milestone(
         &self,
         at: NaiveDateTime,
         slug: &str,
         title: &str,
-        target_date: NaiveDate,
+        target_date: Option<NaiveDate>,
         is_hard: bool,
     ) -> Result<VaultPath, DomainError> {
+        let title = title.trim();
+        // Checked before the transaction: nothing is written on a
+        // rejected call, and the lock is never taken to fail.
+        if is_hard && target_date.is_none() {
+            return Err(DomainError::HardMilestoneRequiresDate {
+                slug: slug.to_owned(),
+                title: title.to_owned(),
+            });
+        }
+
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
-        let title = title.trim();
-        let date_str = target_date.format("%Y-%m-%d").to_string();
+        let date_str = match target_date {
+            Some(date) => date.format("%Y-%m-%d").to_string(),
+            None => UNDATED_TARGET.to_owned(),
+        };
         let keyword = if is_hard { "hard" } else { "target" };
         let bullet = format!("- [ ] {title} \u{2014} {keyword}: {date_str}");
 

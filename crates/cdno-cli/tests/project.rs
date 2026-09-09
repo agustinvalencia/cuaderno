@@ -576,8 +576,66 @@ fn activate_in_non_interactive_errors_when_missing_slug() {
     assert!(msg.contains("--slug"), "error message: {msg}");
 }
 
+/// #521 changed this: an omitted `--date` used to be a missing-flag
+/// error, and is now a valid value (an undated, condition-gated
+/// milestone). The non-interactive path must take the absence at face
+/// value rather than erroring.
 #[test]
-fn milestone_add_in_non_interactive_errors_when_missing_date() {
+fn milestone_add_in_non_interactive_accepts_a_missing_date() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: Some("All replies in".to_owned()),
+                date: None,
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect("an undated milestone is a valid milestone");
+
+    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        body.contains("- [ ] All replies in \u{2014} target: TBD"),
+        "body:\n{body}"
+    );
+}
+
+/// `--date` left the required set in #521, but `--slug` and `--title`
+/// did not. Deleting the old missing-date test took the only
+/// missing-flag guard this verb had with it, on the one handler that
+/// now deliberately routes an argument around `gather_or_error`.
+#[test]
+fn milestone_add_in_non_interactive_errors_when_missing_title() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: None,
+                date: Some(NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --title should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--title"), "error message: {msg}");
+}
+
+#[test]
+fn milestone_add_rejects_hard_without_a_date() {
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
     let err = project::run(
@@ -588,15 +646,15 @@ fn milestone_add_in_non_interactive_errors_when_missing_date() {
                 slug: Some("x".to_owned()),
                 title: Some("Submit".to_owned()),
                 date: None,
-                hard: false,
+                hard: true,
             },
         },
         true,
         false,
     )
-    .expect_err("missing --date should error");
+    .expect_err("a hard deadline with no date is not a thing");
     let msg = format!("{err:#}");
-    assert!(msg.contains("--date"), "error message: {msg}");
+    assert!(msg.contains("hard"), "error message: {msg}");
 }
 
 #[test]
@@ -763,4 +821,68 @@ fn a_rendered_listing_actually_uses_the_context_accent() {
         out.contains('\u{1b}'),
         "forcing colour should paint:\n{out}"
     );
+}
+
+#[test]
+fn core_question_sets_then_clears_the_field() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::CoreQuestion {
+            slug: Some("x".to_owned()),
+            question: Some("questions/research/foo".to_owned()),
+            clear: false,
+        },
+        true,
+        false,
+    )
+    .expect("core-question set");
+
+    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        body.contains("core_question: \"[[questions/research/foo]]\""),
+        "body:\n{body}"
+    );
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ProjectCommands::CoreQuestion {
+            slug: Some("x".to_owned()),
+            question: None,
+            clear: true,
+        },
+        true,
+        false,
+    )
+    .expect("core-question clear");
+
+    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(body.contains("core_question: null"), "body:\n{body}");
+}
+
+/// Neither `--question` nor `--clear` in a non-interactive run is a
+/// missing-flag error, not a silent detach: dropping a project's
+/// question is a decision, and must be asked for.
+#[test]
+fn core_question_in_non_interactive_errors_when_missing_question() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::CoreQuestion {
+            slug: Some("x".to_owned()),
+            question: None,
+            clear: false,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --question should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--question"), "error message: {msg}");
 }

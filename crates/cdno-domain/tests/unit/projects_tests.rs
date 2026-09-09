@@ -1413,7 +1413,7 @@ fn add_milestone_appends_hard_bullet_and_logs() {
             dt(2026, 5, 1, 10, 0),
             "icml",
             "Submit camera-ready",
-            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
             true,
         )
         .expect("add_milestone succeeds");
@@ -1457,7 +1457,7 @@ fn add_milestone_uses_target_keyword_when_not_hard() {
             dt(2026, 5, 1, 10, 0),
             "icml",
             "Internal review",
-            chrono::NaiveDate::from_ymd_opt(2026, 5, 15).unwrap(),
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 15).unwrap()),
             false,
         )
         .expect("add_milestone succeeds");
@@ -1480,7 +1480,7 @@ fn add_milestone_creates_section_when_missing() {
             dt(2026, 5, 1, 10, 0),
             "x",
             "First",
-            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
             true,
         )
         .expect("add_milestone auto-creates the missing section");
@@ -1506,13 +1506,215 @@ fn add_milestone_errors_when_project_parked() {
             dt(2026, 5, 1, 10, 0),
             "old",
             "X",
-            chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap(),
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
             true,
         )
         .unwrap_err();
     assert!(
         matches!(err, DomainError::ProjectNotActive(_)),
         "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------
+// Undated milestones (#521). The read path already tolerated
+// `target: TBD` — `extract_milestones_from_body` yields `date: None`
+// and `extract_hard_deadlines` requires an ISO date — but only the
+// project template could produce the shape. These tests pin both
+// halves: that the writer now emits it, and that the readers keep
+// treating it the way the feature depends on.
+// ---------------------------------------------------------------
+
+#[test]
+fn add_milestone_without_a_date_records_tbd_and_logs_it() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "All Round-1 replies received",
+            None,
+            false,
+        )
+        .expect("add_milestone succeeds without a date");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] All Round-1 replies received \u{2014} target: TBD"),
+        "undated milestone renders the template's own TBD marker:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **10:00**: milestone added to [[icml]] \u{2014} All Round-1 replies received (target: TBD)"
+        ),
+        "log entry names the milestone as undated:\n{daily}"
+    );
+}
+
+/// The aggregation's hard/soft filter runs *before* it looks at the
+/// date (`commitments.rs`: `if !milestone.is_hard || milestone.completed
+/// { continue }`), so a soft undated milestone is excluded for a reason
+/// that has nothing to do with its date — asserting on one would pass
+/// even if `UNDATED_TARGET` were a fabricated date, which is the exact
+/// regression #521 exists to prevent.
+///
+/// So this seeds a **hard** undated bullet by hand. `add_milestone`
+/// refuses to write one, but the project map is mutable and the
+/// template's own `target: TBD` line makes the shape familiar, so a
+/// person can. It is the only way to reach the date filter, and it is
+/// the row that would leak into the aggregation if a null date ever
+/// stopped being dropped.
+#[test]
+fn an_undated_milestone_is_dropped_by_the_commitments_date_filter() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Hand-edited condition \u{2014} hard: TBD\n- [ ] Camera-ready \u{2014} hard: 2026-05-22\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let got = vault
+        .commitments(chrono::NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(), 60)
+        .expect("commitments");
+    let titles: Vec<&str> = got.iter().map(|c| c.title.as_str()).collect();
+    assert!(
+        titles.iter().any(|t| t.contains("Camera-ready")),
+        "the dated hard milestone is aggregated: {titles:?}"
+    );
+    assert!(
+        !titles.iter().any(|t| t.contains("Hand-edited condition")),
+        "a hard milestone with no real date is not a commitment anybody made: {titles:?}"
+    );
+}
+
+/// The other half: what `add_milestone` writes survives reconciliation
+/// as a null-dated row. Milestone rows come from the reconcile pass,
+/// not from the write transaction (`build_index_entry_for` carries only
+/// the `NoteEntry`), so this re-opens the vault over the same store to
+/// exercise writer -> file -> reconcile -> index rather than asserting
+/// on the writer alone.
+#[test]
+fn an_undated_milestone_reconciles_to_a_null_dated_index_row() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Condition gated",
+            None,
+            false,
+        )
+        .expect("add_milestone succeeds");
+
+    let reopened: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) = Vault::new(Arc::clone(&store), reopened, VaultConfig::default())
+        .expect("re-open reconciles the written milestone");
+
+    let open = vault.open_milestones("icml").expect("open_milestones");
+    let entry = open
+        .iter()
+        .find(|m| m.name == "Condition gated")
+        .expect("the written milestone is indexed");
+    assert_eq!(
+        entry.date, None,
+        "TBD indexes as an absent date, not as the literal string"
+    );
+    assert!(!entry.is_hard, "an undated milestone is a soft target");
+}
+
+#[test]
+fn complete_milestone_ticks_an_undated_milestone() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "All Round-1 replies received",
+            None,
+            false,
+        )
+        .expect("add_milestone succeeds");
+    vault
+        .complete_milestone(dt(2026, 5, 14, 16, 0), "icml", "Round-1 replies")
+        .expect("an undated milestone completes like any other");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [x] All Round-1 replies received \u{2014} 2026-05-14"),
+        "the TBD suffix is stripped like a date suffix:\n{raw}"
+    );
+}
+
+#[test]
+fn add_milestone_rejects_hard_without_a_date_and_writes_nothing() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+    let before = store.read_file(&vp("projects/icml.md")).unwrap();
+
+    let err = vault
+        .add_milestone(dt(2026, 5, 1, 10, 0), "icml", "Ship it", None, true)
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::HardMilestoneRequiresDate { ref title, .. } if title == "Ship it"
+        ),
+        "got {err:?}"
+    );
+
+    let after = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert_eq!(before, after, "a rejected call writes nothing");
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap(),
+        "a rejected call logs nothing"
     );
 }
 
@@ -2463,5 +2665,231 @@ fn project_not_found_lists_available_projects_with_parked_flagged() {
     assert!(
         msg.ends_with("available projects: alpha, gamma (parked)"),
         "got: {msg}"
+    );
+}
+
+// ---------------------------------------------------------------
+// set_core_question (#523): the field was writable only at creation,
+// so a project created without a core question — or one whose
+// question changed — could only be fixed by hand-editing the file.
+// ---------------------------------------------------------------
+
+/// A project map carrying `core_question:`, which `project_body_full`
+/// omits. `question` is the raw YAML value, so a test can seed the
+/// `null` a question-less `create_project` writes as well as a link.
+fn project_body_with_core_question(title: &str, question: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: {question}\n---\n\n# {title}\n\n## Current State\nInitial.\n\n## Next Actions\n- [ ] First (light)\n\n## Waiting On\n(nothing yet)\n\n## Milestones\n"
+    )
+}
+
+#[test]
+fn set_core_question_wraps_a_bare_target_and_logs_the_change() {
+    let body = project_body_with_core_question("ICML", "null");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .set_core_question(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            Some("questions/research/foo"),
+        )
+        .expect("set_core_question succeeds");
+
+    let fm = read_project_frontmatter(&store, &vp("projects/icml.md"));
+    assert_eq!(
+        fm.core_question.as_deref(),
+        Some("[[questions/research/foo]]"),
+        "the bare target is wrapped, matching create_project"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("core question on [[icml]]"),
+        "the change is logged:\n{daily}"
+    );
+    assert!(
+        daily.contains("was: (none)") && daily.contains("now: [[questions/research/foo]]"),
+        "the log carries both sides in the was:/now: shape:\n{daily}"
+    );
+}
+
+#[test]
+fn set_core_question_replaces_an_existing_link_and_logs_the_previous_one() {
+    let body = project_body_with_core_question("ICML", "\"[[questions/research/old]]\"");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .set_core_question(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            Some("questions/research/new"),
+        )
+        .expect("set_core_question succeeds");
+
+    let fm = read_project_frontmatter(&store, &vp("projects/icml.md"));
+    assert_eq!(
+        fm.core_question.as_deref(),
+        Some("[[questions/research/new]]")
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("was: [[questions/research/old]]"),
+        "the superseded question survives in the log \u{2014} that is the history:\n{daily}"
+    );
+}
+
+#[test]
+fn set_core_question_with_none_detaches_the_question() {
+    let body = project_body_with_core_question("ICML", "\"[[questions/research/old]]\"");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .set_core_question(dt(2026, 5, 1, 10, 0), "icml", None)
+        .expect("set_core_question succeeds");
+
+    let fm = read_project_frontmatter(&store, &vp("projects/icml.md"));
+    assert_eq!(
+        fm.core_question, None,
+        "the field is null, not an empty link"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .unwrap();
+    assert!(
+        daily.contains("now: (none)"),
+        "a detach is legible in the log:\n{daily}"
+    );
+}
+
+#[test]
+fn set_core_question_to_the_current_value_is_a_silent_noop() {
+    let body = project_body_with_core_question("ICML", "\"[[questions/research/foo]]\"");
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+    let before = store.read_file(&vp("projects/icml.md")).unwrap();
+
+    let outcome = vault
+        .set_core_question(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            Some("questions/research/foo"),
+        )
+        .expect("set_core_question succeeds");
+
+    assert!(!outcome.touched(), "no-op reports nothing written");
+    assert_eq!(
+        before,
+        store.read_file(&vp("projects/icml.md")).unwrap(),
+        "the file is untouched"
+    );
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap(),
+        "'was X, now X' is noise and is not logged"
+    );
+}
+
+#[test]
+fn set_core_question_rejects_an_already_wrapped_target() {
+    let body = project_body_with_core_question("ICML", "null");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .set_core_question(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            Some("[[questions/research/foo]]"),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::MalformedWikilink { .. }),
+        "the wrapped form is refused rather than double-wrapped, got {err:?}"
+    );
+}
+
+#[test]
+fn set_core_question_errors_when_project_parked() {
+    let body =
+        project_body_with_core_question("Old", "null").replace("status: active", "status: parked");
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .set_core_question(dt(2026, 5, 1, 10, 0), "old", Some("questions/research/foo"))
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+/// Every other project test in this file builds its map with
+/// `project_body_full`, which emits no `core_question:` line — the same
+/// shape as a vault predating the field, or one with a custom project
+/// template that dropped it. The rewrite has nothing to rewrite, and
+/// the failure must be legible rather than a half-write.
+#[test]
+fn set_core_question_errors_when_the_field_is_absent_from_the_frontmatter() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+    let before = store.read_file(&vp("projects/icml.md")).unwrap();
+
+    let err = vault
+        .set_core_question(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            Some("questions/research/foo"),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::MissingFrontmatterField(ref f) if f == "core_question"),
+        "the message names the field that is missing, got {err:?}"
+    );
+    assert_eq!(
+        before,
+        store.read_file(&vp("projects/icml.md")).unwrap(),
+        "a rejected rewrite leaves the note untouched"
+    );
+}
+
+#[test]
+fn set_core_question_rejects_an_empty_target() {
+    let body = project_body_with_core_question("ICML", "null");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .set_core_question(dt(2026, 5, 1, 10, 0), "icml", Some("   "))
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::EmptyField {
+                field: "core_question"
+            }
+        ),
+        "an empty target is a mistake, not a detach \u{2014} that is what None is for; got {err:?}"
     );
 }

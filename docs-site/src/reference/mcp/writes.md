@@ -80,10 +80,11 @@ the content.
 | Tool | Inputs | Effect |
 |------|--------|--------|
 | `update_project_state` | `project`, `new_state` | Rewrite the Current State (auto-logs the previous). |
+| `set_core_question` | `project`, `core_question?`, `clear?` | Set the project's core question (bare `questions/<domain>/<slug>` target, not `[[…]]`); `clear: true` detaches. Auto-logs the previous value. |
 | `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
 | `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
 | `complete_action` | `project`, `query` | Complete an action; archives its note if any. |
-| `add_milestone` | `project`, `title`, `target_date`, `hard?` | Add a milestone; `hard` counts it in commitments. |
+| `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |
 | `complete_milestone` | `project`, `query` | Complete a milestone (substring match). |
 | `add_waiting_on` | `project`, `description` | Add a waiting-on blocker. |
 | `resolve_waiting_on` | `project`, `query` | Resolve a waiting-on item (substring match). |

@@ -26,8 +26,8 @@ use cdno_mcp::server::{
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetFrontmatterInput,
-    SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetCoreQuestionInput,
+    SetFrontmatterInput, SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
     UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -1521,6 +1521,148 @@ fn server_with_project() -> (CuadernoServer, Arc<dyn VaultStore>) {
 }
 
 #[tokio::test]
+async fn add_milestone_without_a_target_date_records_tbd() {
+    let (server, store) = server_with_project();
+
+    server
+        .add_milestone(Parameters(AddMilestoneInput {
+            project: "surrogate-model".to_owned(),
+            title: "All Round-1 replies received".to_owned(),
+            target_date: None,
+            hard: false,
+        }))
+        .await
+        .expect("add_milestone without a date");
+
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        body.contains("- [ ] All Round-1 replies received \u{2014} target: TBD"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn add_milestone_rejects_hard_without_a_target_date() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .add_milestone(Parameters(AddMilestoneInput {
+            project: "surrogate-model".to_owned(),
+            title: "Ship v1".to_owned(),
+            target_date: None,
+            hard: true,
+        }))
+        .await
+        .expect_err("a hard deadline with no date is rejected");
+    assert!(
+        err.message.contains("hard"),
+        "the client is told which half is wrong: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn set_core_question_wraps_a_bare_target() {
+    let (server, store) = server_with_project();
+
+    server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: false,
+        }))
+        .await
+        .expect("set_core_question");
+
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(
+        body.contains("core_question: \"[[questions/research/foo]]\""),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn set_core_question_rejects_an_already_wrapped_target() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("[[questions/research/foo]]".to_owned()),
+            clear: false,
+        }))
+        .await
+        .expect_err("the wrapped form is refused");
+    assert!(
+        err.message.contains("bare path"),
+        "the message teaches the convention: {}",
+        err.message
+    );
+}
+
+/// The omitted-field slip is the likeliest one an agent makes, and it
+/// must not be the one that silently unlinks a project from its
+/// question. The CLI refuses it; so does the tool.
+#[tokio::test]
+async fn set_core_question_refuses_to_detach_by_omission() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: None,
+            clear: false,
+        }))
+        .await
+        .expect_err("neither field set is an error, not a detach");
+    assert!(
+        err.message.contains("clear"),
+        "the message names the way to actually detach: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn set_core_question_refuses_a_target_and_clear_together() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: true,
+        }))
+        .await
+        .expect_err("the two are mutually exclusive");
+    assert!(err.message.contains("not both"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn set_core_question_with_clear_detaches_the_question() {
+    let (server, store) = server_with_project();
+    server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: false,
+        }))
+        .await
+        .expect("set");
+
+    server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: None,
+            clear: true,
+        }))
+        .await
+        .expect("detach");
+
+    let body = store.read_file(&vp("projects/surrogate-model.md")).unwrap();
+    assert!(body.contains("core_question: null"), "{body}");
+}
+
+#[tokio::test]
 async fn add_milestone_appends_a_hard_deadline() {
     let (server, store) = server_with_project();
 
@@ -1528,7 +1670,7 @@ async fn add_milestone_appends_a_hard_deadline() {
         .add_milestone(Parameters(AddMilestoneInput {
             project: "surrogate-model".to_owned(),
             title: "Ship v1".to_owned(),
-            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            target_date: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
             hard: true,
         }))
         .await
@@ -1551,7 +1693,7 @@ async fn complete_milestone_ticks_the_bullet() {
         .add_milestone(Parameters(AddMilestoneInput {
             project: "surrogate-model".to_owned(),
             title: "Ship v1".to_owned(),
-            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            target_date: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
             hard: false,
         }))
         .await
@@ -1603,7 +1745,7 @@ async fn add_milestone_errors_on_unknown_project() {
         .add_milestone(Parameters(AddMilestoneInput {
             project: "ghost".to_owned(),
             title: "X".to_owned(),
-            target_date: NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+            target_date: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
             hard: false,
         }))
         .await

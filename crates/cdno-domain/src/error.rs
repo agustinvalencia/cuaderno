@@ -52,6 +52,11 @@ pub enum DomainError {
     )]
     BulletMissingEnergy { slug: String, line: String },
 
+    #[error(
+        "milestone '{title}' on project '{slug}' is hard but has no target date \u{2014} a hard deadline with no date is not a thing; supply a date, or record it as a soft target to leave it undated"
+    )]
+    HardMilestoneRequiresDate { slug: String, title: String },
+
     #[error("no milestone matching '{query}' on project '{slug}'")]
     MilestoneNotFound { slug: String, query: String },
 
