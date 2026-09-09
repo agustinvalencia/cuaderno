@@ -378,10 +378,15 @@ pub struct SetCoreQuestionInput {
     pub project: String,
     /// The question note as a **bare** wikilink target (e.g.
     /// `questions/research/foo`), matching `create_project` — not
-    /// `[[...]]`, which is rejected. Omit to detach the current
-    /// question, writing `core_question: null`.
+    /// `[[...]]`, which is rejected.
     #[serde(default)]
     pub core_question: Option<String>,
+    /// Set `true` to detach the project's current question, writing
+    /// `core_question: null`. Mutually exclusive with `core_question`,
+    /// and required to detach: an omitted `core_question` is an error,
+    /// not a silent detach.
+    #[serde(default)]
+    pub clear: bool,
 }
 
 /// Input for `complete_milestone` (GH #213). `query` mirrors the

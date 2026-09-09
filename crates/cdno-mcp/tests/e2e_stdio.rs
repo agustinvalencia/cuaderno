@@ -224,7 +224,7 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        46,
+        47,
         "expected the full catalogue: 45 prior + the list_note_types discovery read, got {}",
         tools.len()
     );

@@ -607,6 +607,33 @@ fn milestone_add_in_non_interactive_accepts_a_missing_date() {
     );
 }
 
+/// `--date` left the required set in #521, but `--slug` and `--title`
+/// did not. Deleting the old missing-date test took the only
+/// missing-flag guard this verb had with it, on the one handler that
+/// now deliberately routes an argument around `gather_or_error`.
+#[test]
+fn milestone_add_in_non_interactive_errors_when_missing_title() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: None,
+                date: Some(NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --title should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--title"), "error message: {msg}");
+}
+
 #[test]
 fn milestone_add_rejects_hard_without_a_date() {
     let dir = vault();

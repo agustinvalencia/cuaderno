@@ -388,7 +388,11 @@ fn core_question(
             interactive,
             &mut prompted,
             || {
-                prompt::prompt_question(
+                // `prompt_question_target`, not `prompt_question`: the
+                // domain wraps whatever it gets verbatim, and a bare
+                // slug would write `[[does-it-scale]]` where the flag
+                // path writes `[[questions/research/does-it-scale]]`.
+                prompt::prompt_question_target(
                     vault,
                     &[QuestionStatus::Active, QuestionStatus::Parked],
                     "Core question",
@@ -511,6 +515,16 @@ fn milestone_add(
     } else {
         hard_flag
     };
+    // A `--hard` supplied on the command line survives the branch above
+    // when the user declines a date, so fail here rather than rendering
+    // a preview of a milestone the domain is guaranteed to reject and
+    // asking them to confirm it.
+    if hard && date.is_none() {
+        return Err(anyhow::anyhow!(
+            "--hard needs a target date: a hard deadline with no date is not a thing. \
+             Pass --date, or drop --hard to record an undated (target: TBD) milestone."
+        ));
+    }
     let date_preview = match date {
         Some(d) => d.to_string(),
         None => "TBD (no target date)".to_owned(),

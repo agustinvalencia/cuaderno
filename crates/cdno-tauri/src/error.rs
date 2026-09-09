@@ -98,6 +98,7 @@ impl From<DomainError> for CmdError {
             | DomainError::CommitmentNotActive(_)
             | DomainError::ActionAlreadyPromoted { .. }
             | DomainError::BulletMissingEnergy { .. }
+            | DomainError::HardMilestoneRequiresDate { .. }
             | DomainError::TrackingOnFlatStewardship(_)
             | DomainError::EmptyField { .. }
             | DomainError::MalformedWikilink { .. }

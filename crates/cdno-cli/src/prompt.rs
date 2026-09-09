@@ -401,9 +401,15 @@ pub fn prompt_question_domain() -> Result<QuestionDomain> {
 }
 
 /// Fuzzy-pick a question whose status is in `allow_statuses`.
-/// Returns the question slug. `label` is the prompt shown ("Question
-/// to park", "Question to activate", …) so the verb the user is
-/// running is named explicitly.
+/// Returns the question **slug**, which is what the lifecycle verbs
+/// (`question park`, `question activate`, portfolio linking) resolve
+/// against. A caller that needs a wikilink *target* wants
+/// [`prompt_question_target`] instead — the two are not
+/// interchangeable, and confusing them writes a link the MCP question
+/// resolver cannot parse.
+///
+/// `label` is the prompt shown ("Question to park", "Question to
+/// activate", …) so the verb the user is running is named explicitly.
 ///
 /// Errors when no question matches the filter — the user can't pick
 /// nothing.
@@ -412,8 +418,44 @@ pub fn prompt_question(
     allow_statuses: &[QuestionStatus],
     label: &str,
 ) -> Result<String> {
+    Ok(pick_question(vault, allow_statuses, label)?.slug)
+}
+
+/// Fuzzy-pick a question and return it as a vault-relative wikilink
+/// **target** — `questions/<domain>/<slug>`, the form
+/// `create_project --question` and `set_core_question` take.
+///
+/// A bare slug would still *resolve* as a wikilink (the extractor
+/// falls back to a unique filename stem), which is what makes getting
+/// this wrong so quiet: the link works, but
+/// `parse_question_slug_from_wikilink` in `cdno-mcp` requires the
+/// `questions/<domain>/<slug>` shape and silently reports no core
+/// question for anything else.
+pub fn prompt_question_target(
+    vault: &Vault,
+    allow_statuses: &[QuestionStatus],
+    label: &str,
+) -> Result<String> {
+    let picked = pick_question(vault, allow_statuses, label)?;
+    // Mirrors `question_path` in cdno-domain, which is what actually
+    // put the note on disk at `questions/<domain>/<slug>.md`.
+    Ok(format!(
+        "questions/{}/{}",
+        picked.domain.as_str(),
+        picked.slug
+    ))
+}
+
+/// Shared picker behind [`prompt_question`] and
+/// [`prompt_question_target`] — one list, one label format, so the two
+/// public forms cannot drift in what they offer.
+fn pick_question(
+    vault: &Vault,
+    allow_statuses: &[QuestionStatus],
+    label: &str,
+) -> Result<cdno_domain::QuestionSummary> {
     let all = vault.list_questions()?;
-    let eligible: Vec<_> = all
+    let mut eligible: Vec<_> = all
         .into_iter()
         .filter(|q| allow_statuses.contains(&q.status))
         .collect();
@@ -443,7 +485,7 @@ pub fn prompt_question(
         .iter()
         .position(|l| l == &pick)
         .expect("picked label was in the offered list");
-    Ok(eligible[idx].slug.clone())
+    Ok(eligible.swap_remove(idx))
 }
 
 /// Fuzzy-pick an existing stewardship by slug. Used by `cdno

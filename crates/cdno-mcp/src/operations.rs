@@ -104,26 +104,6 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Set or clear an active project's `core_question` after creation. `core_question` is the **bare** wikilink target (e.g. `questions/research/foo`), the same form `create_project` takes -- passing `[[...]]` is rejected. Omit `core_question` to detach the question, writing `core_question: null`. The previous value is auto-logged to today's daily note, so a project's changing question is traceable; setting the value it already holds is a no-op."
-    )]
-    pub async fn set_core_question(
-        &self,
-        Parameters(input): Parameters<SetCoreQuestionInput>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let at = chrono::Local::now().naive_local();
-        let outcome = self
-            .with_vault(move |vault| {
-                vault.set_core_question(at, &input.project, input.core_question.as_deref())
-            })
-            .await?
-            .map_err(into_mcp_error)?;
-        let path = outcome.primary;
-        let message = format!("Set core question on {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
-            .await
-    }
-
-    #[tool(
         description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped."
     )]
     pub async fn complete_milestone(
@@ -213,6 +193,42 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Filed evidence at {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Set or clear an active project's `core_question` after creation. `core_question` is the **bare** wikilink target (e.g. `questions/research/foo`), the same form `create_project` takes -- passing `[[...]]` is rejected, and so is a bare slug like `foo` without its `questions/<domain>/` prefix. To detach the question instead, pass `clear: true`; omitting both is an error rather than a silent detach, because dropping a project's question is a decision and must be asked for. The previous value is auto-logged to today's daily note, so a project's changing question is traceable; setting the value it already holds is a no-op."
+    )]
+    pub async fn set_core_question(
+        &self,
+        Parameters(input): Parameters<SetCoreQuestionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // Mirrors the CLI's `--question` / `--clear` pair. An omitted
+        // field is the likeliest agent slip, and it must not be the one
+        // that quietly unlinks a project from its question.
+        if input.clear && input.core_question.is_some() {
+            return Err(invalid_argument(
+                "clear",
+                "pass either `core_question` or `clear: true`, not both",
+            ));
+        }
+        if !input.clear && input.core_question.is_none() {
+            return Err(invalid_argument(
+                "core_question",
+                "pass a bare target such as `questions/research/foo` to set one, or `clear: true` \
+                 to detach the project's current question",
+            ));
+        }
+        let outcome = self
+            .with_vault(move |vault| {
+                vault.set_core_question(at, &input.project, input.core_question.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let path = outcome.primary;
+        let message = format!("Set core question on {}", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }

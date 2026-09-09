@@ -101,10 +101,7 @@ impl Vault {
             .optional_field::<String>("core_question")?
             .filter(|v| !v.trim().is_empty());
 
-        let new_yaml = match target {
-            Some(t) => format!("\"[[{t}]]\""),
-            None => "null".to_owned(),
-        };
+        let new_yaml = super::core_question_yaml(target);
         let new_rendered = target.map(|t| format!("[[{t}]]"));
         if previous.as_deref() == new_rendered.as_deref() {
             return Ok(WriteOutcome::noop(path));

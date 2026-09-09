@@ -15,9 +15,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   date — "all Round-1 replies received" on a correspondence-driven project — and the only way to
   record one was to invent an estimate, which then read like a commitment somebody made. Omitting
   the date now writes `- [ ] <title> — target: TBD`, the shape the project template already seeds.
-  The readers needed no change: `extract_hard_deadlines` requires an ISO date, so an undated
-  milestone stays out of the commitments aggregation on its own, and `complete_milestone` already
-  stripped the target suffix whatever it held. `hard: true` with no date is rejected rather than
+  The read path needed no change: the commitments aggregation's range query drops a null-dated
+  milestone row and `extract_milestones_from_body` yields exactly that for a non-date marker, so an
+  undated milestone stays out of it on its own; `complete_milestone` already stripped the target
+  suffix whatever it held. `hard: true` with no date is rejected rather than
   quietly downgraded — a hard deadline with no date is not a thing. `cdno project milestone add`
   drops `--date` from its required set (interactively the calendar sits behind a yes/no), and the
   MCP `target_date` becomes optional.
@@ -26,8 +27,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   refused it, so a project created without a question, or one whose question changed, could only be
   fixed by hand-editing — the edit that desyncs the index. `cdno project core-question` and the MCP
   `set_core_question` set or clear it, taking the same **bare** wikilink target `create_project`
-  takes, and auto-logging the previous value to today's daily note in the `was:` / `now:` shape
-  `update_project_state` established. Shipped as a verb rather than a default-config declaration
+  takes (`questions/<domain>/<slug>` — not `[[…]]`, and not a bare slug, which the MCP question
+  resolver cannot parse), and auto-logging the previous value to today's daily note in the `was:` /
+  `now:` shape `update_project_state` established. Detaching is explicit on both surfaces
+  (`--clear`, `clear: true`), never inferred from an omitted argument. Shipped as a verb rather than a default-config declaration
   because `cdno init` rewrites `config.toml`, so a declaration-based fix regresses on a fresh
   machine.
   (#521, #523)

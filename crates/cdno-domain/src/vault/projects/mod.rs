@@ -10,6 +10,8 @@
 //!   previous state to today's daily note.
 //! - [`actions`] — `add_action`, `complete_action` for the
 //!   `## Next Actions` section, plus the energy-tag parsing helpers.
+//! - [`core_question`] — `set_core_question`, changing the project's
+//!   `core_question:` after creation and logging the previous value.
 //! - [`milestones`] — `add_milestone`, `complete_milestone` for the
 //!   `## Milestones` section. Hard milestones feed the commitments
 //!   aggregation query (#32).
@@ -19,8 +21,9 @@
 //!
 //! This file holds the things every submodule needs: the section-name
 //! constants, the shared `resolve_active_project` lookup, the
-//! `rewrite_field_in_frontmatter` helper used by park/activate, and
-//! the slug helpers shared across error paths.
+//! `rewrite_field_in_frontmatter` helper used by park/activate, the
+//! `core_question_yaml` renderer shared by create and set, and the
+//! slug helpers shared across error paths.
 
 use cdno_core::error::StoreError;
 use cdno_core::markdown::MarkdownDocument;
@@ -247,4 +250,19 @@ pub fn rewrite_field_in_frontmatter(
     result.push_str(&new_yaml);
     result.push_str(&raw[yaml_end..]);
     Ok(result)
+}
+
+/// Render a `core_question:` frontmatter value from a **bare** wikilink
+/// target: `"[[questions/research/foo]]"` quoted for YAML, or `null`.
+///
+/// Shared by `create_project` and `set_core_question` so the two cannot
+/// disagree about the wrapping — a project whose question was set after
+/// creation must be byte-identical to one that carried it from the
+/// start, or the no-op check in `set_core_question` and every consumer
+/// that parses the path out of the link would see two shapes.
+pub(in crate::vault) fn core_question_yaml(target: Option<&str>) -> String {
+    match target {
+        Some(t) => format!("\"[[{t}]]\""),
+        None => "null".to_owned(),
+    }
 }

@@ -142,10 +142,7 @@ impl Vault {
             parked_path
         };
 
-        let core_question_yaml = match core_question {
-            Some(target) => format!("\"[[{target}]]\""),
-            None => "null".to_owned(),
-        };
+        let core_question_yaml = super::core_question_yaml(core_question);
         let mut ctx = VariableContext::new();
         ctx.set_contextual("title", title);
         ctx.set_contextual("context", context.as_str());

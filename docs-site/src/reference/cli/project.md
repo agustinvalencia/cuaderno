@@ -57,6 +57,25 @@ Update the Current State section. The previous state is auto-logged to today's d
 cdno project state --slug surrogate-model --text "Mesh scaling works; assembly is the bottleneck"
 ```
 
+## `cdno project core-question`
+
+Set or clear the project's core question after creation, auto-logging the previous value to today's
+daily note in the same `was:` / `now:` shape [`state`](#cdno-project-state) uses.
+
+**`core-question`** — `--slug`, and either `--question <target>` or `--clear`
+
+```bash
+cdno project core-question --slug surrogate-model --question questions/research/does-it-scale
+cdno project core-question --slug surrogate-model --clear
+```
+
+`--question` takes the **bare** wikilink target, the same form
+[`create --question`](#cdno-project-create) takes — `questions/research/foo`, not `[[…]]`, which is
+rejected rather than double-wrapped.
+
+Passing neither flag non-interactively is an error, not a silent detach: dropping a project's
+question is a decision and has to be asked for.
+
 ## `cdno project park`
 
 Move an active project to `projects/_parked/`, freeing a slot against the five-project cap.
@@ -134,25 +153,6 @@ knowing the flag can be omitted.
 `--hard` requires `--date`: a hard deadline with no date is rejected rather than quietly downgraded
 to a soft target.
 
-## `cdno project core-question`
-
-Set or clear the project's core question after creation, auto-logging the previous value to today's
-daily note in the same `was:` / `now:` shape [`state`](#cdno-project-state) uses.
-
-**`core-question`** — `--slug`, and either `--question <target>` or `--clear`
-
-```bash
-cdno project core-question --slug surrogate-model --question questions/research/does-it-scale
-cdno project core-question --slug surrogate-model --clear
-```
-
-`--question` takes the **bare** wikilink target, the same form
-[`create --question`](#cdno-project-create) takes — `questions/research/foo`, not `[[…]]`, which is
-rejected rather than double-wrapped.
-
-Passing neither flag non-interactively is an error, not a silent detach: dropping a project's
-question is a decision and has to be asked for.
-
 ## `cdno project waiting`
 
 Track external blockers.
@@ -171,7 +171,8 @@ cdno project waiting resolve --slug surrogate-model --query "cluster quota"
 [`park_project`](../mcp/creation-and-lifecycle.md),
 [`activate_project`](../mcp/creation-and-lifecycle.md), [`list_projects`](../mcp/reads.md),
 [`get_project_context`](../mcp/reads.md), [`add_milestone`](../mcp/writes.md),
-[`complete_milestone`](../mcp/writes.md), [`add_waiting_on`](../mcp/writes.md),
+[`complete_milestone`](../mcp/writes.md), [`set_core_question`](../mcp/writes.md),
+[`add_waiting_on`](../mcp/writes.md),
 [`resolve_waiting_on`](../mcp/writes.md).
 
 ## See also

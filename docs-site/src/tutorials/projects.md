@@ -13,8 +13,10 @@ cdno project create --title "Surrogate model" --context work
 ```
 
 `--context` is the [life domain](../concepts/contexts-and-energy.md). Optionally link the project's
-core question with `--question questions/research/surrogate-cost`. If you're already at five active
-projects, the new one is created **parked** — activate it once you free a slot.
+core question with `--question questions/research/surrogate-cost` — and if you skip it, or the
+question changes later, `cdno project core-question --slug surrogate-model --question <target>`
+sets it afterwards (`--clear` detaches). If you're already at five active projects, the new one is
+created **parked** — activate it once you free a slot.
 
 ## See where things stand
 
@@ -50,13 +52,24 @@ See [Actions](actions.md) for the inline-vs-manifest distinction and promotion.
 
 ## Milestones
 
-Milestones are dated markers of progress. Mark one `--hard` to make it a real deadline that shows up
+Milestones are markers of progress. Mark one `--hard` to make it a real deadline that shows up
 in the aggregated [commitments](commitments.md) view:
 
 ```bash
 cdno project milestone add --slug surrogate-model --title "Submit to ICML" --date 2026-01-22 --hard
 cdno project milestone done --slug surrogate-model --query "submit to icml"
 ```
+
+`--date` is optional. When a milestone is gated by a condition rather than a date, leave it off
+rather than inventing an estimate — a made-up date reads back later like a commitment somebody
+made:
+
+```bash
+cdno project milestone add --slug surrogate-model --title "All Round-1 replies received"
+```
+
+An undated milestone records `target: TBD`, stays out of the commitments view, and completes
+exactly like a dated one. `--hard` needs a real date.
 
 ## Waiting-on
 

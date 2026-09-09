@@ -21,9 +21,15 @@ use super::MILESTONES_SECTION;
 /// already seeds, so an undated milestone written by `add_milestone`
 /// and one sitting in a fresh project's template read identically.
 ///
-/// Deliberately not an ISO date: `extract_hard_deadlines` parses one
-/// and skips anything else, which is what keeps undated milestones out
-/// of the commitments aggregation with no special-casing.
+/// Deliberately not an ISO date. The commitments aggregation reads
+/// `index.milestones_between`, whose rows come from
+/// `extract_milestones_from_body` via reconciliation; that parser
+/// yields `date: None` for a non-date marker, and both index
+/// implementations drop a null-dated row from the range query. So an
+/// undated milestone stays out of the aggregation with no
+/// special-casing. (`extract_hard_deadlines` fills the separate
+/// `deadlines` table, which has no reader in this crate — do not
+/// reason about the aggregation from it.)
 pub const UNDATED_TARGET: &str = "TBD";
 
 impl Vault {
@@ -41,11 +47,12 @@ impl Vault {
     /// and inventing an estimate pollutes the milestone list with
     /// commitments nobody made. `None` renders the [`UNDATED_TARGET`]
     /// marker the project template already seeds (`- [ ] <title> —
-    /// target: TBD`), a shape both readers already tolerate:
-    /// `extract_milestones_from_body` yields `date: None`, and
-    /// `extract_hard_deadlines` requires an ISO date, so an undated
-    /// milestone stays out of the commitments aggregation without any
-    /// special-casing (#521).
+    /// target: TBD`), a shape the read path already tolerates:
+    /// `extract_milestones_from_body` yields `date: None`, and the
+    /// range query behind the commitments aggregation drops a
+    /// null-dated row, so an undated milestone stays out of it with no
+    /// special-casing (#521). See [`UNDATED_TARGET`] for why that, and
+    /// not `extract_hard_deadlines`, is the mechanism.
     ///
     /// `is_hard` with no date is rejected
     /// ([`DomainError::HardMilestoneRequiresDate`]) rather than

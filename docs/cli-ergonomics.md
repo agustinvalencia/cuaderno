@@ -217,6 +217,24 @@ fn add(
 - **Defaults** (`note: false`, `--weeks 2` on commitments) stay clap
   defaults rather than being prompted for; if the user didn't pass
   the flag and there's a sensible default, use the default.
+- **Genuinely optional fields** never route through `gather_or_error`:
+  an omitted flag is a *value*, not a missing input, so absence must
+  not produce `missing_flag`. Two shapes exist, and which one a verb
+  wants depends on whether the field has a natural common answer:
+  - **Silent** — `project create --question`, `commit create
+    --project/--stewardship`. Never prompted, never sets `prompted`;
+    it appears in the confirm preview only. Right when the field is
+    usually absent.
+  - **Gated** — `project milestone add --date` (#521). Interactive
+    runs get a yes/no ("Target date? (no = undated)") and, on yes,
+    the picker; declining is how the undated case is reached without
+    knowing the flag can be dropped. This *does* set `prompted`,
+    because a question was genuinely asked, so the confirm follows.
+    Right when the field usually has an answer and the alternative
+    would be hiding a whole mode behind an undocumented omission.
+
+  A field that is required but merely *has* a default is neither of
+  these — that is the Defaults bullet above.
 - **Domain layer** never sees the prompts. `cdno-domain` stays pure
   and synchronous; every prompt happens before the domain call.
 
@@ -241,6 +259,8 @@ are worth migrating.
 | `cdno open` (reference is a trailing optional positional) | rule 5 exception |
 | `cdno action add / promote / complete / list` | #113 |
 | `cdno project create / state / park / activate / milestone add+done / waiting add+resolve` | #114 (split across two PRs) |
+| `cdno project core-question` | #523 |
+| `cdno project milestone add` (`--date` now genuinely optional, gated prompt) | #521 |
 | `cdno commit create / done` | #114 |
 | `cdno orient` (`--energy` already optional) | covered ad-hoc |
 | `cdno project show` (slug now an optional positional) | rule 5 exception |
@@ -258,5 +278,7 @@ file, coming back to the search hits is not what anyone wants. `cdno open`'s
 own picker is the same shape, and both use `prompt::prompt_note` rather than
 `prompt::drill_down`.
 
-**Picker prompts available**: project (active), any project (active + parked, for read verbs), parked project, action bullet, open milestone, energy, life-domain context, date, hard/soft.
+**Picker prompts available**: project (active), any project (active + parked, for read verbs), parked project, action bullet, open milestone, energy, life-domain context, date, optional date (yes/no gate, for a genuinely optional field), question (slug, for the lifecycle verbs) and question target (`questions/<domain>/<slug>`, for a wikilink field), hard/soft.
+
+The two question pickers are **not** interchangeable: the lifecycle verbs resolve a bare slug, while a frontmatter wikilink field needs the qualified target. A bare slug still resolves as a link, so getting it the wrong way round fails silently — the MCP question resolver requires the qualified form and reports no core question for anything else.
 **Plain text prompts** (fuzzy pickers deferred): `waiting resolve` query, `commit done` slug — both pending the matching domain queries (open waiting items per project, active commitments listing).

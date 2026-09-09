@@ -1569,6 +1569,7 @@ async fn set_core_question_wraps_a_bare_target() {
         .set_core_question(Parameters(SetCoreQuestionInput {
             project: "surrogate-model".to_owned(),
             core_question: Some("questions/research/foo".to_owned()),
+            clear: false,
         }))
         .await
         .expect("set_core_question");
@@ -1588,6 +1589,7 @@ async fn set_core_question_rejects_an_already_wrapped_target() {
         .set_core_question(Parameters(SetCoreQuestionInput {
             project: "surrogate-model".to_owned(),
             core_question: Some("[[questions/research/foo]]".to_owned()),
+            clear: false,
         }))
         .await
         .expect_err("the wrapped form is refused");
@@ -1598,13 +1600,51 @@ async fn set_core_question_rejects_an_already_wrapped_target() {
     );
 }
 
+/// The omitted-field slip is the likeliest one an agent makes, and it
+/// must not be the one that silently unlinks a project from its
+/// question. The CLI refuses it; so does the tool.
 #[tokio::test]
-async fn set_core_question_with_no_target_detaches_the_question() {
+async fn set_core_question_refuses_to_detach_by_omission() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: None,
+            clear: false,
+        }))
+        .await
+        .expect_err("neither field set is an error, not a detach");
+    assert!(
+        err.message.contains("clear"),
+        "the message names the way to actually detach: {}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn set_core_question_refuses_a_target_and_clear_together() {
+    let (server, _store) = server_with_project();
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: true,
+        }))
+        .await
+        .expect_err("the two are mutually exclusive");
+    assert!(err.message.contains("not both"), "{}", err.message);
+}
+
+#[tokio::test]
+async fn set_core_question_with_clear_detaches_the_question() {
     let (server, store) = server_with_project();
     server
         .set_core_question(Parameters(SetCoreQuestionInput {
             project: "surrogate-model".to_owned(),
             core_question: Some("questions/research/foo".to_owned()),
+            clear: false,
         }))
         .await
         .expect("set");
@@ -1613,6 +1653,7 @@ async fn set_core_question_with_no_target_detaches_the_question() {
         .set_core_question(Parameters(SetCoreQuestionInput {
             project: "surrogate-model".to_owned(),
             core_question: None,
+            clear: true,
         }))
         .await
         .expect("detach");
