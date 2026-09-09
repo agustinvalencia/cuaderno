@@ -145,12 +145,6 @@ fn every_tool_has_description_and_object_input_schema() {
     }
 }
 
-/// The tool description is the only instruction surface an agent that has
-/// loaded no cuaderno skill ever sees, so the vault's linking convention has
-/// to live there or the narrative tools produce plain-text lines that need
-/// repairing downstream (#438). Asserted on the substance (wikilink syntax,
-/// the bare-`#N` prohibition) rather than the exact wording, so the sentence
-/// can be reworded without breaking the test.
 /// `complete_action`'s description is the only place an agent is told
 /// that abandoning an action is a separate verb. Without the pointer the
 /// reachable-looking move for work that was never performed is
@@ -174,6 +168,12 @@ fn complete_action_points_at_the_drop_verb_for_work_never_performed() {
     );
 }
 
+/// The tool description is the only instruction surface an agent that has
+/// loaded no cuaderno skill ever sees, so the vault's linking convention has
+/// to live there or the narrative tools produce plain-text lines that need
+/// repairing downstream (#438). Asserted on the substance (wikilink syntax,
+/// the bare-`#N` prohibition) rather than the exact wording, so the sentence
+/// can be reworded without breaking the test.
 #[test]
 fn narrative_tools_mandate_linking_in_their_description() {
     let server = empty_server();

@@ -15,6 +15,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime};
 use std::collections::HashMap;
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
 use cdno_core::transaction::VaultTransaction;
@@ -275,7 +276,22 @@ impl Vault {
                     // line. Failing the whole drop over an absent key
                     // would leave no way to abandon that action at all,
                     // which is the single thing #559 exists to provide.
-                    Err(DomainError::MissingFrontmatterField(_)) => after_status,
+                    //
+                    // Confirm the absence with the YAML parser rather
+                    // than trusting the rewriter's verdict. The rewriter
+                    // scans for a column-0 `completed:` prefix, while
+                    // `Frontmatter` goes through serde_yaml, which also
+                    // accepts forms the scan cannot see (`"completed":`
+                    // quoted, say). Swallowing on the scan alone would
+                    // archive exactly the self-contradictory file the
+                    // comment above says this arm exists to prevent.
+                    Err(err @ DomainError::MissingFrontmatterField(_)) => {
+                        let (fm, _) = Frontmatter::parse(&after_status)?;
+                        match fm.optional_field::<NaiveDate>("completed") {
+                            Ok(None) => after_status,
+                            _ => return Err(err),
+                        }
+                    }
                     Err(other) => return Err(other),
                 }
             }

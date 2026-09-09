@@ -454,15 +454,16 @@ fn status_label(att: &AttachedAction) -> &'static str {
 
 /// The style an action's status reads in.
 ///
-/// Named rather than inlined so the mapping can be asserted. Collapsing
-/// the roles is invisible to any test that reads the literal `[blocked]`
-/// text — which is every test this command has — and the renderer bakes
-/// in the process palette, so a rendered listing carries no colour under
-/// test to compare.
+/// Named rather than inlined so the mapping can be asserted: a test
+/// that reads only the literal `[blocked]` text cannot see two roles
+/// collapse into one. `a_rendered_listing_actually_uses_the_status_role`
+/// renders under `with_colour(true, ..)` and compares SGR sequences, so
+/// collapsing `Blocked` into `Meta` fails there and in
+/// `action_statuses_are_distinguishable_in_the_rendered_listing`.
 ///
-/// Note the mapping is deliberately not injective: `Active` and
-/// `Dropped` share `Role::Meta`, so colour separates neither pair. What
-/// colour does carry is the claim of achievement — only a real
+/// The mapping is deliberately not injective: `Active` and `Dropped`
+/// both read as `Role::Meta`, so colour does not separate that pair.
+/// What colour carries is the claim of achievement — only a real
 /// completion reads as `Success` — and that is what the tests pin.
 pub fn status_role(status: ActionStatus) -> Role {
     match status {

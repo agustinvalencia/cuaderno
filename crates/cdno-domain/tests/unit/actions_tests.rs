@@ -983,6 +983,48 @@ fn a_real_drop_with_a_reason_clears_the_focus_it_opened() {
     );
 }
 
+/// The absent-key tolerance must mean "the note asserts no completion",
+/// not "the rewriter could not find the line". `rewrite_field_in_frontmatter`
+/// scans for a column-0 `completed:` prefix while `Frontmatter` parses
+/// YAML, so a quoted key is invisible to the scan and visible to the
+/// parser. Swallowing on the scan alone archived the exact
+/// self-contradictory file — `status: dropped` carrying a completion
+/// date — that clearing the field exists to prevent.
+#[test]
+fn a_drop_refuses_to_archive_a_completion_date_the_rewriter_cannot_see() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "\"completed\": 2026-05-01"),
+        )
+        .unwrap();
+
+    let err = vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect_err("a completion date the arm cannot clear must not be archived");
+    assert!(
+        matches!(err, DomainError::MissingFrontmatterField(_)),
+        "got {err:?}"
+    );
+    assert!(
+        !store
+            .exists(&vp("actions/_done/2026/prepare-the-demo-proposal.md"))
+            .unwrap(),
+        "nothing is archived on the error path"
+    );
+}
+
 /// The drop path must not require a `completed:` key to exist.
 /// `completed` is optional in an action's frontmatter, so a note that
 /// omits it parses cleanly and lints clean — an ejected
