@@ -303,11 +303,14 @@ impl Vault {
     /// schedule, and a commitment pulled forward is as real a change as
     /// one pushed back.
     ///
-    /// Errors otherwise mirror [`Vault::complete_commitment`]:
-    /// [`StoreError::NotFound`] with a slug hint, and
-    /// [`DomainError::CommitmentNotActive`] for a fulfilled or
-    /// hand-edited note — a commitment already in `_done/` has no date
-    /// left to move.
+    /// Errors otherwise mirror [`Vault::complete_commitment`].
+    /// [`StoreError::NotFound`], with a slug hint, covers both an unknown
+    /// slug and a commitment already fulfilled: the latter lives at
+    /// `commitments/_done/<year>/<slug>.md`, so the path probe fails
+    /// before any status is read, and a fulfilled commitment has no date
+    /// left to move anyway. [`DomainError::CommitmentNotActive`] is the
+    /// narrower case of a note still at `commitments/<slug>.md` whose
+    /// frontmatter was hand-edited to a non-active status.
     pub fn reschedule_commitment(
         &self,
         at: NaiveDateTime,
@@ -368,15 +371,27 @@ impl Vault {
     /// edit the vault asks you not to make.
     ///
     /// `query` matches the bullet title by case-insensitive substring,
-    /// exactly as `complete_action` and `drop_milestone` do, and
-    /// ambiguity is an error carrying the candidates rather than a guess.
+    /// as `drop_milestone` does, and ambiguity is an error carrying the
+    /// candidates rather than a guess. Note `complete_action` is *not*
+    /// quite the same: it tries an exact match first, so a query equal to
+    /// one title and a substring of another resolves there and is
+    /// ambiguous here. Worth aligning, but not by guessing in a verb that
+    /// silently moves a date.
     ///
     /// **The roll-forward starts from the due date, never from `at`.**
     /// That is the difference between a schedule and a drift: a dental
     /// check-up every 6 months, done a week early each time, would creep
     /// a week earlier per cycle if the next date were computed from when
     /// the work happened. Anchoring to the due date means a run of early
-    /// completions leaves the schedule exactly where it was.
+    /// completions leaves the schedule where it was.
+    ///
+    /// One residual case, and it is the calendar's rather than this
+    /// verb's: a monthly commitment on the 31st has no 31st to land on in
+    /// February, so it clamps to the 28th, and the line then carries the
+    /// 28th as its anchor. Within a single call the original day is held
+    /// (see [`Recurrence::nth_after`]); across calls it cannot be,
+    /// because the bullet stores only the next date and not the day the
+    /// schedule nominally wants. Recording a nominal day is #571.
     ///
     /// From there it advances **until the result is strictly after
     /// `at`** — #558's open question, settled in #564. One occurrence
@@ -416,6 +431,12 @@ impl Vault {
         let section = doc.section(PERIODIC_COMMITMENTS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
         let needle = query.trim().to_lowercase();
+        // Every title contains the empty string, so an empty query would
+        // "match" the whole section and silently complete whichever line
+        // happened to be alone in it.
+        if needle.is_empty() {
+            return Err(DomainError::EmptyField { field: "title" });
+        }
 
         let mut matches: Vec<(usize, PeriodicLine)> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
@@ -450,9 +471,16 @@ impl Vault {
 
         let completed_on = at.date();
         let old_next = parsed.next;
-        let mut new_next = recurrence.next_after(old_next);
+        // Count cycles from the due date rather than stepping one at a
+        // time. Stepping compounds `add_months`' day clamp — 31 January
+        // becomes 28 February and then 28 March, losing the 31st for
+        // good — while counting re-derives each occurrence from the same
+        // anchor day. See `Recurrence::nth_after`.
+        let mut cycles = 1u32;
+        let mut new_next = recurrence.nth_after(old_next, cycles);
         while new_next <= completed_on {
-            new_next = recurrence.next_after(new_next);
+            cycles += 1;
+            new_next = recurrence.nth_after(old_next, cycles);
         }
 
         // Rewrite only the date, in place. The rest of the line is the
@@ -462,7 +490,12 @@ impl Vault {
         let old_date = old_next.format("%Y-%m-%d").to_string();
         let new_date = new_next.format("%Y-%m-%d").to_string();
         let mut new_lines: Vec<String> = lines.iter().map(|l| (*l).to_owned()).collect();
-        new_lines[idx] = replace_last(&new_lines[idx], &old_date, &new_date);
+        new_lines[idx] = rewrite_next_date(&new_lines[idx], &new_date).ok_or_else(|| {
+            DomainError::PeriodicDateUnwritable {
+                slug: stewardship.to_owned(),
+                line: lines[idx].trim().to_owned(),
+            }
+        })?;
         doc.replace_section(PERIODIC_COMMITMENTS_SECTION, &new_lines.join("\n"))?;
 
         let new_content = doc.render().to_owned();
@@ -947,21 +980,66 @@ const LOG_COMMITMENT_RESCHEDULED_PREFIX: &str = "commitment rescheduled on ";
 /// schedule moved to.
 const LOG_PERIODIC_DONE_PREFIX: &str = "periodic done on ";
 
-/// Replace the last occurrence of `from` with `to`.
+/// Rewrite the date that follows the line's `next:` marker, leaving
+/// every other byte alone. `None` when the marker or its date cannot be
+/// located, so the caller can refuse rather than write a file that did
+/// not change.
 ///
-/// The date is rewritten from the right because a title may legitimately
-/// contain a date-shaped string (`- Review 2026-01-01 minutes — yearly —
-/// next: 2026-09-01`). The `next:` marker's date is always the last one
-/// on the line, so anchoring to the right cannot hit the title's.
-fn replace_last(haystack: &str, from: &str, to: &str) -> String {
-    match haystack.rfind(from) {
-        Some(idx) => {
-            let mut out = String::with_capacity(haystack.len() - from.len() + to.len());
-            out.push_str(&haystack[..idx]);
-            out.push_str(to);
-            out.push_str(&haystack[idx + from.len()..]);
-            out
-        }
-        None => haystack.to_owned(),
+/// The marker position comes from [`split_at_next_marker`] — the same
+/// function [`parse_periodic_line`] and the lint hint use — rather than
+/// from a fresh search. That is the point: a writer that located the
+/// marker its own way would disagree with the parser on exactly the
+/// lines where it matters. A plain `rfind("next:")` is stolen by a
+/// trailing annotation that mentions `next:`; a plain `find` is stolen
+/// by a title that does. Deriving it from the parser cannot drift from
+/// what was actually parsed.
+///
+/// Anchoring at the marker rather than at the old date's text also
+/// fixes two shapes that parse and lint cleanly today:
+///
+/// - a date `%Y-%m-%d` reads but the line does not spell that way —
+///   `next: 2026-9-1` parses as 2026-09-01, and searching for
+///   `"2026-09-01"` finds nothing;
+/// - a trailing annotation repeating the marker's date
+///   (`next: 2026-09-01 (booked 2026-09-01)`), where a right-anchored
+///   search rewrites the annotation instead of the schedule.
+///
+/// Either way the old code returned the line unchanged while the caller
+/// logged a move that never happened — the daily log, the vault's record
+/// of what occurred, asserting a change absent from the file it
+/// describes.
+fn rewrite_next_date(line: &str, new_date: &str) -> Option<String> {
+    let indent = line.len() - line.trim_start().len();
+    let rest = line[indent..].strip_prefix("- ")?;
+    let rest_at = indent + "- ".len();
+
+    // Re-derive the parser's own marker rather than searching afresh.
+    let (head, _) = split_at_next_marker(rest)?;
+    let after_dash_at = head.len() + '\u{2014}'.len_utf8();
+    let after_dash = &rest[after_dash_at..];
+    let marker_at = after_dash_at + (after_dash.len() - after_dash.trim_start().len());
+    let after_marker_at = marker_at
+        + rest[marker_at..]
+            .strip_prefix("next:")
+            .map(|_| "next:".len())?;
+
+    // The date is the first whitespace-delimited token after the marker.
+    let tail = &rest[after_marker_at..];
+    let lead = tail.len() - tail.trim_start().len();
+    let token_at = after_marker_at + lead;
+    let token = &rest[token_at..];
+    let token_len = token.find(char::is_whitespace).unwrap_or(token.len());
+    if token_len == 0 {
+        return None;
     }
+    // Only rewrite something that is actually a date; a malformed line is
+    // refused, not mangled.
+    NaiveDate::parse_from_str(&token[..token_len], "%Y-%m-%d").ok()?;
+
+    let abs = rest_at + token_at;
+    let mut out = String::with_capacity(line.len() - token_len + new_date.len());
+    out.push_str(&line[..abs]);
+    out.push_str(new_date);
+    out.push_str(&line[abs + token_len..]);
+    Some(out)
 }

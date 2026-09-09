@@ -102,6 +102,7 @@ impl From<DomainError> for CmdError {
             | DomainError::CommitmentNotActive(_)
             | DomainError::CommitmentAlreadyDue { .. }
             | DomainError::PeriodicRecurrenceUnreadable { .. }
+            | DomainError::PeriodicDateUnwritable { .. }
             | DomainError::ActionAlreadyPromoted { .. }
             | DomainError::BulletMissingEnergy { .. }
             | DomainError::HardMilestoneRequiresDate { .. }

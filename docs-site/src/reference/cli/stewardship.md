@@ -105,9 +105,13 @@ was hand-edited — the one edit the vault asks you not to make.
 
 **The next date is computed from the due date, never from `--at`.** A check-up every 6 months, done
 a week early each time, would creep a week earlier every cycle if the schedule followed the work.
-Anchored to the due date, a run of early completions leaves the schedule exactly where it was. A
-late completion advances until `next:` is in the future, so one neglected commitment comes back on
+Anchored to the due date, a run of early completions leaves the schedule where it was. A late
+completion advances until `next:` is in the future, so one neglected commitment comes back on
 schedule rather than several reminders deep.
+
+One case the calendar imposes: a monthly commitment on the 31st has no 31st to land on in February,
+so it clamps to the 28th and keeps the 28th thereafter — the bullet records the next date, not the
+day the schedule nominally wants.
 
 The entry records the completion and where the schedule moved to:
 

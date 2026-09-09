@@ -1271,3 +1271,165 @@ fn complete_periodic_errors_when_no_line_matches() {
         "got {err:?}"
     );
 }
+
+/// The parser reads `%Y-%m-%d` loosely, so `next: 2026-9-1` is a valid
+/// 2026-09-01 that the line does not spell that way. Rewriting by
+/// searching for the *formatted* old date found nothing and silently
+/// returned the line unchanged — while the caller went on to log a move.
+/// The daily log is the vault's record of what happened; it must not
+/// assert a change absent from the file it describes.
+#[test]
+fn complete_periodic_moves_a_date_the_line_does_not_zero_pad() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-9-1\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-10-01"),
+        "the date must actually move, not just be logged as moved:\n{raw}"
+    );
+    assert!(!raw.contains("2026-9-1"), "the old date is gone:\n{raw}");
+}
+
+/// A trailing annotation may repeat the marker's date. Anchoring the
+/// rewrite at the last *date* rewrote the annotation and left the
+/// schedule alone; anchoring at the `next:` marker cannot.
+#[test]
+fn complete_periodic_rewrites_the_marker_not_a_trailing_annotation() {
+    let lines = "- Renew passport \u{2014} yearly \u{2014} next: 2026-09-01 (booked 2026-09-01)\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/admin.md",
+        &stewardship_with_periodics("Admin", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "admin", "passport")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/admin.md")).unwrap();
+    assert!(
+        raw.contains("next: 2027-09-01 (booked 2026-09-01)"),
+        "the schedule moves and the annotation is left as written:\n{raw}"
+    );
+}
+
+/// Counting cycles from the anchor rather than stepping one at a time.
+/// Stepping compounds the day clamp: 31 Jan becomes 28 Feb, and stepping
+/// *that* gives 28 Mar, losing the 31st for good. Counting re-derives
+/// each occurrence from the same day.
+#[test]
+fn complete_periodic_keeps_the_anchor_day_across_several_missed_cycles() {
+    let lines = "- Pay rent \u{2014} monthly \u{2014} next: 2026-01-31\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/finances.md",
+        &stewardship_with_periodics("Finances", lines),
+    )]);
+
+    // Three cycles missed: Feb, Mar, Apr.
+    vault
+        .complete_periodic(dt(2026, 4, 15, 9, 30), "finances", "rent")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/finances.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-04-30"),
+        "April is the first month landing after 15 April, clamped to its \
+         own length from the 31st anchor — not 2026-04-28, which is what \
+         compounding February's clamp gives:\n{raw}"
+    );
+}
+
+/// A line whose `next:` value is not a date cannot be advanced. Refusing
+/// is the point: the alternative was writing the file unchanged and
+/// logging a move anyway.
+#[test]
+fn complete_periodic_refuses_a_line_whose_next_value_is_not_a_date() {
+    // Parses as a periodic line (the parser takes the first token after
+    // the marker) but the token is not a date, so nothing is rewritable.
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: soon\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect_err("an unparseable next: cannot be advanced");
+    // The parser rejects it outright, so it never resolves to a match.
+    assert!(
+        matches!(err, DomainError::PeriodicNotFound { .. }),
+        "got {err:?}"
+    );
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(raw.contains("next: soon"), "unchanged:\n{raw}");
+}
+
+/// Every title contains the empty string, so an empty query would match
+/// the whole section and silently complete whichever line was alone.
+#[test]
+fn complete_periodic_refuses_an_empty_title() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    let err = vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "   ")
+        .expect_err("an empty query is not a match for everything");
+    assert!(
+        matches!(err, DomainError::EmptyField { field: "title" }),
+        "got {err:?}"
+    );
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(raw.contains("next: 2026-09-01"), "unchanged:\n{raw}");
+}
+
+/// The writer must locate the marker the way the parser did, or the two
+/// disagree on exactly the lines where it matters. A trailing annotation
+/// mentioning `next:` steals a right-anchored search...
+#[test]
+fn complete_periodic_is_not_fooled_by_an_annotation_mentioning_the_marker() {
+    let lines = "- Dental check-up \u{2014} monthly \u{2014} next: 2026-09-01 (next: confirm with clinic)\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/health.md",
+        &stewardship_with_periodics("Health", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "health", "dental")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2026-10-01 (next: confirm with clinic)"),
+        "the schedule moves; the annotation is left alone:\n{raw}"
+    );
+}
+
+/// ...and a title mentioning `next:` steals a left-anchored one.
+#[test]
+fn complete_periodic_is_not_fooled_by_a_title_mentioning_the_marker() {
+    let lines = "- Plan next: quarter \u{2014} monthly \u{2014} next: 2026-09-01\n";
+    let (vault, store) = vault_with_seeded_store(&[(
+        "stewardships/admin.md",
+        &stewardship_with_periodics("Admin", lines),
+    )]);
+
+    vault
+        .complete_periodic(dt(2026, 9, 1, 9, 30), "admin", "quarter")
+        .expect("complete succeeds");
+
+    let raw = store.read_file(&vp("stewardships/admin.md")).unwrap();
+    assert!(
+        raw.contains("- Plan next: quarter \u{2014} monthly \u{2014} next: 2026-10-01"),
+        "the title is untouched and the schedule moves:\n{raw}"
+    );
+}

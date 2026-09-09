@@ -94,6 +94,12 @@ pub enum DomainError {
     )]
     PeriodicRecurrenceUnreadable { slug: String, title: String },
 
+    #[error(
+        "periodic commitment line on stewardship '{slug}' has no rewritable `next:` date: `{line}` \
+         \u{2014} the schedule was left untouched rather than logging a move that did not happen"
+    )]
+    PeriodicDateUnwritable { slug: String, line: String },
+
     #[error("no waiting-on item matching '{query}' on project '{slug}'")]
     WaitingOnNotFound { slug: String, query: String },
 

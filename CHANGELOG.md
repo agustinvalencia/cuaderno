@@ -29,8 +29,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
   **The roll-forward is anchored to the due date, never to when the work happened.** A check-up every
   6 months, done a week early each time, would creep a week earlier per cycle if the schedule
-  followed the work; anchored to the due date, a run of early completions leaves the schedule exactly
-  where it was. From there it advances until `next:` is in the future, so a commitment completed late
+  followed the work; anchored to the due date, a run of early completions leaves the schedule where it
+  was — bar the case the calendar imposes, where a monthly commitment on the 31st clamps to February's
+  28th and keeps it, since the bullet records the next date and not the day the schedule wants. From there it advances until `next:` is in the future, so a commitment completed late
   is not reported overdue the moment it is done, and one neglected for five cycles comes back on
   schedule rather than five reminders deep. `--at` records work finished on another day.
 
