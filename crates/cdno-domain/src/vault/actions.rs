@@ -35,7 +35,8 @@ pub(in crate::vault) enum ActionClosure {
     /// The work was performed. Stamps `status: completed` and dates it.
     Completed,
     /// The work was abandoned, superseded or reprioritised. Stamps
-    /// `status: dropped` and leaves `completed` alone.
+    /// `status: dropped` and clears `completed`, so an archived drop
+    /// can never carry a completion date.
     Dropped,
 }
 
@@ -248,9 +249,8 @@ impl Vault {
         let raw = self.store.read_file(&active)?;
         let after_status = rewrite_field_in_frontmatter(&raw, "status", outcome.status().as_str())?;
         let new_content = match outcome {
-            // A completion dates itself. A drop does not: `completed`
-            // stays as it was (`null` for any action that was never
-            // finished), so nothing downstream reads the drop as work.
+            // A completion dates itself; the drop arm below clears the
+            // field instead, so nothing downstream reads a drop as work.
             ActionClosure::Completed => rewrite_field_in_frontmatter(
                 &after_status,
                 "completed",
@@ -265,7 +265,19 @@ impl Vault {
             // `status` first; that is a second guard, not a reason to
             // leave the first one unenforced.
             ActionClosure::Dropped => {
-                rewrite_field_in_frontmatter(&after_status, "completed", "null")?
+                match rewrite_field_in_frontmatter(&after_status, "completed", "null") {
+                    Ok(cleared) => cleared,
+                    // A note carrying no `completed:` key at all already
+                    // asserts exactly what the rewrite would write.
+                    // `completed` is an optional field, so such a note
+                    // parses cleanly and lints clean — an ejected
+                    // `.cuaderno/templates/action.md` may simply omit the
+                    // line. Failing the whole drop over an absent key
+                    // would leave no way to abandon that action at all,
+                    // which is the single thing #559 exists to provide.
+                    Err(DomainError::MissingFrontmatterField(_)) => after_status,
+                    Err(other) => return Err(other),
+                }
             }
         };
         let done_entry = build_index_entry_for(&done, &new_content, NoteType::Action.as_str())?;

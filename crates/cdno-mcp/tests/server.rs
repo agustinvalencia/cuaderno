@@ -151,6 +151,29 @@ fn every_tool_has_description_and_object_input_schema() {
 /// repairing downstream (#438). Asserted on the substance (wikilink syntax,
 /// the bare-`#N` prohibition) rather than the exact wording, so the sentence
 /// can be reworded without breaking the test.
+/// `complete_action`'s description is the only place an agent is told
+/// that abandoning an action is a separate verb. Without the pointer the
+/// reachable-looking move for work that was never performed is
+/// `complete_action`, which writes `action done on ...` to the permanent
+/// record — the exact failure #559 reports. Pinned here on the same
+/// rationale as the linking mandate below: the description is the only
+/// instruction surface an agent sees.
+#[test]
+fn complete_action_points_at_the_drop_verb_for_work_never_performed() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    let desc = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "complete_action")
+        .and_then(|t| t.description.clone())
+        .expect("tool 'complete_action' not advertised");
+    assert!(
+        desc.contains("drop_action"),
+        "complete_action must name the drop verb so an agent does not \
+         record work that never happened: {desc}"
+    );
+}
+
 #[test]
 fn narrative_tools_mandate_linking_in_their_description() {
     let server = empty_server();

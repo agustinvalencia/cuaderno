@@ -881,6 +881,12 @@ fn drop_action_errors_when_action_not_found() {
 /// The PR's central negative promise, tested against the user-visible
 /// query rather than a proxy: a dropped action must never turn up in
 /// the weekly or monthly "what did you finish" views.
+///
+/// End-to-end cover only. `completed_actions_between` filters on
+/// `status` *and* on the date, so this passes while either guard alone
+/// holds — it cannot localise a break. The two guards are pinned
+/// individually by `drop_action_clears_a_pre_existing_completed_date`
+/// and `a_stale_completion_date_on_an_open_action_is_not_completed_work`.
 #[test]
 fn a_dropped_action_never_appears_in_completed_actions() {
     let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
@@ -905,6 +911,152 @@ fn a_dropped_action_never_appears_in_completed_actions() {
     assert!(
         completed.is_empty(),
         "a drop is not an achievement: {completed:?}"
+    );
+}
+
+/// The one test that actually joins the drop writer to the focus
+/// reader. Every other test on this path feeds one side a fixture of
+/// what the other is assumed to emit, so the load-bearing invariant —
+/// the reason rides on its own indented continuation line, leaving the
+/// entry head carrying the action text alone — was left free: emitting
+/// it inline as `; reason: ...` instead kept the whole suite green
+/// while genuinely breaking the match, because `current_focus` reads
+/// heads and an inline reason lands in the head.
+#[test]
+fn a_real_drop_with_a_reason_clears_the_focus_it_opened() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    // A plain bullet, not an attached note: `start_action` logs the raw
+    // text it is handed while the close verbs log the *resolved* bullet
+    // text, so the two only coincide for a bullet that is its own text.
+    // With an attached note they never match and no close clears the
+    // focus — a pre-existing defect (`complete_action` behaves
+    // identically), filed separately rather than widened into this PR.
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .start_action(
+            dt(2026, 5, 26, 9, 30),
+            "foo",
+            "Prepare the demo proposal (deep)",
+        )
+        .expect("start succeeds");
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_some(),
+        "precondition: the start opened a focus"
+    );
+
+    vault
+        .drop_action(
+            dt(2026, 5, 26, 17, 0),
+            "foo",
+            "Prepare the demo proposal",
+            Some("superseded by the ablation run"),
+        )
+        .expect("drop succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "the drop the writer emitted must clear the start it names"
+    );
+
+    // Pin the shape the reader depends on, so a change to either side
+    // fails here rather than silently decoupling the two again.
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        daily.contains("\n  reason: superseded by the ablation run"),
+        "the reason belongs on its own continuation line: {daily}"
+    );
+}
+
+/// The drop path must not require a `completed:` key to exist.
+/// `completed` is optional in an action's frontmatter, so a note that
+/// omits it parses cleanly and lints clean — an ejected
+/// `.cuaderno/templates/action.md` may simply leave the line out. The
+/// first `completed: null` implementation rewrote the field
+/// unconditionally and so failed the whole verb on such a note: bullet
+/// not removed, nothing logged, note not archived. `complete_action`
+/// has always failed this way, but a drop is the escape hatch for when
+/// a completion is the wrong claim, so it must not inherit that.
+#[test]
+fn drop_action_survives_an_action_note_with_no_completed_field() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    let without = raw.replace("completed: null\n", "");
+    assert!(
+        !without.contains("completed:"),
+        "fixture must actually drop the key"
+    );
+    store.write_file(&note, &without).unwrap();
+
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("a drop must not require the key to be present");
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(fm.status, ActionStatus::Dropped);
+    assert_eq!(fm.completed, None);
+}
+
+/// The second of `completed_actions_between`'s two guards, pinned on its
+/// own. An action left `active` or `blocked` while carrying a stale
+/// completion date is not finished work, and only the `status` check
+/// keeps it out of the weekly and monthly views — the date check passes
+/// it straight through.
+#[test]
+fn a_stale_completion_date_on_an_open_action_is_not_completed_work() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "completed: 2026-05-27"),
+        )
+        .unwrap();
+
+    let completed = vault
+        .completed_actions_between(
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        )
+        .expect("completed_actions_between");
+    assert!(
+        completed.is_empty(),
+        "an action that is still open has not been finished, whatever \
+         date its frontmatter carries: {completed:?}"
     );
 }
 

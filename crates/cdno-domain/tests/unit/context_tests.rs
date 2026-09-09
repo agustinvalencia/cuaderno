@@ -1862,8 +1862,13 @@ fn current_focus_is_cleared_by_a_dropped_action() {
 }
 
 /// The reason rides on an indented continuation line precisely so the
-/// entry head still carries the action text alone. Emit it inline and
-/// this is the test that fails.
+/// entry head still carries the action text alone.
+///
+/// This test feeds the reader a fixture, so it pins only the reader's
+/// half: it fails if `current_focus` goes back to folding entries, but
+/// NOT if the writer starts emitting the reason inline. The writer and
+/// reader are joined by
+/// `actions_tests::a_real_drop_with_a_reason_clears_the_focus_it_opened`.
 #[test]
 fn current_focus_is_cleared_by_a_drop_that_carries_a_reason() {
     let vault = focus_vault_raw(
