@@ -8,6 +8,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **A milestone can be dropped, and the template's placeholder stops being data.** The milestone
+  surface was `add` and `complete` only. Once a milestone was superseded, mis-typed, or overtaken —
+  the funder withdrew, the venue fell through — there was no supported way to be rid of it.
+  `complete_milestone` would tick it done, asserting a milestone nobody met, into the same daily log
+  the weekly review reads back from. The alternative was hand-editing the project map, which
+  desyncs `.cuaderno/index.db` — the one thing the design forbids.
+
+  `cdno project milestone drop` and the MCP `drop_milestone` remove the bullet and log
+  `milestone dropped on [[slug]] — <title>`, with an optional `--reason` on a continuation line.
+  Matching is not merely similar to `complete_milestone`'s but literally the same code: both verbs
+  call one resolver, so a query that names a milestone to complete names the same one to drop, and
+  an ambiguous query is ambiguous for both. Only open `- [ ]` bullets match — a completed milestone
+  is a record of what happened, not a plan to revise, and removing it would erase history rather
+  than correct a plan.
+
+  The half most people will actually feel is smaller: a new project's `## Milestones` holds the
+  template's `- [ ] First milestone — target: TBD`, which renders as a real open milestone and, until
+  now, could only be removed by hand. `add_milestone` replaces it the first time a real milestone is
+  added, so no project ends up with a fake milestone above a real one. It is still there until then,
+  and `drop` is the way out; a placeholder someone edited, or one sitting beside real milestones, is
+  a line its author meant something by, and guessing there deletes work.
+
+  **Fixed along the way**: none of the three milestone verbs updated the `milestones` or `deadlines`
+  index tables. The rows never healed either — the same transaction records the new content hash, so
+  reconciliation's fast path classified the file as unchanged for ever after, and only `cdno reindex`
+  repaired it. So `cdno commitments` could list a milestone that had been completed or removed, and
+  `open_milestones` — the candidate list behind the `done` and `drop` pickers — was empty on any
+  vault whose milestones were all added through cdno. Pre-existing for `add` and `complete`, but a
+  drop cannot be correct while the table it maintains is written by nobody: a milestone the user has
+  just declared dead would keep counting as a live commitment.
+  (#522)
+
 - **An action can be dropped, not just completed.** `complete_action` was the only verb that removed
   an action bullet, and it writes `action done on [[slug]] — <text>` to the daily log. So an action
   that was superseded, abandoned or reprioritised could only be cleared by recording work that never

@@ -414,6 +414,23 @@ pub struct CompleteMilestoneInput {
     pub query: String,
 }
 
+/// Input for `drop_milestone` (GH #522). `query` matches exactly as
+/// [`CompleteMilestoneInput`]'s does — the two verbs share one resolver
+/// in the domain, so a query naming one milestone to complete names the
+/// same one to drop.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DropMilestoneInput {
+    /// Active project slug.
+    pub project: String,
+    /// Case-insensitive substring of the open milestone's title.
+    pub query: String,
+    /// Why it is not happening. Optional; recorded on the daily-log
+    /// entry so a later reader can tell a superseded plan from a
+    /// mistaken one.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 /// Input for `add_waiting_on` (GH #213).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AddWaitingOnInput {

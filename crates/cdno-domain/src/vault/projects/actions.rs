@@ -515,17 +515,18 @@ fn format_action_dropped_log_entry(slug: &str, action_text: &str, reason: Option
     }
 }
 
-/// Key introducing the reason on a dropped action's continuation line.
-/// Private: no reader parses it back, because `current_focus` matches on
-/// entry heads and the reason lives below the head. Anything that does
-/// want to read reasons later should key off this constant rather than
-/// a fresh literal.
-const LOG_REASON_KEY: &str = "reason: ";
+/// Key introducing the reason on a dropped entry's continuation line.
+/// Shared with `drop_milestone` so the two abandonment verbs write the
+/// same shape. No reader parses it back today — `current_focus` matches
+/// on entry heads and the reason lives below the head — but anything
+/// that wants to read reasons later should key off this constant rather
+/// than a fresh literal.
+pub(super) const LOG_REASON_KEY: &str = "reason: ";
 
 /// Collapse every whitespace run — newlines included — to a single
 /// space, so a multi-line reason cannot split one log entry into
 /// several lines that no reader would parse as one.
-fn flatten_reason(reason: &str) -> String {
+pub(super) fn flatten_reason(reason: &str) -> String {
     reason.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

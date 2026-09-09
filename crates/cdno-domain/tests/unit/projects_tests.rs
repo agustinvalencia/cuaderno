@@ -2893,3 +2893,492 @@ fn set_core_question_rejects_an_empty_target() {
         "an empty target is a mistake, not a detach \u{2014} that is what None is for; got {err:?}"
     );
 }
+
+// ---- drop_milestone (#522) ----
+
+/// The verb's reason for existing: before it, a milestone that was not
+/// going to happen could only be ticked done — asserting a milestone
+/// nobody met — or hand-edited out, which desyncs the index.
+#[test]
+fn drop_milestone_removes_the_bullet_and_logs_a_drop_not_a_completion() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submit to ICML \u{2014} hard: 2026-06-01\n- [ ] Book the venue \u{2014} target: 2026-07-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "venue", None)
+        .expect("drop succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        !raw.contains("Book the venue"),
+        "the bullet is removed, not ticked:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Submit to ICML \u{2014} hard: 2026-06-01"),
+        "the sibling milestone is untouched:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-14.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **16:30**: milestone dropped on [[icml]] \u{2014} Book the venue"),
+        "the log must record a drop:\n{daily}"
+    );
+    assert!(
+        !daily.contains("milestone done on"),
+        "a drop is not a completion:\n{daily}"
+    );
+}
+
+/// A drop with no reason is the correction case (#564 settles that a
+/// correction is a drop with no reason, not a second verb), and must not
+/// leave a dangling `reason:` line.
+#[test]
+fn drop_milestone_without_a_reason_logs_a_bare_entry() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submitt to ICML \u{2014} target: 2026-06-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "Submitt", None)
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-14.md"))
+        .unwrap();
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+/// The reason rides an indented continuation line, matching the shape
+/// `drop_action` established, and a multi-line reason is flattened so
+/// one drop stays one log entry.
+#[test]
+fn drop_milestone_puts_its_reason_on_a_continuation_line_flattened() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Book the venue \u{2014} target: 2026-07-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(
+            dt(2026, 5, 14, 16, 30),
+            "icml",
+            "venue",
+            Some("the funder\n  withdrew\n\nso there is no event"),
+        )
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-14.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **16:30**: milestone dropped on [[icml]] \u{2014} Book the venue\n  reason: the funder withdrew so there is no event"
+        ),
+        "reason on its own indented line, whitespace flattened:\n{daily}"
+    );
+}
+
+/// A completed milestone is a record of something that happened.
+/// Dropping is for things that will not, so `- [x]` bullets are never
+/// matched — the same rule `complete_milestone` applies.
+#[test]
+fn drop_milestone_never_matches_a_completed_bullet() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [x] Book the venue \u{2014} 2026-04-20\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "venue", None)
+        .expect_err("a completed milestone is history, not a plan");
+    assert!(
+        matches!(err, DomainError::MilestoneNotFound { .. }),
+        "got {err:?}"
+    );
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [x] Book the venue \u{2014} 2026-04-20"),
+        "nothing is removed on the error path:\n{raw}"
+    );
+}
+
+/// Ambiguity is an error carrying the candidates, never a guess — the
+/// wrong milestone silently vanishing is the failure that matters here.
+#[test]
+fn drop_milestone_refuses_an_ambiguous_query_and_writes_nothing() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Book the venue \u{2014} target: 2026-07-01\n- [ ] Book the caterer \u{2014} target: 2026-07-02\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    let err = vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "Book", None)
+        .expect_err("two matches must not be resolved by guessing");
+    match err {
+        DomainError::AmbiguousMilestone { candidates, .. } => {
+            assert_eq!(candidates.len(), 2, "both candidates are offered");
+        }
+        other => panic!("got {other:?}"),
+    }
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(raw.contains("Book the venue") && raw.contains("Book the caterer"));
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-14.md"))
+            .unwrap(),
+        "a rejected call logs nothing"
+    );
+}
+
+/// `drop_milestone` and `complete_milestone` share one resolver, so a
+/// query that names a milestone for one names the same one for the
+/// other. Two copies of that loop would be two chances to disagree.
+#[test]
+fn drop_and_complete_resolve_a_query_identically() {
+    let milestones = "- [ ] Book the venue \u{2014} target: 2026-07-01\n- [ ] Submit to ICML \u{2014} hard: 2026-06-01\n";
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        milestones,
+        "(nothing yet)\n",
+    );
+
+    for query in ["venue", "VENUE", "Book the venue"] {
+        let (dropper, drop_store) =
+            vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+        let (completer, done_store) =
+            vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+        dropper
+            .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", query, None)
+            .unwrap_or_else(|e| panic!("drop '{query}': {e:?}"));
+        completer
+            .complete_milestone(dt(2026, 5, 14, 16, 30), "icml", query)
+            .unwrap_or_else(|e| panic!("complete '{query}': {e:?}"));
+
+        let dropped = drop_store.read_file(&vp("projects/icml.md")).unwrap();
+        let completed = done_store.read_file(&vp("projects/icml.md")).unwrap();
+        assert!(
+            !dropped.contains("Book the venue"),
+            "'{query}' dropped the wrong line:\n{dropped}"
+        );
+        assert!(
+            completed.contains("- [x] Book the venue \u{2014} 2026-05-14"),
+            "'{query}' completed the wrong line:\n{completed}"
+        );
+    }
+}
+
+// ---- the template placeholder (#522) ----
+
+/// The fix most users will feel. A fresh project's `## Milestones` holds
+/// the template's `- [ ] First milestone — target: TBD`, which renders
+/// as a real open milestone; leaving it above the first real one means
+/// every project accumulates a fake milestone nobody wrote.
+#[test]
+fn add_milestone_replaces_the_untouched_template_placeholder() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] First milestone \u{2014} target: TBD\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Submit to ICML",
+            Some(day(2026, 6, 1)),
+            true,
+        )
+        .expect("add succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        !raw.contains("First milestone"),
+        "the placeholder is replaced, not appended to:\n{raw}"
+    );
+    assert!(raw.contains("- [ ] Submit to ICML \u{2014} hard: 2026-06-01"));
+}
+
+/// Only the *untouched* placeholder goes. A project whose placeholder
+/// was edited is a project whose author meant something by that line,
+/// and guessing at intent there deletes work.
+#[test]
+fn add_milestone_keeps_a_placeholder_the_user_edited() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] First milestone \u{2014} target: 2026-05-30\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(dt(2026, 5, 1, 10, 0), "icml", "Submit to ICML", None, false)
+        .expect("add succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] First milestone \u{2014} target: 2026-05-30"),
+        "an edited placeholder is the user's own milestone:\n{raw}"
+    );
+    assert!(raw.contains("- [ ] Submit to ICML \u{2014} target: TBD"));
+}
+
+/// Nor when it is not alone: real milestones beside it mean the author
+/// has already been in this section and left the line there.
+#[test]
+fn add_milestone_keeps_the_placeholder_when_real_milestones_sit_beside_it() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] First milestone \u{2014} target: TBD\n- [ ] Book the venue \u{2014} target: 2026-07-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(dt(2026, 5, 1, 10, 0), "icml", "Submit to ICML", None, false)
+        .expect("add succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] First milestone \u{2014} target: TBD"),
+        "ambiguous case: leave it, the user can drop it:\n{raw}"
+    );
+}
+
+/// The index must track the file, not lag it. `open_milestones` reads
+/// `milestones_for_project`, and it is what the `done` and `drop`
+/// pickers offer; the commitments aggregation reads the same table. A
+/// milestone the user has just declared dead, still sitting there, keeps
+/// counting as a live commitment and keeps being offered for completion.
+#[test]
+fn drop_milestone_removes_the_row_from_the_index_not_just_the_file() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submit to ICML \u{2014} hard: 2026-06-01\n- [ ] Book the venue \u{2014} target: 2026-07-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "venue", None)
+        .expect("drop succeeds");
+
+    let open = vault.open_milestones("icml").expect("open_milestones");
+    let titles: Vec<&str> = open.iter().map(|m| m.name.as_str()).collect();
+    assert!(
+        !titles.iter().any(|t: &&str| t.contains("venue")),
+        "the dropped milestone must not survive in the index: {titles:?}"
+    );
+    assert!(
+        titles.iter().any(|t: &&str| t.contains("Submit to ICML")),
+        "its sibling must still be there: {titles:?}"
+    );
+}
+
+/// The same gap, on the sibling verb. `add_milestone` never wrote its
+/// index rows either, so on a vault used entirely through cdno the
+/// milestones table stayed empty and the pickers had nothing to offer.
+/// Fixed alongside `drop`, because a drop cannot be correct while the
+/// table it maintains is populated by nobody.
+#[test]
+fn add_milestone_writes_its_row_to_the_index() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Submit to ICML",
+            Some(day(2026, 6, 1)),
+            true,
+        )
+        .expect("add succeeds");
+
+    let open = vault.open_milestones("icml").expect("open_milestones");
+    assert_eq!(
+        open.len(),
+        1,
+        "the new milestone must be visible to the pickers: {open:?}"
+    );
+    assert!(open[0].name.contains("Submit to ICML"), "{open:?}");
+}
+
+/// Likewise for a completion: the row must stop being *open*, or the
+/// picker keeps offering a milestone that is already ticked.
+#[test]
+fn complete_milestone_updates_the_index_row() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submit to ICML \u{2014} hard: 2026-06-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .complete_milestone(dt(2026, 5, 14, 16, 0), "icml", "Submit")
+        .expect("complete succeeds");
+
+    let open = vault.open_milestones("icml").expect("open_milestones");
+    assert!(
+        open.is_empty(),
+        "a completed milestone is no longer open: {open:?}"
+    );
+}
+
+/// Sub-bullets belong to their milestone. Removing the bullet alone
+/// would leave notes about an abandoned milestone re-parented under
+/// whichever one happens to precede it.
+#[test]
+fn drop_milestone_takes_its_child_lines_with_it() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Submit to ICML \u{2014} hard: 2026-06-01\n  - draft abstract by May\n  - co-author sign-off\n- [ ] Book the venue \u{2014} target: 2026-07-01\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "Submit", None)
+        .expect("drop succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        !raw.contains("draft abstract by May") && !raw.contains("co-author sign-off"),
+        "the dropped milestone's notes go with it:\n{raw}"
+    );
+    assert!(
+        raw.contains("- [ ] Book the venue \u{2014} target: 2026-07-01"),
+        "the surviving milestone is untouched:\n{raw}"
+    );
+}
+
+/// The placeholder is matched after `trim`, not byte-for-byte: an
+/// ASCII-hyphen spelling is a different line and is kept. Pinned so the
+/// comparison's actual reach cannot drift from what the doc claims.
+#[test]
+fn add_milestone_keeps_an_ascii_hyphen_placeholder_variant() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] First milestone - target: TBD\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(dt(2026, 5, 1, 10, 0), "icml", "Submit to ICML", None, false)
+        .expect("add succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        raw.contains("- [ ] First milestone - target: TBD"),
+        "only the em-dash spelling is the template's own line:\n{raw}"
+    );
+}
+
+/// Leading whitespace does not make it a different line either. This
+/// is the case the `trim` actually buys: the section is already
+/// `trim_end`-ed before the comparison, so a trailing-space variant
+/// would match with or without it, and only indentation distinguishes
+/// the two.
+#[test]
+fn add_milestone_replaces_an_indented_placeholder() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "   - [ ] First milestone \u{2014} target: TBD\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .add_milestone(dt(2026, 5, 1, 10, 0), "icml", "Submit to ICML", None, false)
+        .expect("add succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(
+        !raw.contains("First milestone"),
+        "indentation does not make it the user's own line:\n{raw}"
+    );
+}

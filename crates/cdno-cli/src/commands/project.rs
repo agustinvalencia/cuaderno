@@ -140,6 +140,21 @@ pub enum MilestoneCommands {
         #[arg(long)]
         query: Option<String>,
     },
+    /// Remove a milestone that is not going to happen, by substring
+    /// match. Use this rather than `done` when the work was not
+    /// performed: `done` records a completion.
+    Drop {
+        /// Project slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        slug: Option<String>,
+        /// Substring matching the milestone title.
+        #[arg(long)]
+        query: Option<String>,
+        /// Why it was dropped. Recorded on the daily-log entry.
+        /// Genuinely optional — never prompted for.
+        #[arg(long)]
+        reason: Option<String>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -250,6 +265,11 @@ pub fn run(
             MilestoneCommands::Done { slug, query } => {
                 milestone_done(&vault, at, slug, query, interactive, json)?
             }
+            MilestoneCommands::Drop {
+                slug,
+                query,
+                reason,
+            } => milestone_drop(&vault, at, slug, query, reason, interactive, json)?,
         },
         ProjectCommands::Waiting { action } => match action {
             WaitingCommands::Add { slug, description } => {
@@ -581,6 +601,49 @@ fn milestone_done(
         json,
         &path.to_string(),
         &format!("Milestone done on {path}"),
+    )?;
+    Ok(())
+}
+
+/// `cdno project milestone drop` — slug picker, then the same fuzzy
+/// open-milestone picker `done` uses.
+///
+/// `--reason` stays outside `gather_or_error`: it is genuinely
+/// optional, and prompting for it would make every drop feel like it
+/// owes an explanation. Per `docs/cli-ergonomics.md`, only promptable
+/// arguments are folded through the helper.
+fn milestone_drop(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    query: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    use crate::prompt;
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
+        prompt::prompt_open_milestone(&slug, vault)
+    })?;
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to drop milestone '{query}' from '{slug}' (this records no completion)"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .drop_milestone(at, &slug, &query, reason.as_deref())
+        .context("dropping milestone")?;
+    crate::output::emit_write_result(
+        json,
+        &path.to_string(),
+        &format!("Milestone dropped from {path}"),
     )?;
     Ok(())
 }
