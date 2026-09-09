@@ -877,3 +877,71 @@ fn drop_action_errors_when_action_not_found() {
         "got {err:?}"
     );
 }
+
+/// The PR's central negative promise, tested against the user-visible
+/// query rather than a proxy: a dropped action must never turn up in
+/// the weekly or monthly "what did you finish" views.
+#[test]
+fn a_dropped_action_never_appears_in_completed_actions() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("drop succeeds");
+
+    let completed = vault
+        .completed_actions_between(
+            NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        )
+        .expect("completed_actions_between");
+    assert!(
+        completed.is_empty(),
+        "a drop is not an achievement: {completed:?}"
+    );
+}
+
+/// A note hand-edited to carry a completion date while still active
+/// must not be archived as `dropped` *and* dated. The archival clears
+/// the field rather than leaving whatever was there, so the file cannot
+/// contradict itself and no reader has to check `status` first to be
+/// safe.
+#[test]
+fn drop_action_clears_a_pre_existing_completed_date() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let note = vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let raw = store.read_file(&note).unwrap();
+    store
+        .write_file(
+            &note,
+            &raw.replace("completed: null", "completed: 2026-01-05"),
+        )
+        .unwrap();
+
+    vault
+        .drop_action(dt(2026, 5, 27, 17, 0), "foo", "demo-proposal", None)
+        .expect("drop succeeds");
+
+    let done = vp("actions/_done/2026/prepare-the-demo-proposal.md");
+    let fm = read_action_frontmatter(&store, &done);
+    assert_eq!(fm.status, ActionStatus::Dropped);
+    assert_eq!(
+        fm.completed, None,
+        "the stale completion date is cleared, not carried into the archive"
+    );
+}

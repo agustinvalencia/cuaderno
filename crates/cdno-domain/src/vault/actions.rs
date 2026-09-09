@@ -209,9 +209,8 @@ impl Vault {
     /// `drop_action` when the closed bullet wikilinks an action note.
     ///
     /// `outcome` decides what is stamped, and the difference is the
-    /// point of #559: a completion also writes `completed: <today>`,
-    /// while a drop writes only `status: dropped` and leaves
-    /// `completed` untouched. A dropped action was never performed, so
+    /// point of #559: a completion writes `completed: <today>`, while a
+    /// drop writes `completed: null`. A dropped action was never performed, so
     /// giving it a completion date would put work into the weekly and
     /// monthly reviews that nobody did — `completed_actions_between`
     /// filters on both `status` and a present `completed`, so a drop
@@ -257,7 +256,17 @@ impl Vault {
                 "completed",
                 &completion.format("%Y-%m-%d").to_string(),
             )?,
-            ActionClosure::Dropped => after_status,
+            // Cleared, not merely left alone. A note hand-edited to
+            // carry a `completed:` date while still active would
+            // otherwise be archived as `status: dropped` *with* a
+            // completion date — a self-contradictory file asserting
+            // work that was abandoned. Nothing reads it as completed
+            // today only because `completed_actions_between` checks
+            // `status` first; that is a second guard, not a reason to
+            // leave the first one unenforced.
+            ActionClosure::Dropped => {
+                rewrite_field_in_frontmatter(&after_status, "completed", "null")?
+            }
         };
         let done_entry = build_index_entry_for(&done, &new_content, NoteType::Action.as_str())?;
 

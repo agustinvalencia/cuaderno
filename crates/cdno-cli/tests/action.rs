@@ -428,9 +428,18 @@ fn action_statuses_are_distinguishable_in_the_rendered_listing() {
     let active = palette.paint(status_role(ActionStatus::Active), "[active]");
     let blocked = palette.paint(status_role(ActionStatus::Blocked), "[blocked]");
     let completed = palette.paint(status_role(ActionStatus::Completed), "[completed]");
+    let dropped = palette.paint(status_role(ActionStatus::Dropped), "[dropped]");
     assert_ne!(sgr_of(&active), sgr_of(&blocked));
     assert_ne!(sgr_of(&active), sgr_of(&completed));
     assert_ne!(sgr_of(&blocked), sgr_of(&completed));
+    // A drop must not read as a success. Nothing was achieved, and
+    // colouring it like a completion is the same false claim in a
+    // different medium.
+    assert_ne!(
+        sgr_of(&dropped),
+        sgr_of(&completed),
+        "a dropped action must not be styled as a completion"
+    );
 }
 
 /// The SGR parameters of `text`, with visible characters removed, so two
@@ -572,4 +581,23 @@ fn drop_in_non_interactive_errors_when_missing_query() {
     )
     .expect_err("missing --query should error");
     assert!(format!("{err:#}").contains("--query"), "{err:#}");
+}
+
+#[test]
+fn drop_in_non_interactive_errors_when_missing_project() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Drop {
+            project: None,
+            query: Some("anything".to_owned()),
+            reason: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --project should error");
+    assert!(format!("{err:#}").contains("--project"), "{err:#}");
 }

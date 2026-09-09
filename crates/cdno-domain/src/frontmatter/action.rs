@@ -104,11 +104,12 @@ impl FromStr for ActionStatus {
 /// commitments aggregation reads as the action's deadline source.
 ///
 /// `completed` is `Some(date)` for completed actions, `None` while
-/// active, blocked or dropped. It moves with `status` for the
-/// completion path only: a dropped action is closed without having been
-/// performed, so it carries no completion date — the drop is recorded
-/// in the daily log and by the archive year, and `completed: null` is
-/// what keeps it out of the completed-actions query. `blocker`
+/// active, blocked or dropped. A drop actively clears it rather than
+/// leaving whatever was there: a dropped action was closed without
+/// being performed, so it carries no completion date — the drop is
+/// recorded in the daily log and by the archive year, and
+/// `completed: null` is what keeps it out of the completed-actions
+/// query. `blocker`
 /// is `Some(description)` while `status: blocked`, `None` otherwise.
 /// `criteria` is free-form text describing what "done" looks like —
 /// optional because trivial cases are encoded by the title.

@@ -346,7 +346,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`."
+        description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`. Use this ONLY when the work was actually performed. If it was superseded, abandoned or reprioritised, use `drop_action` instead -- completing it writes `action done on ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert work nobody did."
     )]
     pub async fn complete_action(
         &self,

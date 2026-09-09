@@ -493,13 +493,18 @@ fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
 ///
 /// It goes on an **indented continuation line**, the shape
 /// `update_project_state` established for its `was:` / `now:` bodies,
-/// rather than inline after the action text. That is load-bearing, not
-/// cosmetic: [`Vault::current_focus`] matches an open start against the
-/// closing entry by the action text that follows the em dash, so a
-/// reason appended inline would make every drop-with-a-reason fail to
-/// clear its start. `parse_log_lines` folds a continuation into the
-/// entry with a `"; "` delimiter, so the reader strips
-/// [`LOG_REASON_DELIMITED`] before comparing.
+/// rather than inline after the action text.
+///
+/// That is load-bearing, and worth stating precisely because the
+/// obvious justification is wrong: `parse_log_lines` folds a
+/// continuation into its entry joined with `"; "`, so an inline
+/// `; reason: …` and a continuation line are byte-identical to any
+/// reader that folds. What makes the shape matter is that
+/// [`Vault::current_focus`] deliberately does **not** fold — it reads
+/// entry heads, so the action text it compares is exactly this line,
+/// with the reason on a line of its own where it cannot perturb the
+/// match. Emit the reason inline and the head carries it, and every
+/// drop-with-a-reason stops clearing its start.
 ///
 /// Whitespace in the reason is flattened so one drop stays one entry.
 fn format_action_dropped_log_entry(slug: &str, action_text: &str, reason: Option<&str>) -> String {
@@ -511,14 +516,11 @@ fn format_action_dropped_log_entry(slug: &str, action_text: &str, reason: Option
 }
 
 /// Key introducing the reason on a dropped action's continuation line.
-pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
-
-/// The same key as it appears **after** `parse_log_lines` has folded the
-/// continuation into the entry text (it joins with `"; "`). The reader
-/// splits on this to recover the action text the start line carried.
-/// Defined next to the writer so the two cannot drift — the failure
-/// #453 was.
-pub(in crate::vault) const LOG_REASON_DELIMITED: &str = "; reason: ";
+/// Private: no reader parses it back, because `current_focus` matches on
+/// entry heads and the reason lives below the head. Anything that does
+/// want to read reasons later should key off this constant rather than
+/// a fresh literal.
+const LOG_REASON_KEY: &str = "reason: ";
 
 /// Collapse every whitespace run — newlines included — to a single
 /// space, so a multi-line reason cannot split one log entry into

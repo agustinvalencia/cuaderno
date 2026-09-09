@@ -258,6 +258,7 @@ are worth migrating.
 |---|---|
 | `cdno open` (reference is a trailing optional positional) | rule 5 exception |
 | `cdno action add / promote / complete / list` | #113 |
+| `cdno action drop` (`--reason` genuinely optional, silent shape) | #559 |
 | `cdno project create / state / park / activate / milestone add+done / waiting add+resolve` | #114 (split across two PRs) |
 | `cdno project core-question` | #523 |
 | `cdno project milestone add` (`--date` now genuinely optional, gated prompt) | #521 |
