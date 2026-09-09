@@ -528,3 +528,145 @@ fn track_at_accepts_a_bare_date() {
             .exists()
     );
 }
+
+#[test]
+fn complete_periodic_rolls_the_date_forward_through_the_cli() {
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 5, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("create");
+
+    stewardship::run(
+        dir.path(),
+        moment(2026, 5, 1, 9, 30),
+        StewardshipCommands::AddPeriodic {
+            stewardship: Some("health".to_owned()),
+            title: Some("Dental check-up".to_owned()),
+            every: Some(Recurrence::EveryNMonths(6)),
+            next: Some(NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()),
+        },
+        true,
+        false,
+    )
+    .expect("add-periodic");
+
+    stewardship::run(
+        dir.path(),
+        moment(2026, 9, 1, 16, 0),
+        StewardshipCommands::CompletePeriodic {
+            stewardship: Some("health".to_owned()),
+            title: Some("dental".to_owned()),
+            at: None,
+        },
+        true,
+        false,
+    )
+    .expect("complete-periodic");
+
+    let raw = fs::read_to_string(dir.path().join("stewardships/health.md")).unwrap();
+    assert!(raw.contains("next: 2027-03-01"), "{raw}");
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-09-01.md")).unwrap();
+    assert!(daily.contains("periodic done on [[health]]"), "{daily}");
+}
+
+/// `--at` back-dates the completion to the day the work happened, and
+/// the roll-forward still anchors to the due date.
+#[test]
+fn complete_periodic_honours_at_for_work_done_earlier() {
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 5, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("create");
+    stewardship::run(
+        dir.path(),
+        moment(2026, 5, 1, 9, 30),
+        StewardshipCommands::AddPeriodic {
+            stewardship: Some("health".to_owned()),
+            title: Some("Dental check-up".to_owned()),
+            every: Some(Recurrence::EveryNMonths(6)),
+            next: Some(NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()),
+        },
+        true,
+        false,
+    )
+    .expect("add-periodic");
+
+    stewardship::run(
+        dir.path(),
+        moment(2026, 9, 3, 16, 0),
+        StewardshipCommands::CompletePeriodic {
+            stewardship: Some("health".to_owned()),
+            title: Some("dental".to_owned()),
+            at: Some(NaiveDate::from_ymd_opt(2026, 8, 25).unwrap()),
+        },
+        true,
+        false,
+    )
+    .expect("complete-periodic");
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-08-25.md")).unwrap();
+    assert!(
+        daily.contains("periodic done on [[health]]"),
+        "the completion lands on the day the work happened:\n{daily}"
+    );
+
+    let raw = fs::read_to_string(dir.path().join("stewardships/health.md")).unwrap();
+    assert!(
+        raw.contains("next: 2027-03-01"),
+        "still anchored to the due date, not to --at:\n{raw}"
+    );
+}
+
+#[test]
+fn complete_periodic_in_non_interactive_errors_when_missing_title() {
+    let dir = vault();
+    stewardship::run(
+        dir.path(),
+        moment(2026, 5, 1, 9, 0),
+        StewardshipCommands::Create {
+            name: Some("Health".to_owned()),
+            context: Some(Context::Personal),
+            tracking: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("create");
+
+    let err = stewardship::run(
+        dir.path(),
+        moment(2026, 9, 1, 16, 0),
+        StewardshipCommands::CompletePeriodic {
+            stewardship: Some("health".to_owned()),
+            title: None,
+            at: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --title should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--title"), "error message: {msg}");
+}

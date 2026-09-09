@@ -8,6 +8,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Dates can move: commitments reschedule, periodic commitments complete.** The write surface could
+  create and complete, but not correct. Two halves of the same gap, both about a date that needs to
+  change.
+
+  A commitment's `due` could not be changed at all. The working procedure was `rm` the note,
+  `cdno reindex`, and create it again — which **destroys the body** (the notes on who was chased and
+  what was promised) and resets `created`, the one field that shows how long something has been
+  slipping. It also desyncs the index between the delete and the reindex. `cdno commit reschedule`
+  and the MCP `reschedule_commitment` move the date in place and log both the old and the new one, so
+  repeated slippage becomes visible instead of silently rewritten: a commitment moving once is a
+  checkpoint, a commitment moving for the fourth time is a signal. Rescheduling to the date it
+  already carries is refused — the entry would assert a slip that never happened.
+
+  A periodic commitment could never be completed. It lives as a bullet in a stewardship's
+  `## Periodic Commitments`, not as a note, so `complete_commitment` — which stamps frontmatter and
+  moves a file — has nothing to act on, and the reminder kept firing until someone hand-edited the
+  stewardship. `cdno stewardship complete-periodic` and the MCP `complete_periodic` roll `next:`
+  forward by the line's own recurrence.
+
+  **The roll-forward is anchored to the due date, never to when the work happened.** A check-up every
+  6 months, done a week early each time, would creep a week earlier per cycle if the schedule
+  followed the work; anchored to the due date, a run of early completions leaves the schedule exactly
+  where it was. From there it advances until `next:` is in the future, so a commitment completed late
+  is not reported overdue the moment it is done, and one neglected for five cycles comes back on
+  schedule rather than five reminders deep. `--at` records work finished on another day.
+
+  Both log in the `was:` / `now:` shape `update_project_state` established, rather than inventing a
+  third way to say a date moved.
+
+  The parser change behind this is deliberately conservative. `parse_periodic_line` isolated the
+  recurrence and threw it away, so a line whose recurrence is unreadable (`— twice a year —`) still
+  parsed, still appeared in `cdno commitments`, and was still accepted by lint. It now returns the
+  recurrence as an `Option`: making it mandatory would have dropped such a line from the aggregation
+  and started lint reporting a shape it has always allowed. Only `complete_periodic`, which cannot
+  advance a date without a recurrence, refuses it — and says which forms it accepts.
+  (#430, #558)
+
 - **A milestone can be dropped, and the template's placeholder stops being data.** The milestone
   surface was `add` and `complete` only. Once a milestone was superseded, mis-typed, or overtaken —
   the funder withdrew, the venue fell through — there was no supported way to be rid of it.

@@ -78,6 +78,24 @@ pub enum StewardshipCommands {
         #[arg(long, value_parser = parse_iso_date)]
         next: Option<NaiveDate>,
     },
+
+    /// Complete one occurrence of a periodic commitment, rolling its
+    /// `next:` date forward by the line's own recurrence. Named to pair
+    /// with `add-periodic`: it completes an occurrence, not the
+    /// stewardship, which is perpetual and never completes.
+    CompletePeriodic {
+        /// Stewardship slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_stewardship))]
+        stewardship: Option<String>,
+        /// Case-insensitive substring of the commitment's title.
+        #[arg(long)]
+        title: Option<String>,
+        /// Date the work was actually done, `YYYY-MM-DD`. Defaults to
+        /// today. The roll-forward is anchored to the due date either
+        /// way, so completing early never drifts the schedule.
+        #[arg(long, value_parser = parse_iso_date)]
+        at: Option<NaiveDate>,
+    },
 }
 
 pub fn run(
@@ -132,6 +150,11 @@ pub fn run(
             interactive,
             json,
         ),
+        StewardshipCommands::CompletePeriodic {
+            stewardship,
+            title,
+            at: done_on,
+        } => complete_periodic(&vault, at, stewardship, title, done_on, interactive, json),
     }
 }
 
@@ -377,4 +400,53 @@ pub fn render_show(
 fn parse_iso_date(s: &str) -> std::result::Result<NaiveDate, String> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .map_err(|_| format!("could not parse `{s}` as a date (expected YYYY-MM-DD)"))
+}
+
+/// `cdno stewardship complete-periodic` — stewardship slug and a
+/// substring of the commitment title, both promptable.
+///
+/// `--at` stays outside `gather_or_error`: it is genuinely optional
+/// (today is the overwhelmingly common case) and prompting for it on
+/// every completion would tax the ordinary path to serve the rare one.
+/// Its time-of-day is taken from the invocation, so back-dating writes
+/// to that day's note at the hour you actually recorded it.
+#[allow(clippy::too_many_arguments)]
+fn complete_periodic(
+    vault: &Vault,
+    at: NaiveDateTime,
+    stewardship: Option<String>,
+    title: Option<String>,
+    done_on: Option<NaiveDate>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let stewardship = prompt::gather_or_error(
+        stewardship,
+        "stewardship",
+        interactive,
+        &mut prompted,
+        || prompt::prompt_stewardship(vault, at.date()),
+    )?;
+    let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
+        prompt::prompt_text("Commitment title (substring)")
+    })?;
+    let effective = match done_on {
+        Some(date) => date.and_time(at.time()),
+        None => at,
+    };
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to complete periodic '{title}' on '{stewardship}' as of {}",
+            effective.date()
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .complete_periodic(effective, &stewardship, &title)
+        .context("completing periodic commitment")?;
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Updated {path}"))?;
+    Ok(())
 }

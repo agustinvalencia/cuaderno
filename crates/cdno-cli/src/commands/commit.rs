@@ -58,6 +58,18 @@ pub enum CommitCommands {
         #[arg(long)]
         slug: Option<String>,
     },
+
+    /// Move an active commitment's due date, recording the move in
+    /// today's daily note. Commitments slip; this records that rather
+    /// than rewriting it silently.
+    Reschedule {
+        /// Slug of the active commitment to move.
+        #[arg(long)]
+        slug: Option<String>,
+        /// New due date, `YYYY-MM-DD`.
+        #[arg(long, value_parser = parse_iso_date)]
+        due: Option<NaiveDate>,
+    },
 }
 
 pub fn run(
@@ -92,6 +104,9 @@ pub fn run(
             json,
         ),
         CommitCommands::Done { slug } => done(&vault, at, slug, interactive, json),
+        CommitCommands::Reschedule { slug, due } => {
+            reschedule(&vault, at, slug, due, interactive, json)
+        }
     }
 }
 
@@ -171,5 +186,39 @@ fn done(
         .complete_commitment(at, &slug)
         .context("completing commitment")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Completed at {path}"))?;
+    Ok(())
+}
+
+/// `cdno commit reschedule` — slug and new due date, both promptable.
+///
+/// `--due` is folded through `gather_or_error` rather than left optional:
+/// unlike a drop's `--reason`, a reschedule with no date has nothing to
+/// do, so its absence is a missing argument and not a choice.
+fn reschedule(
+    vault: &Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    due: Option<NaiveDate>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_text("Commitment slug")
+    })?;
+    let due = prompt::gather_or_error(due, "due", interactive, &mut prompted, || {
+        prompt::prompt_text("New due date (YYYY-MM-DD)")
+            .and_then(|s| parse_iso_date(&s).map_err(|e| anyhow::anyhow!(e)))
+    })?;
+
+    if prompted && !prompt::confirm_preview(&format!("About to move commitment '{slug}' to {due}"))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .reschedule_commitment(at, &slug, due)
+        .context("rescheduling commitment")?;
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Rescheduled {path}"))?;
     Ok(())
 }

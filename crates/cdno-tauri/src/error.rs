@@ -81,6 +81,9 @@ impl From<DomainError> for CmdError {
             }
             | DomainError::AmbiguousWaitingOn {
                 query, candidates, ..
+            }
+            | DomainError::AmbiguousPeriodic {
+                query, candidates, ..
             } => CmdError::Ambiguous { query, candidates },
             DomainError::AmbiguousSlug(query) => CmdError::Ambiguous {
                 query,
@@ -89,13 +92,16 @@ impl From<DomainError> for CmdError {
 
             DomainError::ActionNotFound { .. }
             | DomainError::MilestoneNotFound { .. }
-            | DomainError::WaitingOnNotFound { .. } => CmdError::NotFound(e.to_string()),
+            | DomainError::WaitingOnNotFound { .. }
+            | DomainError::PeriodicNotFound { .. } => CmdError::NotFound(e.to_string()),
             DomainError::Store(StoreError::NotFound(_)) => CmdError::NotFound(e.to_string()),
 
             DomainError::ProjectNotActive(_)
             | DomainError::StateTooLong { .. }
             | DomainError::ProjectNotParked(_)
             | DomainError::CommitmentNotActive(_)
+            | DomainError::CommitmentAlreadyDue { .. }
+            | DomainError::PeriodicRecurrenceUnreadable { .. }
             | DomainError::ActionAlreadyPromoted { .. }
             | DomainError::BulletMissingEnergy { .. }
             | DomainError::HardMilestoneRequiresDate { .. }
