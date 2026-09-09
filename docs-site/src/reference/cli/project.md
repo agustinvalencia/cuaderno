@@ -1,6 +1,6 @@
 # `cdno project`
 
-Manage project maps: create, update state, set the core question, add/complete milestones, manage
+Manage project maps: create, update state, set the core question, add/complete/drop milestones, manage
 waiting-on items, park/activate, and list/show. Next actions have their own verb, [`cdno action`](action.md).
 
 ```text
@@ -18,7 +18,7 @@ cdno project [OPTIONS] <COMMAND>
 | [`activate`](#cdno-project-activate) | Bring a parked project back (enforces the cap) |
 | [`list`](#cdno-project-list) | List active projects |
 | [`show`](#cdno-project-show) | Show one project |
-| [`milestone`](#cdno-project-milestone) | Add / complete milestones |
+| [`milestone`](#cdno-project-milestone) | Add / complete / drop milestones |
 | [`waiting`](#cdno-project-waiting) | Add / resolve waiting-on items |
 
 Write subcommands honour `--json` (a `{path, message}` result, run non-interactively); `list`/`show`
@@ -135,11 +135,21 @@ Manage milestones — markers of progress. A `--hard` milestone is a real deadli
 **`add`** — `--slug`, `--title`, `--date <YYYY-MM-DD>` (optional), `--hard`
 **`done`** — `--slug`, `--query` (case-insensitive substring of the milestone title)
 
+**`drop`** — `--slug`, `--query`, `--reason` (optional)
+
 ```bash
 cdno project milestone add --slug surrogate-model --title "Submit to ICML" --date 2026-01-22 --hard
 cdno project milestone add --slug surrogate-model --title "All Round-1 replies received"
 cdno project milestone done --slug surrogate-model --query "submit to icml"
+cdno project milestone drop --slug surrogate-model --query "book the venue" --reason "the funder withdrew"
 ```
+
+Use `drop` rather than `done` when the milestone is not going to happen — superseded, mis-typed, or
+overtaken by events. `done` ticks the bullet and writes `milestone done on ...` to the daily log,
+asserting a milestone that was met; `drop` removes the bullet and writes `milestone dropped on ...`
+instead, so a later reader can tell a plan that changed from a plan that was kept. `--reason` is
+optional and never prompted for: a correction is simply a drop with no reason. Only open `- [ ]`
+bullets are matched — a completed milestone is a record of what happened, not a plan to revise.
 
 `--date` is optional. Some milestones are gated by a condition rather than a date — "all Round-1
 replies received" on a correspondence-driven project — and omitting the flag records the milestone

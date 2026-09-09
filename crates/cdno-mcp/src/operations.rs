@@ -104,7 +104,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped."
+        description = "Complete an open milestone on an active project: ticks the bullet in `## Milestones`. `query` is a case-insensitive substring of the milestone title (the `-- <keyword>: <date>` suffix is ignored); already-completed bullets are skipped. Use this ONLY when the milestone was actually reached. If it was superseded, mis-typed or is not going to happen, use `drop_milestone` instead -- ticking it writes `milestone done on ...` into the daily log, so the vault would assert a milestone nobody met."
     )]
     pub async fn complete_milestone(
         &self,
@@ -116,6 +116,25 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Completed milestone on {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Drop an open milestone from an active project: removes the bullet from `## Milestones` and logs `milestone dropped on [[slug]]` to today's daily note, with an optional `reason` on a continuation line. `query` matches exactly as `complete_milestone`'s does. Use this for a milestone that was superseded, mis-typed or is not going to happen -- it is the only way to be rid of one without either claiming it was met or hand-editing the file, which desyncs the index. Completed bullets are never matched: those are a record of what happened."
+    )]
+    pub async fn drop_milestone(
+        &self,
+        Parameters(input): Parameters<DropMilestoneInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .with_vault(move |vault| {
+                vault.drop_milestone(at, &input.project, &input.query, input.reason.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Dropped milestone from {}", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
     }

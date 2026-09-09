@@ -442,6 +442,119 @@ fn milestone_done_marks_with_completion_date() {
 }
 
 #[test]
+fn milestone_drop_removes_the_bullet_without_recording_a_completion() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: Some("Book the venue".to_owned()),
+                date: Some(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()),
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect("milestone add");
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 22, 16, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Drop {
+                slug: Some("x".to_owned()),
+                query: Some("venue".to_owned()),
+                reason: Some("the funder withdrew".to_owned()),
+            },
+        },
+        true,
+        false,
+    )
+    .expect("milestone drop");
+
+    let body = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(!body.contains("Book the venue"), "bullet removed:\n{body}");
+    assert!(!body.contains("- [x]"), "nothing is ticked done:\n{body}");
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-22.md")).unwrap();
+    assert!(
+        daily.contains("milestone dropped on [[x]] \u{2014} Book the venue"),
+        "the drop is logged:\n{daily}"
+    );
+    assert!(
+        daily.contains("  reason: the funder withdrew"),
+        "the reason rides a continuation line:\n{daily}"
+    );
+}
+
+/// `--reason` is genuinely optional and never prompted for, so its
+/// absence must not trip the missing-flag path the way `--query` does.
+#[test]
+fn milestone_drop_in_non_interactive_accepts_a_missing_reason() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Add {
+                slug: Some("x".to_owned()),
+                title: Some("Book the venue".to_owned()),
+                date: None,
+                hard: false,
+            },
+        },
+        true,
+        false,
+    )
+    .expect("milestone add");
+
+    project::run(
+        dir.path(),
+        moment(2026, 5, 22, 16, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Drop {
+                slug: Some("x".to_owned()),
+                query: Some("venue".to_owned()),
+                reason: None,
+            },
+        },
+        true,
+        false,
+    )
+    .expect("a drop needs no reason");
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-22.md")).unwrap();
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+#[test]
+fn milestone_drop_in_non_interactive_errors_when_missing_query() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    let err = project::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ProjectCommands::Milestone {
+            action: MilestoneCommands::Drop {
+                slug: Some("x".to_owned()),
+                query: None,
+                reason: None,
+            },
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --query should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--query"), "error message: {msg}");
+}
+
+#[test]
 fn waiting_add_and_resolve_round_trip() {
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);

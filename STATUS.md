@@ -90,7 +90,7 @@ Reachable from the terminal via `cdno`:
 
 - `init` — scaffold a vault
 - `log` / `lint` / `capture` — daily-log writes, validation, inbox capture
-- `project create / state / core-question / park / activate / list / show / milestone {add,done} / waiting {add,resolve}`
+- `project create / state / core-question / park / activate / list / show / milestone {add,done,drop} / waiting {add,resolve}`
 - `action add / promote / complete / drop / list` (bullet form + manifest note form)
 - `commit create / complete` and `commitments` aggregated view
 - `orient` / `status` — morning views
