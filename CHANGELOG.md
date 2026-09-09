@@ -25,9 +25,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
   The half most people will actually feel is smaller: a new project's `## Milestones` holds the
   template's `- [ ] First milestone — target: TBD`, which renders as a real open milestone and, until
-  now, could only be removed by hand. `add_milestone` replaces it when it stands alone and unedited,
-  so it never reaches the user. Only then: a placeholder someone edited, or one sitting beside real
-  milestones, is a line its author meant something by, and guessing there deletes work.
+  now, could only be removed by hand. `add_milestone` replaces it the first time a real milestone is
+  added, so no project ends up with a fake milestone above a real one. It is still there until then,
+  and `drop` is the way out; a placeholder someone edited, or one sitting beside real milestones, is
+  a line its author meant something by, and guessing there deletes work.
+
+  **Fixed along the way**: none of the three milestone verbs updated the `milestones` or `deadlines`
+  index tables. The rows never healed either — the same transaction records the new content hash, so
+  reconciliation's fast path classified the file as unchanged for ever after, and only `cdno reindex`
+  repaired it. So `cdno commitments` could list a milestone that had been completed or removed, and
+  `open_milestones` — the candidate list behind the `done` and `drop` pickers — was empty on any
+  vault whose milestones were all added through cdno. Pre-existing for `add` and `complete`, but a
+  drop cannot be correct while the table it maintains is written by nobody: a milestone the user has
+  just declared dead would keep counting as a live commitment.
   (#522)
 
 - **An action can be dropped, not just completed.** `complete_action` was the only verb that removed

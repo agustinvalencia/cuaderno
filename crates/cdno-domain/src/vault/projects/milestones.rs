@@ -6,8 +6,10 @@
 
 use chrono::{NaiveDate, NaiveDateTime};
 
-use cdno_core::index::MilestoneEntry;
+use cdno_core::index::{DeadlineEntry, MilestoneEntry};
+use cdno_core::markdown::{extract_hard_deadlines, extract_milestones_from_body};
 use cdno_core::path::VaultPath;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::note_type::NoteType;
@@ -40,13 +42,25 @@ pub const UNDATED_TARGET: &str = "TBD";
 /// milestone, `complete_milestone` will happily tick it, and until #522
 /// the only way to be rid of it was to hand-edit the file — the one
 /// thing the design forbids, because it desyncs the index. So
-/// [`Vault::add_milestone`] replaces it when the section holds nothing
-/// else, and it never reaches the user's hands.
+/// [`Vault::add_milestone`] replaces it the first time a real milestone
+/// is added.
 ///
-/// Matched byte-for-byte and only when it stands alone. A project whose
-/// placeholder was edited, or which has real milestones beside it, is a
-/// project whose author meant something by that line; guessing at intent
-/// there would delete work.
+/// It does still reach the user: on a project nobody has added a
+/// milestone to, the placeholder is on disk from creation and is what
+/// `open_milestones` offers the `done` and `drop` pickers. What the
+/// replacement buys is that no project ends up with a fake milestone
+/// sitting *above* a real one. [`Vault::drop_milestone`] is the way out
+/// for the rest.
+///
+/// Compared after `trim`, and only when it is the whole section — not
+/// byte-for-byte. The section arrives already `trim_end`-ed, so trailing
+/// whitespace and a CRLF ending never distinguished anything; what the
+/// `trim` adds is that an indented placeholder still counts as
+/// untouched. An ASCII-hyphen spelling (`First milestone - target: TBD`)
+/// is a different line and is kept. A project
+/// whose placeholder was genuinely edited, or which has real milestones
+/// beside it, is a project whose author meant something by that line;
+/// guessing at intent there would delete work.
 const TEMPLATE_PLACEHOLDER: &str = "- [ ] First milestone \u{2014} target: TBD";
 
 impl Vault {
@@ -106,7 +120,7 @@ impl Vault {
 
         doc.ensure_section(MILESTONES_SECTION)?;
         let existing = doc.section(MILESTONES_SECTION)?.trim_end();
-        // The untouched template placeholder is replaced rather than
+        // The template placeholder is replaced rather than
         // appended to (#522). See [`TEMPLATE_PLACEHOLDER`]: it is
         // scaffolding, and leaving it above the user's first real
         // milestone means every fresh project accumulates a fake one.
@@ -125,6 +139,7 @@ impl Vault {
 
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
+        stage_milestone_index_rows(&path, &new_section, &mut tx);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
@@ -168,6 +183,7 @@ impl Vault {
 
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
+        stage_milestone_index_rows(&path, &new_section, &mut tx);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
@@ -188,6 +204,10 @@ impl Vault {
     /// same resolver: case-insensitive substring on the title portion,
     /// with the `— <keyword>: <date>` suffix stripped before comparison.
     /// Ambiguity is an error carrying the candidates rather than a guess.
+    ///
+    /// A bullet's indented continuation lines go with it: sub-bullets
+    /// describing a milestone that is not happening must not be
+    /// re-parented to the milestone above.
     ///
     /// **Only open `- [ ]` bullets match.** A completed milestone is a
     /// record of something that happened, and dropping is for things that
@@ -221,10 +241,24 @@ impl Vault {
         let lines: Vec<&str> = section.split('\n').collect();
         let (matched_idx, title) = resolve_open_milestone(&lines, slug, query)?;
 
+        // Take the bullet's indented continuation lines with it. Removing
+        // the bullet alone would re-parent its sub-bullets to whichever
+        // milestone happens to precede it — notes about a milestone that
+        // is not happening, silently attached to one that is.
+        // `complete_milestone` has no equivalent problem: it replaces the
+        // line in place, so the children stay under their own bullet.
+        let mut drop_end = matched_idx + 1;
+        while drop_end < lines.len() {
+            let line = lines[drop_end];
+            if line.trim().is_empty() || !line.starts_with(char::is_whitespace) {
+                break;
+            }
+            drop_end += 1;
+        }
         let new_lines: Vec<String> = lines
             .iter()
             .enumerate()
-            .filter(|(i, _)| *i != matched_idx)
+            .filter(|(i, _)| !(matched_idx..drop_end).contains(i))
             .map(|(_, s)| (*s).to_owned())
             .collect();
         let new_section = new_lines.join("\n");
@@ -237,6 +271,7 @@ impl Vault {
 
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
+        stage_milestone_index_rows(&path, &new_section, &mut tx);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
@@ -252,14 +287,46 @@ impl Vault {
     }
 }
 
-/// If `line` is an open milestone bullet (`- [ ] <title> — <keyword>:
-/// <value>`), return the `<title>` portion with the trailing
-/// keyword/value section stripped. Closed bullets, blanks, and
-/// non-bullet content return `None`.
+/// Stage the index rows a rewritten `## Milestones` section implies.
 ///
-/// Both em-dash (`\u{2014}`) and ASCII hyphen-minus separators are
-/// recognised — same forgiveness as
-/// [`cdno_core::markdown::extract_hard_deadlines`].
+/// Reconciliation writes `milestones` and `deadlines` for a project
+/// whenever it re-reads the file (`cdno_core::reconcile`), but the
+/// milestone verbs did not, so every add, completion and drop left the
+/// index describing the section as it was before. The rows do not heal
+/// on their own: the same transaction's `upsert_note` records the *new*
+/// content hash, so reconciliation's fast path classifies the file as
+/// unchanged for ever after and only an explicit `cdno reindex` repairs
+/// it.
+///
+/// That is not cosmetic. The commitments aggregation reads
+/// `milestones_between`, and `open_milestones` — the candidate list
+/// behind the `done` and `drop` pickers — reads `milestones_for_project`.
+/// A dropped milestone left in the table keeps counting as a live
+/// commitment and keeps being offered for completion, which is the exact
+/// opposite of what the user just said about it.
+///
+/// `replace_*` is a whole-path replacement, so staging it from the new
+/// section also repairs whatever the previous verbs left behind.
+fn stage_milestone_index_rows(path: &VaultPath, new_section: &str, tx: &mut VaultTransaction) {
+    tx.replace_milestones(path.clone(), extract_milestones_from_body(new_section));
+    tx.replace_deadlines(
+        path.clone(),
+        extract_hard_deadlines(new_section)
+            .into_iter()
+            .map(|(title, due_date)| DeadlineEntry {
+                source: "project_milestone".to_owned(),
+                title,
+                due_date,
+                is_hard: true,
+                // Mirrors `cdno_core::reconcile`: context derivation needs
+                // the frontmatter field, the column accepts NULL, and the
+                // commitments query filters client-side.
+                context: None,
+            })
+            .collect(),
+    );
+}
+
 /// Resolve a substring `query` to exactly one open milestone within a
 /// project's `## Milestones` lines, returning its index and stripped
 /// title.
@@ -268,7 +335,7 @@ impl Vault {
 /// so the two cannot drift: a query that names one milestone to complete
 /// must name the same one to drop, and a query that is ambiguous for one
 /// must be ambiguous for the other. Two copies of this loop would be two
-/// chances to disagree about what an action is called.
+/// chances to disagree about what a milestone is called.
 fn resolve_open_milestone(
     lines: &[&str],
     slug: &str,
@@ -334,6 +401,14 @@ fn format_milestone_dropped_log_entry(slug: &str, title: &str, reason: Option<&s
     }
 }
 
+/// If `line` is an open milestone bullet (`- [ ] <title> — <keyword>:
+/// <value>`), return the `<title>` portion with the trailing
+/// keyword/value section stripped. Closed bullets, blanks, and
+/// non-bullet content return `None`.
+///
+/// Both em-dash (`\u{2014}`) and ASCII hyphen-minus separators are
+/// recognised — same forgiveness as
+/// [`cdno_core::markdown::extract_hard_deadlines`].
 fn parse_open_milestone_title(line: &str) -> Option<&str> {
     let after_box = line.trim_start().strip_prefix("- [ ] ")?;
     Some(strip_milestone_target_suffix(after_box.trim()))
