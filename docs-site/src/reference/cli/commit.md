@@ -13,9 +13,10 @@ cdno commit [OPTIONS] <COMMAND>
 |------------|-------------|
 | [`create`](#cdno-commit-create) | Create an active commitment at `commitments/<slug>.md` |
 | [`done`](#cdno-commit-done) | Mark a commitment completed and archive it |
+| [`drop`](#cdno-commit-drop) | End a commitment that was not kept |
 | [`reschedule`](#cdno-commit-reschedule) | Move an active commitment's due date |
 
-All three honour `--json` (`{path, message}`, non-interactive).
+All four honour `--json` (`{path, message}`, non-interactive).
 
 ---
 
@@ -89,3 +90,36 @@ That is what makes repeated slippage visible instead of silently rewritten: a co
 once is a checkpoint, a commitment moving for the fourth time is a signal. Moving a date earlier is
 allowed; moving it to the date it already carries is refused, since the entry would assert a slip
 that never happened.
+
+## `cdno commit drop`
+
+End an active commitment that was **not** kept — cancelled, superseded, or overtaken by events.
+
+| Flag | Description |
+|------|-------------|
+| `--slug <SLUG>` | Slug of the active commitment. |
+| `--reason <TEXT>` | Why it ended. Optional, and never prompted for. |
+
+```bash
+cdno commit drop --slug quarterly-report
+cdno commit drop --slug quarterly-report --reason "the client cancelled the engagement"
+```
+
+Use this rather than [`done`](#cdno-commit-done) when the promise was not fulfilled. `done` writes
+`commitment completed [[slug]]` into the daily log, which every weekly and monthly review reads back
+from, so using it for a cancelled promise makes the vault assert something nobody did. Deleting the
+note is not the alternative either: that destroys the record that the promise was ever made, and
+desyncs the index on the way out.
+
+The note is archived to `commitments/_done/<year>/` like a completion, stamped `status: dropped`
+with `completed` cleared — so it never appears as completed work. The log entry says what happened,
+with the reason on its own line:
+
+```text
+- **16:30**: commitment dropped on [[quarterly-report]] — Quarterly report
+  reason: the client cancelled the engagement
+```
+
+A dropped commitment can afterwards be neither completed nor rescheduled. Nothing is destroyed — the
+note keeps its body and its `created` date — but a drop is re-decided rather than undone: if the
+promise comes back, make it again, and the record shows both decisions.

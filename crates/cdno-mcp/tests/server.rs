@@ -99,6 +99,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "resolve_waiting_on",
         "create_commitment",
         "complete_commitment",
+        "drop_commitment",
         "reschedule_commitment",
         "complete_periodic",
         "create_tracking_entry",
@@ -122,7 +123,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 51);
+    assert_eq!(tools.len(), 52);
 }
 
 #[test]
@@ -146,6 +147,26 @@ fn every_tool_has_description_and_object_input_schema() {
             tool.name
         );
     }
+}
+
+/// The same rationale as `complete_action`'s pointer below: an agent
+/// reaching for `complete_commitment` for a promise that was cancelled
+/// writes `commitment completed ...` into the permanent record. #569's
+/// review found that kind of pointer deletable with the suite green, so
+/// it is pinned rather than trusted.
+#[test]
+fn complete_commitment_points_at_the_drop_verb_for_a_promise_not_kept() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    let desc = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "complete_commitment")
+        .and_then(|t| t.description.clone())
+        .expect("tool 'complete_commitment' not advertised");
+    assert!(
+        desc.contains("drop_commitment"),
+        "complete_commitment must name the drop verb: {desc}"
+    );
 }
 
 /// `complete_action`'s description is the only place an agent is told

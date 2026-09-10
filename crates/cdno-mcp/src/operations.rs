@@ -439,6 +439,25 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "End an active commitment that was NOT kept -- cancelled, superseded, or overtaken. Stamps `status: dropped`, clears `completed`, moves the file to `commitments/_done/<year>/`, and logs `commitment dropped on [[slug]]` with an optional `reason` on a continuation line. The counterpart to `complete_commitment`: use that only when the promise was actually kept. A dropped commitment can afterwards be neither completed nor rescheduled, and never appears as completed work."
+    )]
+    pub async fn drop_commitment(
+        &self,
+        Parameters(input): Parameters<DropCommitmentInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .with_vault(move |vault| {
+                vault.drop_commitment(at, &input.commitment, input.reason.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Dropped commitment, archived to {}", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
         description = "Move an active commitment's `due` date and log the move to today's daily entry, recording BOTH the old and new dates. Use this rather than deleting and recreating the note: recreating destroys the body (the notes on who was chased and why it moved) and resets `created`, the field that shows how long something has been slipping. The new date must differ from the current one. Moving a date earlier is allowed."
     )]
     pub async fn reschedule_commitment(
@@ -477,7 +496,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Mark an active commitment as completed: stamps the `status` and `completed` frontmatter fields, moves the file to `commitments/_done/<year>/`, and logs to today's daily entry. All in one atomic transaction."
+        description = "Mark an active commitment as completed: stamps the `status` and `completed` frontmatter fields, moves the file to `commitments/_done/<year>/`, and logs to today's daily entry. All in one atomic transaction. Use this ONLY when the promise was actually kept. If it was cancelled, superseded or overtaken, use `drop_commitment` instead -- completing it writes `commitment completed ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert a promise nobody kept."
     )]
     pub async fn complete_commitment(
         &self,

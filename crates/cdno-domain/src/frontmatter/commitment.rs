@@ -17,25 +17,41 @@ use serde::{Deserialize, Serialize};
 
 use super::context::Context;
 
-/// Lifecycle state of a commitment. Created `Active`; flipped to
-/// `Completed` by `Vault::complete_commitment` in the same
-/// transaction that moves the file to `_done/<year>/`.
+/// Lifecycle state of a commitment. Created `Active`, then ended one of
+/// two ways in the same transaction that moves the file to
+/// `_done/<year>/`: `Completed` by `Vault::complete_commitment`, or
+/// `Dropped` by `Vault::drop_commitment`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CommitmentStatus {
     Active,
     Completed,
+    /// The promise was cancelled, superseded or overtaken — ended
+    /// **without** having been kept (#573).
+    ///
+    /// Terminal, like `Completed`, and deliberately not a degree of it:
+    /// they are different claims about what happened. Completing a
+    /// cancelled promise writes `commitment completed` into the daily
+    /// log every weekly and monthly review reads back from, so the vault
+    /// would assert a promise nobody kept. Deleting the note instead
+    /// destroys the record that the promise was ever made.
+    Dropped,
 }
 
 impl CommitmentStatus {
     /// Every variant in declaration order.
-    pub const ALL: [CommitmentStatus; 2] = [CommitmentStatus::Active, CommitmentStatus::Completed];
+    pub const ALL: [CommitmentStatus; 3] = [
+        CommitmentStatus::Active,
+        CommitmentStatus::Completed,
+        CommitmentStatus::Dropped,
+    ];
 
     /// Kebab-case YAML / CLI form.
     pub fn as_str(self) -> &'static str {
         match self {
             CommitmentStatus::Active => "active",
             CommitmentStatus::Completed => "completed",
+            CommitmentStatus::Dropped => "dropped",
         }
     }
 }
@@ -43,7 +59,7 @@ impl CommitmentStatus {
 /// Error returned when a string does not match any
 /// [`CommitmentStatus`] variant.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-#[error("unknown commitment status: {0} (expected: active or completed)")]
+#[error("unknown commitment status: {0} (expected: active, completed, or dropped)")]
 pub struct ParseCommitmentStatusError(pub String);
 
 impl FromStr for CommitmentStatus {
@@ -70,7 +86,9 @@ impl FromStr for CommitmentStatus {
 /// dominant case.
 ///
 /// `completed` is `Some(date)` for completed commitments, `None`
-/// while active. The two move together with `status`.
+/// while active. The two move together with `status` — and a drop
+/// clears it, so an archived commitment can never read `status:
+/// dropped` while carrying a date that says it was kept.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitmentFrontmatter {
     pub status: CommitmentStatus,

@@ -1433,3 +1433,231 @@ fn complete_periodic_is_not_fooled_by_a_title_mentioning_the_marker() {
         "the title is untouched and the schedule moves:\n{raw}"
     );
 }
+
+// ---- drop_commitment (#573) ----
+
+const ACTIVE_COMMITMENT: &str = "---\ntype: commitment\nstatus: active\ndue: 2026-06-01\ncreated: 2026-04-01\ncompleted: null\ncontext: work\n---\n\n# Quarterly report\n\nPromised to Bob in the April review.\n";
+
+/// The verb's reason for existing: a cancelled promise gets an ending
+/// that does not claim it was kept.
+#[test]
+fn drop_commitment_archives_as_dropped_not_completed() {
+    let (vault, store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", ACTIVE_COMMITMENT)]);
+
+    vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect("drop succeeds");
+
+    let done = vp("commitments/_done/2026/quarterly-report.md");
+    let fm = read_commitment_frontmatter(&store, &done);
+    assert_eq!(fm.status, CommitmentStatus::Dropped);
+    assert_eq!(fm.completed, None, "a drop is not dated");
+    assert!(
+        !store
+            .exists(&vp("commitments/quarterly-report.md"))
+            .unwrap(),
+        "the active note is moved, not copied"
+    );
+
+    let raw = store.read_file(&done).unwrap();
+    assert!(
+        raw.contains("Promised to Bob in the April review."),
+        "the body survives, unlike delete-and-recreate:\n{raw}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-20.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **16:30**: commitment dropped on [[quarterly-report]] \u{2014} Quarterly report"
+        ),
+        "the log records a drop:\n{daily}"
+    );
+    assert!(
+        !daily.contains("commitment completed"),
+        "and never a completion:\n{daily}"
+    );
+}
+
+/// The user-visible promise: a dropped commitment is not finished work.
+#[test]
+fn a_dropped_commitment_never_appears_in_the_commitments_view() {
+    let (vault, _store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", ACTIVE_COMMITMENT)]);
+
+    vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect("drop succeeds");
+
+    let items = vault
+        .commitments(NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(), 60)
+        .expect("commitments");
+    assert!(
+        !items.iter().any(|c| c.title.contains("Quarterly report")),
+        "a promise that was cancelled is not a promise outstanding: {items:?}"
+    );
+}
+
+/// A note hand-edited to carry a completion date must not be archived
+/// as `dropped` *and* dated — a file contradicting itself.
+#[test]
+fn drop_commitment_clears_a_pre_existing_completed_date() {
+    let note = ACTIVE_COMMITMENT.replace("completed: null", "completed: 2026-05-02");
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &note)]);
+
+    vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect("drop succeeds");
+
+    let fm = read_commitment_frontmatter(&store, &vp("commitments/_done/2026/quarterly-report.md"));
+    assert_eq!(fm.status, CommitmentStatus::Dropped);
+    assert_eq!(fm.completed, None, "the stale date is cleared");
+}
+
+/// `completed` is optional, so a note omitting it parses and lints
+/// clean — an ejected template may simply leave the line out. Failing
+/// the verb over an absent key would leave no way to end that
+/// commitment honestly at all.
+#[test]
+fn drop_commitment_survives_a_note_with_no_completed_field() {
+    let note = ACTIVE_COMMITMENT.replace("completed: null\n", "");
+    assert!(!note.contains("completed:"), "fixture must drop the key");
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &note)]);
+
+    vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect("an absent key already says what the rewrite would write");
+
+    let fm = read_commitment_frontmatter(&store, &vp("commitments/_done/2026/quarterly-report.md"));
+    assert_eq!(fm.status, CommitmentStatus::Dropped);
+    assert_eq!(fm.completed, None);
+}
+
+/// The absence must be confirmed by the YAML parser, not by the
+/// rewriter's column-0 line scan: a quoted key is invisible to the scan
+/// and visible to the parser. Swallowing on the scan alone archives the
+/// self-contradictory file this clearing exists to prevent.
+#[test]
+fn drop_commitment_refuses_a_completion_date_the_rewriter_cannot_see() {
+    let note = ACTIVE_COMMITMENT.replace("completed: null", "\"completed\": 2026-05-02");
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &note)]);
+
+    let err = vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect_err("a date that cannot be cleared must not be archived");
+    assert!(
+        matches!(err, DomainError::MissingFrontmatterField(_)),
+        "got {err:?}"
+    );
+    assert!(
+        !store
+            .exists(&vp("commitments/_done/2026/quarterly-report.md"))
+            .unwrap(),
+        "nothing is archived on the error path"
+    );
+}
+
+/// The reason distinguishes a cancellation from a supersession a month
+/// later, and rides its own line so one drop stays one entry.
+#[test]
+fn drop_commitment_puts_its_reason_on_a_continuation_line_flattened() {
+    let (vault, store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", ACTIVE_COMMITMENT)]);
+
+    vault
+        .drop_commitment(
+            dt(2026, 5, 20, 16, 30),
+            "quarterly-report",
+            Some("the client\n  cancelled\n\nthe engagement"),
+        )
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-20.md"))
+        .unwrap();
+    assert!(
+        daily.contains(
+            "- **16:30**: commitment dropped on [[quarterly-report]] \u{2014} Quarterly report\n  reason: the client cancelled the engagement"
+        ),
+        "reason on its own indented line, whitespace flattened:\n{daily}"
+    );
+}
+
+#[test]
+fn drop_commitment_without_a_reason_logs_a_bare_entry() {
+    let (vault, store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", ACTIVE_COMMITMENT)]);
+
+    vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect("drop succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-20.md"))
+        .unwrap();
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+/// Terminal means terminal: a dropped commitment has no date left to
+/// move and no completion left to claim.
+#[test]
+fn a_dropped_commitment_can_be_neither_completed_nor_rescheduled() {
+    let dropped = ACTIVE_COMMITMENT.replace("status: active", "status: dropped");
+    let (vault, _store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &dropped)]);
+
+    let complete_err = vault
+        .complete_commitment(dt(2026, 5, 21, 9, 0), "quarterly-report")
+        .expect_err("a cancelled promise cannot then be kept");
+    assert!(
+        matches!(complete_err, DomainError::CommitmentNotActive(_)),
+        "got {complete_err:?}"
+    );
+
+    let reschedule_err = vault
+        .reschedule_commitment(
+            dt(2026, 5, 21, 9, 0),
+            "quarterly-report",
+            NaiveDate::from_ymd_opt(2026, 7, 1).unwrap(),
+        )
+        .expect_err("a cancelled promise has no date to move");
+    assert!(
+        matches!(reschedule_err, DomainError::CommitmentNotActive(_)),
+        "got {reschedule_err:?}"
+    );
+}
+
+/// Dropping the same slug twice in one year would overwrite the first
+/// archive; refused, with nothing written.
+#[test]
+fn drop_commitment_refuses_a_done_collision_and_writes_nothing() {
+    let (vault, store) = vault_with_seeded_store(&[
+        ("commitments/quarterly-report.md", ACTIVE_COMMITMENT),
+        (
+            "commitments/_done/2026/quarterly-report.md",
+            "---\ntype: commitment\nstatus: dropped\ndue: 2026-03-01\ncreated: 2026-01-01\ncompleted: null\ncontext: work\n---\n\n# Earlier one\n",
+        ),
+    ]);
+
+    let err = vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect_err("the destination is occupied");
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::AlreadyExists(_))
+        ),
+        "got {err:?}"
+    );
+    assert!(
+        store
+            .exists(&vp("commitments/quarterly-report.md"))
+            .unwrap(),
+        "the active note is untouched on the error path"
+    );
+    let archived = store
+        .read_file(&vp("commitments/_done/2026/quarterly-report.md"))
+        .unwrap();
+    assert!(archived.contains("# Earlier one"), "and so is the archive");
+}
