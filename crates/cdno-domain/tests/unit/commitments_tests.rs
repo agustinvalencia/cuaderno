@@ -1661,3 +1661,90 @@ fn drop_commitment_refuses_a_done_collision_and_writes_nothing() {
         .unwrap();
     assert!(archived.contains("# Earlier one"), "and so is the archive");
 }
+
+/// The guard its own doc comment asserts, which nothing was pinning:
+/// dropping an already-dropped commitment must be refused, not applied
+/// twice. Its sibling `complete_commitment` has the analogue; this did
+/// not, and deleting the guard left the whole suite green.
+#[test]
+fn drop_commitment_refuses_a_commitment_that_is_already_dropped() {
+    let dropped = ACTIVE_COMMITMENT.replace("status: active", "status: dropped");
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &dropped)]);
+
+    let err = vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect_err("a promise already ended cannot end again");
+    assert!(
+        matches!(err, DomainError::CommitmentNotActive(_)),
+        "got {err:?}"
+    );
+    assert!(
+        store
+            .exists(&vp("commitments/quarterly-report.md"))
+            .unwrap(),
+        "nothing moves on the error path"
+    );
+}
+
+/// Likewise for a completed one sitting at the active path after a
+/// hand-edit — the status is trusted over the location.
+#[test]
+fn drop_commitment_refuses_a_commitment_already_completed() {
+    let completed = ACTIVE_COMMITMENT
+        .replace("status: active", "status: completed")
+        .replace("completed: null", "completed: 2026-05-02");
+    let (vault, _store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", &completed)]);
+
+    let err = vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-report", None)
+        .expect_err("a promise kept cannot then be dropped");
+    assert!(
+        matches!(err, DomainError::CommitmentNotActive(_)),
+        "got {err:?}"
+    );
+}
+
+/// The archive year comes from when it ended, not from when it was
+/// made. `complete_commitment` pins this rule explicitly; the drop
+/// fixtures all created and dropped in the same year, so the two
+/// sources were indistinguishable and the rule unconstrained.
+#[test]
+fn drop_commitment_files_under_the_year_it_ended_not_the_year_it_was_made() {
+    let note = ACTIVE_COMMITMENT.replace("created: 2026-04-01", "created: 2025-04-01");
+    let (vault, store) = vault_with_seeded_store(&[("commitments/quarterly-report.md", &note)]);
+
+    vault
+        .drop_commitment(dt(2026, 1, 1, 0, 5), "quarterly-report", None)
+        .expect("drop succeeds");
+
+    assert!(
+        store
+            .exists(&vp("commitments/_done/2026/quarterly-report.md"))
+            .unwrap(),
+        "filed under the ending year"
+    );
+    assert!(
+        !store
+            .exists(&vp("commitments/_done/2025/quarterly-report.md"))
+            .unwrap(),
+        "not under the creation year"
+    );
+}
+
+/// The not-found error carries the slug hint its doc comment promises —
+/// the whole point being that a mistyped slug shows you the real ones.
+#[test]
+fn drop_commitment_not_found_lists_the_open_commitments() {
+    let (vault, _store) =
+        vault_with_seeded_store(&[("commitments/quarterly-report.md", ACTIVE_COMMITMENT)]);
+
+    let err = vault
+        .drop_commitment(dt(2026, 5, 20, 16, 30), "quarterly-repot", None)
+        .expect_err("unknown slug");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("quarterly-report"),
+        "the hint must name the commitments that do exist: {msg}"
+    );
+}

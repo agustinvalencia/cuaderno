@@ -1,9 +1,10 @@
-//! Standalone commitment notes: create, complete.
+//! Standalone commitment notes: create, complete, drop, reschedule.
 //!
 //! See `docs/design.md` §5.9. Active commitments live at
-//! `commitments/<slug>.md`; completed ones move to
+//! `commitments/<slug>.md`; ended ones move to
 //! `commitments/_done/<year>/<slug>.md` with the `status` and
-//! `completed` frontmatter fields stamped in the same transaction.
+//! `completed` frontmatter fields stamped in the same transaction —
+//! `completed` dated for a promise kept, cleared for one dropped.
 //!
 //! Frontmatter carries `status`, `created`, and `completed` so the
 //! commitments aggregation query (#32) and weekly/monthly reviews
@@ -803,9 +804,9 @@ impl Vault {
     /// equals `slug`, sorted by due date. The backlink complement to
     /// the `stewardship` parameter of [`Vault::create_commitment`]: a
     /// stewardship dashboard can list the dated commitments that point
-    /// at it. Both active and completed commitments are returned —
-    /// `status` lives in the frontmatter, so the caller decides whether
-    /// to show fulfilled ones.
+    /// at it. Every commitment is returned whatever its `status` —
+    /// active, completed, or dropped — because `status` lives in the
+    /// frontmatter and the caller decides which endings to show.
     pub fn commitments_for_stewardship(
         &self,
         slug: &str,

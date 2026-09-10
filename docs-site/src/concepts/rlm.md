@@ -83,14 +83,20 @@ The method is deliberately shaped to be sustainable when executive function is u
 
 - **Leads with what is there**, not what is missing — no guilt engine, no red overdue counts.
 - **Permission to park or drop.** Projects park, questions retire, actions and milestones drop,
-  commitments get fulfilled or dropped — all first-class, and nothing is destroyed. A parked project
-  activates again; everything else keeps its note, its body and its history, so changing your mind
-  costs you nothing you wrote.
+  commitments get fulfilled or dropped — all first-class, and none of it is a failure state.
 
-  "Reversible" means exactly that and not more: dropping is not undone, it is *re-decided*. There is
-  no un-drop verb and none is planned. If a dropped action turns out to matter after all, add it
-  again — the record then honestly shows two decisions rather than pretending the first never
-  happened, which is the same reason a drop is logged as a drop instead of a completion.
+  "Reversible" is worth stating precisely, because it means less than it might sound like. Parking is
+  genuinely two-way: a parked project activates again, and a retired question does too. Dropping is
+  not — there is no un-drop verb for an action, a milestone or a commitment, and none is planned. It
+  is *re-decided* rather than undone: if a dropped thing turns out to matter, make it again, and the
+  record honestly shows two decisions rather than pretending the first never happened. That is the
+  same reason a drop is logged as a drop and not as a completion.
+
+  What a drop does preserve is the **note**. A dropped action or commitment keeps its file, its body
+  and its `created` date, archived under `_done/<year>/` — so the context you wrote survives even
+  though the plan did not. A milestone is only a bullet, with no note behind it, so dropping one
+  leaves just the log entry naming it — including when it had sub-bullets, which is the one place
+  this guarantee does not yet hold (#574).
 - **Minimal maintenance.** If keeping the system running costs more than a few minutes a day outside
   the weekly review, something is wrong.
 - **One obvious next step.** `cdno orient` answers "what should I do now?" with a single suggestion,

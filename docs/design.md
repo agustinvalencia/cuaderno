@@ -29,7 +29,7 @@ The tool has four consumers:
 
 **Opinionated enforcement over flexibility.** Required frontmatter by note type, automatic scaffolding, validation, enforced linking patterns. The tool has strong opinions about structure because the user benefits from externally imposed structure.
 
-**ADHD-friendly emotional design.** Lead with what is there, not what is missing. No guilt engines. No angry red overdue counts. Permission to park or drop things — nothing is destroyed when you do, though dropping is re-decided rather than undone (see `docs-site/src/concepts/rlm.md`). Missed reviews cost nothing. Celebration before problems.
+**ADHD-friendly emotional design.** Lead with what is there, not what is missing. No guilt engines. No angry red overdue counts. Permission to park or drop things — parking is two-way, dropping is re-decided rather than undone, and a dropped note keeps its body (see `docs-site/src/concepts/rlm.md`). Missed reviews cost nothing. Celebration before problems.
 
 **Minimal maintenance overhead.** If maintaining the system takes more than five minutes a day (outside the weekly review), something is wrong. Quick capture, deferred organisation, minimal friction.
 
