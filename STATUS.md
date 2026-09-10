@@ -98,7 +98,7 @@ Reachable from the terminal via `cdno`:
 - `log` / `lint` / `capture` — daily-log writes, validation, inbox capture
 - `project create / state / core-question / park / activate / list / show / milestone {add,done,drop} / waiting {add,resolve}`
 - `action add / promote / complete / drop / list` (bullet form + manifest note form)
-- `commit create / complete / reschedule` and `commitments` aggregated view
+- `commit create / complete / drop / reschedule` and `commitments` aggregated view
 - `orient` / `status` — morning views
 - `portfolio create / list / show` and `file` (file evidence into a portfolio; `--attach <path>` files a non-markdown artefact — PDF/image/video — by copying it in and scaffolding a linked evidence stub, `--move` to relocate instead, #154)
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)

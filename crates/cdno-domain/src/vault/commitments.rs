@@ -1,9 +1,10 @@
-//! Standalone commitment notes: create, complete.
+//! Standalone commitment notes: create, complete, drop, reschedule.
 //!
 //! See `docs/design.md` §5.9. Active commitments live at
-//! `commitments/<slug>.md`; completed ones move to
+//! `commitments/<slug>.md`; ended ones move to
 //! `commitments/_done/<year>/<slug>.md` with the `status` and
-//! `completed` frontmatter fields stamped in the same transaction.
+//! `completed` frontmatter fields stamped in the same transaction —
+//! `completed` dated for a promise kept, cleared for one dropped.
 //!
 //! Frontmatter carries `status`, `created`, and `completed` so the
 //! commitments aggregation query (#32) and weekly/monthly reviews
@@ -26,6 +27,8 @@ use crate::frontmatter::{
 };
 use crate::note_type::NoteType;
 use crate::recurrence::Recurrence;
+
+use super::projects::actions::{LOG_REASON_KEY, flatten_reason};
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
@@ -261,6 +264,95 @@ impl Vault {
 
         let title_for_log = body_title_or_slug(&new_content, slug);
         let log_entry = format!("commitment completed [[{slug}]] \u{2014} {title_for_log}");
+
+        tx.write_file(done_path.clone(), new_content);
+        tx.delete_file(active_path.clone());
+        tx.upsert_note(entry_meta);
+        tx.remove_note(active_path);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        tx.commit()?;
+
+        Ok(done_path)
+    }
+
+    /// End an active commitment that was **not** kept: cancelled,
+    /// superseded, or overtaken by events.
+    ///
+    /// The counterpart to [`Vault::complete_commitment`], and the last
+    /// clause of the promise `docs-site/src/concepts/rlm.md` makes —
+    /// "commitments get fulfilled or dropped". Until #573 only the first
+    /// half existed, so a cancelled promise had no honest ending:
+    /// completing it writes `commitment completed [[slug]]` into the
+    /// daily log every weekly and monthly review reads back from,
+    /// asserting a promise nobody kept, and deleting the note destroys
+    /// the record that the promise was ever made — while desyncing the
+    /// index on the way out.
+    ///
+    /// Mirrors `complete_commitment` exactly — same resolution, same
+    /// `_done/<year>/` destination, same collision guard — except for
+    /// what it stamps: `status: dropped`, and `completed` **cleared**
+    /// rather than dated. An archived commitment must never read
+    /// `status: dropped` while carrying a date that says it was kept.
+    ///
+    /// `reason` is optional free text on an indented continuation line,
+    /// the shape #564 settles for abandonment and `drop_action` and
+    /// `drop_milestone` already write. A correction and a decision read
+    /// differently a month later, and only one of them suggests asking
+    /// what replaced it.
+    ///
+    /// Rescheduling (#430) covers a promise that *moved*. This covers
+    /// one that ended.
+    ///
+    /// Errors: [`StoreError::NotFound`] with a slug hint for an unknown
+    /// slug — which also covers an already-archived commitment, since it
+    /// no longer sits at `commitments/<slug>.md`;
+    /// [`DomainError::CommitmentNotActive`] for a note hand-edited to a
+    /// non-active status, so a completed *or already-dropped* commitment
+    /// cannot be dropped again; and [`StoreError::AlreadyExists`] when
+    /// the destination is occupied.
+    pub fn drop_commitment(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        reason: Option<&str>,
+    ) -> Result<VaultPath, DomainError> {
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::COMMITMENTS))?;
+        if !self.store.exists(&active_path)? {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_commitments_hint()
+            ))));
+        }
+
+        let raw = self.store.read_file(&active_path)?;
+        let (fm, _body) = Frontmatter::parse(&raw)?;
+        let commitment = CommitmentFrontmatter::try_from(fm)?;
+        if commitment.status != CommitmentStatus::Active {
+            return Err(DomainError::CommitmentNotActive(slug.to_owned()));
+        }
+
+        let year = at.date().year();
+        let done_dir = cdno_core::paths::commitments_done_dir(year);
+        let done_path = VaultPath::new(format!("{done_dir}/{slug}.md"))?;
+        if self.store.exists(&done_path)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                done_path.to_string(),
+            )));
+        }
+
+        let after_status =
+            rewrite_field_in_frontmatter(&raw, "status", CommitmentStatus::Dropped.as_str())?;
+        let new_content = clear_completed_field(&after_status)?;
+        let entry_meta =
+            build_index_entry_for(&done_path, &new_content, NoteType::Commitment.as_str())?;
+
+        let title_for_log = body_title_or_slug(&new_content, slug);
+        let base = format!("{LOG_COMMITMENT_DROPPED_PREFIX}[[{slug}]] \u{2014} {title_for_log}");
+        let log_entry = match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
+            Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),
+            None => base,
+        };
 
         tx.write_file(done_path.clone(), new_content);
         tx.delete_file(active_path.clone());
@@ -712,9 +804,9 @@ impl Vault {
     /// equals `slug`, sorted by due date. The backlink complement to
     /// the `stewardship` parameter of [`Vault::create_commitment`]: a
     /// stewardship dashboard can list the dated commitments that point
-    /// at it. Both active and completed commitments are returned —
-    /// `status` lives in the frontmatter, so the caller decides whether
-    /// to show fulfilled ones.
+    /// at it. Every commitment is returned whatever its `status` —
+    /// active, completed, or dropped — because `status` lives in the
+    /// frontmatter and the caller decides which endings to show.
     pub fn commitments_for_stewardship(
         &self,
         slug: &str,
@@ -1042,4 +1134,45 @@ fn rewrite_next_date(line: &str, new_date: &str) -> Option<String> {
     out.push_str(new_date);
     out.push_str(&line[abs + token_len..]);
     Some(out)
+}
+
+/// The marker opening a daily-log line that records a commitment ending
+/// without having been kept. A separate prefix from
+/// `commitment completed`, not a variation on it: the whole point is
+/// that a later reader — a weekly review, a monthly scan, a person —
+/// can tell a promise kept from one cancelled.
+const LOG_COMMITMENT_DROPPED_PREFIX: &str = "commitment dropped on ";
+
+/// Clear a commitment's `completed` field, tolerating a note that has
+/// no such key.
+///
+/// The tolerance is load-bearing and the shape of it is not obvious —
+/// this mirrors `stage_action_archival`'s `Dropped` arm, which took two
+/// review rounds to get right (#567, #569).
+///
+/// `rewrite_field_in_frontmatter` errors with `MissingFrontmatterField`
+/// when the key is absent, and `completed` is genuinely optional: such a
+/// note parses cleanly, lints clean, and an ejected template may simply
+/// omit the line. Failing the whole verb over an absent key would leave
+/// no way to end that commitment honestly at all.
+///
+/// But the absence must be confirmed by the YAML parser, not by the
+/// rewriter's verdict. The rewriter scans for a column-0 `completed:`
+/// prefix while `Frontmatter` goes through serde_yaml, which also
+/// accepts forms the scan cannot see — `"completed": 2026-05-01` with a
+/// quoted key among them. Swallowing on the scan alone would archive
+/// exactly the self-contradictory file this exists to prevent: a
+/// `status: dropped` note carrying a date saying it was kept.
+fn clear_completed_field(raw: &str) -> Result<String, DomainError> {
+    match rewrite_field_in_frontmatter(raw, "completed", "null") {
+        Ok(cleared) => Ok(cleared),
+        Err(err @ DomainError::MissingFrontmatterField(_)) => {
+            let (fm, _) = Frontmatter::parse(raw)?;
+            match fm.optional_field::<NaiveDate>("completed") {
+                Ok(None) => Ok(raw.to_owned()),
+                _ => Err(err),
+            }
+        }
+        Err(other) => Err(other),
+    }
 }

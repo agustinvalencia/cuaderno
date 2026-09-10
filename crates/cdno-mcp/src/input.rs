@@ -220,6 +220,17 @@ pub struct CompleteCommitmentInput {
     pub commitment: String,
 }
 
+/// Input for `drop_commitment` (GH #573).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DropCommitmentInput {
+    /// Bare slug of the active commitment to drop.
+    pub commitment: String,
+    /// Why the promise ended. Optional; recorded on the daily-log entry
+    /// so a later reader can tell a cancellation from a supersession.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 /// Input for `reschedule_commitment` (GH #430).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RescheduleCommitmentInput {

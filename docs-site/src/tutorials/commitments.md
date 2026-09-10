@@ -38,6 +38,27 @@ When it's fulfilled, mark it done — it's stamped and moved to `commitments/_do
 cdno commit done --slug pay-rent
 ```
 
+## When a promise ends without being kept
+
+Not every promise is kept. The client cancels, the plan changes, the thing is overtaken by events.
+Marking it done would be the wrong record — `cdno commitments` and every weekly and monthly review
+read the daily log back, and a completion says the promise was fulfilled:
+
+```bash
+cdno commit drop --slug quarterly-report --reason "the client cancelled the engagement"
+```
+
+The note is archived beside your completed ones, stamped `status: dropped` with no completion date,
+so it never counts as finished work. `--reason` is optional; a typo needs no explanation, a
+cancellation usually deserves one.
+
+If the date merely moved, [`reschedule`](../reference/cli/commit.md#cdno-commit-reschedule) is the
+verb you want — it records the move rather than ending the promise.
+
+Nothing is destroyed by a drop: the note keeps its body and its `created` date. But a drop is
+re-decided rather than undone — there is no un-drop. If the promise comes back, make it again, and
+the record honestly shows both decisions.
+
 ## Deadlines that live elsewhere
 
 You often don't need a standalone note — put the deadline where the work is:

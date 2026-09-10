@@ -15,7 +15,7 @@ typed structure — if it parses, it's valid. There are **twelve** note types.
 | `stewardship` | `stewardships/` (flat or folder) | Occasionally edited | Dashboard for a perpetual responsibility |
 | `tracking` | `stewardships/<slug>/tracking/` | Append-only | One time-series entry (a gym session, a measurement) |
 | `question` | `questions/research/` or `questions/life/` | Status transitions | An important research or life question |
-| `commitment` | `commitments/` → `commitments/_done/` | Moves on completion | A standalone dated promise |
+| `commitment` | `commitments/` → `commitments/_done/` | Moves when it ends, kept or dropped | A standalone dated promise |
 
 Plus the **inbox**: raw, untyped captures in `inbox/` awaiting [triage](../tutorials/inbox-and-triage.md).
 
@@ -67,8 +67,9 @@ ones any time with [`cdno questions`](../reference/cli/questions.md).
 
 ## `commitment` — dated promises
 
-A standalone promise with a hard `due:` date and a `context`. On fulfilment it moves to
-`commitments/_done/<year>/`. Standalone commitments are one of four sources feeding the aggregated
+A standalone promise with a hard `due:` date and a `context`. It moves to
+`commitments/_done/<year>/` when it ends — stamped `completed` if it was kept, `dropped` if it was
+cancelled or overtaken. Both are terminal; the frontmatter says which. Standalone commitments are one of four sources feeding the aggregated
 [commitments view](../tutorials/commitments.md).
 
 These twelve are a closed set with built-in behaviour. For an entity they don't cover (people,

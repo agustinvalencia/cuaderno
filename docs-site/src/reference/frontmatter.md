@@ -112,7 +112,10 @@ updated?: 2026-05-01
 
 ```yaml
 type: commitment
+status: active         # active | completed | dropped
 due: 2026-06-01
+created: 2026-04-25
+completed?: 2026-06-01
 context: personal
 project?: icml-paper
 stewardship?: finances

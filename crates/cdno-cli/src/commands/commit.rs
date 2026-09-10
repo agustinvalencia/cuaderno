@@ -59,6 +59,19 @@ pub enum CommitCommands {
         slug: Option<String>,
     },
 
+    /// End a commitment that was not kept — cancelled, superseded, or
+    /// overtaken. Use this rather than `done` when the promise was not
+    /// fulfilled: `done` records a completion.
+    Drop {
+        /// Slug of the active commitment to drop.
+        #[arg(long)]
+        slug: Option<String>,
+        /// Why it ended. Recorded on the daily-log entry. Genuinely
+        /// optional — never prompted for.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
     /// Move an active commitment's due date, recording the move in
     /// today's daily note. Commitments slip; this records that rather
     /// than rewriting it silently.
@@ -104,6 +117,9 @@ pub fn run(
             json,
         ),
         CommitCommands::Done { slug } => done(&vault, at, slug, interactive, json),
+        CommitCommands::Drop { slug, reason } => {
+            drop_commitment(&vault, at, slug, reason, interactive, json)
+        }
         CommitCommands::Reschedule { slug, due } => {
             reschedule(&vault, at, slug, due, interactive, json)
         }
@@ -220,5 +236,39 @@ fn reschedule(
         .reschedule_commitment(at, &slug, due)
         .context("rescheduling commitment")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Rescheduled {path}"))?;
+    Ok(())
+}
+
+/// `cdno commit drop` — slug promptable, reason not.
+///
+/// `--reason` stays outside `gather_or_error`: prompting for it would
+/// make every cancellation feel like it owes an explanation, and
+/// `docs/cli-ergonomics.md` folds only promptable arguments through the
+/// helper. Same shape as `action drop` and `project milestone drop`.
+fn drop_commitment(
+    vault: &Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_text("Commitment slug")
+    })?;
+
+    if prompted
+        && !prompt::confirm_preview(&format!(
+            "About to drop commitment '{slug}' (this records no completion)"
+        ))?
+    {
+        println!("Aborted.");
+        return Ok(());
+    }
+    let path = vault
+        .drop_commitment(at, &slug, reason.as_deref())
+        .context("dropping commitment")?;
+    crate::output::emit_write_result(json, &path.to_string(), &format!("Dropped to {path}"))?;
     Ok(())
 }

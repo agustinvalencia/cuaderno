@@ -323,3 +323,110 @@ fn commit_reschedule_in_non_interactive_errors_when_missing_due() {
     let msg = format!("{err:#}");
     assert!(msg.contains("--due"), "error message: {msg}");
 }
+
+#[test]
+fn commit_drop_archives_without_recording_a_completion() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 28, 9, 0),
+        CommitCommands::Create {
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("commit create");
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 10, 15),
+        CommitCommands::Drop {
+            slug: Some("pay-rent".to_owned()),
+            reason: Some("moved out".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("commit drop");
+
+    let raw =
+        std::fs::read_to_string(dir.path().join("commitments/_done/2026/pay-rent.md")).unwrap();
+    assert!(raw.contains("status: dropped"), "{raw}");
+    assert!(!raw.contains("completed: 2026"), "not dated:\n{raw}");
+
+    let daily =
+        std::fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-29.md")).unwrap();
+    assert!(
+        daily.contains("commitment dropped on [[pay-rent]]"),
+        "{daily}"
+    );
+    assert!(daily.contains("  reason: moved out"), "{daily}");
+    assert!(!daily.contains("commitment completed"), "{daily}");
+}
+
+/// `--reason` is genuinely optional and never prompted for, so its
+/// absence must not trip the missing-flag path the way `--slug` does.
+#[test]
+fn commit_drop_in_non_interactive_accepts_a_missing_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 28, 9, 0),
+        CommitCommands::Create {
+            title: Some("Pay rent".to_owned()),
+            due: Some(ymd(2026, 6, 1)),
+            context: Some(Context::Personal),
+            project: None,
+            stewardship: None,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("commit create");
+
+    commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 10, 15),
+        CommitCommands::Drop {
+            slug: Some("pay-rent".to_owned()),
+            reason: None,
+        },
+        true,
+        false,
+    )
+    .expect("a drop needs no reason");
+
+    let daily =
+        std::fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-29.md")).unwrap();
+    assert!(!daily.contains("reason:"), "no empty reason line:\n{daily}");
+}
+
+#[test]
+fn commit_drop_in_non_interactive_errors_when_missing_slug() {
+    let dir = tempfile::tempdir().unwrap();
+    init_vault(dir.path());
+
+    let err = commit::run(
+        dir.path(),
+        dt(2026, 5, 29, 10, 15),
+        CommitCommands::Drop {
+            slug: None,
+            reason: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("missing --slug should error");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("--slug"), "error message: {msg}");
+}
