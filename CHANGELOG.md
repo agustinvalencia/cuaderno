@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-09-10
+
 ### Added
 
 - **Dates can move: commitments reschedule, periodic commitments complete.** The write surface could
