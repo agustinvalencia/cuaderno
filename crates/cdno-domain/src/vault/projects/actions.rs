@@ -63,27 +63,64 @@ impl Vault {
     /// This is the single home of the "started" log format — CLI,
     /// MCP, and desktop-Start-button surfaces are expected to call
     /// this rather than compose their own line, so the trace stays
-    /// greppable. The
-    /// project is resolved first (active projects only) so the logged
-    /// wikilink can't dangle; `action` is free text — typically the
-    /// bullet the caller picked from `list_actions`, but starting
-    /// unplanned work is equally valid.
+    /// greppable. The project is resolved first (active projects only)
+    /// so the logged wikilink can't dangle.
+    ///
+    /// `action` is a **query against `## Next Actions`**, matched by
+    /// [`resolve_open_action`] exactly as `complete_action` and
+    /// `drop_action` match theirs, and the *resolved bullet text* is
+    /// what gets logged — not the string passed in.
+    ///
+    /// That sharing is the point (#568). [`Vault::current_focus`] pairs
+    /// this entry with the closing one by exact text equality, and the
+    /// close verbs log resolved text; a start logged verbatim is
+    /// closable only while the caller happens to pass exactly what they
+    /// will later write. The desktop app does — it passes
+    /// `ActionListEntry::text`, which is the bullet verbatim — but that
+    /// was caller discipline rather than a guarantee, and a second
+    /// caller had no way to know the rule.
+    ///
+    /// **This used to accept free text**, on the reasoning that
+    /// "starting unplanned work is equally valid". It was not: an
+    /// unplanned start names no bullet, so no completion can ever log
+    /// matching text, and the focus stays open for ever. Demonstrated
+    /// before the change — `start_action(.., "Buy milk")` on a project
+    /// with no such bullet left `current_focus` reporting `Buy milk`
+    /// permanently, with `complete_action` refusing it as not found.
+    /// Refusing at the start turns a silent, unfixable state into an
+    /// error where the mistake is.
     ///
     /// Returns the daily-note path touched. Errors mirror the other
     /// action ops: parked → `ProjectNotActive`, missing →
-    /// `Store(NotFound)`, whitespace-only action → `EmptyField`.
+    /// `Store(NotFound)`, whitespace-only action → `EmptyField`,
+    /// missing section → `Manipulation`, no match →
+    /// [`DomainError::ActionNotFound`], several matches →
+    /// [`DomainError::AmbiguousAction`] carrying the candidates.
     pub fn start_action(
         &self,
         at: NaiveDateTime,
         slug: &str,
         action: &str,
     ) -> Result<VaultPath, DomainError> {
-        let action_text = action.trim();
-        if action_text.is_empty() {
+        let query = action.trim();
+        if query.is_empty() {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        self.resolve_active_project(slug)?;
+        let (_path, doc) = self.resolve_active_project(slug)?;
+
+        // Resolve against the map rather than logging what we were
+        // handed. `current_focus` pairs this entry with the closing one
+        // by exact text equality, and the close verbs log the *resolved*
+        // bullet text — so a start logged verbatim is closable only
+        // while the caller happens to pass exactly what they will later
+        // write. Sharing `resolve_open_action` makes the three verbs
+        // agree by construction instead (#568).
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let idx = resolve_open_action(&lines, slug, query)?;
+        let action_text =
+            parse_open_action_text(lines[idx]).expect("matched line was previously parseable");
 
         let log_entry = format_action_started_log_entry(slug, action_text);
         let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;

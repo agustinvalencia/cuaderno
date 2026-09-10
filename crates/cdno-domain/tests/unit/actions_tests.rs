@@ -526,6 +526,15 @@ fn promote_action_errors_on_ambiguous_match() {
 #[test]
 fn start_action_logs_to_daily_note() {
     let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    // The action must exist on the map: a start names a bullet (#568).
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
 
     let daily = vault
         .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft the methods section")
@@ -533,7 +542,8 @@ fn start_action_logs_to_daily_note() {
 
     let content = store.read_file(&daily).unwrap();
     assert!(
-        content.contains("- **09:30**: started [[alpha]] \u{2014} Draft the methods section"),
+        content
+            .contains("- **09:30**: started [[alpha]] \u{2014} Draft the methods section (deep)"),
         "daily note carries the started line: {content}"
     );
 }
@@ -1138,4 +1148,178 @@ fn drop_action_clears_a_pre_existing_completed_date() {
         fm.completed, None,
         "the stale completion date is cleared, not carried into the archive"
     );
+}
+
+/// The acceptance criterion of #568, joining the two sides rather than
+/// feeding each a fixture: the text the desktop app actually passes,
+/// through a real start and a real close.
+#[test]
+fn a_start_from_the_desktop_path_is_cleared_by_completing_it() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    // Exactly what `ActionShortlist` hands `start_action`.
+    let listed = vault.list_actions("foo").unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", &listed[0].text)
+        .expect("start succeeds");
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_some(),
+        "precondition: the start opened a focus"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 17, 0), "foo", "demo-proposal")
+        .expect("complete succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "the close must clear the start it names"
+    );
+}
+
+/// And by dropping it — the other terminal verb writes a different
+/// prefix, so it needs its own end-to-end pass.
+#[test]
+fn a_start_from_the_desktop_path_is_cleared_by_dropping_it() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    let listed = vault.list_actions("foo").unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", &listed[0].text)
+        .expect("start succeeds");
+
+    vault
+        .drop_action(
+            dt(2026, 5, 26, 17, 0),
+            "foo",
+            "demo-proposal",
+            Some("superseded"),
+        )
+        .expect("drop succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "a drop clears the start too"
+    );
+}
+
+/// The resolution, stated as a property: what is logged is the bullet,
+/// not the query. A caller passing the energy-stripped form — which
+/// `TopAction::text` is — still produces an entry a close can match.
+#[test]
+fn start_action_logs_the_bullet_text_not_the_query_it_was_given() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    // No energy suffix, and only part of the title.
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "methods")
+        .expect("a substring resolves, as it does for the close verbs");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **09:30**: started [[foo]] \u{2014} Draft the methods section (deep)"),
+        "the resolved bullet is logged, so a close can match it:\n{daily}"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 17, 0), "foo", "methods")
+        .expect("complete succeeds");
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "and it does"
+    );
+}
+
+/// Unplanned work is refused rather than logged. It was never really
+/// supported: a start naming no bullet can be closed by nothing, so the
+/// focus stayed open for ever and `complete_action` reported the action
+/// as not found. Better to say so at the start than to leave an
+/// unfixable state behind.
+#[test]
+fn start_action_refuses_work_that_is_not_on_the_map() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "Buy milk")
+        .expect_err("a start names a bullet");
+    assert!(
+        matches!(err, DomainError::ActionNotFound { .. }),
+        "got {err:?}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        !daily.contains("started [[foo]]"),
+        "a refused start logs nothing:\n{daily}"
+    );
+}
+
+/// Ambiguity is an error carrying the candidates, as it is for the
+/// close verbs — starting the wrong one of two look-alike bullets puts
+/// the focus on work you are not doing.
+#[test]
+fn start_action_refuses_an_ambiguous_query_and_offers_the_candidates() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    for title in ["Draft the methods section", "Draft the results section"] {
+        vault
+            .add_action(dt(2026, 5, 26, 9, 0), "foo", title, EnergyLevel::Deep)
+            .unwrap();
+    }
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "Draft the")
+        .expect_err("two matches must not be resolved by guessing");
+    match err {
+        DomainError::AmbiguousAction { candidates, .. } => {
+            assert_eq!(candidates.len(), 2, "both offered: {candidates:?}");
+        }
+        other => panic!("got {other:?}"),
+    }
 }
