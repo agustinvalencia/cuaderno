@@ -128,6 +128,91 @@ impl Vault {
         Ok(daily_path)
     }
 
+    /// Start work that was never planned: append `action` to the
+    /// project's `## Next Actions` and log it as started, in one commit.
+    ///
+    /// This is the honest form of the gesture [`Vault::start_action`]
+    /// used to appear to support. Its old doc claimed "starting
+    /// unplanned work is equally valid", but free-text starts never
+    /// worked (#568): [`Vault::current_focus`] pairs a start with its
+    /// close by exact text equality, and the close verbs only ever log
+    /// text they resolved *from a bullet*, so work with no bullet could
+    /// be started and then never closed — the focus stayed pinned to it
+    /// for ever.
+    ///
+    /// So rather than logging a start that nothing can close, this
+    /// gives the work a bullet first and starts *that*. The action
+    /// becomes ordinary planned work the moment it begins, closable by
+    /// `complete_action` and `drop_action` like any other. The started
+    /// line is derived from the bullet just written, by the same
+    /// [`parse_open_action_text`] the close verbs resolve through, so
+    /// the texts agree by construction rather than by both sides
+    /// formatting the string the same way.
+    ///
+    /// Keep this separate from `start_action` rather than making it a
+    /// fallback when the query matches nothing: a fallback would turn
+    /// every typo into a *new* action silently — the exact class of
+    /// failure #568 removed. Creating work is a different intent from
+    /// starting known work, so the caller states which it means.
+    ///
+    /// **Two log lines, deliberately**: `action added to …` then
+    /// `started …`. Adding the bullet mutates `## Next Actions`, and the
+    /// vault's history rule is that a mutable-section change emits its
+    /// own log entry — so the bullet's origin stays greppable instead of
+    /// appearing on the map from nowhere.
+    ///
+    /// Returns the daily-note path touched. Errors mirror
+    /// [`Vault::add_action`]: parked → `ProjectNotActive`, missing →
+    /// `Store(NotFound)`, whitespace-only action → `EmptyField`. There
+    /// is no not-found or ambiguity error here — the action is being
+    /// created, so there is nothing to match against.
+    pub fn start_unplanned_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+        energy: EnergyLevel,
+    ) -> Result<VaultPath, DomainError> {
+        let action_text = action.trim();
+        if action_text.is_empty() {
+            return Err(DomainError::EmptyField { field: "action" });
+        }
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
+        doc.ensure_section(NEXT_ACTIONS_SECTION)?;
+        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        // Read the started text back out of the bullet we just built,
+        // exactly as `start_action` reads it out of one already on the
+        // map — so the energy suffix and spacing match what the close
+        // verbs will log, without this path knowing the format itself.
+        let started_text =
+            parse_open_action_text(&bullet).expect("bullet was just formatted as `- [ ] …`");
+
+        let added_entry = format_action_added_log_entry(slug, action_text, energy);
+        let started_entry = format_action_started_log_entry(slug, started_text);
+
+        tx.write_file(path, new_content);
+        tx.upsert_note(entry_meta);
+        // One staged write for both lines — see `stage_daily_logs`;
+        // staging them separately would drop the first.
+        let daily_path = self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
+        tx.commit()?;
+
+        Ok(daily_path)
+    }
+
     /// Append a next action to an active project, also recording the
     /// addition in today's daily log so a planning session leaves a
     /// trace.

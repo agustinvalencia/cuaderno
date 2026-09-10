@@ -1323,3 +1323,185 @@ fn start_action_refuses_an_ambiguous_query_and_offers_the_candidates() {
         other => panic!("got {other:?}"),
     }
 }
+
+// --- start_unplanned_action -------------------------------------------
+//
+// The path that makes "just start something" real (#568). The old
+// free-text `start_action` only appeared to support it: the start was
+// logged, and then nothing could ever close it.
+
+#[test]
+fn unplanned_start_adds_the_bullet_and_starts_it_in_one_go() {
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let daily = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "the work is on the map now, not just in the log: {map}"
+    );
+
+    let content = store.read_file(&daily).unwrap();
+    assert!(
+        content.contains("- **09:30**: started [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "started line carries the resolved bullet text: {content}"
+    );
+}
+
+#[test]
+fn unplanned_start_logs_the_bullets_origin_as_well_as_the_start() {
+    // Adding the bullet mutates `## Next Actions`, so it emits its own
+    // log entry — the map never gains a line from nowhere. Both entries
+    // must survive: they are staged into one write, and staging them
+    // separately would silently drop the first.
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let daily = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let content = store.read_file(&daily).unwrap();
+    assert!(
+        content.contains("action added to [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "the addition is logged: {content}"
+    );
+    assert!(
+        content.contains("started [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "the start is logged: {content}"
+    );
+}
+
+#[test]
+fn unplanned_work_can_actually_be_completed() {
+    // The whole point. On the old free-text path this was impossible:
+    // the start logged raw text, `complete_action` logged resolved
+    // bullet text, the two never matched, and `current_focus` stayed
+    // pinned to the unplanned work for ever.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let focus = vault
+        .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+        .unwrap();
+    assert!(
+        focus.is_some_and(|f| f.action.contains("Fix the CI badge")),
+        "focus is on the unplanned work while it runs"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 11, 0), "alpha", "Fix the CI badge")
+        .unwrap();
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "and it clears on completion — the invariant free text could never satisfy"
+    );
+}
+
+#[test]
+fn unplanned_work_can_also_be_dropped() {
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+    vault
+        .drop_action(dt(2026, 5, 26, 11, 0), "alpha", "Fix the CI badge", None)
+        .unwrap();
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "dropping clears the focus too"
+    );
+}
+
+#[test]
+fn unplanned_start_rejects_parked_project_and_blank_action() {
+    const PARKED: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n";
+    let (vault, _store) = vault_with(&[
+        ("projects/alpha.md", ACTIVE_PROJECT),
+        ("projects/_parked/beta.md", PARKED),
+    ]);
+
+    assert!(matches!(
+        vault.start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "beta",
+            "Anything",
+            EnergyLevel::Light
+        ),
+        Err(DomainError::ProjectNotActive { .. })
+    ));
+    assert!(matches!(
+        vault.start_unplanned_action(dt(2026, 5, 26, 9, 30), "alpha", "   ", EnergyLevel::Light),
+        Err(DomainError::EmptyField { field: "action" })
+    ));
+}
+
+#[test]
+fn unplanned_start_appends_rather_than_replacing_existing_actions() {
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Draft methods (deep)"),
+        "planned work survives: {map}"
+    );
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "unplanned work added: {map}"
+    );
+}

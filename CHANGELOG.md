@@ -6,6 +6,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **A start now has to name a real action.** `start_action` logged whatever string it was handed;
+  the close verbs (`complete_action`, `drop_action`) log *resolved bullet text*, and `current_focus`
+  pairs a start with its close by exact text equality. So "a start can be closed" held only while the
+  caller passed exactly what the close verbs would later write — caller discipline, not a guarantee,
+  with silent and unfixable failure when a second caller got it wrong (#568).
+
+  `start_action` now resolves its argument through `resolve_open_action`, the matcher the close verbs
+  already share, and logs the resolved text, so the three verbs agree by construction. A query
+  matching no open bullet is `ActionNotFound`; an ambiguous one is `AmbiguousAction` carrying the
+  candidates. Passing energy-stripped text (`Draft methods` for `- [ ] Draft methods (deep)`) now
+  resolves and logs the full bullet. The desktop app is unaffected — it already passed bullet text.
+
+  Note this issue was filed claiming a live bug in `current_focus` for actions with attached notes.
+  That claim was wrong and the issue has been corrected; the desktop flow round-trips correctly.
+
+### Added
+
+- **Unplanned work can be started for real.** `start_action`'s old doc claimed "starting unplanned
+  work is equally valid". It never was: unplanned work names no bullet, so no completion could log
+  matching text and the focus stayed pinned to it for ever. `start_unplanned_action` gives the work a
+  bullet first and starts that, in one commit — it becomes ordinary planned work as it begins,
+  closable by `complete_action` and `drop_action` like anything else. It logs both `action added to`
+  and `started`, so a bullet never appears on the map without a trace of where it came from.
+
+  Deliberately a separate verb rather than a fallback when `start_action` matches nothing: a fallback
+  would silently turn every typo into a new action, which is the failure mode the change above
+  removes.
+
 ## [0.37.0] - 2026-09-10
 
 ### Added
