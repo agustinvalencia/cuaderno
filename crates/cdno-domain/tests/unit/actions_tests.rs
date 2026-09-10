@@ -15,6 +15,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
+use cdno_domain::vault::WriteOutcome;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -1334,7 +1335,7 @@ fn start_action_refuses_an_ambiguous_query_and_offers_the_candidates() {
 fn unplanned_start_adds_the_bullet_and_starts_it_in_one_go() {
     let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
 
-    let daily = vault
+    let outcome = vault
         .start_unplanned_action(
             dt(2026, 5, 26, 9, 30),
             "alpha",
@@ -1342,6 +1343,7 @@ fn unplanned_start_adds_the_bullet_and_starts_it_in_one_go() {
             EnergyLevel::Light,
         )
         .unwrap();
+    let daily = daily_path_of(&outcome);
 
     let map = store
         .read_file(&VaultPath::new("projects/alpha.md").unwrap())
@@ -1366,7 +1368,7 @@ fn unplanned_start_logs_the_bullets_origin_as_well_as_the_start() {
     // separately would silently drop the first.
     let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
 
-    let daily = vault
+    let outcome = vault
         .start_unplanned_action(
             dt(2026, 5, 26, 9, 30),
             "alpha",
@@ -1374,6 +1376,7 @@ fn unplanned_start_logs_the_bullets_origin_as_well_as_the_start() {
             EnergyLevel::Light,
         )
         .unwrap();
+    let daily = daily_path_of(&outcome);
 
     let content = store.read_file(&daily).unwrap();
     assert!(
@@ -1503,5 +1506,56 @@ fn unplanned_start_appends_rather_than_replacing_existing_actions() {
     assert!(
         map.contains("- [ ] Fix the CI badge (light)"),
         "unplanned work added: {map}"
+    );
+}
+
+/// The daily note out of a [`WriteOutcome`]'s touched set. Pulling it
+/// from the outcome rather than rebuilding the path keeps these tests
+/// honest about what the commit actually wrote — the same set the
+/// desktop layer journals for watcher echo-suppression.
+fn daily_path_of(outcome: &WriteOutcome) -> VaultPath {
+    outcome
+        .paths
+        .iter()
+        .find(|p| p.as_path().starts_with("journal"))
+        .expect("the commit wrote a daily note")
+        .clone()
+}
+
+#[test]
+fn unplanned_start_reports_both_files_it_wrote() {
+    // The desktop layer journals this set so the watcher doesn't echo
+    // the writes back as external edits (#315). This op touches two
+    // files, and a caller-side reconstruction would miss one.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let outcome = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.primary,
+        VaultPath::new("projects/alpha.md").unwrap(),
+        "the op is about the project map"
+    );
+    assert!(
+        outcome
+            .paths
+            .contains(&VaultPath::new("projects/alpha.md").unwrap()),
+        "map is in the touched set: {:?}",
+        outcome.paths
+    );
+    assert!(
+        outcome
+            .paths
+            .iter()
+            .any(|p| p.as_path().starts_with("journal")),
+        "daily note is in the touched set: {:?}",
+        outcome.paths
     );
 }

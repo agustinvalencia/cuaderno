@@ -36,6 +36,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   would silently turn every typo into a new action, which is the failure mode the change above
   removes.
 
+  On the desktop this is the Home view's "Starting something that isn't listed?" row, under the
+  pick-one shortlist — collapsed until asked for, so the planned path stays the main one. It defaults
+  to the energy filter's current level, since the filter states the energy you have now and this is
+  work starting now. Previously the only honest route was to add the action, come back, and start it:
+  two gestures and a context switch to record work already begun.
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

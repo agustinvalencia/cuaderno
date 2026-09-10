@@ -226,3 +226,93 @@ test("an empty vault gets the warm empty state", async () => {
 
   expect(await screen.findByText(/Nothing active/)).toBeDefined();
 });
+
+// --- starting something that isn't listed (#568) -----------------------
+
+const NO_PROJECTS: OrientationView = { ...ORIENTATION, projects: [] };
+
+/** Open the unplanned-start form and return it, so queries inside stay
+ * scoped — the shortlist has a "Start" button of its own. */
+async function openUnplannedForm() {
+  fireEvent.click(await screen.findByRole("button", { name: /isn't listed/ }));
+  return screen.getByRole("form", { name: "Start something that isn't listed" });
+}
+
+test("the unplanned-start form stays closed until asked for", async () => {
+  // The planned shortlist is the main path; an always-open capture box
+  // invites recording work instead of doing it.
+  installMock([], { now: null });
+  renderHome();
+
+  expect(await screen.findByRole("button", { name: /isn't listed/ })).toBeDefined();
+  expect(screen.queryByLabelText("What are you starting?")).toBeNull();
+});
+
+test("starting something unlisted adds it and starts it in one gesture", async () => {
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { now: null });
+  renderHome();
+
+  const form = await openUnplannedForm();
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).toMatchObject({
+      project: "alpha",
+      action: "Fix the CI badge",
+      energy: "medium",
+    });
+  });
+  // Never the plain start: that one requires the bullet to exist, and
+  // routing unplanned work through it is the bug this path exists for.
+  expect(calls.find((c) => c.cmd === "start_action")).toBeUndefined();
+});
+
+test("the energy filter is what the unplanned start defaults to", async () => {
+  // The filter states the energy you have now, and this is work you are
+  // starting now.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { now: null });
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "light" }));
+  const form = await openUnplannedForm();
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "File receipts" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).toMatchObject({
+      energy: "light",
+    });
+  });
+});
+
+test("an empty description cannot be started", async () => {
+  // A blank bullet would land on the map as `- [ ]  (medium)`.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { now: null });
+  renderHome();
+
+  const form = await openUnplannedForm();
+  const start = within(form).getByRole("button", { name: "Start" });
+  expect(start.hasAttribute("disabled")).toBe(true);
+
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "   " },
+  });
+  expect(start.hasAttribute("disabled")).toBe(true);
+  expect(calls.find((c) => c.cmd === "start_unplanned_action")).toBeUndefined();
+});
+
+test("with no active projects there is nothing to hang unplanned work on", async () => {
+  installMock([], { orientation: NO_PROJECTS, now: null });
+  renderHome();
+
+  expect(await screen.findByText(/Nothing active/)).toBeDefined();
+  expect(screen.queryByRole("button", { name: /isn't listed/ })).toBeNull();
+});

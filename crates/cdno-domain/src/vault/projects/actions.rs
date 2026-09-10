@@ -161,18 +161,24 @@ impl Vault {
     /// own log entry — so the bullet's origin stays greppable instead of
     /// appearing on the map from nowhere.
     ///
-    /// Returns the daily-note path touched. Errors mirror
-    /// [`Vault::add_action`]: parked → `ProjectNotActive`, missing →
-    /// `Store(NotFound)`, whitespace-only action → `EmptyField`. There
-    /// is no not-found or ambiguity error here — the action is being
-    /// created, so there is nothing to match against.
+    /// Returns a [`WriteOutcome`] like the close verbs: `primary` is the
+    /// project map, `paths` every file the commit wrote (the map and the
+    /// daily note). This writes *two* files, so the desktop layer needs
+    /// the domain's own touched set to journal them for the watcher —
+    /// reconstructing it caller-side would leave one of them looking
+    /// like an external edit (#315).
+    ///
+    /// Errors mirror [`Vault::add_action`]: parked → `ProjectNotActive`,
+    /// missing → `Store(NotFound)`, whitespace-only action →
+    /// `EmptyField`. There is no not-found or ambiguity error here — the
+    /// action is being created, so there is nothing to match against.
     pub fn start_unplanned_action(
         &self,
         at: NaiveDateTime,
         slug: &str,
         action: &str,
         energy: EnergyLevel,
-    ) -> Result<VaultPath, DomainError> {
+    ) -> Result<WriteOutcome, DomainError> {
         let action_text = action.trim();
         if action_text.is_empty() {
             return Err(DomainError::EmptyField { field: "action" });
@@ -203,14 +209,14 @@ impl Vault {
         let added_entry = format_action_added_log_entry(slug, action_text, energy);
         let started_entry = format_action_started_log_entry(slug, started_text);
 
-        tx.write_file(path, new_content);
+        tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         // One staged write for both lines — see `stage_daily_logs`;
         // staging them separately would drop the first.
-        let daily_path = self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
-        tx.commit()?;
+        self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
+        let touched = tx.commit()?;
 
-        Ok(daily_path)
+        Ok(WriteOutcome::written(path, touched))
     }
 
     /// Append a next action to an active project, also recording the

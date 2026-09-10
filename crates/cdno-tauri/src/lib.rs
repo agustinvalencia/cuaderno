@@ -403,6 +403,7 @@ pub fn run() {
             commands::orientation::get_index_exclusions,
             commands::orientation::get_now,
             commands::actions::start_action,
+            commands::actions::start_unplanned_action,
             commands::actions::complete_action,
             commands::actions::add_action,
             commands::actions::promote_action,

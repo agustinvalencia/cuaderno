@@ -96,6 +96,45 @@ pub async fn start_action<R: tauri::Runtime>(
     Ok(())
 }
 
+/// Start work that isn't on the map yet: the domain appends the bullet
+/// to `## Next Actions` and logs it as started in one transaction. The
+/// Home view's "Something else" row.
+///
+/// Separate from [`start_action`] rather than a fallback inside it, for
+/// the reason the domain method documents: a fallback would turn a typo
+/// into a new action silently. The frontend sends the two intents from
+/// two different affordances.
+///
+/// `energy` is the wire string (`"deep" | "medium" | "light"`), matching
+/// [`add_action`]; an unrecognised value is `CmdError::Invalid` rather
+/// than a defaulted bucket.
+///
+/// Unlike `start_action` this writes the project map as well as the
+/// daily, so it journals the domain's own touched set — Projects and
+/// Actions invalidate too, since the map gained a bullet.
+#[tauri::command]
+pub async fn start_unplanned_action<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    project: String,
+    action: String,
+    energy: String,
+) -> Result<(), CmdError> {
+    let energy = EnergyLevel::from_str(&energy).map_err(|e| CmdError::Invalid(e.to_string()))?;
+    let now = Local::now().naive_local();
+    let outcome = with_vault(&state.vault(), move |vault| {
+        vault.start_unplanned_action(now, &project, &action, energy)
+    })
+    .await??;
+    record_outcome_and_emit(
+        &app,
+        &state,
+        &outcome,
+        vec![VaultArea::Projects, VaultArea::Actions, VaultArea::Daily],
+    );
+    Ok(())
+}
+
 /// Complete the action bullet matching `action` on `project`
 /// (case-insensitive substring; ambiguity comes back as
 /// `CmdError::Ambiguous` and the UI shows a picker). Removes the
