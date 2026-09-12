@@ -63,32 +63,187 @@ impl Vault {
     /// This is the single home of the "started" log format — CLI,
     /// MCP, and desktop-Start-button surfaces are expected to call
     /// this rather than compose their own line, so the trace stays
-    /// greppable. The
-    /// project is resolved first (active projects only) so the logged
-    /// wikilink can't dangle; `action` is free text — typically the
-    /// bullet the caller picked from `list_actions`, but starting
-    /// unplanned work is equally valid.
+    /// greppable. The project is resolved first (active projects only)
+    /// so the logged wikilink can't dangle.
+    ///
+    /// `action` is a **query against `## Next Actions`**, matched by
+    /// [`resolve_open_action`] exactly as `complete_action` and
+    /// `drop_action` match theirs, and the *resolved bullet text* is
+    /// what gets logged — not the string passed in.
+    ///
+    /// That sharing is the point (#568). [`Vault::current_focus`] pairs
+    /// this entry with the closing one by exact text equality, and the
+    /// close verbs log resolved text; a start logged verbatim is
+    /// closable only while the caller happens to pass exactly what they
+    /// will later write. The desktop app does — it passes
+    /// `ActionListEntry::text`, which is the bullet verbatim — but that
+    /// was caller discipline rather than a guarantee, and a second
+    /// caller had no way to know the rule.
+    ///
+    /// **This used to accept free text**, on the reasoning that
+    /// "starting unplanned work is equally valid". It was not: an
+    /// unplanned start names no bullet, so no completion can ever log
+    /// matching text, and the focus stays open for ever. Demonstrated
+    /// before the change — `start_action(.., "Buy milk")` on a project
+    /// with no such bullet left `current_focus` reporting `Buy milk`
+    /// permanently, with `complete_action` refusing it as not found.
+    /// Refusing at the start turns a silent, unfixable state into an
+    /// error where the mistake is.
     ///
     /// Returns the daily-note path touched. Errors mirror the other
     /// action ops: parked → `ProjectNotActive`, missing →
-    /// `Store(NotFound)`, whitespace-only action → `EmptyField`.
+    /// `Store(NotFound)`, whitespace-only action → `EmptyField`,
+    /// missing section → `Manipulation`, no match →
+    /// [`DomainError::ActionNotFound`], several matches →
+    /// [`DomainError::AmbiguousAction`] carrying the candidates.
     pub fn start_action(
         &self,
         at: NaiveDateTime,
         slug: &str,
         action: &str,
     ) -> Result<VaultPath, DomainError> {
-        let action_text = action.trim();
-        if action_text.is_empty() {
+        let query = action.trim();
+        if query.is_empty() {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        self.resolve_active_project(slug)?;
+        let (_path, doc) = self.resolve_active_project(slug)?;
+
+        // Resolve against the map rather than logging what we were
+        // handed. `current_focus` pairs this entry with the closing one
+        // by exact text equality, and the close verbs log the *resolved*
+        // bullet text — so a start logged verbatim is closable only
+        // while the caller happens to pass exactly what they will later
+        // write. Sharing `resolve_open_action` makes the three verbs
+        // agree by construction instead (#568).
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let idx = resolve_open_action(&lines, slug, query)?;
+        let action_text =
+            parse_open_action_text(lines[idx]).expect("matched line was previously parseable");
 
         let log_entry = format_action_started_log_entry(slug, action_text);
         let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
         Ok(daily_path)
+    }
+
+    /// Start work that was never planned: append `action` to the
+    /// project's `## Next Actions` and log it as started, in one commit.
+    ///
+    /// This is the honest form of the gesture [`Vault::start_action`]
+    /// used to appear to support. Its old doc claimed "starting
+    /// unplanned work is equally valid", but free-text starts never
+    /// worked (#568): [`Vault::current_focus`] pairs a start with its
+    /// close by exact text equality, and the close verbs only ever log
+    /// text they resolved *from a bullet*, so work with no bullet could
+    /// be started and then never closed — the focus stayed pinned to it
+    /// for ever.
+    ///
+    /// So rather than logging a start that nothing can close, this
+    /// gives the work a bullet first and starts *that*. The action
+    /// becomes ordinary planned work the moment it begins, closable by
+    /// `complete_action` and `drop_action` like any other. The started
+    /// line is derived from the bullet just written, by the same
+    /// [`parse_open_action_text`] the close verbs resolve through, so
+    /// the texts agree by construction rather than by both sides
+    /// formatting the string the same way.
+    ///
+    /// That agreement holds for the *close* verbs only. [`promote_action`]
+    /// also resolves through [`resolve_open_action`] but **rewrites** the
+    /// bullet it matched, so a start logged before a promotion can never
+    /// be paired with the close that follows it and the focus stays
+    /// pinned. That is pre-existing and unchanged here — `start_action`
+    /// logged the same verbatim text before this change — but it is the
+    /// limit of "agree by construction", and
+    /// `a_promotion_between_start_and_close_strands_the_focus` pins the
+    /// real behaviour so the claim cannot quietly grow.
+    ///
+    /// Keep this separate from `start_action` rather than making it a
+    /// fallback when the query matches nothing: a fallback would turn
+    /// every typo into a *new* action silently — the exact class of
+    /// failure #568 removed. Creating work is a different intent from
+    /// starting known work, so the caller states which it means.
+    ///
+    /// **Two log lines, deliberately**: `action added to …` then
+    /// `started …`. Adding the bullet mutates `## Next Actions`, and the
+    /// vault's history rule is that a mutable-section change emits its
+    /// own log entry — so the bullet's origin stays greppable instead of
+    /// appearing on the map from nowhere.
+    ///
+    /// Returns a [`WriteOutcome`] like the close verbs: `primary` is the
+    /// project map, `paths` every file the commit wrote (the map and the
+    /// daily note), which is what the desktop journals for the watcher
+    /// (#315). `add_action` writes the same two files and gets away with
+    /// returning a bare path because its caller rebuilds the daily path
+    /// from the same clock — so this is the safer shape, not the only
+    /// workable one: the touched set stays right here if a later change
+    /// makes this verb write a third file, where a caller-side rebuild
+    /// would silently keep journalling two.
+    ///
+    /// Errors: parked → `ProjectNotActive`, missing → `Store(NotFound)`,
+    /// whitespace-only action → `EmptyField`. The first two mirror
+    /// [`Vault::add_action`]; the blank check does not — `add_action` has
+    /// none and will write `- [ ]  (deep)` — this mirrors `start_action`,
+    /// since starting nameless work is the failure #568 is about. There
+    /// is no not-found or ambiguity error here: the action is being
+    /// created, so there is nothing to match against.
+    ///
+    /// Whitespace inside `action` is flattened, as [`flatten_reason`]
+    /// does for a drop reason and for the same reason: an interior
+    /// newline would split the bullet across two lines of
+    /// `## Next Actions` — leaving an orphan non-bullet line behind when
+    /// the action is later closed — and split each log entry into a
+    /// second physical line no reader parses. `add_action` has the same
+    /// hole and is left alone here rather than widening this change.
+    pub fn start_unplanned_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        action: &str,
+        energy: EnergyLevel,
+    ) -> Result<WriteOutcome, DomainError> {
+        // Flattened, not merely trimmed: an interior newline would split
+        // the bullet and both log entries across physical lines.
+        let action_text = flatten_reason(action);
+        let action_text = action_text.as_str();
+        if action_text.is_empty() {
+            return Err(DomainError::EmptyField { field: "action" });
+        }
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
+        doc.ensure_section(NEXT_ACTIONS_SECTION)?;
+        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+
+        // Read the started text back out of the bullet we just built,
+        // exactly as `start_action` reads it out of one already on the
+        // map — so the energy suffix and spacing match what the close
+        // verbs will log, without this path knowing the format itself.
+        let started_text =
+            parse_open_action_text(&bullet).expect("bullet was just formatted as `- [ ] …`");
+
+        let added_entry = format_action_added_log_entry(slug, action_text, energy);
+        let started_entry = format_action_started_log_entry(slug, started_text);
+
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        // One staged write for both lines — see `stage_daily_logs`;
+        // staging them separately would drop the first.
+        self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
+        let touched = tx.commit()?;
+
+        Ok(WriteOutcome::written(path, touched))
     }
 
     /// Append a next action to an active project, also recording the

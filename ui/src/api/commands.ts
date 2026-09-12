@@ -112,6 +112,18 @@ export function startAction(project: string, action: string): Promise<void> {
   return call("start_action", { project, action });
 }
 
+/** Start work that isn't on the map: the backend adds the bullet and
+ * starts it in one transaction. Deliberately a separate call from
+ * `startAction`, which requires the action to exist — a fallback would
+ * turn a typo into a new action silently. */
+export function startUnplannedAction(
+  project: string,
+  action: string,
+  energy: EnergyLevel,
+): Promise<void> {
+  return call("start_unplanned_action", { project, action, energy });
+}
+
 export function completeAction(project: string, action: string): Promise<void> {
   return call("complete_action", { project, action });
 }

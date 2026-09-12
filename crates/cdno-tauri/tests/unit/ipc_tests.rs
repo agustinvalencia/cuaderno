@@ -78,6 +78,7 @@ fn mock_app_configured(
             cdno_tauri::commands::orientation::get_orientation,
             cdno_tauri::commands::orientation::get_today,
             cdno_tauri::commands::actions::start_action,
+            cdno_tauri::commands::actions::start_unplanned_action,
             cdno_tauri::commands::actions::complete_action,
             cdno_tauri::commands::actions::add_action,
             cdno_tauri::commands::actions::promote_action,
@@ -2003,4 +2004,103 @@ fn save_config_rejects_a_stale_hash_with_the_conflict_shape() {
     )
     .expect("config.toml readable");
     assert_eq!(on_disk, seed, "a conflict leaves the file byte-identical");
+}
+
+#[test]
+fn start_unplanned_action_adds_the_bullet_and_starts_it() {
+    // The map gains the action and the daily records both events, from
+    // one IPC call — the whole point of the verb (#568).
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-unplanned", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Fix the CI badge",
+        "energy": "light",
+    }));
+    get_ipc_response(&webview, request_with("start_unplanned_action", body))
+        .expect("command succeeds");
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .expect("map readable");
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "bullet is on the map: {map}"
+    );
+
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let content = store.read_file(&daily).expect("daily note written");
+    assert!(
+        content.contains("started [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "daily carries the started line: {content}"
+    );
+    assert!(
+        content.contains("action added to [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "and where the bullet came from: {content}"
+    );
+}
+
+#[test]
+fn start_unplanned_action_rejects_an_unknown_energy() {
+    // The frontend select can only send the three, but a malformed IPC
+    // call must fail loudly rather than default to a bucket.
+    let (app, store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-unplanned-bad", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Fix the CI badge",
+        "energy": "frantic",
+    }));
+    let result = get_ipc_response(&webview, request_with("start_unplanned_action", body));
+    assert!(result.is_err(), "unknown energy is rejected");
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .expect("map readable");
+    assert!(
+        !map.contains("Fix the CI badge"),
+        "and nothing was written: {map}"
+    );
+}
+
+#[test]
+fn start_unplanned_action_command_journals_both_paths_it_wrote() {
+    // The reason the domain verb returns a `WriteOutcome` at all: this
+    // command writes TWO files, and both must land in the write journal
+    // or the watcher reports them as external edits (#315). Without this,
+    // deleting the whole `record_outcome_and_emit` call leaves every
+    // cdno-tauri test green — the same shape as
+    // `complete_action_command_journals_every_touched_path_including_the_archive`.
+    use tauri::Manager;
+
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-unplanned-journal", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Fix the CI badge",
+        "energy": "light",
+    }));
+    get_ipc_response(&webview, request_with("start_unplanned_action", body))
+        .expect("command succeeds");
+
+    // As in the completion test above: the command stamps its own
+    // `Local::now()`, so the daily is recomputed from a fresh one.
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let state = app.state::<AppState>();
+    for path in [VaultPath::new("projects/alpha.md").unwrap(), daily] {
+        assert!(
+            state.journal.is_recent_self_write(&path),
+            "{path:?} must be journalled as our own write, or the watcher \
+             echoes it back as an external edit"
+        );
+    }
 }

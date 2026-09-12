@@ -6,6 +6,49 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **A start now has to name a real action.** `start_action` logged whatever string it was handed;
+  the close verbs (`complete_action`, `drop_action`) log *resolved bullet text*, and `current_focus`
+  pairs a start with its close by exact text equality. So "a start can be closed" held only while the
+  caller passed exactly what the close verbs would later write — caller discipline, not a guarantee,
+  with silent and unfixable failure when a second caller got it wrong (#568).
+
+  `start_action` now resolves its argument through `resolve_open_action`, the matcher the close verbs
+  already share, and logs the resolved text, so a start and its completion or drop agree by
+  construction. A query matching no open bullet is `ActionNotFound`; an ambiguous one is
+  `AmbiguousAction` carrying the candidates. Passing energy-stripped text (`Draft methods` for
+  `- [ ] Draft methods (deep)`) now resolves and logs the full bullet. The desktop app is unaffected —
+  it already passed bullet text.
+
+  That agreement covers the close verbs only. `promote_action` also resolves through the same matcher
+  but *rewrites* the bullet, so a start logged before a promotion still cannot pair with the close
+  after it and the focus stays pinned. Pre-existing and unchanged — `start_action` logged the same
+  verbatim text before — but it is the limit of the guarantee, and is now pinned by a test rather
+  than left to be discovered.
+
+  Note this issue was filed claiming a live bug in `current_focus` for actions with attached notes.
+  That claim was wrong and the issue has been corrected; the desktop flow round-trips correctly.
+
+### Added
+
+- **Unplanned work can be started for real.** `start_action`'s old doc claimed "starting unplanned
+  work is equally valid". It never was: unplanned work names no bullet, so no completion could log
+  matching text and the focus stayed pinned to it for ever. `start_unplanned_action` gives the work a
+  bullet first and starts that, in one commit — it becomes ordinary planned work as it begins,
+  closable by `complete_action` and `drop_action` like anything else. It logs both `action added to`
+  and `started`, so a bullet never appears on the map without a trace of where it came from.
+
+  Deliberately a separate verb rather than a fallback when `start_action` matches nothing: a fallback
+  would silently turn every typo into a new action, which is the failure mode the change above
+  removes.
+
+  On the desktop this is the Home view's "Starting something that isn't listed?" row, under the
+  pick-one shortlist — collapsed until asked for, so the planned path stays the main one. It defaults
+  to the energy filter's current level, since the filter states the energy you have now and this is
+  work starting now. Previously the only honest route was to add the action, come back, and start it:
+  two gestures and a context switch to record work already begun.
+
 ## [0.37.0] - 2026-09-10
 
 ### Added

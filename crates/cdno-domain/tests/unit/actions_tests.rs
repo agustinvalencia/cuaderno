@@ -15,6 +15,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
+use cdno_domain::vault::WriteOutcome;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 fn vp(p: &str) -> VaultPath {
@@ -526,6 +527,15 @@ fn promote_action_errors_on_ambiguous_match() {
 #[test]
 fn start_action_logs_to_daily_note() {
     let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    // The action must exist on the map: a start names a bullet (#568).
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
 
     let daily = vault
         .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft the methods section")
@@ -533,7 +543,8 @@ fn start_action_logs_to_daily_note() {
 
     let content = store.read_file(&daily).unwrap();
     assert!(
-        content.contains("- **09:30**: started [[alpha]] \u{2014} Draft the methods section"),
+        content
+            .contains("- **09:30**: started [[alpha]] \u{2014} Draft the methods section (deep)"),
         "daily note carries the started line: {content}"
     );
 }
@@ -1137,5 +1148,531 @@ fn drop_action_clears_a_pre_existing_completed_date() {
     assert_eq!(
         fm.completed, None,
         "the stale completion date is cleared, not carried into the archive"
+    );
+}
+
+/// The acceptance criterion of #568, joining the two sides rather than
+/// feeding each a fixture: the text the desktop app actually passes,
+/// through a real start and a real close.
+#[test]
+fn a_start_from_the_desktop_path_is_cleared_by_completing_it() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    // Exactly what `ActionShortlist` hands `start_action`.
+    let listed = vault.list_actions("foo").unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", &listed[0].text)
+        .expect("start succeeds");
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_some(),
+        "precondition: the start opened a focus"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 17, 0), "foo", "demo-proposal")
+        .expect("complete succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "the close must clear the start it names"
+    );
+}
+
+/// And by dropping it — the other terminal verb writes a different
+/// prefix, so it needs its own end-to-end pass.
+#[test]
+fn a_start_from_the_desktop_path_is_cleared_by_dropping_it() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action_with_note(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Prepare the demo proposal",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    let listed = vault.list_actions("foo").unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", &listed[0].text)
+        .expect("start succeeds");
+
+    vault
+        .drop_action(
+            dt(2026, 5, 26, 17, 0),
+            "foo",
+            "demo-proposal",
+            Some("superseded"),
+        )
+        .expect("drop succeeds");
+
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "a drop clears the start too"
+    );
+}
+
+/// The resolution, stated as a property: what is logged is the bullet,
+/// not the query. A caller passing the energy-stripped form — which
+/// `TopAction::text` is — still produces an entry a close can match.
+#[test]
+fn start_action_logs_the_bullet_text_not_the_query_it_was_given() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    // No energy suffix, and only part of the title.
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "methods")
+        .expect("a substring resolves, as it does for the close verbs");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        daily.contains("- **09:30**: started [[foo]] \u{2014} Draft the methods section (deep)"),
+        "the resolved bullet is logged, so a close can match it:\n{daily}"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 17, 0), "foo", "methods")
+        .expect("complete succeeds");
+    assert_eq!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap(),
+        None,
+        "and it does"
+    );
+}
+
+/// Unplanned work is refused rather than logged. It was never really
+/// supported: a start naming no bullet can be closed by nothing, so the
+/// focus stayed open for ever and `complete_action` reported the action
+/// as not found. Better to say so at the start than to leave an
+/// unfixable state behind.
+#[test]
+fn start_action_refuses_work_that_is_not_on_the_map() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "foo",
+            "Draft the methods section",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "Buy milk")
+        .expect_err("a start names a bullet");
+    assert!(
+        matches!(err, DomainError::ActionNotFound { .. }),
+        "got {err:?}"
+    );
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .unwrap();
+    assert!(
+        !daily.contains("started [[foo]]"),
+        "a refused start logs nothing:\n{daily}"
+    );
+}
+
+/// Ambiguity is an error carrying the candidates, as it is for the
+/// close verbs — starting the wrong one of two look-alike bullets puts
+/// the focus on work you are not doing.
+#[test]
+fn start_action_refuses_an_ambiguous_query_and_offers_the_candidates() {
+    let (vault, _store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    for title in ["Draft the methods section", "Draft the results section"] {
+        vault
+            .add_action(dt(2026, 5, 26, 9, 0), "foo", title, EnergyLevel::Deep)
+            .unwrap();
+    }
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 9, 30), "foo", "Draft the")
+        .expect_err("two matches must not be resolved by guessing");
+    match err {
+        DomainError::AmbiguousAction { candidates, .. } => {
+            assert_eq!(candidates.len(), 2, "both offered: {candidates:?}");
+        }
+        other => panic!("got {other:?}"),
+    }
+}
+
+// --- start_unplanned_action -------------------------------------------
+//
+// The path that makes "just start something" real (#568). The old
+// free-text `start_action` only appeared to support it: the start was
+// logged, and then nothing could ever close it.
+
+#[test]
+fn unplanned_start_adds_the_bullet_and_starts_it_in_one_go() {
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let outcome = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+    let daily = daily_path_of(&outcome);
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "the work is on the map now, not just in the log: {map}"
+    );
+
+    let content = store.read_file(&daily).unwrap();
+    assert!(
+        content.contains("- **09:30**: started [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "started line carries the resolved bullet text: {content}"
+    );
+}
+
+#[test]
+fn unplanned_start_logs_the_bullets_origin_as_well_as_the_start() {
+    // Adding the bullet mutates `## Next Actions`, so it emits its own
+    // log entry — the map never gains a line from nowhere. Both entries
+    // must survive: they are staged into one write, and staging them
+    // separately would silently drop the first.
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let outcome = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+    let daily = daily_path_of(&outcome);
+
+    let content = store.read_file(&daily).unwrap();
+    assert!(
+        content.contains("action added to [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "the addition is logged: {content}"
+    );
+    assert!(
+        content.contains("started [[alpha]] \u{2014} Fix the CI badge (light)"),
+        "the start is logged: {content}"
+    );
+}
+
+#[test]
+fn unplanned_work_can_actually_be_completed() {
+    // The whole point. On the old free-text path this was impossible:
+    // the start logged raw text, `complete_action` logged resolved
+    // bullet text, the two never matched, and `current_focus` stayed
+    // pinned to the unplanned work for ever.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let focus = vault
+        .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+        .unwrap();
+    assert!(
+        focus.is_some_and(|f| f.action.contains("Fix the CI badge")),
+        "focus is on the unplanned work while it runs"
+    );
+
+    vault
+        .complete_action(dt(2026, 5, 26, 11, 0), "alpha", "Fix the CI badge")
+        .unwrap();
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "and it clears on completion — the invariant free text could never satisfy"
+    );
+}
+
+#[test]
+fn unplanned_work_can_also_be_dropped() {
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+    vault
+        .drop_action(dt(2026, 5, 26, 11, 0), "alpha", "Fix the CI badge", None)
+        .unwrap();
+
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "dropping clears the focus too"
+    );
+}
+
+#[test]
+fn unplanned_start_rejects_parked_project_and_blank_action() {
+    const PARKED: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n";
+    let (vault, _store) = vault_with(&[
+        ("projects/alpha.md", ACTIVE_PROJECT),
+        ("projects/_parked/beta.md", PARKED),
+    ]);
+
+    assert!(matches!(
+        vault.start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "beta",
+            "Anything",
+            EnergyLevel::Light
+        ),
+        Err(DomainError::ProjectNotActive { .. })
+    ));
+    assert!(matches!(
+        vault.start_unplanned_action(dt(2026, 5, 26, 9, 30), "alpha", "   ", EnergyLevel::Light),
+        Err(DomainError::EmptyField { field: "action" })
+    ));
+}
+
+#[test]
+fn unplanned_start_appends_rather_than_replacing_existing_actions() {
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Draft methods (deep)"),
+        "planned work survives: {map}"
+    );
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "unplanned work added: {map}"
+    );
+}
+
+/// The daily note out of a [`WriteOutcome`]'s touched set. Pulling it
+/// from the outcome rather than rebuilding the path keeps these tests
+/// honest about what the commit actually wrote — the same set the
+/// desktop layer journals for watcher echo-suppression.
+fn daily_path_of(outcome: &WriteOutcome) -> VaultPath {
+    outcome
+        .paths
+        .iter()
+        .find(|p| p.as_path().starts_with("journal"))
+        .expect("the commit wrote a daily note")
+        .clone()
+}
+
+#[test]
+fn unplanned_start_reports_both_files_it_wrote() {
+    // The desktop layer journals this set so the watcher doesn't echo
+    // the writes back as external edits (#315). This op touches two
+    // files, and a caller-side reconstruction would miss one.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    let outcome = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.primary,
+        VaultPath::new("projects/alpha.md").unwrap(),
+        "the op is about the project map"
+    );
+    assert!(
+        outcome
+            .paths
+            .contains(&VaultPath::new("projects/alpha.md").unwrap()),
+        "map is in the touched set: {:?}",
+        outcome.paths
+    );
+    assert!(
+        outcome
+            .paths
+            .iter()
+            .any(|p| p.as_path().starts_with("journal")),
+        "daily note is in the touched set: {:?}",
+        outcome.paths
+    );
+}
+
+#[test]
+fn unplanned_start_flattens_interior_whitespace() {
+    // An interior newline would split the bullet across two lines of
+    // `## Next Actions`, and each log entry into a second physical line
+    // that no reader parses. The close then removes only the first line
+    // and leaves an orphan non-bullet behind in the section.
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the badge\nand the docs",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Fix the badge and the docs (light)"),
+        "one bullet, one line: {map}"
+    );
+
+    // The close must take the whole bullet with it, leaving no orphan.
+    vault
+        .complete_action(
+            dt(2026, 5, 26, 11, 0),
+            "alpha",
+            "Fix the badge and the docs",
+        )
+        .unwrap();
+    let after = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        !after.contains("and the docs"),
+        "nothing of the action survives in the section: {after}"
+    );
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "and the focus clears"
+    );
+}
+
+#[test]
+fn unplanned_start_creates_the_section_on_a_drifted_project() {
+    // A map with no `## Next Actions` at all (migration import, hand
+    // edit). Without `ensure_section` the whole verb fails and the work
+    // cannot be started — and no other fixture here lacks the section,
+    // so nothing else would catch its removal.
+    const NO_SECTION: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n";
+    let (vault, store) = vault_with(&[("projects/drifted.md", NO_SECTION)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "drifted",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .expect("a missing section is created, not an error");
+
+    let map = store
+        .read_file(&VaultPath::new("projects/drifted.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("## Next Actions") && map.contains("- [ ] Fix the CI badge (light)"),
+        "section created and bullet placed in it: {map}"
+    );
+}
+
+#[test]
+fn a_promotion_between_start_and_close_strands_the_focus() {
+    // The limit of "the verbs agree by construction" (#568). Promotion is
+    // the fourth caller of `resolve_open_action` and the only one that
+    // REWRITES the text it matched, so a start logged before it can never
+    // pair with the close after it. Pre-existing and unchanged by #568 —
+    // pinned so the claim cannot quietly grow into one the code does not
+    // keep, and so that fixing it later has a failing test to flip.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft methods")
+        .unwrap();
+
+    // Promotion rewrites the bullet to wikilink the new action note.
+    vault
+        .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
+        .unwrap();
+
+    // The close logs the REWRITTEN text, which cannot match the start.
+    vault
+        .complete_action(dt(2026, 5, 26, 11, 0), "alpha", "draft-methods")
+        .unwrap();
+
+    let focus = vault
+        .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+        .unwrap();
+    assert!(
+        focus.is_some_and(|f| f.action.contains("Draft methods")),
+        "documented limitation: the pre-promotion start is still open, \
+         with no bullet left that could ever close it"
     );
 }
