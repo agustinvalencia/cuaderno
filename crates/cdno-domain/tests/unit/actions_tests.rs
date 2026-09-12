@@ -1559,3 +1559,120 @@ fn unplanned_start_reports_both_files_it_wrote() {
         outcome.paths
     );
 }
+
+#[test]
+fn unplanned_start_flattens_interior_whitespace() {
+    // An interior newline would split the bullet across two lines of
+    // `## Next Actions`, and each log entry into a second physical line
+    // that no reader parses. The close then removes only the first line
+    // and leaves an orphan non-bullet behind in the section.
+    let (vault, store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "alpha",
+            "Fix the badge\nand the docs",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let map = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("- [ ] Fix the badge and the docs (light)"),
+        "one bullet, one line: {map}"
+    );
+
+    // The close must take the whole bullet with it, leaving no orphan.
+    vault
+        .complete_action(
+            dt(2026, 5, 26, 11, 0),
+            "alpha",
+            "Fix the badge and the docs",
+        )
+        .unwrap();
+    let after = store
+        .read_file(&VaultPath::new("projects/alpha.md").unwrap())
+        .unwrap();
+    assert!(
+        !after.contains("and the docs"),
+        "nothing of the action survives in the section: {after}"
+    );
+    assert!(
+        vault
+            .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+            .unwrap()
+            .is_none(),
+        "and the focus clears"
+    );
+}
+
+#[test]
+fn unplanned_start_creates_the_section_on_a_drifted_project() {
+    // A map with no `## Next Actions` at all (migration import, hand
+    // edit). Without `ensure_section` the whole verb fails and the work
+    // cannot be started — and no other fixture here lacks the section,
+    // so nothing else would catch its removal.
+    const NO_SECTION: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n";
+    let (vault, store) = vault_with(&[("projects/drifted.md", NO_SECTION)]);
+
+    vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 9, 30),
+            "drifted",
+            "Fix the CI badge",
+            EnergyLevel::Light,
+        )
+        .expect("a missing section is created, not an error");
+
+    let map = store
+        .read_file(&VaultPath::new("projects/drifted.md").unwrap())
+        .unwrap();
+    assert!(
+        map.contains("## Next Actions") && map.contains("- [ ] Fix the CI badge (light)"),
+        "section created and bullet placed in it: {map}"
+    );
+}
+
+#[test]
+fn a_promotion_between_start_and_close_strands_the_focus() {
+    // The limit of "the verbs agree by construction" (#568). Promotion is
+    // the fourth caller of `resolve_open_action` and the only one that
+    // REWRITES the text it matched, so a start logged before it can never
+    // pair with the close after it. Pre-existing and unchanged by #568 —
+    // pinned so the claim cannot quietly grow into one the code does not
+    // keep, and so that fixing it later has a failing test to flip.
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft methods")
+        .unwrap();
+
+    // Promotion rewrites the bullet to wikilink the new action note.
+    vault
+        .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
+        .unwrap();
+
+    // The close logs the REWRITTEN text, which cannot match the start.
+    vault
+        .complete_action(dt(2026, 5, 26, 11, 0), "alpha", "draft-methods")
+        .unwrap();
+
+    let focus = vault
+        .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+        .unwrap();
+    assert!(
+        focus.is_some_and(|f| f.action.contains("Draft methods")),
+        "documented limitation: the pre-promotion start is still open, \
+         with no bullet left that could ever close it"
+    );
+}

@@ -16,7 +16,7 @@
 // Collapsed by default — the planned shortlist is the main path, and an
 // always-open form would invite capture-instead-of-doing, which is the
 // friction the method exists to remove.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import type { EnergyLevel } from "../../api/bindings/EnergyLevel";
@@ -36,6 +36,8 @@ export default function UnplannedStart({
   const client = useQueryClient();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [returnFocus, setReturnFocus] = useState(false);
   const [project, setProject] = useState("");
   const [text, setText] = useState("");
   // The filter is a statement about the energy you have right now, so it
@@ -50,16 +52,43 @@ export default function UnplannedStart({
   const [override, setOverride] = useState<EnergyLevel | null>(null);
   const level = override ?? energy ?? "medium";
 
-  const slug = project || projects[0]?.slug || "";
+  // Reconciled against the live list, not just remembered. `projects`
+  // comes from get_orientation, which is invalidated while this form can
+  // be open — by the Now band's Done, by this form's own success, and by
+  // any `vault:changed` from the CLI, an agent, or another window. If the
+  // picked project is gone from the refetched list, a controlled <select>
+  // silently falls back to rendering the first option, so remembering the
+  // raw pick would show one project and submit another.
+  const selected = projects.some((p) => p.slug === project) ? project : (projects[0]?.slug ?? "");
+
+  // Reset to the closed state, returning focus to the trigger that
+  // opened it rather than dropping it on document.body.
+  //
+  // Deferred through an effect rather than focused inline: while the form
+  // is open the trigger is UNMOUNTED (this component renders one or the
+  // other), so `trigger.current` is null at the moment Cancel fires and a
+  // direct call is a silent no-op. The flag survives to the commit where
+  // the button exists again.
+  function close() {
+    setOpen(false);
+    setText("");
+    setOverride(null);
+    setReturnFocus(true);
+  }
+
+  useEffect(() => {
+    if (!open && returnFocus) {
+      trigger.current?.focus();
+      setReturnFocus(false);
+    }
+  }, [open, returnFocus]);
 
   const start = useMutation({
-    mutationFn: () => startUnplannedAction(slug, text.trim(), level),
+    mutationFn: () => startUnplannedAction(selected, text.trim(), level),
     onError: (error) => toast(errorMessage(error), "attention"),
     onSuccess: () => {
-      toast(`Started on ${slug}. It's on the map now, so you can tick it off.`);
-      setText("");
-      setOverride(null);
-      setOpen(false);
+      toast(`Started on ${selected}. It's on the map now, so you can tick it off.`);
+      close();
       // The band reads the log this wrote; the shortlist and the map
       // both gained a bullet.
       void client.invalidateQueries({ queryKey: ["get_now"] });
@@ -77,6 +106,8 @@ export default function UnplannedStart({
     return (
       <button
         type="button"
+        ref={trigger}
+        aria-expanded={false}
         onClick={() => setOpen(true)}
         className="mt-2 text-xs text-ink-faint hover:text-ink"
       >
@@ -116,7 +147,7 @@ export default function UnplannedStart({
           </label>
           <select
             id="unplanned-project"
-            value={slug}
+            value={selected}
             onChange={(event) => setProject(event.target.value)}
             className="mt-1 rounded border border-line bg-bg px-2 py-1 text-sm text-ink"
           >
@@ -155,13 +186,13 @@ export default function UnplannedStart({
         </button>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={close}
           className="text-xs text-ink-faint hover:text-ink"
         >
           Cancel
         </button>
         <span className="ml-auto text-xs text-ink-faint">
-          Adds it to {slug} and starts it
+          Adds it to {selected} and starts it
         </span>
       </div>
     </form>

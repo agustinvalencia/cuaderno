@@ -2068,3 +2068,39 @@ fn start_unplanned_action_rejects_an_unknown_energy() {
         "and nothing was written: {map}"
     );
 }
+
+#[test]
+fn start_unplanned_action_command_journals_both_paths_it_wrote() {
+    // The reason the domain verb returns a `WriteOutcome` at all: this
+    // command writes TWO files, and both must land in the write journal
+    // or the watcher reports them as external edits (#315). Without this,
+    // deleting the whole `record_outcome_and_emit` call leaves every
+    // cdno-tauri test green — the same shape as
+    // `complete_action_command_journals_every_touched_path_including_the_archive`.
+    use tauri::Manager;
+
+    let (app, _store) = mock_app();
+    let webview = tauri::WebviewWindowBuilder::new(&app, "w-unplanned-journal", Default::default())
+        .build()
+        .expect("mock webview");
+
+    let body = InvokeBody::Json(serde_json::json!({
+        "project": "alpha",
+        "action": "Fix the CI badge",
+        "energy": "light",
+    }));
+    get_ipc_response(&webview, request_with("start_unplanned_action", body))
+        .expect("command succeeds");
+
+    // As in the completion test above: the command stamps its own
+    // `Local::now()`, so the daily is recomputed from a fresh one.
+    let daily = cdno_tauri::commands::actions::daily_path_for(chrono::Local::now().date_naive());
+    let state = app.state::<AppState>();
+    for path in [VaultPath::new("projects/alpha.md").unwrap(), daily] {
+        assert!(
+            state.journal.is_recent_self_write(&path),
+            "{path:?} must be journalled as our own write, or the watcher \
+             echoes it back as an external edit"
+        );
+    }
+}

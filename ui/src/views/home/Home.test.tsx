@@ -316,3 +316,77 @@ test("with no active projects there is nothing to hang unplanned work on", async
   expect(await screen.findByText(/Nothing active/)).toBeDefined();
   expect(screen.queryByRole("button", { name: /isn't listed/ })).toBeNull();
 });
+
+const TWO_PROJECTS: OrientationView = {
+  ...ORIENTATION,
+  projects: [
+    ORIENTATION.projects[0],
+    {
+      slug: "beta",
+      status: "active",
+      state_snippet: "Second project.",
+      top_action: { text: "Chase the invoice", energy: "light" },
+      context: "work",
+      actions: [{ text: "Chase the invoice (light)", energy: "light", attached: null }],
+    },
+  ],
+};
+
+test("the project picked in the form is the project submitted", async () => {
+  // Every other fixture has one project, so the picker was unconstrained:
+  // ignoring the select entirely would have passed.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { orientation: TWO_PROJECTS, now: null });
+  renderHome();
+
+  const form = await openUnplannedForm();
+  fireEvent.change(within(form).getByLabelText("On"), { target: { value: "beta" } });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).toMatchObject({
+      project: "beta",
+    });
+  });
+});
+
+test("an explicit energy pick beats the filter's default", async () => {
+  // The override half of `override ?? energy ?? "medium"` — with the
+  // filter on "light", choosing "deep" in the form must win.
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  installMock(calls, { now: null });
+  renderHome();
+
+  fireEvent.click(await screen.findByRole("button", { name: "light" }));
+  const form = await openUnplannedForm();
+  fireEvent.change(within(form).getByLabelText("Energy"), { target: { value: "deep" } });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).toMatchObject({
+      energy: "deep",
+    });
+  });
+});
+
+test("cancelling discards the draft rather than keeping it for next time", async () => {
+  installMock([], { now: null });
+  renderHome();
+
+  const form = await openUnplannedForm();
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "half-typed thought" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+
+  const reopened = await openUnplannedForm();
+  expect((within(reopened).getByLabelText("What are you starting?") as HTMLInputElement).value).toBe(
+    "",
+  );
+});

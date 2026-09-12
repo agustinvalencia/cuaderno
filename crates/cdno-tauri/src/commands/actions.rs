@@ -98,7 +98,7 @@ pub async fn start_action<R: tauri::Runtime>(
 
 /// Start work that isn't on the map yet: the domain appends the bullet
 /// to `## Next Actions` and logs it as started in one transaction. The
-/// Home view's "Something else" row.
+/// Home view's "Starting something that isn't listed?" row.
 ///
 /// Separate from [`start_action`] rather than a fallback inside it, for
 /// the reason the domain method documents: a fallback would turn a typo

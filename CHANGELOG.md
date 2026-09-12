@@ -15,10 +15,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   with silent and unfixable failure when a second caller got it wrong (#568).
 
   `start_action` now resolves its argument through `resolve_open_action`, the matcher the close verbs
-  already share, and logs the resolved text, so the three verbs agree by construction. A query
-  matching no open bullet is `ActionNotFound`; an ambiguous one is `AmbiguousAction` carrying the
-  candidates. Passing energy-stripped text (`Draft methods` for `- [ ] Draft methods (deep)`) now
-  resolves and logs the full bullet. The desktop app is unaffected — it already passed bullet text.
+  already share, and logs the resolved text, so a start and its completion or drop agree by
+  construction. A query matching no open bullet is `ActionNotFound`; an ambiguous one is
+  `AmbiguousAction` carrying the candidates. Passing energy-stripped text (`Draft methods` for
+  `- [ ] Draft methods (deep)`) now resolves and logs the full bullet. The desktop app is unaffected —
+  it already passed bullet text.
+
+  That agreement covers the close verbs only. `promote_action` also resolves through the same matcher
+  but *rewrites* the bullet, so a start logged before a promotion still cannot pair with the close
+  after it and the focus stays pinned. Pre-existing and unchanged — `start_action` logged the same
+  verbatim text before — but it is the limit of the guarantee, and is now pinned by a test rather
+  than left to be discovered.
 
   Note this issue was filed claiming a live bug in `current_focus` for actions with attached notes.
   That claim was wrong and the issue has been corrected; the desktop flow round-trips correctly.

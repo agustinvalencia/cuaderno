@@ -149,6 +149,16 @@ impl Vault {
     /// the texts agree by construction rather than by both sides
     /// formatting the string the same way.
     ///
+    /// That agreement holds for the *close* verbs only. [`promote_action`]
+    /// also resolves through [`resolve_open_action`] but **rewrites** the
+    /// bullet it matched, so a start logged before a promotion can never
+    /// be paired with the close that follows it and the focus stays
+    /// pinned. That is pre-existing and unchanged here — `start_action`
+    /// logged the same verbatim text before this change — but it is the
+    /// limit of "agree by construction", and
+    /// `a_promotion_between_start_and_close_strands_the_focus` pins the
+    /// real behaviour so the claim cannot quietly grow.
+    ///
     /// Keep this separate from `start_action` rather than making it a
     /// fallback when the query matches nothing: a fallback would turn
     /// every typo into a *new* action silently — the exact class of
@@ -163,15 +173,29 @@ impl Vault {
     ///
     /// Returns a [`WriteOutcome`] like the close verbs: `primary` is the
     /// project map, `paths` every file the commit wrote (the map and the
-    /// daily note). This writes *two* files, so the desktop layer needs
-    /// the domain's own touched set to journal them for the watcher —
-    /// reconstructing it caller-side would leave one of them looking
-    /// like an external edit (#315).
+    /// daily note), which is what the desktop journals for the watcher
+    /// (#315). `add_action` writes the same two files and gets away with
+    /// returning a bare path because its caller rebuilds the daily path
+    /// from the same clock — so this is the safer shape, not the only
+    /// workable one: the touched set stays right here if a later change
+    /// makes this verb write a third file, where a caller-side rebuild
+    /// would silently keep journalling two.
     ///
-    /// Errors mirror [`Vault::add_action`]: parked → `ProjectNotActive`,
-    /// missing → `Store(NotFound)`, whitespace-only action →
-    /// `EmptyField`. There is no not-found or ambiguity error here — the
-    /// action is being created, so there is nothing to match against.
+    /// Errors: parked → `ProjectNotActive`, missing → `Store(NotFound)`,
+    /// whitespace-only action → `EmptyField`. The first two mirror
+    /// [`Vault::add_action`]; the blank check does not — `add_action` has
+    /// none and will write `- [ ]  (deep)` — this mirrors `start_action`,
+    /// since starting nameless work is the failure #568 is about. There
+    /// is no not-found or ambiguity error here: the action is being
+    /// created, so there is nothing to match against.
+    ///
+    /// Whitespace inside `action` is flattened, as [`flatten_reason`]
+    /// does for a drop reason and for the same reason: an interior
+    /// newline would split the bullet across two lines of
+    /// `## Next Actions` — leaving an orphan non-bullet line behind when
+    /// the action is later closed — and split each log entry into a
+    /// second physical line no reader parses. `add_action` has the same
+    /// hole and is left alone here rather than widening this change.
     pub fn start_unplanned_action(
         &self,
         at: NaiveDateTime,
@@ -179,7 +203,10 @@ impl Vault {
         action: &str,
         energy: EnergyLevel,
     ) -> Result<WriteOutcome, DomainError> {
-        let action_text = action.trim();
+        // Flattened, not merely trimmed: an interior newline would split
+        // the bullet and both log entries across physical lines.
+        let action_text = flatten_reason(action);
+        let action_text = action_text.as_str();
         if action_text.is_empty() {
             return Err(DomainError::EmptyField { field: "action" });
         }
