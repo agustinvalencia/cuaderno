@@ -37,6 +37,7 @@ export default function UnplannedStart({
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const form = useRef<HTMLFormElement>(null);
   const [returnFocus, setReturnFocus] = useState(false);
   const [project, setProject] = useState("");
   const [text, setText] = useState("");
@@ -61,8 +62,16 @@ export default function UnplannedStart({
   // raw pick would show one project and submit another.
   const selected = projects.some((p) => p.slug === project) ? project : (projects[0]?.slug ?? "");
 
-  // Reset to the closed state, returning focus to the trigger that
-  // opened it rather than dropping it on document.body.
+  // Reset to the closed state, discarding the whole draft.
+  //
+  // Focus returns to the trigger ONLY when focus is still inside the form
+  // being closed. `close()` runs from two places — Cancel, and the
+  // mutation's success — and Cancel is not disabled while the request is
+  // in flight, so both can fire for one submission. Without the guard the
+  // late success would haul focus back to the trigger from wherever the
+  // user had moved to, which also happens without Cancel at all: press
+  // Start, click into the daily note while the IPC commits, and the
+  // resolution steals focus back.
   //
   // Deferred through an effect rather than focused inline: while the form
   // is open the trigger is UNMOUNTED (this component renders one or the
@@ -70,10 +79,12 @@ export default function UnplannedStart({
   // direct call is a silent no-op. The flag survives to the commit where
   // the button exists again.
   function close() {
+    const hadFocus = form.current?.contains(document.activeElement) ?? false;
     setOpen(false);
     setText("");
     setOverride(null);
-    setReturnFocus(true);
+    setProject("");
+    if (hadFocus) setReturnFocus(true);
   }
 
   useEffect(() => {
@@ -83,11 +94,18 @@ export default function UnplannedStart({
     }
   }, [open, returnFocus]);
 
+  // Submitted through mutation variables rather than read out of the
+  // render closure. `selected` is re-derived from the live `projects`
+  // prop, and react-query runs the callbacks with the closure from the
+  // render at RESOLUTION time — so if the picked project leaves the
+  // refetched list mid-request, the callbacks would report a different
+  // project from the one actually written.
   const start = useMutation({
-    mutationFn: () => startUnplannedAction(selected, text.trim(), level),
+    mutationFn: (submission: { project: string; action: string; energy: EnergyLevel }) =>
+      startUnplannedAction(submission.project, submission.action, submission.energy),
     onError: (error) => toast(errorMessage(error), "attention"),
-    onSuccess: () => {
-      toast(`Started on ${selected}. It's on the map now, so you can tick it off.`);
+    onSuccess: (_data, submission) => {
+      toast(`Started on ${submission.project}. It's on the map now, so you can tick it off.`);
       close();
       // The band reads the log this wrote; the shortlist and the map
       // both gained a bullet.
@@ -120,11 +138,12 @@ export default function UnplannedStart({
 
   return (
     <form
+      ref={form}
       aria-label="Start something that isn't listed"
       className="mt-2 rounded border border-line bg-bg-surface p-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (canStart) start.mutate();
+        if (canStart) start.mutate({ project: selected, action: text.trim(), energy: level });
       }}
     >
       <div className="flex flex-wrap items-end gap-2">

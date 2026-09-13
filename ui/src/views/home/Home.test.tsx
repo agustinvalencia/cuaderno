@@ -231,6 +231,21 @@ test("an empty vault gets the warm empty state", async () => {
 
 const NO_PROJECTS: OrientationView = { ...ORIENTATION, projects: [] };
 
+const TWO_PROJECTS_ORIENTATION: OrientationView = {
+  ...ORIENTATION,
+  projects: [
+    ORIENTATION.projects[0],
+    {
+      slug: "beta",
+      status: "active",
+      state_snippet: "Second project.",
+      top_action: null,
+      context: "work",
+      actions: [],
+    },
+  ],
+};
+
 /** Open the unplanned-start form and return it, so queries inside stay
  * scoped — the shortlist has a "Start" button of its own. */
 async function openUnplannedForm() {
@@ -375,18 +390,29 @@ test("an explicit energy pick beats the filter's default", async () => {
   });
 });
 
-test("cancelling discards the draft rather than keeping it for next time", async () => {
-  installMock([], { now: null });
+test("cancelling discards the whole draft, not just the text", async () => {
+  // All three fields: the text, the energy override, and the project.
+  // The override matters most — left behind, it would keep offering a
+  // stale bucket after the page filter moved on, which is exactly what
+  // deriving the default is meant to prevent.
+  installMock([], { orientation: TWO_PROJECTS_ORIENTATION, now: null });
   renderHome();
 
   const form = await openUnplannedForm();
   fireEvent.change(within(form).getByLabelText("What are you starting?"), {
     target: { value: "half-typed thought" },
   });
+  fireEvent.change(within(form).getByLabelText("Energy"), { target: { value: "deep" } });
+  fireEvent.change(within(form).getByLabelText("On"), { target: { value: "beta" } });
   fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
+
+  // The page filter moves on while the form is shut.
+  fireEvent.click(screen.getByRole("button", { name: "light" }));
 
   const reopened = await openUnplannedForm();
   expect((within(reopened).getByLabelText("What are you starting?") as HTMLInputElement).value).toBe(
     "",
   );
+  expect((within(reopened).getByLabelText("Energy") as HTMLSelectElement).value).toBe("light");
+  expect((within(reopened).getByLabelText("On") as HTMLSelectElement).value).toBe("alpha");
 });

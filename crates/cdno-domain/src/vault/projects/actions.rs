@@ -149,7 +149,7 @@ impl Vault {
     /// the texts agree by construction rather than by both sides
     /// formatting the string the same way.
     ///
-    /// That agreement holds for the *close* verbs only. [`promote_action`]
+    /// That agreement holds for the *close* verbs only. [`Vault::promote_action`]
     /// also resolves through [`resolve_open_action`] but **rewrites** the
     /// bullet it matched, so a start logged before a promotion can never
     /// be paired with the close that follows it and the focus stays

@@ -21,6 +21,18 @@ const ALPHA: OrientationProject = {
 
 const BETA: OrientationProject = { ...ALPHA, slug: "beta", top_action: null, actions: [] };
 
+/** The provider-wrapped element, for tests that render siblings too. */
+function renderFormInto(projects: OrientationProject[]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <UnplannedStart projects={projects} energy={null} />
+      </ToastProvider>
+    </QueryClientProvider>
+  );
+}
+
 function renderForm(projects: OrientationProject[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -83,6 +95,117 @@ test("a project that vanishes from the list cannot be submitted behind the user'
   expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).not.toMatchObject({
     project: "beta",
   });
+});
+
+test("a late success does not haul focus back from wherever the user moved to", async () => {
+  // close() runs from Cancel AND from the mutation's success, and Cancel
+  // is not disabled while the request is in flight, so both fire for one
+  // submission. Focus must return only if it is still inside the form.
+  let resolve: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    resolve = r;
+  });
+  mockIPC(async (cmd) => {
+    if (cmd === "start_unplanned_action") await gate;
+    return undefined;
+  });
+
+  render(
+    <div>
+      <button data-testid="elsewhere">elsewhere</button>
+      {renderFormInto([ALPHA])}
+    </div>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /isn't listed/ }));
+  const form = screen.getByRole("form", { name: "Start something that isn't listed" });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  // The user gives up waiting and goes elsewhere.
+  const elsewhere = screen.getByTestId("elsewhere");
+  elsewhere.focus();
+  resolve();
+
+  await waitFor(() => {
+    expect(screen.queryByRole("form", { name: "Start something that isn't listed" })).toBeNull();
+  });
+  expect(document.activeElement).toBe(elsewhere);
+});
+
+test("the toast names the project actually submitted, not one re-derived later", async () => {
+  // `selected` is re-derived from the live list every render, and
+  // react-query runs onSuccess with the closure from the render at
+  // RESOLUTION time. The submission is carried in mutation variables so
+  // the message cannot drift from the write.
+  let resolve: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    resolve = r;
+  });
+  const calls: Array<{ cmd: string; args: unknown }> = [];
+  mockIPC(async (cmd, args) => {
+    calls.push({ cmd, args });
+    if (cmd === "start_unplanned_action") await gate;
+    return undefined;
+  });
+
+  const { rerender } = renderForm([ALPHA, BETA]);
+  fireEvent.click(screen.getByRole("button", { name: /isn't listed/ }));
+  const form = screen.getByRole("form", { name: "Start something that isn't listed" });
+  fireEvent.change(within(form).getByLabelText("On"), { target: { value: "beta" } });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+  await waitFor(() => {
+    expect(calls.find((c) => c.cmd === "start_unplanned_action")).toBeDefined();
+  });
+
+  // beta disappears from the list mid-request.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  rerender(
+    <QueryClientProvider client={client}>
+      <ToastProvider>
+        <UnplannedStart projects={[ALPHA]} energy={null} />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+  resolve();
+
+  await waitFor(() => {
+    expect(document.body.textContent).toContain("Started on beta");
+  });
+  expect(document.body.textContent).not.toContain("Started on alpha");
+  expect(calls.find((c) => c.cmd === "start_unplanned_action")?.args).toMatchObject({
+    project: "beta",
+  });
+});
+
+test("a failed start leaves the form open with the typed text intact", async () => {
+  // The path a user hits when a project is parked from the CLI between
+  // the refetch and the submit — losing the text here would be the worst
+  // possible moment for it.
+  mockIPC((cmd) => {
+    if (cmd === "start_unplanned_action") throw new Error("alpha is parked");
+    return undefined;
+  });
+
+  renderForm([ALPHA]);
+  fireEvent.click(screen.getByRole("button", { name: /isn't listed/ }));
+  const form = screen.getByRole("form", { name: "Start something that isn't listed" });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+  fireEvent.click(within(form).getByRole("button", { name: "Start" }));
+
+  await waitFor(() => {
+    expect(document.body.textContent).toContain("alpha is parked");
+  });
+  const live = screen.getByRole("form", { name: "Start something that isn't listed" });
+  expect((within(live).getByLabelText("What are you starting?") as HTMLInputElement).value).toBe(
+    "Fix the CI badge",
+  );
 });
 
 test("closing the form returns focus to the trigger that opened it", async () => {

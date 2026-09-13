@@ -1387,6 +1387,19 @@ fn unplanned_start_logs_the_bullets_origin_as_well_as_the_start() {
         content.contains("started [[alpha]] \u{2014} Fix the CI badge (light)"),
         "the start is logged: {content}"
     );
+
+    // ORDER, not just presence: the bullet exists before it is started,
+    // and the daily log is the append-only record of that sequence.
+    // `stage_daily_logs` promises "in order" and nothing else pins it —
+    // reversing its fold left the whole domain suite green.
+    let added = content
+        .find("action added to [[alpha]]")
+        .expect("addition logged");
+    let started = content.find("started [[alpha]]").expect("start logged");
+    assert!(
+        added < started,
+        "the addition is logged before the start: {content}"
+    );
 }
 
 #[test]
@@ -1525,8 +1538,11 @@ fn daily_path_of(outcome: &WriteOutcome) -> VaultPath {
 #[test]
 fn unplanned_start_reports_both_files_it_wrote() {
     // The desktop layer journals this set so the watcher doesn't echo
-    // the writes back as external edits (#315). This op touches two
-    // files, and a caller-side reconstruction would miss one.
+    // the writes back as external edits (#315). `add_action` gets away
+    // with returning a bare path because its command rebuilds the daily
+    // from the same clock; carrying the set keeps this verb right if it
+    // ever writes a third file, where such a rebuild would silently keep
+    // journalling two.
     let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
 
     let outcome = vault
