@@ -173,6 +173,16 @@ test("Home has no axe violations", async () => {
   expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
 });
 
+test("Home's unplanned-start form has no axe violations", async () => {
+  // Collapsed by default, so the pass above never reaches it — a form
+  // axe cannot see is a form nobody checked.
+  mockIPC((cmd) => (cmd === "get_orientation" ? ORIENTATION : undefined));
+  const { container } = renderView(<Home />);
+  fireEvent.click(await screen.findByRole("button", { name: /isn't listed/ }));
+  await screen.findByLabelText("What are you starting?");
+  expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
+});
+
 test("Commitments has no axe violations", async () => {
   mockIPC((cmd) => (cmd === "get_commitments" ? COMMITMENTS : undefined));
   const { container } = renderView(<Commitments />);

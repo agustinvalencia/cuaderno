@@ -1313,7 +1313,8 @@ The default view on launch. Shows:
 - **Commitments strip**: items due within 48h, horizontal, colour-coded by context
 - **Active projects** (up to 5): cards showing project name, current state (first 2 lines), and top next action with energy tag
 - **Energy selector**: deep / medium / light toggle that filters next actions across project cards
-- **Start button**: logs the selected action to today’s daily entry and opens the relevant file/notebook
+- **Start button**: logs the selected action to today’s daily entry and opens the relevant file/notebook. The action must already exist on the project map — a start names a bullet, so that the later completion logs matching text and the Now band clears
+- **Unplanned start**: a collapsed row under the shortlist for work that is on no map yet. It appends the action to the chosen project's `## Next Actions` and starts it in one transaction, logging both the addition and the start, so unplanned work becomes ordinary planned work as it begins
 
 Design: calm, spacious, no red. Commitments use subtle colour coding by context (see §5.10), not urgency colours.
 

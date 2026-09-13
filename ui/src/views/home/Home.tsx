@@ -24,6 +24,7 @@ import { SectionHeading } from "../../components/ui/section-heading";
 import { useReader } from "../../shell/reader";
 import ActionShortlist from "./ActionShortlist";
 import NowBand from "./NowBand";
+import UnplannedStart from "./UnplannedStart";
 
 const ENERGIES: EnergyLevel[] = ["deep", "medium", "light"];
 
@@ -112,6 +113,7 @@ export default function Home() {
         <SectionHeading>Pick one thing</SectionHeading>
         <div className="mt-2">
           <ActionShortlist projects={data.projects} energy={energy} />
+          <UnplannedStart projects={data.projects} energy={energy} />
         </div>
       </section>
 

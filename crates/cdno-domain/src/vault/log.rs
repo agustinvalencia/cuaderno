@@ -56,6 +56,25 @@ impl Vault {
         entry: &str,
         tx: &mut VaultTransaction,
     ) -> Result<VaultPath, DomainError> {
+        self.stage_daily_logs(at, std::slice::from_ref(&entry), tx)
+    }
+
+    /// Stage several daily-log entries as a single write, in order.
+    ///
+    /// Calling [`Vault::stage_daily_log`] twice on one transaction does
+    /// **not** work: it reads the base back from the store each time, so
+    /// the second call never sees the first call's staged content and
+    /// silently drops that line. This folds every entry into one
+    /// materialised base and writes the file once — the same hazard
+    /// [`Vault::fold_daily_log_line`] exists for, hoisted to the common
+    /// case of one op logging more than one thing (e.g.
+    /// `start_unplanned_action`, which both adds a bullet and starts it).
+    pub(in crate::vault) fn stage_daily_logs(
+        &self,
+        at: NaiveDateTime,
+        entries: &[&str],
+        tx: &mut VaultTransaction,
+    ) -> Result<VaultPath, DomainError> {
         let path = daily_note_path(at.date())?;
 
         // One path for both fresh and existing notes: get the base
@@ -69,7 +88,10 @@ impl Vault {
         } else {
             self.scaffold_daily_base(at.date())?
         };
-        let new_content = self.fold_daily_log_line(at.time(), base, entry)?;
+        let mut new_content = base;
+        for entry in entries {
+            new_content = self.fold_daily_log_line(at.time(), new_content, entry)?;
+        }
 
         // Rebuild the index row from the new content so the committed
         // transaction leaves file + index in sync.
