@@ -134,6 +134,50 @@ test("a late success does not haul focus back from wherever the user moved to", 
   expect(document.activeElement).toBe(elsewhere);
 });
 
+test("submitting from the Start button still returns focus, despite the browser's focus fixup", async () => {
+  // Browsers implement the HTML focus-fixup rule: when the focused
+  // element stops being focusable, focus reverts to <body>. The Start
+  // button goes `disabled` the instant the mutation turns pending, so a
+  // user who submitted from it is on <body> by the time success resolves
+  // — outside the form. jsdom implements NONE of this (it neither
+  // focuses on click nor blurs on disable), so the blur below stands in
+  // for the browser, and without it this regression is invisible to the
+  // suite. That is exactly how it shipped once.
+  let resolve: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    resolve = r;
+  });
+  mockIPC(async (cmd) => {
+    if (cmd === "start_unplanned_action") await gate;
+    return undefined;
+  });
+
+  renderForm([ALPHA]);
+  fireEvent.click(screen.getByRole("button", { name: /isn't listed/ }));
+  const form = screen.getByRole("form", { name: "Start something that isn't listed" });
+  fireEvent.change(within(form).getByLabelText("What are you starting?"), {
+    target: { value: "Fix the CI badge" },
+  });
+
+  const submit = within(form).getByRole("button", { name: "Start" }) as HTMLButtonElement;
+  submit.focus();
+  fireEvent.click(submit);
+  await waitFor(() => expect(submit.disabled).toBe(true));
+  // The browser's fixup, by hand. jsdom's blur() is a no-op on an
+  // already-disabled element, so re-enable across the blur to move focus
+  // the way a real browser does when `disabled` lands on it.
+  submit.disabled = false;
+  submit.blur();
+  submit.disabled = true;
+  expect(document.activeElement).toBe(document.body);
+  resolve();
+
+  await waitFor(() => {
+    expect(screen.queryByRole("form", { name: "Start something that isn't listed" })).toBeNull();
+  });
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: /isn't listed/ }));
+});
+
 test("the toast names the project actually submitted, not one re-derived later", async () => {
   // `selected` is re-derived from the live list every render, and
   // react-query runs onSuccess with the closure from the render at

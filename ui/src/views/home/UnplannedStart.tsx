@@ -79,7 +79,20 @@ export default function UnplannedStart({
   // direct call is a silent no-op. The flag survives to the commit where
   // the button exists again.
   function close() {
-    const hadFocus = form.current?.contains(document.activeElement) ?? false;
+    // `body`/null counts as "still ours". The HTML focus-fixup rule moves
+    // focus to <body> when the focused element stops being focusable, and
+    // the Start button goes `disabled` the instant the mutation turns
+    // pending — so by the time success resolves, a user who submitted
+    // from the button is on <body>, not inside the form. Testing
+    // containment alone therefore skipped the focus return on the most
+    // ordinary keyboard path (Tab to Start, Enter) and stranded them at
+    // the top of the document, which is the very thing this return
+    // exists to prevent. The guard still does its job: the late-success
+    // and Cancel cases it was added for leave focus on a REAL element
+    // elsewhere, never on body.
+    const active = document.activeElement;
+    const hadFocus =
+      active === null || active === document.body || (form.current?.contains(active) ?? false);
     setOpen(false);
     setText("");
     setOverride(null);
