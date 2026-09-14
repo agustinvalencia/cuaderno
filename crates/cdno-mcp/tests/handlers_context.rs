@@ -1683,3 +1683,76 @@ async fn get_stewardship_tracking_returns_aggregated_series() {
     assert_eq!(points[0]["value"], 82.5);
     assert_eq!(points[1]["value"], 82.0);
 }
+
+// --- current_focus (#568) ---------------------------------------------
+
+/// The daily-note path for today, rebuilt the way the handlers stamp it
+/// (they use the real `Local::now()`, with no injection seam).
+fn today_daily_path() -> String {
+    let today = chrono::Local::now().date_naive();
+    format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    )
+}
+
+fn daily_with_logs(logs: &str) -> String {
+    let today = chrono::Local::now().date_naive();
+    format!(
+        "---\ntype: daily\ndate: {}\n---\n\n# Today\n\n## Logs\n{logs}",
+        today.format("%Y-%m-%d")
+    )
+}
+
+#[tokio::test]
+async fn current_focus_is_null_with_nothing_started() {
+    let server = empty_server();
+    let result = server
+        .current_focus(Parameters(EmptyInput {}))
+        .await
+        .expect("current_focus");
+    assert!(
+        decode_json(&result).is_null(),
+        "nothing open must be null, not an empty object"
+    );
+}
+
+#[tokio::test]
+async fn current_focus_sees_a_start_written_by_anything_at_all() {
+    // The point of replaying the log rather than holding state: a start
+    // made by the CLI, by a human in an editor, or by this server all
+    // count. Here it is hand-written, i.e. none of the above.
+    let server = server_with_notes(&[(
+        &today_daily_path(),
+        &daily_with_logs("- **09:30**: started [[alpha]] — Draft methods (deep)\n"),
+    )]);
+
+    let result = server
+        .current_focus(Parameters(EmptyInput {}))
+        .await
+        .expect("current_focus");
+    let json = decode_json(&result);
+    assert_eq!(json["project"], "alpha");
+    // The bullet text verbatim — the string `complete_action` expects back.
+    assert_eq!(json["action"], "Draft methods (deep)");
+    assert_eq!(json["started"], "09:30");
+}
+
+#[tokio::test]
+async fn current_focus_clears_once_the_log_records_a_close() {
+    // A completion OR a drop closes it; the pairing is exact text.
+    let server = server_with_notes(&[(
+        &today_daily_path(),
+        &daily_with_logs(
+            "- **09:30**: started [[alpha]] — Draft methods (deep)\n\
+             - **11:00**: action done on [[alpha]] — Draft methods (deep)\n",
+        ),
+    )]);
+
+    let result = server
+        .current_focus(Parameters(EmptyInput {}))
+        .await
+        .expect("current_focus");
+    assert!(decode_json(&result).is_null(), "closed, so nothing is open");
+}

@@ -83,6 +83,8 @@ the content.
 | `set_core_question` | `project`, `core_question?`, `clear?` | Set the project's core question (bare `questions/<domain>/<slug>` target, not `[[…]]`); `clear: true` detaches. Auto-logs the previous value. |
 | `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
 | `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
+| `start_action` | `project`, `query` | Log that work on an existing bullet is starting. Logs the **resolved** bullet text, so the later close pairs with it. Errors when `query` matches nothing — it will not create the action. |
+| `start_unplanned_action` | `project`, `title`, `energy` | Add the bullet **and** start it, in one commit, for work that was on no map. Separate from `start_action` on purpose: a fallback would turn a typo into a new action. |
 | `complete_action` | `project`, `query` | Complete an action; archives its note if any. |
 | `drop_action` | `project`, `query`, `reason?` | Close an action **without** recording it as done (superseded, abandoned, reprioritised); archives its note as `status: dropped`. |
 | `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |

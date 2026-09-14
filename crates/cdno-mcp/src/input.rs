@@ -156,6 +156,27 @@ pub struct ActionQueryInput {
     pub query: String,
 }
 
+/// Input for `start_action`. `query` names a bullet that already
+/// exists; creating one is `start_unplanned_action`'s job, deliberately
+/// a separate tool (#568).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StartActionInput {
+    pub project: String,
+    /// Case-insensitive substring of the open bullet to start.
+    pub query: String,
+}
+
+/// Input for `start_unplanned_action` — the bullet does not exist yet,
+/// so this takes a `title` and an `energy` rather than a `query`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct StartUnplannedActionInput {
+    pub project: String,
+    /// The work being started, as the bullet should read.
+    pub title: String,
+    /// One of `"deep"`, `"medium"`, `"light"`.
+    pub energy: String,
+}
+
 /// Input for `drop_action` (GH #559) — like [`ActionQueryInput`] but
 /// carries the optional reason the drop is worth recording for.
 #[derive(Debug, Deserialize, JsonSchema)]

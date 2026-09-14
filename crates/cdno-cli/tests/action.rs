@@ -601,3 +601,262 @@ fn drop_in_non_interactive_errors_when_missing_project() {
     .expect_err("missing --project should error");
     assert!(format!("{err:#}").contains("--project"), "{err:#}");
 }
+
+// --- start (#568) ------------------------------------------------------
+
+#[test]
+fn start_logs_the_resolved_bullet_not_the_query() {
+    // The query may be energy-stripped; what lands in the log must be
+    // the whole bullet, because that is what `complete_action` will
+    // later write and `current_focus` pairs them by exact text.
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 30),
+        ActionCommands::Add {
+            project: Some("x".to_owned()),
+            title: Some("Run ablation".to_owned()),
+            energy: Some(EnergyLevel::Deep),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: Some("Run ablation".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect("start");
+
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("started [[x]] \u{2014} Run ablation (deep)"),
+        "the resolved bullet, energy and all:\n{daily}"
+    );
+}
+
+#[test]
+fn start_refuses_an_action_that_is_not_on_the_map() {
+    // The #568 change: a start names a bullet. Free text could be
+    // started and never closed, leaving the focus pinned for ever.
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: Some("Buy milk".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("a start that names nothing must fail");
+    assert!(
+        format!("{err:#}").contains("no action matching"),
+        "not-found, not a silent log: {err:#}"
+    );
+}
+
+#[test]
+fn an_ambiguous_start_lists_its_candidates_readably() {
+    // `AmbiguousAction` carries the candidates as a Vec<String>. Left
+    // to anyhow they reach the user as a Rust debug vec. `start` is the
+    // first CLI verb to UNPACK them -- complete, drop and promote can
+    // all raise it too, and still print the vec.
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for title in ["Run sweep B", "Run sweep C"] {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some(title.to_owned()),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: Some("Run sweep".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("ambiguous");
+
+    let shown = format!("{err:#}");
+    assert!(shown.contains("Run sweep B"), "candidate listed:\n{shown}");
+    assert!(shown.contains("Run sweep C"), "candidate listed:\n{shown}");
+    assert!(
+        !shown.contains("[\""),
+        "candidates must not arrive as a Rust debug vec:\n{shown}"
+    );
+}
+
+#[test]
+fn unplanned_start_adds_the_bullet_and_starts_it() {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: None,
+            unplanned: true,
+            title: Some("Fix the CI badge".to_owned()),
+            energy: Some(EnergyLevel::Light),
+        },
+        true,
+        false,
+    )
+    .expect("unplanned start");
+
+    let map = fs::read_to_string(dir.path().join("projects/x.md")).unwrap();
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "map:\n{map}"
+    );
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("action added to [[x]] \u{2014} Fix the CI badge (light)"),
+        "origin logged:\n{daily}"
+    );
+    assert!(
+        daily.contains("started [[x]] \u{2014} Fix the CI badge (light)"),
+        "start logged:\n{daily}"
+    );
+}
+
+#[test]
+fn identical_bullets_still_report_readably_rather_than_a_debug_vec() {
+    // `action add` allows byte-identical bullets, and then the domain's
+    // exact-match tiebreak sees TWO exact matches, declines, and the
+    // substring rule re-ambiguates. The interactive branch re-queries by
+    // the chosen text, so it hits that second error — which must land in
+    // the readable message, not escape through anyhow as a debug vec.
+    // (Non-interactive here; the assertion is on the message shape both
+    // exits now share.)
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for _ in 0..2 {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some("Dup task".to_owned()),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: Some("Dup task".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("two identical bullets are ambiguous");
+
+    let shown = format!("{err:#}");
+    assert!(
+        !shown.contains("[\""),
+        "no Rust debug vec on any ambiguity exit:\n{shown}"
+    );
+    assert!(
+        shown.contains("Dup task (deep)"),
+        "candidates listed:\n{shown}"
+    );
+}
+
+#[test]
+fn the_picker_re_entry_reports_readably_when_the_choice_is_still_ambiguous() {
+    // The interactive half of the ambiguity fix, reachable without a
+    // pty. Round 1 found that the re-entrant call leaked the debug vec
+    // when two bullets carry identical text; round 3 found the fix
+    // itself was unpinned -- deleting it left the whole suite green.
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for _ in 0..2 {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some("Dup task".to_owned()),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+    let (vault_handle, _report) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
+    let candidates = vec!["Dup task (deep)".to_owned(), "Dup task (deep)".to_owned()];
+
+    let err = cdno_cli::commands::action::start_chosen_candidate(
+        &vault_handle,
+        moment(2026, 5, 2, 10, 0),
+        "x",
+        "Dup task (deep)",
+        &candidates,
+    )
+    .expect_err("the picked candidate is still ambiguous");
+
+    let shown = format!("{err:#}");
+    assert!(
+        !shown.contains("[\""),
+        "the re-entry must not leak the debug vec:\n{shown}"
+    );
+    assert!(
+        shown.contains("Dup task (deep)"),
+        "candidates listed:\n{shown}"
+    );
+}

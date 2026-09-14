@@ -21,7 +21,10 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::Vault;
 use cdno_mcp::CuadernoServer;
-use cdno_mcp::server::{AppendToLogInput, CaptureInput, DiscardInboxItemInput};
+use cdno_mcp::server::{
+    AppendToLogInput, CaptureInput, CreateProjectInput, DiscardInboxItemInput, StartActionInput,
+    StartUnplannedActionInput,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, RawContent};
 use serde_json::Value;
@@ -372,4 +375,107 @@ async fn a_swallowed_append_is_an_error_too() {
 
     let err = outcome.expect_err("an unverifiable append must not report success");
     assert!(err.message.contains("could not be verified"), "{err:?}");
+}
+
+// --- the start verbs' write shapes (#568) -------------------------------
+//
+// Both choices are load-bearing and neither was pinned: swapping them
+// left every operations, context, server AND verification test green.
+// The failure is quiet rather than loud — `Rewritten` on `start_action`
+// drops `appended_tail`, which is the only thing that shows an agent
+// which log line actually landed, the stated purpose of #539.
+
+/// A server whose vault already holds one active project with one open
+/// bullet, so both start verbs have something to act on.
+async fn server_with_a_started_bullet() -> CuadernoServer {
+    let server = healthy_server();
+    server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Alpha".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+        }))
+        .await
+        .expect("create_project");
+    server
+}
+
+#[tokio::test]
+async fn start_action_is_append_shaped_and_shows_the_log_line_that_landed() {
+    let server = server_with_a_started_bullet().await;
+    server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "alpha".to_owned(),
+            title: "Draft methods".to_owned(),
+            energy: "deep".to_owned(),
+        }))
+        .await
+        .expect("seed a bullet to start");
+
+    let result = server
+        .start_action(Parameters(StartActionInput {
+            project: "alpha".to_owned(),
+            query: "Draft methods".to_owned(),
+        }))
+        .await
+        .expect("start_action");
+
+    let tail = verification(&result)["appended_tail"]
+        .as_str()
+        .expect("start_action is append-shaped, so it carries its tail")
+        .to_owned();
+    assert!(
+        tail.contains("started [[alpha]]") && tail.contains("Draft methods (deep)"),
+        "the tail must show the line that landed: {tail}"
+    );
+}
+
+#[tokio::test]
+async fn start_unplanned_action_is_rewrite_shaped_because_it_returns_the_map() {
+    // Its `.primary` is the project map, not the daily note, so an
+    // append shape would look for a tail in the wrong file.
+    let server = server_with_a_started_bullet().await;
+    let result = server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "alpha".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "light".to_owned(),
+        }))
+        .await
+        .expect("start_unplanned_action");
+
+    // NOTE, deliberately: this does NOT pin the WriteShape, and cannot.
+    // `AppendedToSection` degrades to a null tail when the heading is
+    // absent (verify.rs `section_tail`), and the project map has no
+    // `## Logs`, so swapping this verb to the append shape produces a
+    // byte-identical payload. Verified by mutation: the swap leaves this
+    // whole target green, and nothing observable distinguishes them.
+    //
+    // The consequential direction IS pinned, by the sibling test above:
+    // swapping `start_action` to `Rewritten` drops the tail that shows
+    // an agent which log line landed, and that fails loudly. What is
+    // asserted here is the payload a rewrite actually carries.
+    let v = verification(&result);
+    assert_eq!(v["verified"], "content", "a rewrite re-reads the file: {v}");
+    assert!(
+        v["bytes_written"].as_u64().is_some_and(|b| b > 0),
+        "and reports the size it wrote: {v}"
+    );
+    assert!(
+        v["content_hash"].as_str().is_some(),
+        "and fingerprints it: {v}"
+    );
+    assert!(
+        v.get("appended_tail").is_none() || v["appended_tail"].is_null(),
+        "with no appended tail: {v}"
+    );
+    let payload = decode(&result);
+    assert!(
+        payload["path"]
+            .as_str()
+            .is_some_and(|p| p.starts_with("projects/")),
+        "and reports the map it rewrote: {}",
+        payload["path"]
+    );
 }

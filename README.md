@@ -114,7 +114,7 @@ Wire it into Claude Desktop / Claude Code with:
 
 The vault path can also be omitted; the server then opens whichever vault the working directory belongs to.
 
-**Tool surface today.** All 42 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions; see [`STATUS.md`](STATUS.md) for the per-tool list.
+**Tool surface today.** All 55 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions; see [`STATUS.md`](STATUS.md) for the per-tool list.
 
 ### Where to go next
 
@@ -201,7 +201,7 @@ The tool has four consumers:
 
 Phases 1 through 5 of [the build sequence](docs/implementation-plan.md) are complete (Phase 4's skill adaptations remain). **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
 
-The MCP server (Phase 4) is production-ready with all 42 tools wired through to the domain, over both stdio and Streamable HTTP transports. The Tauri desktop UI (Phase 5/6) is complete: all eight views plus the app shell, global `⌘⇧C` capture, a menu-bar tray, and live refresh from external edits — installable via the Homebrew cask above. Deliberately deferred: notarization, an auto-updater, an NSPanel capture overlay, and an Intel `.dmg`.
+The MCP server (Phase 4) is production-ready with all 55 tools wired through to the domain, over both stdio and Streamable HTTP transports. The Tauri desktop UI (Phase 5/6) is complete: all eight views plus the app shell, global `⌘⇧C` capture, a menu-bar tray, and live refresh from external edits — installable via the Homebrew cask above. Deliberately deferred: notarization, an auto-updater, an NSPanel capture overlay, and an Intel `.dmg`.
 
 See **[`STATUS.md`](STATUS.md)** for the per-phase and per-issue breakdown, and **[`CHANGELOG.md`](CHANGELOG.md)** for what's shipped per PR.
 

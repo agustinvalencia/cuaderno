@@ -12,6 +12,7 @@ cdno action [OPTIONS] <COMMAND>
 | Subcommand | Description |
 |------------|-------------|
 | [`add`](#cdno-action-add) | Append a next action to a project |
+| [`start`](#cdno-action-start) | Log that work on an action is starting |
 | [`promote`](#cdno-action-promote) | Promote a plain bullet to a wikilinked manifest note |
 | [`complete`](#cdno-action-complete) | Mark an action done by substring match |
 | [`drop`](#cdno-action-drop) | Close an action **without** recording it as done |
@@ -53,6 +54,39 @@ energy is inherited.
 ```bash
 cdno action promote --project surrogate-model --query "profile the assembly"
 ```
+
+## `cdno action start`
+
+Log that work on an action is starting: writes `started [[slug]] — <bullet>` to today's daily note,
+which is what [`cdno now`](now.md) reads back.
+
+The action must already be on the map. A start *names a bullet*, so that the later completion logs
+matching text and the focus clears — a start naming nothing could never be closed. What gets logged
+is the **resolved** bullet text, not your query, so `--query "draft methods"` logs
+`Draft methods (deep)`.
+
+| Flag | Description |
+|------|-------------|
+| `--project <SLUG>` | Project slug. |
+| `--query <QUERY>` | Substring of an existing bullet. Conflicts with `--unplanned`. |
+| `--unplanned` | Start work that is on no map yet: adds the bullet, then starts it. |
+| `--title <TEXT>` | Title for the new bullet (with `--unplanned`). |
+| `--energy <LEVEL>` | `deep`, `medium` or `light` (with `--unplanned`). |
+
+An ambiguous `--query` is a question rather than a dead end: in a terminal you get a picker over the
+candidates, and non-interactively they are listed one per line.
+
+```bash
+# start something already planned
+cdno action start --project surrogate-model --query "feature set B"
+
+# start something that was never planned — adds the bullet and starts it
+cdno action start --project surrogate-model --unplanned \
+    --title "Fix the CI badge" --energy light
+```
+
+`--unplanned` is deliberately explicit rather than a fallback when `--query` matches nothing: a
+fallback would turn every typo into a new action, silently.
 
 ## `cdno action complete`
 
@@ -114,10 +148,13 @@ cdno action list --project surrogate-model --json
 ## Related MCP tools
 
 [`add_action`](../mcp/writes.md), [`promote_action`](../mcp/writes.md),
+[`start_action`](../mcp/writes.md), [`start_unplanned_action`](../mcp/writes.md),
 [`complete_action`](../mcp/writes.md), [`drop_action`](../mcp/writes.md). (Open actions are also visible via
-[`get_project_context`](../mcp/reads.md).)
+[`get_project_context`](../mcp/reads.md); what is currently started via
+[`current_focus`](../mcp/reads.md).)
 
 ## See also
 
 - [Actions](../../tutorials/actions.md).
+- [`now`](now.md) — what is currently started.
 - [`project`](project.md).

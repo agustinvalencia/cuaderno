@@ -2,22 +2,18 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 44 tools are wired through to the domain — the 16
-//! design §11 tools, the two daily-note tools (GH #158), the two
-//! weekly-note tools (`read_weekly_note`, `upsert_weekly_section`), the
-//! two monthly-note tools (`read_monthly_note`,
-//! `upsert_monthly_section`, GH #228), the
-//! four structural-creation tools (GH #162), the four lifecycle tools
-//! (`park_project`, `activate_project`, `set_question_status`,
-//! `add_periodic_commitment`, GH #166), `search_notes` (#172),
-//! `link_portfolio_to_question` (#200), the four read-parity tools
-//! (`list_projects`, `get_commitments`, `lint`, `capture`, GH #204),
-//! and the four milestone/waiting-on tools (`add_milestone`,
-//! `complete_milestone`, `add_waiting_on`, `resolve_waiting_on`,
-//! GH #213), and `create_custom_note` (GH #296). The authoritative
-//! catalogue is the `tests/server.rs`
-//! sorted-set assertion. Handlers are split by group
-//! across sibling modules — `context.rs`, `operations.rs`,
+//! Status: all 55 tools are wired through to the domain — context
+//! reads, daily/weekly/monthly note access, the write operations,
+//! structural creation, lifecycle transitions, and the generic
+//! frontmatter setter. No stubs remain.
+//!
+//! The authoritative catalogue is the sorted-set assertion in
+//! `tests/server.rs`, not a list maintained here. This comment used to
+//! enumerate the groups, and that sum had fallen ten tools behind the
+//! pin — exactly the failure a hand-maintained parallel list invites.
+//!
+//! Handlers are split by group across sibling modules — `context.rs`,
+//! `operations.rs`,
 //! `creation.rs`, `lifecycle.rs` — each a `#[tool_router]` merged into
 //! the dispatch table in `new()`.
 //!

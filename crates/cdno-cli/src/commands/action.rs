@@ -65,6 +65,35 @@ pub enum ActionCommands {
         var: Vec<(String, String)>,
     },
 
+    /// Start work on a next action: logs `started [[slug]] — <bullet>`
+    /// to today's daily note, which is what `cdno now` reads back.
+    ///
+    /// The action must already be on the map. A start names a bullet so
+    /// that the later completion logs matching text and the focus
+    /// clears; a start that names nothing could never be closed (#568).
+    /// For work on no map yet, pass `--unplanned` with `--title` and
+    /// `--energy` — that adds the bullet and starts it in one commit.
+    Start {
+        /// Project slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        project: Option<String>,
+        /// Substring matching the open bullet to start.
+        #[arg(long, conflicts_with_all = ["unplanned", "title", "energy"])]
+        query: Option<String>,
+        /// Start work that is on no map yet: adds the bullet, then
+        /// starts it. Deliberately explicit rather than a fallback when
+        /// `--query` matches nothing — a fallback would turn a typo into
+        /// a new action silently.
+        #[arg(long)]
+        unplanned: bool,
+        /// Title for the new bullet (with `--unplanned`).
+        #[arg(long)]
+        title: Option<String>,
+        /// Energy for the new bullet (with `--unplanned`).
+        #[arg(long)]
+        energy: Option<EnergyLevel>,
+    },
+
     /// Mark a next action as completed by case-insensitive substring
     /// match. A wikilinked bullet also archives its note to
     /// `actions/_done/<year>/`.
@@ -139,6 +168,23 @@ pub fn run(
             query,
             var,
         } => promote(&vault, at, project, query, var, interactive, json),
+        ActionCommands::Start {
+            project,
+            query,
+            unplanned,
+            title,
+            energy,
+        } => start(
+            &vault,
+            at,
+            project,
+            query,
+            unplanned,
+            title,
+            energy,
+            interactive,
+            json,
+        ),
         ActionCommands::Complete { project, query } => {
             complete(&vault, at, project, query, interactive, json)
         }
@@ -228,6 +274,168 @@ fn add(
         )?;
     }
     Ok(())
+}
+
+/// `cdno action start` — two intents behind one verb, kept apart the
+/// way the domain keeps them.
+///
+/// `--query` starts a bullet that already exists; `--unplanned` creates
+/// one and starts it. They are `conflicts_with` at the clap level, so
+/// the mode is never inferred. That separation is the whole point of
+/// #568: routing a non-matching query into creation would turn a typo
+/// into a new action, silently, which is the failure the domain change
+/// removed.
+#[allow(clippy::too_many_arguments)] // two modes, each a gather→execute passthrough
+fn start(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: Option<String>,
+    query: Option<String>,
+    unplanned: bool,
+    title: Option<String>,
+    energy: Option<EnergyLevel>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    let mut prompted = false;
+    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
+        prompt::prompt_project(vault)
+    })?;
+
+    if unplanned {
+        let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
+            prompt::prompt_text("Title")
+        })?;
+        let energy = prompt::gather_or_error(energy, "energy", interactive, &mut prompted, || {
+            prompt::prompt_energy()
+        })?;
+        if prompted
+            && !prompt::confirm_preview(&format!(
+                "About to ADD to '{project}' and start it:\n  title:  {title}\n  energy: {}",
+                energy.as_str(),
+            ))?
+        {
+            println!("Aborted.");
+            return Ok(());
+        }
+        let path = vault
+            .start_unplanned_action(at, &project, &title, energy)
+            .context("starting unplanned action")?
+            .primary;
+        crate::output::emit_write_result(
+            json,
+            &path.to_string(),
+            &format!("Added to {path} and started"),
+        )?;
+        return Ok(());
+    }
+
+    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
+        let entries = vault
+            .list_actions(&project)
+            .context("listing actions for the bullet picker")?;
+        // Verbatim `text`, energy suffix and wikilink included: the
+        // domain's whole-bullet tiebreak needs the exact string, and
+        // `start_action` resolves through the same matcher the close
+        // verbs use.
+        let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
+        prompt::prompt_bullet(&project, &labels)
+    })?;
+
+    if prompted && !prompt::confirm_preview(&format!("About to START on '{project}': '{query}'"))? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let daily = start_resolving_ambiguity(vault, at, &project, &query, interactive)?;
+    crate::output::emit_write_result(
+        json,
+        &daily.to_string(),
+        &format!("Started on {project}, logged to {daily}"),
+    )?;
+    Ok(())
+}
+
+/// Call `start_action`, turning an ambiguous match into a question
+/// rather than a dead end — the shape `cdno open` already uses for an
+/// ambiguous note reference.
+///
+/// Without this the candidates reach the user only as a Rust `{:?}` vec
+/// inside an anyhow chain, because `AmbiguousAction` carries them as a
+/// `Vec<String>` and nothing in the CLI unpacks it.
+///
+/// `start` is the first CLI verb to *unpack* it, not the first that can
+/// raise it: `complete`, `drop` and `promote` all resolve through the
+/// same [`resolve_open_action`] and have been able to raise it since
+/// long before this verb existed. They still hand it to anyhow, so they
+/// still print the debug vec. Routing them through here too is worth
+/// doing and is deliberately not done in the same change as adding the
+/// verb.
+fn start_resolving_ambiguity(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: &str,
+    query: &str,
+    interactive: bool,
+) -> Result<cdno_core::path::VaultPath> {
+    match vault.start_action(at, project, query) {
+        Ok(path) => Ok(path),
+        Err(cdno_domain::error::DomainError::AmbiguousAction { candidates, .. }) => {
+            if interactive && prompt::picker_fits(crate::output::terminal_columns()) {
+                // The candidates are already known, so offer exactly
+                // those. A whole bullet usually resolves uniquely on the
+                // second call, via the exact-match tiebreak — but not
+                // when two bullets carry byte-identical text, which
+                // `action add` allows freely. Then the tiebreak sees two
+                // exact matches, declines, and the substring rule
+                // re-ambiguates. Fall into the readable branch below
+                // rather than letting that second error escape through
+                // `.context`, which would print the debug vec this
+                // function exists to remove.
+                let chosen = prompt::prompt_bullet(project, &candidates)?;
+                return start_chosen_candidate(vault, at, project, &chosen, &candidates);
+            }
+            anyhow::bail!(ambiguous_message(project, query, &candidates))
+        }
+        Err(e) => Err(e).context("starting action"),
+    }
+}
+
+/// Start the candidate the user picked out of the ambiguity picker.
+///
+/// Split out so a test can reach it without driving a pty. The second
+/// call can itself be ambiguous — two bullets carrying byte-identical
+/// text defeat the domain's whole-bullet tiebreak, since it sees two
+/// EXACT matches and declines — and that error must land in the same
+/// readable message rather than escaping through `.context` as the
+/// debug vec this whole path exists to remove.
+pub fn start_chosen_candidate(
+    vault: &Vault,
+    at: NaiveDateTime,
+    project: &str,
+    chosen: &str,
+    candidates: &[String],
+) -> Result<cdno_core::path::VaultPath> {
+    match vault.start_action(at, project, chosen) {
+        Ok(path) => Ok(path),
+        Err(cdno_domain::error::DomainError::AmbiguousAction { .. }) => {
+            anyhow::bail!(ambiguous_message(project, chosen, candidates))
+        }
+        Err(e) => Err(e).context("starting action"),
+    }
+}
+
+/// The candidates, one per line, instead of a Rust debug vec. Shared by
+/// both ambiguity exits so they cannot drift apart.
+fn ambiguous_message(project: &str, query: &str, candidates: &[String]) -> String {
+    format!(
+        "ambiguous action match for '{query}' on project '{project}'. Candidates:\n{}",
+        candidates
+            .iter()
+            .map(|c| format!("  {c}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }
 
 #[allow(clippy::too_many_arguments)] // thin gather→create passthrough

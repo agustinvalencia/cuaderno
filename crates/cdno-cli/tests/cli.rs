@@ -2195,3 +2195,118 @@ fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
         .success()
         .stdout(predicate::str::contains("active project"));
 }
+
+#[test]
+fn action_start_modes_are_mutually_exclusive_at_the_parser() {
+    // `conflicts_with_all` on --query is the ONLY thing keeping the two
+    // modes apart: `fn start` checks `if unplanned` first and never
+    // reads --query on that path. Every other test builds the variant
+    // directly and bypasses clap, so without this the attribute could be
+    // deleted with a green suite while `--query q --unplanned --title T`
+    // silently created a bullet and discarded the named query. Same
+    // shape as templates_eject_requires_exactly_one_of_type_or_all.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+
+    for flag in [
+        vec!["--unplanned"],
+        vec!["--title", "T"],
+        vec!["--energy", "deep"],
+    ] {
+        let mut args = vec!["--vault", vault, "action", "start", "--query", "q"];
+        args.extend(flag.iter().copied());
+        cdno()
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn now_json_is_an_object_with_null_fields_when_nothing_is_started() {
+    // The documented contract, end to end through the real binary: a
+    // caller tests one field without branching on the document's shape.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"project\": null"))
+        .stdout(predicate::str::contains("\"action\": null"))
+        .stdout(predicate::str::contains("\"started\": null"));
+}
+
+#[test]
+fn action_start_json_emits_a_write_result() {
+    // Every other mutating verb in this file has a matching
+    // `_json_emits_a_write_result` case; the PR's own new mutating verb
+    // had none. (No count here on purpose: a number in a comment beside
+    // a set that grows is a claim that goes stale, which is the failure
+    // this PR already had to correct twice.) The `path` is
+    // deliberately mode-dependent -- the
+    // daily note under --query, the project map under --unplanned --
+    // which is exactly the distinction left free to change.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+
+    // --unplanned reports the project map it rewrote.
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--unplanned",
+            "--title",
+            "Fix the CI badge",
+            "--energy",
+            "light",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().ends_with("projects/alpha.md"),
+        "unplanned start reports the map: {v}"
+    );
+    assert!(
+        v["message"].as_str().is_some(),
+        "and carries a message: {v}"
+    );
+
+    // --query reports the daily note it logged to.
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--query",
+            "Fix the CI badge",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().contains("journal/"),
+        "a plain start reports the daily note: {v}"
+    );
+}

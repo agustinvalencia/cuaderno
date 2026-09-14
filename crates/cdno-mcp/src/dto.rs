@@ -32,9 +32,9 @@ use cdno_domain::frontmatter::{
 };
 use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary, ProjectStateChange,
-    ProjectSummary, QuestionSummary, SearchResultEntry, StewardshipSummary, StewardshipVariant,
-    TopAction, TrackingEntry,
+    CurrentFocus, DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary,
+    ProjectStateChange, ProjectSummary, QuestionSummary, SearchResultEntry, StewardshipSummary,
+    StewardshipVariant, TopAction, TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -175,6 +175,31 @@ impl From<OrientationContext> for OrientationContextDto {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// An action started and not yet closed, as replayed from today's
+/// `## Logs`. There is no state behind this: a start written by the
+/// CLI, by an agent, or by hand in an editor all count, and a
+/// completion or a drop clears it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CurrentFocusDto {
+    /// Slug of the project the action belongs to.
+    pub project: String,
+    /// The action text exactly as logged, energy suffix and all — the
+    /// same string `complete_action` will match and log back.
+    pub action: String,
+    /// When it was started, `HH:MM`, from the log line's own stamp.
+    pub started: String,
+}
+
+impl From<CurrentFocus> for CurrentFocusDto {
+    fn from(f: CurrentFocus) -> Self {
+        Self {
+            project: f.project,
+            action: f.action,
+            started: f.started.format("%H:%M").to_string(),
         }
     }
 }

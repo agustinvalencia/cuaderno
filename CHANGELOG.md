@@ -6,6 +6,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno action start` and `cdno now`, plus their MCP equivalents.** `start_action`,
+  `start_unplanned_action` and `current_focus` reached the vault through the desktop app and nothing
+  else, so the terminal and agents could not start work or ask what was open. All three now have a
+  CLI verb and an MCP tool, ahead of the desktop app's retirement — the capabilities land before the
+  surface that held them goes away, so coverage never dips.
+
+  `cdno action start --project P --query Q` starts a bullet that already exists;
+  `--unplanned --title T --energy E` adds one and starts it. The two modes are mutually exclusive at
+  the parser, because the domain keeps those intents apart precisely so a typo cannot create an
+  action (#568) and the CLI must not reunite them. `cdno now` reports the action started and not yet
+  closed, read back from today's `## Logs` — so a start made by the CLI, by an agent, or by hand all
+  count, and a completion or a drop clears it. `--json` emits `{project, action, started}`, all null
+  when nothing is open.
+
+  Over MCP: `start_action` and `start_unplanned_action` write; `current_focus` reads, and sits on the
+  read-only surface so a client with no write access can still ask what is in progress. The tool
+  catalogue goes 52 → 55.
+
+### Fixed
+
+- **An ambiguous action query is readable instead of a Rust debug vec.** `AmbiguousAction` carries
+  its candidates as a `Vec<String>` and nothing in the CLI unpacked them, so they arrived as
+  `["Run sweep B", "Run sweep C"]` inside an anyhow chain. `action start` unpacks them — a picker in
+  a terminal, a listed set otherwise. It is the first CLI verb to do so, not the first that can
+  raise it: `complete`, `drop` and `promote` still print the vec, and routing them through the same
+  helper is worth a separate change.
+
+
 ### Changed
 
 - **A start now has to name a real action.** `start_action` logged whatever string it was handed;
