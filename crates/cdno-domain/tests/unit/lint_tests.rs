@@ -2259,3 +2259,175 @@ fn lint_refuses_a_rooted_embed_target() {
     assert_eq!(report.issues.len(), 1, "issues: {:?}", report.issues);
     assert!(report.issues[0].message.contains("embedded file"));
 }
+
+// ---------------------------------------------------------------------
+// Focus-marker near-misses in the daily log (`Vault::focus_marker_issues`)
+// ---------------------------------------------------------------------
+//
+// `Vault::current_focus` accepts exactly `- **HH:MM**: started [[slug]] — text`
+// and skips everything else silently by design, so a hand-typed near-miss
+// vanishes: the line looks right, `cdno now` says nothing is started, and no
+// surface explains why. This rule makes that visible. Acceptance is the
+// canonical parsers' verdict — these tests exercise each near-miss class plus
+// the negatives, since a false positive in a free-prose section is worse than
+// a missed one.
+
+/// Wrap `lines` in a minimal daily note's `## Logs` section.
+fn daily_log(lines: &str) -> String {
+    format!("---\ndate: 2026-09-15\ntype: daily\n---\n\n# 2026-09-15\n\n## Logs\n{lines}")
+}
+
+/// The focus-marker warnings in a report, isolated from unrelated output.
+fn focus_warnings(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("`cdno now` will not see it"))
+        .collect()
+}
+
+#[test]
+fn lint_flags_a_start_written_with_an_ascii_hyphen() {
+    // The defect this rule exists for: everything is right except the
+    // separator, so the line reads as a start to a human and to nothing else.
+    let body = daily_log("- **09:30**: started [[alpha]] - Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    let issue = warnings[0];
+    assert_eq!(issue.severity, LintSeverity::Warning);
+    assert_eq!(issue.path, vp("journal/2026/daily/2026-09-15.md"));
+    assert!(
+        issue.message.contains("ASCII hyphen"),
+        "hint should name the hyphen: {}",
+        issue.message
+    );
+}
+
+#[test]
+fn lint_flags_a_start_written_with_an_en_dash() {
+    // The typo the naked eye cannot catch.
+    let body = daily_log("- **09:30**: started [[alpha]] \u{2013} Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let warnings_msg = {
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = focus_warnings(&report);
+        assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+        warnings[0].message.clone()
+    };
+    assert!(
+        warnings_msg.contains("en-dash"),
+        "hint should name the en-dash: {warnings_msg}"
+    );
+}
+
+#[test]
+fn lint_flags_a_start_with_no_timestamp_stamp() {
+    // The other half of the shape. Without the stamp the line is not a log
+    // entry at all, so the separator is never even reached — the hint has to
+    // say so rather than blaming a dash that is perfectly correct.
+    let body = daily_log("started [[alpha]] \u{2014} Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("timestamp"),
+        "hint should name the missing stamp, not the dash: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_flags_a_close_marker_near_miss_too() {
+    // A completion that is not read back is worse than a start that is not:
+    // the focus it should have cleared stays pinned for the rest of the day.
+    let body = daily_log("- **11:00**: action done on [[alpha]] - Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert_eq!(
+        focus_warnings(&report).len(),
+        1,
+        "issues: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_accepts_the_shape_the_writers_emit() {
+    // The exact bytes `start_action` produces must never be flagged.
+    let body = daily_log("- **09:30**: started [[alpha]] \u{2014} Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        focus_warnings(&report).is_empty(),
+        "a valid start must not be flagged: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_leaves_ordinary_prose_alone() {
+    // `## Logs` is free prose. A line merely *containing* the word, or naming
+    // a note mid-sentence, was never reaching for the marker — flagging it
+    // would make the rule worse than the silence it replaces.
+    let body = daily_log(concat!(
+        "- **09:30**: started the engine and it held\n",
+        "- **09:40**: I started [[alpha]] yesterday and got nowhere\n",
+        "- **09:50**: scaled the mesh to 2M cells\n",
+    ));
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        focus_warnings(&report).is_empty(),
+        "prose must not be flagged: {:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn lint_leaves_an_indented_continuation_alone() {
+    // Continuation lines are indented, and current_focus skips them by
+    // design: a marker inside one belongs to the entry above it.
+    let body = daily_log(concat!(
+        "- **11:00**: action dropped on [[alpha]] \u{2014} Draft methods (deep)\n",
+        "    reason: started [[beta]] - superseded it\n",
+        "    started [[gamma]] - a bare marker, still a continuation\n",
+    ));
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        focus_warnings(&report).is_empty(),
+        "an indented continuation must not be flagged: {:?}",
+        report.issues
+    );
+}

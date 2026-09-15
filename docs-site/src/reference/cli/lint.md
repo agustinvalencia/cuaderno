@@ -9,6 +9,24 @@ the linking note, then to the vault root) before a link is called broken. Only a
 nothing at all is reported, and a missing `![[embed]]` reads as a missing file rather than a link
 that "resolves to no note".
 
+It also reports lines that were plainly meant to be structured but will never be read as such,
+because the parsers that consume them skip what they cannot parse rather than complaining. That
+covers malformed `## Active Habits` and `## Periodic Commitments` bullets on a stewardship
+dashboard, and — in a daily note's `## Logs` — a start or close marker that
+[`cdno now`](now.md) will not see:
+
+```text
+[warning] journal/2026/daily/2026-09-15.md: log line `- **09:30**: started [[alpha]] - Draft methods (deep)`
+          reads as a `started` marker but `cdno now` will not see it -- found an ASCII hyphen (-)
+          where an em-dash (—) separates the slug from the action
+```
+
+The shape has to be `- **HH:MM**: started [[slug]] — text`, and both halves matter: the stamp is what
+makes the line a log entry at all, and the separator must be a real em dash (U+2014). The check is
+deliberately narrow — the marker has to open the entry and be followed immediately by `[[` — so
+ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
+note mid-sentence, is never flagged.
+
 ```text
 cdno lint [OPTIONS]
 ```

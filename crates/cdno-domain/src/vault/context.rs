@@ -889,8 +889,9 @@ impl Vault {
 
     /// What you are in the middle of, according to today's log.
     ///
-    /// Starting an action writes `started [[slug]] - text` into the daily
-    /// note and completing it writes `action done on [[slug]] - text`, so
+    /// Starting an action writes `- **HH:MM**: started [[slug]] — text`
+    /// into the daily note and completing it writes
+    /// `- **HH:MM**: action done on [[slug]] — text`, so
     /// "what am I on" is already recorded. This reads it back rather than
     /// keeping a parallel piece of state that could disagree with the
     /// vault — which also means it sees a start made from the CLI or by an
@@ -971,7 +972,7 @@ pub struct CurrentFocus {
 /// and no amount of stripping it back off is safe — an action's own
 /// bullet text may contain the same delimiter, and after folding the
 /// two are indistinguishable.
-fn parse_log_entry_heads(section: &str) -> Vec<(NaiveTime, String)> {
+pub(super) fn parse_log_entry_heads(section: &str) -> Vec<(NaiveTime, String)> {
     let mut out = Vec::new();
     for line in section.lines() {
         let trimmed = line.trim_end();
@@ -989,12 +990,14 @@ fn parse_log_entry_heads(section: &str) -> Vec<(NaiveTime, String)> {
     out
 }
 
-/// Split `<prefix>[[project]] - action` into its project and action.
+/// Split `<prefix>[[project]] — action` into its project and action.
+/// The separator is an em dash, U+2014 — spelled here as the codepoint
+/// this function actually requires, not the ASCII hyphen it rejects.
 ///
 /// `None` for a line without the marker, or with it but not in the
 /// wikilink-and-em-dash shape the writers produce: a hand-typed log line
 /// that happens to begin "started something" must not register as a focus.
-fn parse_focus_marker(text: &str, prefix: &str) -> Option<(String, String)> {
+pub(super) fn parse_focus_marker(text: &str, prefix: &str) -> Option<(String, String)> {
     let rest = text.strip_prefix(prefix)?;
     let rest = rest.strip_prefix("[[")?;
     let (project, rest) = rest.split_once("]]")?;

@@ -23,9 +23,10 @@ A line you type yourself has to match the shape the writers emit:
 
 Both halves are required. The `- **HH:MM**: ` stamp is what makes the line a log entry at all, and
 the separator is an **em dash** (U+2014), not a hyphen. The parser requires that exact codepoint, so
-that ordinary prose beginning "started something" is never mistaken for a focus — which also means a
-line missing the stamp, or typed with `-`, is silently not picked up, and `cdno lint` will not flag
-either.
+that ordinary prose beginning "started something" is never mistaken for a focus. That strictness
+means a line missing the stamp, or typed with `-`, is simply not picked up here — but
+[`cdno lint`](lint.md) reports it, naming the line and the likely cause, so a near-miss does not stay
+invisible.
 
 ```bash
 $ cdno now
