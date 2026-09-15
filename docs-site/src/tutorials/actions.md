@@ -42,6 +42,39 @@ cdno action add --project surrogate-model \
                 --energy deep --note
 ```
 
+## Start an action
+
+Starting is optional — nothing forces you to declare it — but it is what makes
+[`cdno now`](../reference/cli/now.md) able to answer "what am I in the middle of?", which matters
+most on the days you come back from an interruption and cannot remember:
+
+```bash
+cdno action start --project surrogate-model --query "assembly step"
+```
+
+This logs `started [[surrogate-model]] — Profile the assembly step (medium)` to today's journal.
+What gets written is the **resolved bullet text**, not your query, so the later completion logs
+matching text and the focus clears by itself.
+
+For work that is on no map yet — the fix you noticed, the errand in front of you — `--unplanned`
+adds the bullet and starts it in one go:
+
+```bash
+cdno action start --project surrogate-model --unplanned \
+    --title "Chase the licence renewal" --energy light
+```
+
+That is deliberately a separate flag rather than a fallback when `--query` matches nothing. A
+fallback would turn every typo into a new action, silently.
+
+Two limits worth knowing, both pre-existing and both easy to trip over:
+
+- **Do not promote an action between starting it and closing it.** Promotion *rewrites* the bullet,
+  so the start can no longer be paired with it: `cdno now` keeps naming the old text for the rest of
+  the day, and `complete` and `drop` both match nothing. Close it first, or re-run the start after.
+- **Two open bullets with identical text cannot be told apart** by a substring query — neither can
+  be closed until one is edited. This is not specific to starting; `action add` twice does the same.
+
 ## Complete an action
 
 Completing matches a bullet by substring, ticks it off, and logs it to today's journal. If the
