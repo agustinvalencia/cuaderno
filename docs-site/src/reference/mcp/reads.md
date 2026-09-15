@@ -20,7 +20,7 @@ anything. Inputs marked optional may be omitted.
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
 | `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |
 | `search_notes` | `query`, `note_type?`, `from?`, `to?`, `portfolio?`, `limit?` (default 20) | Ranked full-text hits. The MCP form of [`cdno search`](../cli/search.md). |
-| `lint` | — | Frontmatter problems across the vault. |
+| `lint` | — | Vault-wide problems: frontmatter, broken wikilinks, attachment pairing, and lines the canonical parsers silently skip — malformed stewardship-dashboard bullets and daily-log focus markers [`cdno now`](../cli/now.md) will not read back. |
 | `triage_inbox` | — | Pending inbox captures awaiting triage. |
 
 ## Notes
