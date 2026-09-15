@@ -9,8 +9,9 @@
 //!
 //! The authoritative catalogue is the sorted-set assertion in
 //! `tests/server.rs`, not a list maintained here. This comment used to
-//! enumerate the groups, and that sum had fallen ten tools behind the
-//! pin — exactly the failure a hand-maintained parallel list invites.
+//! enumerate the groups; by the commit before this one its groups summed
+//! to 41 and its own header said 44, against a pin of 52 — exactly the
+//! failure a hand-maintained parallel list invites.
 //!
 //! Handlers are split by group across sibling modules — `context.rs`,
 //! `operations.rs`,

@@ -202,25 +202,35 @@ fn json_carries_the_logged_text_and_a_hh_mm_stamp() {
 fn hostile_text_from_the_log_is_sanitised_before_it_reaches_the_terminal() {
     // Both rendered strings come straight out of the daily log, which a
     // hand edit or an agent can fill with anything. Without sanitise the
-    // escape below would repaint and clear the user's terminal. Same
+    // escapes below would repaint and clear the user's terminal. Same
     // shape as the render_list case in tests/action.rs.
+    //
+    // The slug half is poisoned as well as the action half: `render`
+    // calls sanitise twice, and a case that only dirties the action text
+    // leaves the slug call free to be deleted. The wikilink target is
+    // not checked against an existing project here -- the focus is
+    // replayed from the log line, whatever it says.
     let dir = vault_with_action();
     let daily = dir.path().join("journal/2026/daily/2026-05-26.md");
     fs::create_dir_all(daily.parent().unwrap()).unwrap();
     fs::write(
         &daily,
         "---\ntype: daily\ndate: 2026-05-26\n---\n\n# Tuesday\n\n## Logs\n\
-         - **08:15**: started [[alpha]] — safe\tesc\u{1b}[41mRED\u{1b}[2J tail\n",
+         - **08:15**: started [[al\u{1b}[42mpha]] — safe\tesc\u{1b}[41mRED\u{1b}[2J tail\n",
     )
     .unwrap();
 
     let out = build_now(dir.path(), day(), t(9, 0)).expect("builds");
     assert!(
         !out.contains('\u{1b}'),
-        "no ESC reaches the terminal:\n{out:?}"
+        "no ESC reaches the terminal, from either half:\n{out:?}"
     );
     assert!(!out.contains('\t'), "no raw tab either:\n{out:?}");
-    assert!(out.contains("safe"), "the readable text survives:\n{out}");
+    assert!(
+        out.contains("safe"),
+        "the readable action text survives:\n{out}"
+    );
+    assert!(out.contains("pha"), "and so does the readable slug:\n{out}");
 }
 
 #[test]

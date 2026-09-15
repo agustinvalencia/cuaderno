@@ -2200,11 +2200,13 @@ fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
 fn action_start_modes_are_mutually_exclusive_at_the_parser() {
     // `conflicts_with_all` on --query is the ONLY thing keeping the two
     // modes apart: `fn start` checks `if unplanned` first and never
-    // reads --query on that path. Every other test builds the variant
-    // directly and bypasses clap, so without this the attribute could be
-    // deleted with a green suite while `--query q --unplanned --title T`
-    // silently created a bullet and discarded the named query. Same
-    // shape as templates_eject_requires_exactly_one_of_type_or_all.
+    // reads --query on that path. No other test passes both flags --
+    // the behaviour tests in tests/action.rs build `ActionCommands::Start`
+    // directly and never reach clap at all -- so without this the
+    // attribute could be deleted with a green suite while
+    // `--query q --unplanned --title T` silently created a bullet and
+    // discarded the named query. Same shape as
+    // templates_eject_requires_exactly_one_of_type_or_all.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
     let vault = dir.path().to_str().unwrap();
@@ -2242,14 +2244,11 @@ fn now_json_is_an_object_with_null_fields_when_nothing_is_started() {
 
 #[test]
 fn action_start_json_emits_a_write_result() {
-    // Every other mutating verb in this file has a matching
-    // `_json_emits_a_write_result` case; the PR's own new mutating verb
-    // had none. (No count here on purpose: a number in a comment beside
-    // a set that grows is a claim that goes stale, which is the failure
-    // this PR already had to correct twice.) The `path` is
-    // deliberately mode-dependent -- the
-    // daily note under --query, the project map under --unplanned --
-    // which is exactly the distinction left free to change.
+    // The `--json` contract for the new verb, in the shape this file's
+    // other write verbs use (`project_create_json_emits_a_write_result`
+    // and its siblings). What is load-bearing is the `path`: it is
+    // mode-dependent -- the daily note under --query, the project map
+    // under --unplanned -- and nothing else pins that distinction.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
     let vault = dir.path().to_str().unwrap();

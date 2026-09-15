@@ -445,17 +445,11 @@ async fn start_unplanned_action_is_rewrite_shaped_because_it_returns_the_map() {
         .await
         .expect("start_unplanned_action");
 
-    // NOTE, deliberately: this does NOT pin the WriteShape, and cannot.
-    // `AppendedToSection` degrades to a null tail when the heading is
-    // absent (verify.rs `section_tail`), and the project map has no
-    // `## Logs`, so swapping this verb to the append shape produces a
-    // byte-identical payload. Verified by mutation: the swap leaves this
-    // whole target green, and nothing observable distinguishes them.
-    //
-    // The consequential direction IS pinned, by the sibling test above:
-    // swapping `start_action` to `Rewritten` drops the tail that shows
-    // an agent which log line landed, and that fails loudly. What is
-    // asserted here is the payload a rewrite actually carries.
+    // With the STOCK project template the two shapes are
+    // indistinguishable here: `AppendedToSection` degrades to a null
+    // tail when the heading is absent (verify.rs `section_tail`) and the
+    // stock map has no `## Logs`. The sibling test below closes that,
+    // using a custom template that does have one.
     let v = verification(&result);
     assert_eq!(v["verified"], "content", "a rewrite re-reads the file: {v}");
     assert!(
@@ -477,5 +471,54 @@ async fn start_unplanned_action_is_rewrite_shaped_because_it_returns_the_map() {
             .is_some_and(|p| p.starts_with("projects/")),
         "and reports the map it rewrote: {}",
         payload["path"]
+    );
+}
+
+#[tokio::test]
+async fn the_unplanned_verbs_rewrite_shape_is_pinned_by_a_map_that_has_a_logs_section() {
+    // A custom project template is a supported vault feature, and one
+    // carrying a `## Logs` heading makes the two write shapes
+    // observable: `AppendedToSection` finds the section and emits a
+    // tail, `Rewritten` emits none. Without this the choice is
+    // deletable — the gap round 2 raised, round 3's comment wrongly
+    // called unpinnable, and round 4 showed how to close.
+    // The stock template verbatim plus one heading, so the only thing
+    // this vault differs by is the `## Logs` section under test.
+    const MAP_WITH_LOGS: &str = concat!(
+        include_str!("../../cdno-domain/templates/project.md"),
+        "\n## Logs\n"
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &VaultPath::new(".cuaderno/templates/project.md").unwrap(),
+            MAP_WITH_LOGS,
+        )
+        .expect("seed a custom project template");
+    let server = server_over(Arc::clone(&store));
+    server
+        .create_project(Parameters(CreateProjectInput {
+            title: "Alpha".to_owned(),
+            context: "work".to_owned(),
+            core_question: None,
+            vars: None,
+        }))
+        .await
+        .expect("create_project");
+
+    let result = server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "alpha".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "light".to_owned(),
+        }))
+        .await
+        .expect("start_unplanned_action");
+
+    let v = verification(&result);
+    assert!(
+        v["appended_tail"].is_null(),
+        "a rewrite emits no tail even when the map HAS a Logs section; \
+         an append shape here would emit one: {v}"
     );
 }

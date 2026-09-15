@@ -366,8 +366,8 @@ fn start(
 ///
 /// `start` is the first CLI verb to *unpack* it, not the first that can
 /// raise it: `complete`, `drop` and `promote` all resolve through the
-/// same [`resolve_open_action`] and have been able to raise it since
-/// long before this verb existed. They still hand it to anyhow, so they
+/// same [`resolve_open_action`] and could raise it before this verb
+/// existed. They still hand it to anyhow, so they
 /// still print the debug vec. Routing them through here too is worth
 /// doing and is deliberately not done in the same change as adding the
 /// verb.
