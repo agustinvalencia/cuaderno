@@ -1,7 +1,8 @@
 # `cdno lint`
 
-Validate every indexed note and report frontmatter problems. Errors fail the command; warnings (such
-as broken wikilinks) are non-fatal unless `--strict` is given.
+Validate every indexed note and report what is wrong with it — frontmatter, links, attachment
+pairing, and lines the canonical parsers silently skip. Errors fail the command; warnings (such as
+broken wikilinks) are non-fatal unless `--strict` is given.
 
 A wikilink or embed that points at an **attachment** — a pasted image, a filed PDF — is not a broken
 link: attachments are never indexed, but the target is resolved against the filesystem (relative to
