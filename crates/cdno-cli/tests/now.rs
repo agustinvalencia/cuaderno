@@ -90,8 +90,10 @@ fn elapsed_reads_in_words() {
 
 #[test]
 fn a_start_in_the_future_says_nothing_rather_than_a_negative() {
-    // The clock moved — a timezone change, a nap past midnight. A
-    // negative duration would be worse than silence.
+    // The clock moved backwards within the day — a timezone change, an
+    // NTP correction. (Not a midnight crossing: the focus is read from
+    // one date's note against that same moment's clock.) A negative
+    // duration would be worse than silence.
     assert_eq!(elapsed_since(t(23, 0), t(1, 0)), None);
 }
 

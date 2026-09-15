@@ -183,6 +183,10 @@ impl From<OrientationContext> for OrientationContextDto {
 /// `## Logs`. There is no state behind this: a start written by the
 /// CLI, by an agent, or by hand in an editor all count, and a
 /// completion or a drop clears it.
+///
+/// A hand-written start only counts in the writers' own shape,
+/// `started [[slug]] — text` with an em dash (U+2014); the domain's
+/// parser requires that codepoint, so a hyphen there is invisible.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CurrentFocusDto {
     /// Slug of the project the action belongs to.

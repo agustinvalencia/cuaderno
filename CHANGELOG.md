@@ -18,23 +18,51 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `--unplanned --title T --energy E` adds one and starts it. The two modes are mutually exclusive at
   the parser, because the domain keeps those intents apart precisely so a typo cannot create an
   action (#568) and the CLI must not reunite them. `cdno now` reports the action started and not yet
-  closed, read back from today's `## Logs` — so a start made by the CLI, by an agent, or by hand all
-  count, and a completion or a drop clears it. `--json` emits `{project, action, started}`, all null
-  when nothing is open.
+  closed, read back from today's `## Logs` — so a start made by the CLI, by an agent, or written by
+  hand in the log's own shape all count, and a completion or a drop clears it. (That shape is
+  `started [[slug]] — text` with an em dash, U+2014; the parser requires that codepoint so ordinary
+  prose is never mistaken for a focus, which also means a hand-typed hyphen is silently not picked
+  up.) `--json` emits `{project, action, started}`, all null when nothing is open.
 
   Over MCP: `start_action` and `start_unplanned_action` write; `current_focus` reads, and sits on the
   read-only surface so a client with no write access can still ask what is in progress. The tool
   catalogue goes 52 → 55.
 
+- **Unplanned work can be started for real.** `start_action`'s old doc claimed "starting unplanned
+  work is equally valid". It never was: unplanned work names no bullet, so no completion could log
+  matching text and the focus stayed pinned to it for ever. `start_unplanned_action` gives the work a
+  bullet first and starts that, in one commit — it becomes ordinary planned work as it begins,
+  closable by `complete_action` and `drop_action` like anything else. It logs both `action added to`
+  and `started`, so a bullet never appears on the map without a trace of where it came from.
+
+  Deliberately a separate verb rather than a fallback when `start_action` matches nothing: a fallback
+  would silently turn every typo into a new action, which is the failure mode the change above
+  removes.
+
+  On the desktop this is the Home view's "Starting something that isn't listed?" row, under the
+  pick-one shortlist — collapsed until asked for, so the planned path stays the main one. It defaults
+  to the energy filter's current level, since the filter states the energy you have now and this is
+  work starting now. Previously the only honest route was to add the action, come back, and start it:
+  two gestures and a context switch to record work already begun.
+
 ### Fixed
+
+- **`cdno action start --title` without `--unplanned` no longer dead-ends.** The two flags are only
+  meaningful together, but nothing said so to the parser: non-interactively the command asked for
+  `--query` instead, adding `--query` then failed with "cannot be used with", and neither message
+  ever named `--unplanned`. Interactively it was worse — the title was silently discarded and the
+  picker of *existing* bullets appeared, so confirming logged a start for work the person had not
+  named. `--title` and `--energy` now `requires = "unplanned"`, so clap names the missing flag.
 
 - **An ambiguous action query is readable instead of a Rust debug vec.** `AmbiguousAction` carries
   its candidates as a `Vec<String>` and nothing in the CLI unpacked them, so they arrived as
   `["Run sweep B", "Run sweep C"]` inside an anyhow chain. `action start` unpacks them — a picker in
   a terminal, a listed set otherwise. It is the first CLI verb to do so, not the first that can
   raise it: `complete`, `drop` and `promote` still print the vec, and routing them through the same
-  helper is worth a separate change.
-
+  helper is worth a separate change. The candidates go through the same `sanitise` the listing
+  renderer uses — the debug vec escaped control characters as a side effect of `{:?}`, so printing
+  them plainly would have let a bullet drive the terminal on the one path meant to make the error
+  readable.
 
 ### Changed
 
@@ -59,25 +87,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
   Note this issue was filed claiming a live bug in `current_focus` for actions with attached notes.
   That claim was wrong and the issue has been corrected; the desktop flow round-trips correctly.
-
-### Added
-
-- **Unplanned work can be started for real.** `start_action`'s old doc claimed "starting unplanned
-  work is equally valid". It never was: unplanned work names no bullet, so no completion could log
-  matching text and the focus stayed pinned to it for ever. `start_unplanned_action` gives the work a
-  bullet first and starts that, in one commit — it becomes ordinary planned work as it begins,
-  closable by `complete_action` and `drop_action` like anything else. It logs both `action added to`
-  and `started`, so a bullet never appears on the map without a trace of where it came from.
-
-  Deliberately a separate verb rather than a fallback when `start_action` matches nothing: a fallback
-  would silently turn every typo into a new action, which is the failure mode the change above
-  removes.
-
-  On the desktop this is the Home view's "Starting something that isn't listed?" row, under the
-  pick-one shortlist — collapsed until asked for, so the planned path stays the main one. It defaults
-  to the energy filter's current level, since the filter states the energy you have now and this is
-  work starting now. Previously the only honest route was to add the action, come back, and start it:
-  two gestures and a context switch to record work already begun.
 
 ## [0.37.0] - 2026-09-10
 

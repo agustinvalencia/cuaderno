@@ -70,8 +70,8 @@ is the **resolved** bullet text, not your query, so `--query "draft methods"` lo
 | `--project <SLUG>` | Project slug. |
 | `--query <QUERY>` | Substring of an existing bullet. Conflicts with `--unplanned`. |
 | `--unplanned` | Start work that is on no map yet: adds the bullet, then starts it. |
-| `--title <TEXT>` | Title for the new bullet (with `--unplanned`). |
-| `--energy <LEVEL>` | `deep`, `medium` or `light` (with `--unplanned`). |
+| `--title <TEXT>` | Title for the new bullet. Requires `--unplanned`. |
+| `--energy <LEVEL>` | `deep`, `medium` or `light`. Requires `--unplanned`. |
 
 An ambiguous `--query` is a question rather than a dead end: in a terminal you get a picker over the
 candidates, and non-interactively they are listed one per line.
@@ -86,7 +86,8 @@ cdno action start --project surrogate-model --unplanned \
 ```
 
 `--unplanned` is deliberately explicit rather than a fallback when `--query` matches nothing: a
-fallback would turn every typo into a new action, silently.
+fallback would turn every typo into a new action, silently. `--title` and `--energy` require it, so
+passing them alone is a parse error naming `--unplanned` rather than a start on some other bullet.
 
 ## `cdno action complete`
 

@@ -1,9 +1,17 @@
 //! `cdno now`: what you are in the middle of.
 //!
-//! A read verb over [`Vault::current_focus`], which replays today's
+//! A read verb over `Vault::current_focus`, which replays today's
 //! `## Logs` rather than holding state — so a start made from the CLI,
 //! from an agent over MCP, or by hand in an editor all count, and a
 //! completion or a drop clears it. Nothing to keep in sync.
+//!
+//! A hand-written line has to be in the shape the writers emit:
+//! `- **HH:MM**: started [[slug]] — text`, separated by an em dash
+//! (U+2014). The domain's parser requires that codepoint exactly
+//! (`parse_focus_marker`, cdno-domain `vault/context.rs`), so a line
+//! typed with an ASCII hyphen is silently not a focus. That strictness
+//! is deliberate — prose beginning "started something" must not
+//! register — but it does mean "by hand" means "in that shape".
 //!
 //! Rendering is split from I/O the way `orient` and `status` split it:
 //! [`build_now`] returns the text so tests assert on a string without
@@ -72,8 +80,14 @@ pub fn build_now(root: &Path, today: NaiveDate, now: NaiveTime) -> Result<String
 }
 
 /// How long ago `started` was, in words. `None` when the start is in
-/// the future, which happens when the clock moved — a nap past
-/// midnight, a timezone change. Saying nothing beats "-3h ago".
+/// the future, which happens when the clock moves backwards within one
+/// day — a timezone change, an NTP correction. Saying nothing beats
+/// "-3h ago".
+///
+/// Not a midnight crossing: `current_focus` is asked for one date and
+/// reads only that date's note, and `main.rs` takes a single
+/// `Local::now()` for both the date and the time, so yesterday's start
+/// is never read back to render against today's clock.
 ///
 /// `pub` so `tests/now.rs` can pin it directly: it is the one piece of
 /// arithmetic here, and the crate's convention is a `pub` seam over an

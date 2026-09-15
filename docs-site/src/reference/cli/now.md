@@ -8,8 +8,18 @@ cdno now [OPTIONS]
 
 There is no state behind this. It replays today's `## Logs`, so a start made from
 [`cdno action start`](action.md#cdno-action-start), from an agent over MCP, or typed into the daily
-note by hand all count equally — and a completion or a drop clears it. Nothing to keep in sync, and
+note by hand all count — and a completion or a drop clears it. Nothing to keep in sync, and
 nothing to go stale.
+
+A line you type yourself has to match the shape the writers emit:
+
+```text
+- **09:30**: started [[surrogate-model]] — Draft the methods section (deep)
+```
+
+The separator is an **em dash** (U+2014), not a hyphen. The parser requires that exact codepoint, so
+that ordinary prose beginning "started something" is never mistaken for a focus — which also means a
+line typed with `-` is silently not picked up, and `cdno lint` will not flag it.
 
 ```bash
 $ cdno now

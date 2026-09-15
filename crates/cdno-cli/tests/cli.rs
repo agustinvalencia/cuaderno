@@ -2243,6 +2243,79 @@ fn now_json_is_an_object_with_null_fields_when_nothing_is_started() {
 }
 
 #[test]
+fn now_renders_the_started_action_through_the_real_binary() {
+    // `cdno now`'s human path -- main.rs's date/time wiring and
+    // `now::run`'s `print!` -- is reachable only here. tests/now.rs goes
+    // through `build_now`, which `run` does not call, and the --json
+    // case above short-circuits before `render` and never reads the
+    // clock. Deleting the stamps main.rs passes, or the print itself,
+    // leaves both of those green. CLAUDE.md puts exactly this wiring in
+    // the cdno-cli profile.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--unplanned",
+            "--title",
+            "Draft methods",
+            "--energy",
+            "deep",
+        ])
+        .assert()
+        .success();
+
+    // The slug, the resolved bullet with its energy suffix, and the
+    // "since HH:MM" clause built from the log stamp -- none of which the
+    // --json shape carries in that form.
+    cdno()
+        .args(["--vault", vault, "now"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("Draft methods (deep)"))
+        .stdout(predicate::str::is_match(r"since \d{2}:\d{2}").unwrap());
+
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "action",
+            "complete",
+            "--project",
+            "alpha",
+            "--query",
+            "Draft methods",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .args(["--vault", vault, "now"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing started yet"));
+}
+
+#[test]
 fn action_start_json_emits_a_write_result() {
     // The `--json` contract for the new verb, in the shape this file's
     // other write verbs use (`project_create_json_emits_a_write_result`

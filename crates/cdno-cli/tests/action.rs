@@ -860,3 +860,57 @@ fn the_picker_re_entry_reports_readably_when_the_choice_is_still_ambiguous() {
         "candidates listed:\n{shown}"
     );
 }
+
+#[test]
+fn an_ambiguous_candidate_cannot_drive_the_terminal() {
+    // The candidates are note-derived bullet text. The debug vec this
+    // listing replaced escaped control characters as a side effect of
+    // `{:?}`, so printing them plainly would have been a regression:
+    // the one path that exists to make the error readable would be the
+    // one path that lets a bullet repaint the terminal. Same rule as
+    // an_action_bullet_cannot_drive_the_terminal, which guards the
+    // listing renderer.
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for suffix in ["one", "two"] {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some(format!("review draft \u{1b}[31mRED\u{1b}[0m {suffix}")),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("x".to_owned()),
+            query: Some("review draft".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("ambiguous");
+
+    let shown = format!("{err:#}");
+    assert!(
+        !shown.contains('\u{1b}'),
+        "no ESC reaches the terminal from a candidate:\n{shown:?}"
+    );
+    assert!(
+        shown.contains("review draft"),
+        "the readable text still survives:\n{shown}"
+    );
+}

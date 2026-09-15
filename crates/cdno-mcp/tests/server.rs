@@ -84,7 +84,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (23)
+        // Operations (33)
         "append_to_log",
         "capture",
         "discard_inbox_item",

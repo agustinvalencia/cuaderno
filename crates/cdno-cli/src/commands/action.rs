@@ -87,10 +87,21 @@ pub enum ActionCommands {
         #[arg(long)]
         unplanned: bool,
         /// Title for the new bullet (with `--unplanned`).
-        #[arg(long)]
+        ///
+        /// `requires` rather than a runtime check: without it, passing
+        /// `--title` and forgetting `--unplanned` is a dead end that
+        /// never names the missing flag — non-interactively it asks for
+        /// `--query`, and interactively `fn start` takes the resolve
+        /// branch, discards the title, and offers the picker of
+        /// *existing* bullets, so a confirmed choice logs a start for
+        /// work the person did not name. Stated to clap rather than
+        /// checked at runtime, the way `templates eject` states its
+        /// exactly-one-of rule (`required_unless_present` +
+        /// `conflicts_with`): the parser then names the missing flag.
+        #[arg(long, requires = "unplanned")]
         title: Option<String>,
         /// Energy for the new bullet (with `--unplanned`).
-        #[arg(long)]
+        #[arg(long, requires = "unplanned")]
         energy: Option<EnergyLevel>,
     },
 
@@ -366,7 +377,9 @@ fn start(
 ///
 /// `start` is the first CLI verb to *unpack* it, not the first that can
 /// raise it: `complete`, `drop` and `promote` all resolve through the
-/// same [`resolve_open_action`] and could raise it before this verb
+/// same `resolve_open_action` (cdno-domain `vault/projects/actions.rs`,
+/// a private free function, so no intra-doc link) and could raise it
+/// before this verb
 /// existed. They still hand it to anyhow, so they
 /// still print the debug vec. Routing them through here too is worth
 /// doing and is deliberately not done in the same change as adding the
@@ -427,12 +440,20 @@ pub fn start_chosen_candidate(
 
 /// The candidates, one per line, instead of a Rust debug vec. Shared by
 /// both ambiguity exits so they cannot drift apart.
+///
+/// Each candidate is note-derived bullet text, so it goes through
+/// [`crate::output::sanitise`] like every other such string the CLI
+/// lays out (`render_list` below does the same). The debug vec this
+/// replaces escaped control characters as a side effect of `{:?}`;
+/// printing the candidates plainly would have been a regression on
+/// that, letting a bullet drive the terminal on the one path that
+/// exists to make the error readable.
 fn ambiguous_message(project: &str, query: &str, candidates: &[String]) -> String {
     format!(
         "ambiguous action match for '{query}' on project '{project}'. Candidates:\n{}",
         candidates
             .iter()
-            .map(|c| format!("  {c}"))
+            .map(|c| format!("  {}", crate::output::sanitise(c)))
             .collect::<Vec<_>>()
             .join("\n")
     )

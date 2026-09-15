@@ -34,7 +34,7 @@ use crate::server::CuadernoServer;
 #[tool_router(router = context_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "What the person is in the middle of right now: the most recent action started and not yet closed, or null if nothing is open. Read this BEFORE suggesting what to work on, and before acting on a request that may be a detour -- if the focus names something else, say so rather than silently starting a second thing. There is no state behind it: it replays today's `## Logs`, so a start made from the CLI, from this server, or typed into the note by hand all count equally, and a completion or a drop clears it. `action` is the bullet text exactly as logged, which is the string `complete_action` expects back."
+        description = "What the person is in the middle of right now: the most recent action started and not yet closed, or null if nothing is open. Read this BEFORE suggesting what to work on, and before acting on a request that may be a detour -- if the focus names something else, say so rather than silently starting a second thing. There is no state behind it: it replays today's `## Logs`, so a start made from the CLI or from this server counts, and a completion or a drop clears it. A line typed into the note by hand counts only in the writers' own shape, `started [[slug]] \u{2014} text` separated by an em dash (U+2014) -- the parser requires that codepoint, so prose is never mistaken for a focus and a hand-typed hyphen is silently invisible; if the person insists something is started and this returns null, that is the likely reason. `action` is the bullet text exactly as logged, which is the string `complete_action` expects back."
     )]
     pub async fn current_focus(
         &self,
