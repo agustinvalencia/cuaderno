@@ -695,8 +695,6 @@ fn parse_open_action_text(line: &str) -> Option<&str> {
     line.trim_start().strip_prefix("- [ ] ").map(str::trim)
 }
 
-/// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
-/// matching is case-sensitive because `add_action` always emits
 /// Find the one open action bullet `query` names, among `lines`.
 ///
 /// Two rules, in order.
@@ -758,6 +756,8 @@ fn resolve_open_action(lines: &[&str], slug: &str, query: &str) -> Result<usize,
     }
 }
 
+/// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
+/// matching is case-sensitive because `add_action` always emits
 /// lowercase.
 fn strip_energy_suffix(text: &str) -> &str {
     for suffix in [" (deep)", " (medium)", " (light)"] {

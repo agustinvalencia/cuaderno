@@ -14,11 +14,12 @@ use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
 
 use crate::dto::{
-    CommitmentEntryDto, DailyNoteViewDto, InboxItemDto, LintReportDto, MonthlyContextDto,
-    MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS, PROJECT_MENTIONS_MAX,
-    PortfolioDetailDto, ProjectContextDto, ProjectListDto, ProjectListEntryDto, ProjectSlotsDto,
-    QuestionSummaryDto, SearchResultDto, StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto,
-    WEEKLY_LOGS_MAX, WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
+    CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
+    MonthlyContextDto, MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS,
+    PROJECT_MENTIONS_MAX, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
+    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
+    StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
+    WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
 
 use crate::input::*;
@@ -32,6 +33,21 @@ use crate::server::CuadernoServer;
 
 #[tool_router(router = context_router, vis = "pub")]
 impl CuadernoServer {
+    #[tool(
+        description = "What the person is in the middle of right now: the most recent action started and not yet closed, or null if nothing is open. Read this BEFORE suggesting what to work on, and before acting on a request that may be a detour -- if the focus names something else, say so rather than silently starting a second thing. There is no state behind it: it replays today's `## Logs`, so a start made from the CLI or from this server counts, and a completion or a drop clears it -- but `promote_action` rewrites the bullet it matches, so a promotion between a start and its close leaves this pinned to the old text until the day rolls over. A line typed into the note by hand counts only in the writers' own shape, `- **HH:MM**: started [[slug]] \u{2014} text` -- the parser requires BOTH the `- **HH:MM**: ` stamp and that exact em-dash codepoint (U+2014), so prose is never mistaken for a focus; if the person insists something is started and this returns null, a missing stamp or an ASCII hyphen is the likely reason. `action` is the bullet text exactly as logged, which is the string `complete_action` expects back."
+    )]
+    pub async fn current_focus(
+        &self,
+        Parameters(_input): Parameters<EmptyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
+        let focus = self
+            .with_vault(move |vault| vault.current_focus(today))
+            .await?
+            .map_err(into_mcp_error)?;
+        json_result(focus.map(CurrentFocusDto::from))
+    }
+
     #[tool(
         description = "Today's orientation: commitments due soon, active projects with their top action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered."
     )]

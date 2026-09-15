@@ -62,7 +62,7 @@ struct Cli {
     color: cdno_cli::output::style::ColourChoice,
 
     /// Emit machine-readable JSON instead of the formatted table.
-    /// Read verbs (`commitments`, `questions`, `status`, `orient`,
+    /// Read verbs (`commitments`, `questions`, `status`, `now`, `orient`,
     /// `search`, `open`, and the `list`/`show` verbs of `project`, `portfolio`,
     /// `stewardship`, plus `action list`) emit their listing/detail;
     /// write verbs (`log`, `capture`, `file`, `track`, and the
@@ -151,6 +151,13 @@ enum Commands {
         #[arg(long)]
         energy: Option<EnergyLevel>,
     },
+
+    /// What you are in the middle of: the most recent action started
+    /// and not yet closed, read back from today's daily log — so a
+    /// start made from an agent counts too, as does one written by hand
+    /// in the log's own shape (`- **HH:MM**: started [[slug]] — text`,
+    /// stamp and em dash both required).
+    Now,
 
     /// Quick snapshot: active projects and their top next actions.
     Status,
@@ -471,6 +478,11 @@ fn main() -> Result<()> {
                 cli.no_interactive,
                 cli.json,
             )
+        }
+        Commands::Now => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            let now = Local::now();
+            commands::now::run(&root, now.date_naive(), now.time(), cli.json)
         }
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

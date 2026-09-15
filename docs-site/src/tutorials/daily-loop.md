@@ -47,9 +47,26 @@ cdno project state --slug surrogate-model --text "Mesh scaling works; assembly i
 # File a useful result into the right portfolio:
 cdno file --portfolio sparse-vs-dense-ood --source "ablation run B" --origin projects/surrogate-model
 
+# Say what you are starting, so `cdno now` can answer for you later:
+cdno action start --project surrogate-model --query "assembly step"
+
 # Tick off a finished action (substring match on the bullet):
 cdno action complete --project surrogate-model --query "feature set B"
 ```
+
+**When you lose the thread**, ask what you were doing rather than guessing:
+
+```bash
+$ cdno now
+surrogate-model since 09:30 · 1h 30m
+  Profile the assembly step (medium)
+```
+
+There is no state behind that — it replays today's journal, so a start made here, from the desktop,
+or by an agent over MCP all count equally, and completing or dropping the action clears it. With
+nothing open it says so rather than printing an empty frame. See
+[`cdno now`](../reference/cli/now.md) for the full shape, including what a start typed by hand has to
+look like.
 
 ## Evening: close
 

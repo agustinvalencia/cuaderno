@@ -64,8 +64,11 @@ fn advertised_catalogue_matches_expected_surface() {
     // the two daily-note tools (GH #158), the two weekly-note tools, and
     // the two monthly-note tools (GH #228).
     let mut expected = vec![
-        // Context (16)
+        // Context (17)
         "get_orientation",
+        // What is open right now (#568) — read-only, so it belongs to
+        // the context router and the read-only surface with it.
+        "current_focus",
         "get_weekly_context",
         "get_monthly_context",
         "get_project_context",
@@ -81,7 +84,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (23)
+        // Operations (33)
         "append_to_log",
         "capture",
         "discard_inbox_item",
@@ -89,6 +92,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "update_project_state",
         "add_action",
         "promote_action",
+        "start_action",
+        "start_unplanned_action",
         "complete_action",
         "drop_action",
         "add_milestone",
@@ -123,7 +128,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 52);
+    assert_eq!(tools.len(), 55);
 }
 
 #[test]
@@ -166,6 +171,32 @@ fn complete_commitment_points_at_the_drop_verb_for_a_promise_not_kept() {
     assert!(
         desc.contains("drop_commitment"),
         "complete_commitment must name the drop verb: {desc}"
+    );
+}
+
+/// `start_action` must name `start_unplanned_action`. The domain keeps
+/// the two apart so a non-matching query cannot silently create an
+/// action (#568); an agent that does not know the creating verb exists
+/// will either give up or, worse, reach for `add_action` and leave the
+/// work unstarted. Same rationale as the completion/drop pointer below:
+/// the description is the only instruction surface an agent sees.
+#[test]
+fn start_action_points_at_the_unplanned_verb_for_work_not_on_the_map() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    let desc = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "start_action")
+        .and_then(|t| t.description.clone())
+        .expect("tool 'start_action' not advertised");
+    assert!(
+        desc.contains("start_unplanned_action"),
+        "start_action must name the creating verb so an agent knows what \
+         to reach for when the work is not on the map yet: {desc}"
+    );
+    assert!(
+        desc.contains("will not create"),
+        "and must say plainly that it refuses to create the bullet: {desc}"
     );
 }
 

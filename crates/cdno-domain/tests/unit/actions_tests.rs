@@ -936,12 +936,14 @@ fn a_dropped_action_never_appears_in_completed_actions() {
 #[test]
 fn a_real_drop_with_a_reason_clears_the_focus_it_opened() {
     let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
-    // A plain bullet, not an attached note: `start_action` logs the raw
-    // text it is handed while the close verbs log the *resolved* bullet
-    // text, so the two only coincide for a bullet that is its own text.
-    // With an attached note they never match and no close clears the
-    // focus — a pre-existing defect (`complete_action` behaves
-    // identically), filed separately rather than widened into this PR.
+    // A plain bullet keeps the fixture simple. The caveat this comment
+    // used to carry — that `start_action` logged the raw text it was
+    // handed, so an attached-note bullet could never be closed — was
+    // made false by #568: `start_action` now resolves through
+    // `resolve_open_action` and logs `parse_open_action_text` of the
+    // matched line, exactly as the close verbs do. Measured on a real
+    // vault: starting and completing a `- [ ] [[actions/<slug>]] (deep)`
+    // bullet logs the same text both times and the focus clears.
     vault
         .add_action(
             dt(2026, 5, 26, 9, 0),

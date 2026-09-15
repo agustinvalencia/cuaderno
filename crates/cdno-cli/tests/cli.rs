@@ -2195,3 +2195,224 @@ fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
         .success()
         .stdout(predicate::str::contains("active project"));
 }
+
+#[test]
+fn action_start_modes_are_mutually_exclusive_at_the_parser() {
+    // Two attributes hold the modes apart and each needs its own guard.
+    // `conflicts_with_all` on --query is what stops a named query being
+    // silently discarded: `fn start` checks `if unplanned` first and
+    // never reads --query on that path, so without it
+    // `--query q --unplanned --title T` would create a bullet and throw
+    // the query away. (`requires = "unplanned"` on --title/--energy is
+    // the other half, guarded by the test below.) No other test passes
+    // both flags -- the behaviour tests in tests/action.rs build
+    // `ActionCommands::Start` directly and never reach clap at all --
+    // so without this the attribute could be deleted with a green
+    // suite. Same shape as
+    // templates_eject_requires_exactly_one_of_type_or_all.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+
+    for flag in [
+        vec!["--unplanned"],
+        vec!["--title", "T"],
+        vec!["--energy", "deep"],
+    ] {
+        let mut args = vec!["--vault", vault, "action", "start", "--query", "q"];
+        args.extend(flag.iter().copied());
+        cdno()
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn action_start_title_and_energy_require_unplanned() {
+    // The other half of the mode split. Without `requires = "unplanned"`
+    // these never named the missing flag: non-interactively clap was
+    // satisfied and `fn start` took the resolve branch, so the run died
+    // asking for --query, and adding --query then failed with "cannot be
+    // used with" -- neither message mentioning --unplanned. Interactively
+    // it was worse: the title was discarded and the picker of EXISTING
+    // bullets appeared, so a confirmed choice logged a start for work the
+    // person never named. Deleting either `requires` fails here.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+
+    for flag in [vec!["--title", "T"], vec!["--energy", "deep"]] {
+        let mut args = vec!["--vault", vault, "action", "start", "--project", "alpha"];
+        args.extend(flag.iter().copied());
+        cdno()
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("--unplanned"));
+    }
+}
+
+#[test]
+fn now_json_is_an_object_with_null_fields_when_nothing_is_started() {
+    // The documented contract, end to end through the real binary: a
+    // caller tests one field without branching on the document's shape.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+
+    cdno()
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"project\": null"))
+        .stdout(predicate::str::contains("\"action\": null"))
+        .stdout(predicate::str::contains("\"started\": null"));
+}
+
+#[test]
+fn now_renders_the_started_action_through_the_real_binary() {
+    // `cdno now`'s human path -- main.rs's date/time wiring and
+    // `now::run`'s `print!` -- is reachable only here. tests/now.rs goes
+    // through `build_now`, which `run` does not call, and the --json
+    // case above short-circuits before `render` and never reads the
+    // clock. Deleting the print itself, or either stamp main.rs passes
+    // (the date reaching `current_focus`, or the `NaiveDateTime` the
+    // elapsed clause is measured against), leaves both of those green --
+    // so this asserts the date-derived "since HH:MM" AND the
+    // clock-derived elapsed clause. CLAUDE.md puts exactly this wiring
+    // in the cdno-cli profile.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--unplanned",
+            "--title",
+            "Draft methods",
+            "--energy",
+            "deep",
+        ])
+        .assert()
+        .success();
+
+    // The slug, the resolved bullet with its energy suffix, and the
+    // "since HH:MM" clause built from the log stamp -- none of which the
+    // --json shape carries in that form.
+    cdno()
+        .args(["--vault", vault, "now"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alpha"))
+        .stdout(predicate::str::contains("Draft methods (deep)"))
+        .stdout(predicate::str::is_match(r"since \d{2}:\d{2}").unwrap())
+        // The elapsed half is measured against the `NaiveDateTime` main.rs
+        // stamps, not the date -- a start made moments ago reads "just now".
+        .stdout(predicate::str::contains("\u{b7} just now"));
+
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "action",
+            "complete",
+            "--project",
+            "alpha",
+            "--query",
+            "Draft methods",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .args(["--vault", vault, "now"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Nothing started yet"));
+}
+
+#[test]
+fn action_start_json_emits_a_write_result() {
+    // The `--json` contract for the new verb, in the shape this file's
+    // other write verbs use (`project_create_json_emits_a_write_result`
+    // and its siblings). What is load-bearing is the `path`: it is
+    // mode-dependent -- the daily note under --query, the project map
+    // under --unplanned -- and nothing else pins that distinction.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+    cdno()
+        .args([
+            "--vault",
+            vault,
+            "project",
+            "create",
+            "--title",
+            "Alpha",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+
+    // --unplanned reports the project map it rewrote.
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--unplanned",
+            "--title",
+            "Fix the CI badge",
+            "--energy",
+            "light",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().ends_with("projects/alpha.md"),
+        "unplanned start reports the map: {v}"
+    );
+    assert!(
+        v["message"].as_str().is_some(),
+        "and carries a message: {v}"
+    );
+
+    // --query reports the daily note it logged to.
+    let v = json_stdout(
+        dir.path(),
+        &[
+            "action",
+            "start",
+            "--project",
+            "alpha",
+            "--query",
+            "Fix the CI badge",
+            "--json",
+        ],
+    );
+    assert!(
+        v["path"].as_str().unwrap().contains("journal/"),
+        "a plain start reports the daily note: {v}"
+    );
+}

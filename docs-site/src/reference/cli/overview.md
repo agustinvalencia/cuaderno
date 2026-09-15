@@ -51,7 +51,7 @@ and `--json` all behave exactly as they did before. See
 
 `--json` makes any supported verb emit structured output:
 
-- **Read verbs** (`commitments`, `questions`, `status`, `orient`, `search`, `open`, and the `list`/`show`
+- **Read verbs** (`commitments`, `questions`, `status`, `now`, `orient`, `search`, `open`, and the `list`/`show`
   verbs of `project`/`portfolio`/`stewardship`, plus `action list`) emit their listing or detail
   object.
 - **Write verbs** (`log`, `capture`, `file`, `track`, and the create/update verbs of `project`,
@@ -73,6 +73,7 @@ The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 | [`triage`](triage.md) | Process inbox captures |
 | [`orient`](orient.md) | Morning orientation |
 | [`status`](status.md) | Active projects + top actions |
+| [`now`](now.md) | What you are in the middle of |
 | [`open`](open.md) | Resolve a note reference to its path |
 | [`weekly`](weekly.md) | Show the weekly note |
 | [`monthly`](monthly.md) | Show the monthly note |

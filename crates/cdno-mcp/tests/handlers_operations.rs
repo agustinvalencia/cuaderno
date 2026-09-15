@@ -27,8 +27,9 @@ use cdno_mcp::server::{
     DiscardInboxItemInput, DropActionInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
     ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetCoreQuestionInput,
-    SetFrontmatterInput, SetQuestionStatusInput, UpdateProjectStateInput, UpsertDailySectionInput,
-    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
+    SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
+    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
+    UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -2069,5 +2070,124 @@ async fn create_tracking_entry_rejects_a_non_object_metrics_payload() {
     assert!(
         format!("{err:?}").contains("metrics"),
         "the error must name the parameter: {err:?}"
+    );
+}
+
+// --- start / unplanned start (#568) ------------------------------------
+
+#[tokio::test]
+async fn start_action_logs_the_resolved_bullet_not_the_query() {
+    // The query may be energy-stripped; what lands in the log must be
+    // the whole bullet, because that is what `complete_action` writes
+    // back and `current_focus` pairs them by exact text.
+    let (server, store) = server_with_project();
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Prepare the demo proposal".to_owned(),
+            energy: "deep".to_owned(),
+            with_note: false,
+            vars: None,
+        }))
+        .await
+        .expect("add_action");
+
+    server
+        .start_action(Parameters(StartActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "demo proposal".to_owned(),
+        }))
+        .await
+        .expect("start_action");
+
+    let today = chrono::Local::now().naive_local().date();
+    let daily = vp(&format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    ));
+    let body = store.read_file(&daily).expect("daily written");
+    assert!(
+        body.contains("started [[surrogate-model]] \u{2014} Prepare the demo proposal (deep)"),
+        "resolved bullet, energy and all:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn start_action_refuses_work_that_is_not_on_the_map() {
+    // It will not create the bullet — that is `start_unplanned_action`.
+    // A fallback here would turn a typo into a new action silently.
+    let (server, store) = server_with_project();
+    let err = server
+        .start_action(Parameters(StartActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Buy milk".to_owned(),
+        }))
+        .await
+        .expect_err("a start naming nothing must error");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+
+    let map = store
+        .read_file(&vp("projects/surrogate-model.md"))
+        .expect("map readable");
+    assert!(!map.contains("Buy milk"), "and nothing was written:\n{map}");
+}
+
+#[tokio::test]
+async fn start_unplanned_action_adds_the_bullet_and_starts_it() {
+    let (server, store) = server_with_project();
+    server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "light".to_owned(),
+        }))
+        .await
+        .expect("start_unplanned_action");
+
+    let map = store
+        .read_file(&vp("projects/surrogate-model.md"))
+        .expect("map readable");
+    assert!(
+        map.contains("- [ ] Fix the CI badge (light)"),
+        "bullet on the map:\n{map}"
+    );
+
+    let today = chrono::Local::now().naive_local().date();
+    let daily = vp(&format!(
+        "journal/{}/daily/{}.md",
+        today.format("%Y"),
+        today.format("%Y-%m-%d")
+    ));
+    let body = store.read_file(&daily).expect("daily written");
+    assert!(
+        body.contains("action added to [[surrogate-model]] \u{2014} Fix the CI badge (light)"),
+        "origin logged:\n{body}"
+    );
+    assert!(
+        body.contains("started [[surrogate-model]] \u{2014} Fix the CI badge (light)"),
+        "start logged:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn start_unplanned_action_rejects_an_unknown_energy() {
+    let (server, store) = server_with_project();
+    let err = server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "frantic".to_owned(),
+        }))
+        .await
+        .expect_err("unknown energy");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+
+    let map = store
+        .read_file(&vp("projects/surrogate-model.md"))
+        .expect("map readable");
+    assert!(
+        !map.contains("Fix the CI badge"),
+        "and nothing was written:\n{map}"
     );
 }

@@ -365,6 +365,49 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Start work on an action that is ALREADY on the project map: matches the open bullet by substring `query` and logs `- **HH:MM**: started [[project]] — <bullet>` to today's daily note. `current_focus` requires that whole shape -- the `- **HH:MM**: ` stamp AND the em dash (U+2014) -- so a line composed by hand without both is invisible to it. What gets logged is the RESOLVED bullet text, not your query, so the later `complete_action` or `drop_action` logs matching text and `current_focus` clears. One exception: `promote_action` REWRITES the bullet it matches, so promoting between the start and the close strands the focus until the day rolls over, and the close verbs then match nothing. Errors with `INTERNAL_ERROR` when `query` matches no open bullet, and on an ambiguous match (several bullets contain it) -- the message lists the candidates; re-call with enough text to pick one. For work that is NOT on the map yet, use `start_unplanned_action` instead: this tool will not create a bullet, deliberately, because a fallback would turn a typo into a new action silently."
+    )]
+    pub async fn start_action(
+        &self,
+        Parameters(input): Parameters<StartActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .with_vault(move |vault| vault.start_action(at, &input.project, &input.query))
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Started action, logged to {}", path);
+        self.verified_write(
+            path,
+            message,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Start work that is on NO project map yet: appends the action to the project's `## Next Actions` AND logs it as started, in one commit, so it becomes ordinary planned work the moment it begins and can be closed by `complete_action` or `drop_action` like any other -- with the same two limits every bullet has: a `promote_action` in between rewrites the bullet and strands the focus, and a `title` that duplicates an open bullet's text makes both unresolvable by substring (check the map first if the work may already be listed). Use this when the person is already doing something that was never planned -- the fix they noticed, the errand in front of them. It is a separate tool from `start_action` on purpose: routing a non-matching query into creation would turn a typo into a new action silently. Two lines land in the daily log, `action added to ...` then `started ...`, so the bullet never appears on the map without a trace of where it came from. `energy` is one of `\"deep\"`, `\"medium\"`, `\"light\"`."
+    )]
+    pub async fn start_unplanned_action(
+        &self,
+        Parameters(input): Parameters<StartUnplannedActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let energy = EnergyLevel::from_str(&input.energy)
+            .map_err(|e| invalid_argument("energy", &e.to_string()))?;
+        let at = chrono::Local::now().naive_local();
+        let path = self
+            .with_vault(move |vault| {
+                vault.start_unplanned_action(at, &input.project, &input.title, energy)
+            })
+            .await?
+            .map_err(into_mcp_error)?
+            .primary;
+        let message = format!("Added to {} and started", path);
+        self.verified_write(path, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
         description = "Complete an action: matches the bullet on the project by substring `query`, removes the bullet, logs the completion to today's daily, and (if an action note is attached) archives it to `actions/_done/<year>/`. Use this ONLY when the work was actually performed. If it was superseded, abandoned or reprioritised, use `drop_action` instead -- completing it writes `action done on ...` into the daily log, which every weekly and monthly review reads back from, so the vault would assert work nobody did."
     )]
     pub async fn complete_action(
