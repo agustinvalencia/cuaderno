@@ -2431,3 +2431,84 @@ fn lint_leaves_an_indented_continuation_alone() {
         report.issues
     );
 }
+
+#[test]
+fn lint_flags_a_start_whose_stamp_is_mangled_not_merely_absent() {
+    // The typo the rule most wants: the writer *reached* for a stamp and got
+    // it wrong. Matching the marker at position 0 saw none of these, so they
+    // stayed exactly as invisible as before the rule existed.
+    for line in [
+        "- **25:99**: started [[alpha]] \u{2014} out-of-range hour\n",
+        "- 09:20: started [[alpha]] \u{2014} unbolded stamp\n",
+        "- **09:40** started [[alpha]] \u{2014} no colon\n",
+        "-**09:35**: started [[alpha]] \u{2014} no space after the bullet\n",
+    ] {
+        let body = daily_log(line);
+        let vault = vault_with_notes(
+            &[("journal/2026/daily/2026-09-15.md", &body)],
+            VaultConfig::default(),
+        );
+        let report = vault.lint_all_notes().expect("lint succeeds");
+        let warnings = focus_warnings(&report);
+        assert_eq!(
+            warnings.len(),
+            1,
+            "not flagged: {line:?} -> {:?}",
+            report.issues
+        );
+        assert!(
+            warnings[0].message.contains("timestamp"),
+            "hint should name the stamp for {line:?}: {}",
+            warnings[0].message
+        );
+    }
+}
+
+#[test]
+fn lint_names_the_missing_bullet_rather_than_the_shape_that_is_correct() {
+    // `parse_log_entry_heads` needs the literal `- **`, so a stamped line
+    // with no bullet is a near-miss -- but the wikilink and the em dash are
+    // both perfect, and the hint used to fall through and blame them.
+    let body = daily_log("**09:30**: started [[alpha]] \u{2014} Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("bullet"),
+        "hint should name the missing bullet: {}",
+        warnings[0].message
+    );
+    assert!(
+        !warnings[0].message.contains("does not match"),
+        "hint must not blame the shape that is correct: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn lint_still_leaves_prose_alone_after_the_widened_stamp_peel() {
+    // The peel stops at the first letter, which is the whole reason it is
+    // safe. These must stay unflagged now that a mangled stamp is a claim.
+    let body = daily_log(concat!(
+        "- **09:45**: I started [[alpha]] yesterday and got nowhere\n",
+        "- **09:46**: 3 things blocked me today\n",
+        "- **09:47**: started the engine and it held\n",
+        "- **09:48**: 1. started [[alpha]] is on the list, not a marker\n",
+    ));
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    assert!(
+        focus_warnings(&report).is_empty(),
+        "prose must not be flagged: {:?}",
+        report.issues
+    );
+}

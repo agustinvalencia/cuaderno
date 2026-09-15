@@ -12,8 +12,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `- **HH:MM**: started [[slug]] — text` and skips everything else silently, which is deliberate —
   prose beginning "started something" must not register. The cost was that a hand-typed near-miss
   vanished: the line sat in the journal looking correct, `cdno now` said "Nothing started yet", and
-  no surface anywhere said why. Both halves are load-bearing, so both are checked — a missing or
-  malformed `- **HH:MM**: ` stamp, and an ASCII hyphen or en-dash where the em dash (U+2014) belongs.
+  no surface anywhere said why. Every part of the shape is load-bearing, so every part is checked —
+  the `- ` bullet, a stamp that is missing *or* mangled (`- 09:20:` unbolded, `- **25:99**:` out of
+  range, `- **09:40**` with no colon), and an ASCII hyphen or en-dash where the em dash (U+2014)
+  belongs — and the message names which one it was.
   Close markers (`action done on`, `action dropped on`) are checked too: a completion that is not
   read back leaves the focus it should have cleared pinned for the rest of the day.
 

@@ -16,13 +16,13 @@ dashboard, and — in a daily note's `## Logs` — a start or close marker that
 [`cdno now`](now.md) will not see:
 
 ```text
-[warning] journal/2026/daily/2026-09-15.md: log line `- **09:30**: started [[alpha]] - Draft methods (deep)`
-          reads as a `started` marker but `cdno now` will not see it -- found an ASCII hyphen (-)
-          where an em-dash (—) separates the slug from the action
+[warning] journal/2026/daily/2026-09-15.md: log line `- **09:30**: started [[alpha]] - Draft methods (deep)` reads as a `started` marker but `cdno now` will not see it -- found an ASCII hyphen (-) where an em-dash (—) separates the slug from the action
 ```
 
-The shape has to be `- **HH:MM**: started [[slug]] — text`, and both halves matter: the stamp is what
-makes the line a log entry at all, and the separator must be a real em dash (U+2014). The check is
+The shape has to be `- **HH:MM**: started [[slug]] — text`, and every part of it matters: the `- `
+bullet and the stamp are what make the line a log entry at all, and the separator must be a real em
+dash (U+2014). A stamp that was attempted and mangled — `- 09:20:` unbolded, `- **25:99**:` out of
+range, `- **09:40**` with no colon — is caught too, not only one that is missing outright. The check is
 deliberately narrow — the marker has to open the entry and be followed immediately by `[[` — so
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
 note mid-sentence, is never flagged.

@@ -57,6 +57,10 @@ impl Vault {
     ///   `## Periodic Commitments` lines the canonical parsers reject —
     ///   the near-misses that would otherwise vanish silently from the
     ///   lapse scan and the commitments aggregation (a `Warning`, #312).
+    /// - daily-log focus markers [`Vault::current_focus`] will not read
+    ///   back: a `started` / `action done on` / `action dropped on` line
+    ///   whose `- **HH:MM**: ` stamp or em dash is wrong, the same class
+    ///   of silent near-miss as the rule above (a `Warning`).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -581,6 +585,10 @@ struct FocusClaim<'a> {
     prefix: &'static str,
     /// Whether a well-formed `**HH:MM**: ` stamp preceded it.
     stamped: bool,
+    /// Whether a `- ` bullet opened the line. `parse_log_entry_heads`
+    /// requires the literal `- **`, so a stamped line with no bullet is a
+    /// near-miss whose defect is the bullet and nothing else.
+    bulleted: bool,
     /// The entry text with any bullet and stamp peeled off.
     text: &'a str,
 }
@@ -605,17 +613,34 @@ const FOCUS_MARKER_PREFIXES: [&str; 3] = [
 /// line actually reads back is [`parse_log_entry_heads`] and
 /// [`parse_focus_marker`]'s verdict, never this function's.
 fn focus_marker_claim(line: &str) -> Option<FocusClaim<'_>> {
-    // `trim_end`, never `trim`: leading whitespace has to survive, because
-    // it is what excludes indented continuation lines. A marker inside one
-    // belongs to the entry above it -- parse_log_entry_heads skips those by
-    // design, so they are not near-misses of their own -- and with the
-    // indent preserved no prefix can match below. Trimming both ends would
-    // silently start flagging them.
+    // Indented lines are continuations: a marker inside one belongs to the
+    // entry above it, and parse_log_entry_heads skips them by design, so
+    // they are not near-misses of their own. This has to be an explicit
+    // guard rather than a consequence of not trimming the front, because
+    // the stamp peel below consumes spaces and would otherwise eat the
+    // indent and turn every such line into a claim.
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
     let body = line.trim_end();
+    let bulleted = body.starts_with("- ");
     let body = body.strip_prefix("- ").unwrap_or(body);
     let (stamped, text) = match body.strip_prefix("**").and_then(|r| r.split_once("**: ")) {
         Some((hhmm, rest)) if NaiveTime::parse_from_str(hhmm, "%H:%M").is_ok() => (true, rest),
-        _ => (false, body),
+        // A stamp that was *attempted* and mangled -- `**25:99**: `,
+        // an unbolded `09:20: `, `**09:40** ` with no colon -- is the
+        // near-miss this rule most wants to catch, and matching the
+        // marker at position 0 would miss every one of them. So peel a
+        // run of stamp-shaped characters and look for the marker behind
+        // it. Only digits, colons, asterisks, dashes and spaces peel: a
+        // letter ends the run, and that is precisely what keeps prose
+        // like "I started [[x]] yesterday" from becoming a claim.
+        _ => (
+            false,
+            body.trim_start_matches(|c: char| {
+                c.is_ascii_digit() || matches!(c, ':' | '*' | '-' | ' ')
+            }),
+        ),
     };
     let prefix = FOCUS_MARKER_PREFIXES
         .iter()
@@ -624,6 +649,7 @@ fn focus_marker_claim(line: &str) -> Option<FocusClaim<'_>> {
     Some(FocusClaim {
         prefix,
         stamped,
+        bulleted,
         text,
     })
 }
@@ -637,6 +663,13 @@ fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
     if !claim.stamped {
         return "the `- **HH:MM**: ` timestamp is missing or malformed, so this is not a log entry"
             .to_owned();
+    }
+    // Checked after the stamp so the more informative half is named first
+    // when both are absent, but before the wikilink and dash branches: with
+    // a good stamp and no bullet those all pass, and the hint would go on to
+    // blame the one part of the line that is correct.
+    if !claim.bulleted {
+        return "the line does not open with a `- ` bullet, so it is not a log entry".to_owned();
     }
     let after_prefix = claim
         .text
