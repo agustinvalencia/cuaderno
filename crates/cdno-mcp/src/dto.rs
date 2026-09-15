@@ -182,11 +182,15 @@ impl From<OrientationContext> for OrientationContextDto {
 /// An action started and not yet closed, as replayed from today's
 /// `## Logs`. There is no state behind this: a start written by the
 /// CLI, by an agent, or by hand in an editor all count, and a
-/// completion or a drop clears it.
+/// completion or a drop clears it — except across a
+/// [`Vault::promote_action`], which rewrites the bullet and leaves the
+/// focus pinned to the old text until the day rolls over.
 ///
 /// A hand-written start only counts in the writers' own shape,
-/// `started [[slug]] — text` with an em dash (U+2014); the domain's
-/// parser requires that codepoint, so a hyphen there is invisible.
+/// `- **HH:MM**: started [[slug]] — text`. The domain's parser
+/// requires both halves — the `- **HH:MM**: ` stamp
+/// (`parse_log_entry_heads`) and that exact em-dash codepoint, U+2014
+/// (`parse_focus_marker`) — so a line missing either is invisible.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CurrentFocusDto {
     /// Slug of the project the action belongs to.

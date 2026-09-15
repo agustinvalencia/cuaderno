@@ -2198,14 +2198,17 @@ fn a_listing_does_not_fail_when_stdout_is_a_terminal_but_stdin_is_not() {
 
 #[test]
 fn action_start_modes_are_mutually_exclusive_at_the_parser() {
-    // `conflicts_with_all` on --query is the ONLY thing keeping the two
-    // modes apart: `fn start` checks `if unplanned` first and never
-    // reads --query on that path. No other test passes both flags --
-    // the behaviour tests in tests/action.rs build `ActionCommands::Start`
-    // directly and never reach clap at all -- so without this the
-    // attribute could be deleted with a green suite while
-    // `--query q --unplanned --title T` silently created a bullet and
-    // discarded the named query. Same shape as
+    // Two attributes hold the modes apart and each needs its own guard.
+    // `conflicts_with_all` on --query is what stops a named query being
+    // silently discarded: `fn start` checks `if unplanned` first and
+    // never reads --query on that path, so without it
+    // `--query q --unplanned --title T` would create a bullet and throw
+    // the query away. (`requires = "unplanned"` on --title/--energy is
+    // the other half, guarded by the test below.) No other test passes
+    // both flags -- the behaviour tests in tests/action.rs build
+    // `ActionCommands::Start` directly and never reach clap at all --
+    // so without this the attribute could be deleted with a green
+    // suite. Same shape as
     // templates_eject_requires_exactly_one_of_type_or_all.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
@@ -2223,6 +2226,31 @@ fn action_start_modes_are_mutually_exclusive_at_the_parser() {
             .assert()
             .failure()
             .stderr(predicate::str::contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn action_start_title_and_energy_require_unplanned() {
+    // The other half of the mode split. Without `requires = "unplanned"`
+    // these never named the missing flag: non-interactively clap was
+    // satisfied and `fn start` took the resolve branch, so the run died
+    // asking for --query, and adding --query then failed with "cannot be
+    // used with" -- neither message mentioning --unplanned. Interactively
+    // it was worse: the title was discarded and the picker of EXISTING
+    // bullets appeared, so a confirmed choice logged a start for work the
+    // person never named. Deleting either `requires` fails here.
+    let dir = tempdir().unwrap();
+    cdno().arg("init").arg(dir.path()).assert().success();
+    let vault = dir.path().to_str().unwrap();
+
+    for flag in [vec!["--title", "T"], vec!["--energy", "deep"]] {
+        let mut args = vec!["--vault", vault, "action", "start", "--project", "alpha"];
+        args.extend(flag.iter().copied());
+        cdno()
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("--unplanned"));
     }
 }
 
@@ -2248,9 +2276,12 @@ fn now_renders_the_started_action_through_the_real_binary() {
     // `now::run`'s `print!` -- is reachable only here. tests/now.rs goes
     // through `build_now`, which `run` does not call, and the --json
     // case above short-circuits before `render` and never reads the
-    // clock. Deleting the stamps main.rs passes, or the print itself,
-    // leaves both of those green. CLAUDE.md puts exactly this wiring in
-    // the cdno-cli profile.
+    // clock. Deleting the print itself, or either stamp main.rs passes
+    // (the date reaching `current_focus`, or the `NaiveDateTime` the
+    // elapsed clause is measured against), leaves both of those green --
+    // so this asserts the date-derived "since HH:MM" AND the
+    // clock-derived elapsed clause. CLAUDE.md puts exactly this wiring
+    // in the cdno-cli profile.
     let dir = tempdir().unwrap();
     cdno().arg("init").arg(dir.path()).assert().success();
     let vault = dir.path().to_str().unwrap();
@@ -2293,7 +2324,10 @@ fn now_renders_the_started_action_through_the_real_binary() {
         .success()
         .stdout(predicate::str::contains("alpha"))
         .stdout(predicate::str::contains("Draft methods (deep)"))
-        .stdout(predicate::str::is_match(r"since \d{2}:\d{2}").unwrap());
+        .stdout(predicate::str::is_match(r"since \d{2}:\d{2}").unwrap())
+        // The elapsed half is measured against the `NaiveDateTime` main.rs
+        // stamps, not the date -- a start made moments ago reads "just now".
+        .stdout(predicate::str::contains("\u{b7} just now"));
 
     cdno()
         .args([

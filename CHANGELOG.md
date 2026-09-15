@@ -11,8 +11,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **`cdno action start` and `cdno now`, plus their MCP equivalents.** `start_action`,
   `start_unplanned_action` and `current_focus` reached the vault through the desktop app and nothing
   else, so the terminal and agents could not start work or ask what was open. All three now have a
-  CLI verb and an MCP tool, ahead of the desktop app's retirement — the capabilities land before the
-  surface that held them goes away, so coverage never dips.
+  CLI verb and an MCP tool, ahead of the desktop app's *planned* retirement — the capabilities land
+  before the surface that held them goes away, so coverage never dips. Nothing is removed here; the
+  desktop app is still built, still shipped and still documented.
 
   `cdno action start --project P --query Q` starts a bullet that already exists;
   `--unplanned --title T --energy E` adds one and starts it. The two modes are mutually exclusive at
@@ -20,9 +21,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   action (#568) and the CLI must not reunite them. `cdno now` reports the action started and not yet
   closed, read back from today's `## Logs` — so a start made by the CLI, by an agent, or written by
   hand in the log's own shape all count, and a completion or a drop clears it. (That shape is
-  `started [[slug]] — text` with an em dash, U+2014; the parser requires that codepoint so ordinary
-  prose is never mistaken for a focus, which also means a hand-typed hyphen is silently not picked
-  up.) `--json` emits `{project, action, started}`, all null when nothing is open.
+  `- **HH:MM**: started [[slug]] — text`; the parser requires both the stamp and that exact em-dash
+  codepoint, U+2014, so ordinary prose is never mistaken for a focus — which also means a line
+  missing either is silently not picked up.) The one thing that breaks the pairing is
+  `action promote`, which *rewrites* the bullet it matched: promoting between a start and its close
+  strands the focus for the rest of the day and the close verbs then match nothing. `--json` emits
+  `{project, action, started}`, all null when nothing is open.
+
+  Two details of the CLI worth stating, since both are easy to get wrong. `--title` and `--energy`
+  `requires = "unplanned"`, so forgetting the mode flag is a parse error naming it rather than a
+  prompt for `--query` or a silently discarded title. And an ambiguous query is a question rather
+  than a dead end: `AmbiguousAction` carries its candidates as a `Vec<String>` and nothing in the
+  CLI unpacked them, so they reached users as `["Run sweep B", "Run sweep C"]` inside an anyhow
+  chain. `action start` unpacks them — a picker in a terminal, a listed set otherwise, each
+  candidate through the same `sanitise` the listing renderer uses, since the debug vec escaped
+  control characters only as a side effect of `{:?}`. It is the first CLI verb to do so, **not** the
+  first that can raise it: `complete`, `drop` and `promote` still print the vec, and routing them
+  through the same helper is worth a separate change.
 
   Over MCP: `start_action` and `start_unplanned_action` write; `current_focus` reads, and sits on the
   read-only surface so a client with no write access can still ask what is in progress. The tool
@@ -32,7 +47,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   work is equally valid". It never was: unplanned work names no bullet, so no completion could log
   matching text and the focus stayed pinned to it for ever. `start_unplanned_action` gives the work a
   bullet first and starts that, in one commit — it becomes ordinary planned work as it begins,
-  closable by `complete_action` and `drop_action` like anything else. It logs both `action added to`
+  closable by `complete_action` and `drop_action` like anything else, subject to the same two limits
+  every bullet has: a promotion in between strands the focus, and a title duplicating an open
+  bullet's text leaves both unresolvable by substring. It logs both `action added to`
   and `started`, so a bullet never appears on the map without a trace of where it came from.
 
   Deliberately a separate verb rather than a fallback when `start_action` matches nothing: a fallback
@@ -44,25 +61,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   to the energy filter's current level, since the filter states the energy you have now and this is
   work starting now. Previously the only honest route was to add the action, come back, and start it:
   two gestures and a context switch to record work already begun.
-
-### Fixed
-
-- **`cdno action start --title` without `--unplanned` no longer dead-ends.** The two flags are only
-  meaningful together, but nothing said so to the parser: non-interactively the command asked for
-  `--query` instead, adding `--query` then failed with "cannot be used with", and neither message
-  ever named `--unplanned`. Interactively it was worse — the title was silently discarded and the
-  picker of *existing* bullets appeared, so confirming logged a start for work the person had not
-  named. `--title` and `--energy` now `requires = "unplanned"`, so clap names the missing flag.
-
-- **An ambiguous action query is readable instead of a Rust debug vec.** `AmbiguousAction` carries
-  its candidates as a `Vec<String>` and nothing in the CLI unpacked them, so they arrived as
-  `["Run sweep B", "Run sweep C"]` inside an anyhow chain. `action start` unpacks them — a picker in
-  a terminal, a listed set otherwise. It is the first CLI verb to do so, not the first that can
-  raise it: `complete`, `drop` and `promote` still print the vec, and routing them through the same
-  helper is worth a separate change. The candidates go through the same `sanitise` the listing
-  renderer uses — the debug vec escaped control characters as a side effect of `{:?}`, so printing
-  them plainly would have let a bullet drive the terminal on the one path meant to make the error
-  readable.
 
 ### Changed
 

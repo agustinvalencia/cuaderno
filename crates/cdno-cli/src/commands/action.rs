@@ -71,6 +71,9 @@ pub enum ActionCommands {
     /// The action must already be on the map. A start names a bullet so
     /// that the later completion logs matching text and the focus
     /// clears; a start that names nothing could never be closed (#568).
+    /// `action promote` rewrites the bullet it matches, so promoting
+    /// between a start and its close strands the focus for the rest of
+    /// the day and the close verbs then match nothing.
     /// For work on no map yet, pass `--unplanned` with `--title` and
     /// `--energy` — that adds the bullet and starts it in one commit.
     Start {
@@ -86,21 +89,24 @@ pub enum ActionCommands {
         /// a new action silently.
         #[arg(long)]
         unplanned: bool,
-        /// Title for the new bullet (with `--unplanned`).
-        ///
-        /// `requires` rather than a runtime check: without it, passing
-        /// `--title` and forgetting `--unplanned` is a dead end that
-        /// never names the missing flag — non-interactively it asks for
-        /// `--query`, and interactively `fn start` takes the resolve
-        /// branch, discards the title, and offers the picker of
-        /// *existing* bullets, so a confirmed choice logs a start for
-        /// work the person did not name. Stated to clap rather than
-        /// checked at runtime, the way `templates eject` states its
-        /// exactly-one-of rule (`required_unless_present` +
-        /// `conflicts_with`): the parser then names the missing flag.
+        /// Title for the new bullet. Requires `--unplanned`.
+        //
+        // `requires` rather than a runtime check: without it, passing
+        // `--title` and forgetting `--unplanned` is a dead end that
+        // never names the missing flag -- non-interactively it asks for
+        // `--query`, and interactively `fn start` takes the resolve
+        // branch, discards the title, and offers the picker of
+        // *existing* bullets, so a confirmed choice logs a start for
+        // work the person did not name. Stated to clap rather than
+        // checked at runtime, the way `templates eject` states its
+        // exactly-one-of rule (`required_unless_present` +
+        // `conflicts_with`): the parser then names the missing flag.
+        // Kept as `//` so it stays out of `--help`, which no other flag
+        // in this file uses to name internal Rust items.
         #[arg(long, requires = "unplanned")]
         title: Option<String>,
-        /// Energy for the new bullet (with `--unplanned`).
+        /// Energy for the new bullet: `deep`, `medium` or `light`.
+        /// Requires `--unplanned`.
         #[arg(long, requires = "unplanned")]
         energy: Option<EnergyLevel>,
     },

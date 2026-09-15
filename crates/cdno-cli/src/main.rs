@@ -155,7 +155,8 @@ enum Commands {
     /// What you are in the middle of: the most recent action started
     /// and not yet closed, read back from today's daily log — so a
     /// start made from an agent counts too, as does one written by hand
-    /// in the log's own shape (`started [[slug]] — text`, em dash).
+    /// in the log's own shape (`- **HH:MM**: started [[slug]] — text`,
+    /// stamp and em dash both required).
     Now,
 
     /// Quick snapshot: active projects and their top next actions.

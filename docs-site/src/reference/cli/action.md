@@ -65,6 +65,11 @@ matching text and the focus clears — a start naming nothing could never be clo
 is the **resolved** bullet text, not your query, so `--query "draft methods"` logs
 `Draft methods (deep)`.
 
+[`cdno action promote`](#cdno-action-promote) is the one thing that breaks the pairing: it
+*rewrites* the bullet it matched, so promoting between a start and its close strands the focus for
+the rest of the day — [`cdno now`](now.md) keeps naming the old text and both `complete` and `drop`
+then match nothing. Close the action before promoting it, or re-run the start afterwards.
+
 | Flag | Description |
 |------|-------------|
 | `--project <SLUG>` | Project slug. |

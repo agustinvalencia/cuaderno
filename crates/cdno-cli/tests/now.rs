@@ -90,10 +90,11 @@ fn elapsed_reads_in_words() {
 
 #[test]
 fn a_start_in_the_future_says_nothing_rather_than_a_negative() {
-    // The clock moved backwards within the day — a timezone change, an
-    // NTP correction. (Not a midnight crossing: the focus is read from
-    // one date's note against that same moment's clock.) A negative
-    // duration would be worse than silence.
+    // Any stamp ahead of render time: a clock moving backwards within
+    // the day (a timezone change, an NTP correction), or a line typed
+    // into the log with a later stamp. (Not a midnight crossing: the
+    // focus is read from one date's note against that same moment's
+    // clock.) A negative duration would be worse than silence.
     assert_eq!(elapsed_since(t(23, 0), t(1, 0)), None);
 }
 
@@ -237,9 +238,10 @@ fn hostile_text_from_the_log_is_sanitised_before_it_reaches_the_terminal() {
 
 #[test]
 fn a_start_stamped_in_the_future_renders_without_an_elapsed_clause() {
-    // The clock moved. `render` must drop the "· {ago}" half rather
-    // than print a negative duration — the branch elapsed_since's None
-    // exists to drive, exercised here through the renderer.
+    // A stamp ahead of render time, whatever put it there. `render`
+    // must drop the "· {ago}" half rather than print a negative
+    // duration — the branch elapsed_since's None exists to drive,
+    // exercised here through the renderer.
     let dir = vault_with_action();
     start(dir.path(), moment(14, 0), "Draft methods");
 

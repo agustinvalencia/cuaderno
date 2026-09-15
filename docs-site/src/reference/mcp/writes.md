@@ -27,7 +27,7 @@ tool re-reads its target before answering, and the result carries the evidence:
 | `verified` | `content` — the file was re-read; or `removed`, for `discard_inbox_item`, where the check is that the file is gone |
 | `bytes_written` | Size of the file on disk after the write. `0` for a removal |
 | `content_hash` | The note's content hash (below) — `null` for a removal |
-| `appended_tail` | For append-shaped writes (`append_to_log`), the tail of the *section* the text went into — see [below](#the-appended-tail). `null` elsewhere |
+| `appended_tail` | For append-shaped writes (`append_to_log`, `start_action`), the tail of the *section* the text went into — see [below](#the-appended-tail). `null` elsewhere |
 
 **If the target cannot be read back, the tool returns an error rather than a success.** The wording
 says the write is *unverified*, not failed: it may still have landed, so the right response is to
@@ -36,7 +36,9 @@ re-read the note, not to blindly repeat the write.
 ### The appended tail
 
 `appended_tail` is scoped to the section the write targeted, not to the last bytes of the file.
-`append_to_log` writes into `## Logs`, so that is the section you get back.
+`append_to_log` and `start_action` both write into `## Logs`, so that is the section you get back.
+(`start_unplanned_action` also logs, but it rewrites the project map in the same commit and so
+verifies as a whole-file rewrite — its `appended_tail` is `null`.)
 
 The distinction matters because `## Logs` is not always last. Cuaderno pins the *effective daily
 template's* last `##` section to the bottom of the note — for the built-in template that is `## Logs`,

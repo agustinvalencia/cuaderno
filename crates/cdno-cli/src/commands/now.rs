@@ -5,6 +5,12 @@
 //! from an agent over MCP, or by hand in an editor all count, and a
 //! completion or a drop clears it. Nothing to keep in sync.
 //!
+//! `action promote` is the exception: it rewrites the bullet it
+//! matched, so a promotion between a start and its close leaves the
+//! focus pinned to the old text until the day rolls over, and the close
+//! verbs match nothing. The domain pins that in
+//! `a_promotion_between_start_and_close_strands_the_focus`.
+//!
 //! A hand-written line has to be in the shape the writers emit:
 //! `- **HH:MM**: started [[slug]] — text`, separated by an em dash
 //! (U+2014). The domain's parser requires that codepoint exactly
@@ -15,7 +21,8 @@
 //!
 //! Rendering is split from I/O the way `orient` and `status` split it:
 //! [`build_now`] returns the text so tests assert on a string without
-//! capturing stdout, and [`run`] prints what it returns.
+//! capturing stdout. [`run`] does not call it — it opens the vault,
+//! branches on `--json`, and calls [`render`] itself.
 
 use std::path::Path;
 
@@ -79,10 +86,11 @@ pub fn build_now(root: &Path, today: NaiveDate, now: NaiveTime) -> Result<String
     Ok(render(focus.as_ref(), now))
 }
 
-/// How long ago `started` was, in words. `None` when the start is in
-/// the future, which happens when the clock moves backwards within one
-/// day — a timezone change, an NTP correction. Saying nothing beats
-/// "-3h ago".
+/// How long ago `started` was, in words. `None` whenever the stamp is
+/// ahead of render time — a clock moving backwards within the day (a
+/// timezone change, an NTP correction), or simply a line typed into the
+/// log with a stamp later than now, which this module's own "by hand"
+/// route invites. Saying nothing beats "-3h ago".
 ///
 /// Not a midnight crossing: `current_focus` is asked for one date and
 /// reads only that date's note, and `main.rs` takes a single
