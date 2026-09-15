@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Component;
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime};
 
 use cdno_core::config::IgnoreSet;
 use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
@@ -17,11 +17,17 @@ use crate::error::DomainError;
 use crate::lint::{LintIssue, LintReport};
 use crate::note_type::NoteType;
 
-use super::Vault;
 use super::commitments::{parse_periodic_line, split_at_next_marker};
-use super::context::{RECORD_TIME_FORMATS, RecordTime, record_time, records_of, str_field};
+use super::context::{
+    RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads, record_time,
+    records_of, str_field,
+};
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
+use super::projects::actions::{
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
+};
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
+use super::{DAILY_LOGS_SECTION, Vault};
 
 impl Vault {
     /// Validate every indexed note and return a structured report.
@@ -51,6 +57,10 @@ impl Vault {
     ///   `## Periodic Commitments` lines the canonical parsers reject —
     ///   the near-misses that would otherwise vanish silently from the
     ///   lapse scan and the commitments aggregation (a `Warning`, #312).
+    /// - daily-log focus markers [`Vault::current_focus`] will not read
+    ///   back: a `started` / `action done on` / `action dropped on` line
+    ///   whose `- **HH:MM**: ` stamp or em dash is wrong, the same class
+    ///   of silent near-miss as the rule above (a `Warning`).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -295,8 +305,73 @@ impl Vault {
         issues.extend(orphan_artefact_issues(&self.store, &path_set, &ignore)?);
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
+        issues.extend(self.focus_marker_issues()?);
 
         Ok(LintReport { issues })
+    }
+
+    /// Report a `## Logs` line that was plainly meant to record a start
+    /// or a close but will never be read as one.
+    ///
+    /// `Vault::current_focus` replays the daily log rather than holding
+    /// state, and it accepts exactly one shape:
+    /// `- **HH:MM**: started [[slug]] — text`. Both halves are load-bearing
+    /// — the stamp is what makes the line a log entry at all
+    /// ([`parse_log_entry_heads`]), and the separator must be U+2014
+    /// ([`parse_focus_marker`]). That strictness is deliberate: prose
+    /// beginning "started something" must never register as a focus.
+    ///
+    /// The cost is that a hand-typed near-miss vanishes. The line sits in
+    /// the journal looking correct, `cdno now` says "Nothing started yet",
+    /// and nothing anywhere says why. This rule turns that silent skip
+    /// into a visible `Warning`, exactly as
+    /// [`Vault::stewardship_dashboard_issues`] does for habit bullets.
+    ///
+    /// Acceptance is delegated to the canonical parsers, never a parallel
+    /// regex that could drift: a line is a near-miss exactly when
+    /// [`focus_marker_claim`] says the writer reached for the marker and
+    /// the real chain then rejects it. The claim test is deliberately
+    /// narrow — the prefix must open the entry text and be followed
+    /// immediately by `[[` — so "I started [[x]] yesterday" and
+    /// "started the engine" are both left alone.
+    fn focus_marker_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        let mut issues = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Daily.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            // A daily note whose markdown won't parse is already surfaced
+            // by the read/frontmatter checks in the main loop.
+            let Ok(doc) = MarkdownDocument::parse(raw) else {
+                continue;
+            };
+            let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
+                continue;
+            };
+
+            for line in section.lines() {
+                let Some(claim) = focus_marker_claim(line) else {
+                    continue;
+                };
+                // The verdict, through the very functions current_focus
+                // runs: the stamp must yield an entry head, and that
+                // head's text must yield a marker.
+                let read_back = parse_log_entry_heads(line)
+                    .first()
+                    .is_some_and(|(_, text)| parse_focus_marker(text, claim.prefix).is_some());
+                if read_back {
+                    continue;
+                }
+                issues.push(LintIssue::warning(
+                    entry.path.clone(),
+                    format!(
+                        "log line `{}` reads as a `{}` marker but `cdno now` will not see it -- {}",
+                        line.trim(),
+                        claim.prefix.trim(),
+                        focus_marker_hint(&claim)
+                    ),
+                ));
+            }
+        }
+        Ok(issues)
     }
 
     /// Report a record whose `at` ordering field the read path cannot use
@@ -500,6 +575,130 @@ fn habit_line_hint(line: &str) -> &'static str {
     } else {
         "missing the em-dash (\u{2014}) that separates habit from status"
     }
+}
+
+/// A `## Logs` line that reached for a focus marker, as
+/// [`focus_marker_claim`] read it. Carries only what the hint needs; the
+/// accept/reject verdict is the canonical parsers'.
+struct FocusClaim<'a> {
+    /// Which marker the writer reached for.
+    prefix: &'static str,
+    /// Whether a well-formed `**HH:MM**: ` stamp preceded it.
+    stamped: bool,
+    /// Whether a `- ` bullet opened the line. `parse_log_entry_heads`
+    /// requires the literal `- **`, so a stamped line with no bullet is a
+    /// near-miss whose defect is the bullet and nothing else.
+    bulleted: bool,
+    /// The entry text with any bullet and stamp peeled off.
+    text: &'a str,
+}
+
+/// The three markers [`Vault::current_focus`] is built from.
+const FOCUS_MARKER_PREFIXES: [&str; 3] = [
+    LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX,
+    LOG_ACTION_DROPPED_PREFIX,
+];
+
+/// Did this line reach for a focus marker?
+///
+/// Deliberately narrow, because the `## Logs` section is otherwise free
+/// prose and a false positive here is worse than a missed one: the prefix
+/// must open the entry text, and `[[` must follow it immediately. So
+/// "started the engine" (no wikilink) and "I started [[x]] yesterday"
+/// (prefix not at the start) are both left alone, while every shape the
+/// writers emit is caught however mangled the rest of it is.
+///
+/// Peeling the bullet and stamp here is for the *hint* only — whether the
+/// line actually reads back is [`parse_log_entry_heads`] and
+/// [`parse_focus_marker`]'s verdict, never this function's.
+fn focus_marker_claim(line: &str) -> Option<FocusClaim<'_>> {
+    // Indented lines are continuations: a marker inside one belongs to the
+    // entry above it, and parse_log_entry_heads skips them by design, so
+    // they are not near-misses of their own. This has to be an explicit
+    // guard rather than a consequence of not trimming the front, because
+    // the stamp peel below consumes spaces and would otherwise eat the
+    // indent and turn every such line into a claim.
+    if line.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let body = line.trim_end();
+    let bulleted = body.starts_with("- ");
+    let body = body.strip_prefix("- ").unwrap_or(body);
+    let (stamped, text) = match body.strip_prefix("**").and_then(|r| r.split_once("**: ")) {
+        Some((hhmm, rest)) if NaiveTime::parse_from_str(hhmm, "%H:%M").is_ok() => (true, rest),
+        // A stamp that was *attempted* and mangled -- `**25:99**: `,
+        // an unbolded `09:20: `, `**09:40** ` with no colon -- is the
+        // near-miss this rule most wants to catch, and matching the
+        // marker at position 0 would miss every one of them. So peel a
+        // run of stamp-shaped characters and look for the marker behind
+        // it. Only digits, colons, asterisks, dashes and spaces peel: a
+        // letter ends the run, and that is precisely what keeps prose
+        // like "I started [[x]] yesterday" from becoming a claim.
+        _ => (
+            false,
+            body.trim_start_matches(|c: char| {
+                c.is_ascii_digit() || matches!(c, ':' | '*' | '-' | ' ')
+            }),
+        ),
+    };
+    let prefix = FOCUS_MARKER_PREFIXES
+        .iter()
+        .copied()
+        .find(|p| text.strip_prefix(p).is_some_and(|r| r.starts_with("[[")))?;
+    Some(FocusClaim {
+        prefix,
+        stamped,
+        bulleted,
+        text,
+    })
+}
+
+/// Best-effort guess at *why* a focus-marker line will not be read back.
+/// Heuristic only, mirroring [`habit_line_hint`]: the verdict belongs to
+/// the canonical parsers. Ordered most-specific first.
+fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
+    // The stamp is checked first because without it the line is not a log
+    // entry at all, so nothing downstream even looks at the separator.
+    if !claim.stamped {
+        return "the `- **HH:MM**: ` timestamp is missing or malformed, so this is not a log entry"
+            .to_owned();
+    }
+    // Checked after the stamp so the more informative half is named first
+    // when both are absent, but before the wikilink and dash branches: with
+    // a good stamp and no bullet those all pass, and the hint would go on to
+    // blame the one part of the line that is correct.
+    if !claim.bulleted {
+        return "the line does not open with a `- ` bullet, so it is not a log entry".to_owned();
+    }
+    let after_prefix = claim
+        .text
+        .strip_prefix(claim.prefix)
+        .unwrap_or(claim.text)
+        .trim_start();
+    let Some((project, rest)) = after_prefix.trim_start_matches('[').split_once("]]") else {
+        return "the wikilink is not closed -- expected `[[slug]]`".to_owned();
+    };
+    let rest = rest.trim_start();
+    if let Some(action) = rest.strip_prefix('\u{2014}') {
+        // The separator is right, so one side must be empty. Checked
+        // before any dash guess, so the hint never blames a dash that is
+        // not broken.
+        if project.is_empty() || action.trim().is_empty() {
+            return "the slug or the action either side of the em-dash is empty".to_owned();
+        }
+        return "the line does not match `[[slug]] \u{2014} action`".to_owned();
+    }
+    if rest.starts_with('\u{2013}') {
+        // En-dash: the near-miss the naked eye cannot tell from an em-dash.
+        return "found an en-dash (\u{2013}) where an em-dash (\u{2014}) separates the slug from the action"
+            .to_owned();
+    }
+    if rest.starts_with('-') {
+        return "found an ASCII hyphen (-) where an em-dash (\u{2014}) separates the slug from the action"
+            .to_owned();
+    }
+    "missing the em-dash (\u{2014}) that separates the slug from the action".to_owned()
 }
 
 /// Name a JSON scalar's kind for a diagnostic, so the message can say what

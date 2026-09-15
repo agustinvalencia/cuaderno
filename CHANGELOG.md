@@ -8,6 +8,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno lint` reports a start the daily log will never read back.** `current_focus` accepts exactly
+  `- **HH:MM**: started [[slug]] — text` and skips everything else silently, which is deliberate —
+  prose beginning "started something" must not register. The cost was that a hand-typed near-miss
+  vanished: the line sat in the journal looking correct, `cdno now` said "Nothing started yet", and
+  no surface anywhere said why. Every part of the shape is load-bearing, so every part is checked —
+  the `- ` bullet, a stamp that is missing *or* mangled (`- 09:20:` unbolded, `- **25:99**:` out of
+  range, `- **09:40**` with no colon), and an ASCII hyphen or en-dash where the em dash (U+2014)
+  belongs — and the message names which one it was.
+  Close markers (`action done on`, `action dropped on`) are checked too: a completion that is not
+  read back leaves the focus it should have cleared pinned for the rest of the day.
+
+  This is the same remedy the stewardship-dashboard rule applies to habit bullets, and it delegates
+  the accept/reject verdict to `parse_log_entry_heads` and `parse_focus_marker` themselves rather
+  than a parallel regex that could drift. The trigger is deliberately narrow — the marker must open
+  the entry text and be followed immediately by `[[` — because `## Logs` is otherwise free prose and
+  a false positive there would be worse than the silence it replaces: "started the engine" and
+  "I started [[alpha]] yesterday" are both left alone.
+
 - **`cdno action start` and `cdno now`, plus their MCP equivalents.** `start_action`,
   `start_unplanned_action` and `current_focus` reached the vault through the desktop app and nothing
   else, so the terminal and agents could not start work or ask what was open. All three now have a

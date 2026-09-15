@@ -45,6 +45,20 @@ ui/tsconfig.tsbuildinfo
 .cuaderno/index.db-wal
 .cuaderno/.lock
 
+# ...and the notes it accumulates. The repo root is a vault, so any `cdno`
+# run from here writes real notes into these folders -- a `cdno log` while
+# testing, a scratch project. None of it is repo content (no note has ever
+# been tracked in any of them), but `git add -A` will happily sweep one into
+# a commit, which is how a stray daily note reached PR #589.
+/journal/
+/projects/
+/actions/
+/commitments/
+/questions/
+/portfolios/
+/stewardships/
+/inbox/
+
 # ts-rs writes here when TS_RS_EXPORT_DIR is unset (a bare
 # `cargo test --features ts-bindings`). The bindings the UI consumes are
 # generated into ui/src/api/bindings by `just gen-bindings`; a second copy

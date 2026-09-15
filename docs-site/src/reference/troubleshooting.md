@@ -40,6 +40,32 @@ Errors are usually an unknown `type:` or invalid frontmatter; warnings are typic
 wikilinks. Fix the reported file, or run [`cdno normalise`](cli/normalise.md) if the issue is field
 ordering. See [Frontmatter fields](frontmatter.md).
 
+## `cdno now` says nothing is started, but I started something
+
+Two causes, and [`cdno lint`](cli/lint.md) tells them apart.
+
+If you wrote the log line **by hand**, it is almost certainly not in the shape the readers accept.
+It has to be exactly:
+
+```text
+- **09:30**: started [[surrogate-model]] — Draft the methods section (deep)
+```
+
+The `- ` bullet and the `**HH:MM**: ` stamp are what make it a log entry at all, and the separator
+must be a real em dash (U+2014), not a hyphen. A near-miss is skipped in silence by design — prose
+beginning "started something" must never register as a focus — so `cdno lint` reports it instead,
+naming the line and the likely cause. Run it and fix what it points at.
+
+Otherwise, check the date. The focus is read from **today's** daily note only, so a start logged
+yesterday and never closed does not carry over.
+
+## `cdno now` names the wrong action
+
+You probably ran [`cdno action promote`](cli/action.md#cdno-action-promote) between starting the
+action and closing it. Promotion *rewrites* the bullet, so the start can no longer be paired with it:
+`cdno now` keeps naming the old text for the rest of the day, and `action complete` and `action drop`
+both match nothing. Close an action before promoting it, or re-run the start afterwards.
+
 ## A prompt appears when I wanted automation (or vice versa)
 
 Write commands prompt for missing required flags **only** in an interactive terminal. In scripts,
