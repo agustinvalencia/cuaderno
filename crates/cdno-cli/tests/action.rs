@@ -841,12 +841,13 @@ fn the_picker_re_entry_reports_readably_when_the_choice_is_still_ambiguous() {
     let (vault_handle, _report) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let candidates = vec!["Dup task (deep)".to_owned(), "Dup task (deep)".to_owned()];
 
-    let err = cdno_cli::commands::action::start_chosen_candidate(
-        &vault_handle,
-        moment(2026, 5, 2, 10, 0),
+    let at = moment(2026, 5, 2, 10, 0);
+    let err = cdno_cli::commands::action::resolve_chosen(
         "x",
         "Dup task (deep)",
         &candidates,
+        "starting action",
+        |q| vault_handle.start_action(at, "x", q),
     )
     .expect_err("the picked candidate is still ambiguous");
 
@@ -913,4 +914,97 @@ fn an_ambiguous_candidate_cannot_drive_the_terminal() {
         shown.contains("review draft"),
         "the readable text still survives:\n{shown}"
     );
+}
+
+/// `complete`, `drop` and `promote` resolve through the same matcher as
+/// `start` and have always been able to raise `AmbiguousAction`, but each
+/// handed it to anyhow, so the candidates reached the user as a Rust debug
+/// vec. #588 routed only `start` through the readable message and said so;
+/// this closes the gap. Non-interactive, which is the exit a script and a
+/// piped terminal both take.
+fn vault_with_two_identical_bullets() -> TempDir {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for _ in 0..2 {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some("Sweep run".to_owned()),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+    dir
+}
+
+fn assert_readable_ambiguity(err: anyhow::Error, verb: &str) {
+    let shown = format!("{err:#}");
+    assert!(
+        !shown.contains("[\""),
+        "{verb} must not print the debug vec:\n{shown}"
+    );
+    assert!(
+        shown.contains("Sweep run (deep)"),
+        "{verb} must list the candidates:\n{shown}"
+    );
+}
+
+#[test]
+fn complete_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Complete {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "complete");
+}
+
+#[test]
+fn drop_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Drop {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+            reason: None,
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "drop");
+}
+
+#[test]
+fn promote_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Promote {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+            var: vec![],
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "promote");
 }
