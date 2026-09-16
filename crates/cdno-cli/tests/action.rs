@@ -678,9 +678,10 @@ fn start_refuses_an_action_that_is_not_on_the_map() {
 #[test]
 fn an_ambiguous_start_lists_its_candidates_readably() {
     // `AmbiguousAction` carries the candidates as a Vec<String>. Left
-    // to anyhow they reach the user as a Rust debug vec. `start` is the
-    // first CLI verb to UNPACK them -- complete, drop and promote can
-    // all raise it too, and still print the vec.
+    // to anyhow they reach the user as a Rust debug vec. All four verbs
+    // that resolve a bullet by substring now unpack them instead --
+    // `start` first, then complete, drop and promote, which share the
+    // same helper; the three cases at the end of this file are theirs.
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
     for title in ["Run sweep B", "Run sweep C"] {
@@ -1007,4 +1008,66 @@ fn promote_reports_an_ambiguous_query_readably() {
     )
     .expect_err("ambiguous");
     assert_readable_ambiguity(err, "promote");
+}
+
+/// The per-verb anyhow context survives the shared helper.
+///
+/// `resolving_ambiguity` bails on `AmbiguousAction` *before* applying
+/// `context`, so the ambiguity tests above cannot catch a copy/paste swap
+/// between verbs -- and the helper takes the string as a parameter, which
+/// is exactly the kind of argument that gets pasted wrong. A query that
+/// matches nothing takes the `Err(e) => Err(e).context(context)` arm, so
+/// it is the path that pins it. The CHANGELOG makes this a headline
+/// claim ("completing action" must not become a generic "resolving
+/// action"), so it needs an assertion behind it.
+#[test]
+fn each_verb_keeps_its_own_error_context() {
+    for (verb, command, expected) in [
+        (
+            "complete",
+            ActionCommands::Complete {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+            },
+            "completing action",
+        ),
+        (
+            "drop",
+            ActionCommands::Drop {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                reason: None,
+            },
+            "dropping action",
+        ),
+        (
+            "promote",
+            ActionCommands::Promote {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                var: vec![],
+            },
+            "promoting action",
+        ),
+        (
+            "start",
+            ActionCommands::Start {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                unplanned: false,
+                title: None,
+                energy: None,
+            },
+            "starting action",
+        ),
+    ] {
+        let dir = vault_with_two_identical_bullets();
+        let err = action::run(dir.path(), moment(2026, 5, 2, 10, 0), command, false, false)
+            .expect_err("no bullet matches");
+        let shown = format!("{err:#}");
+        assert!(
+            shown.contains(expected),
+            "{verb} must keep its own context `{expected}`:\n{shown}"
+        );
+    }
 }

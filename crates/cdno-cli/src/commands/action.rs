@@ -375,29 +375,12 @@ fn start(
     Ok(())
 }
 
-/// Call `start_action`, turning an ambiguous match into a question
-/// rather than a dead end — the shape `cdno open` already uses for an
-/// ambiguous note reference.
-///
-/// Without this the candidates reach the user only as a Rust `{:?}` vec
-/// inside an anyhow chain, because `AmbiguousAction` carries them as a
-/// `Vec<String>` and nothing in the CLI unpacks it.
-///
-/// `start` is the first CLI verb to *unpack* it, not the first that can
-/// raise it: `complete`, `drop` and `promote` all resolve through the
-/// same `resolve_open_action` (cdno-domain `vault/projects/actions.rs`,
-/// a private free function, so no intra-doc link) and could raise it
-/// before this verb
-/// existed. They still hand it to anyhow, so they
-/// still print the debug vec. Routing them through here too is worth
-/// doing and is deliberately not done in the same change as adding the
-/// verb.
 /// Run an action verb that resolves its target by substring, turning an
 /// ambiguous match into a question rather than a dead end.
 ///
 /// `AmbiguousAction` carries its candidates as a `Vec<String>`, and a verb
 /// that hands the error straight to anyhow prints them as a Rust debug vec
-/// -- `["Run sweep B", "Run sweep C"]` -- inside an error chain. Every verb
+/// — `["Run sweep B", "Run sweep C"]` — inside an error chain. Every verb
 /// that resolves this way routes through here instead: a picker when a
 /// terminal can show one, a listed set otherwise.
 ///
@@ -418,7 +401,7 @@ fn resolving_ambiguity<T>(
             if interactive && prompt::picker_fits(crate::output::terminal_columns()) {
                 // The candidates are already known, so offer exactly
                 // those. A whole bullet usually resolves uniquely on the
-                // second call, via the exact-match tiebreak -- but not
+                // second call, via the exact-match tiebreak — but not
                 // when two bullets carry byte-identical text, which
                 // `action add` allows freely. Then the tiebreak sees two
                 // exact matches, declines, and the substring rule
@@ -435,9 +418,9 @@ fn resolving_ambiguity<T>(
 /// Re-run the verb for the candidate the user picked out of the picker.
 ///
 /// Split out so a test can reach it without driving a pty. The second call
-/// can itself be ambiguous -- two bullets carrying byte-identical text
+/// can itself be ambiguous — two bullets carrying byte-identical text
 /// defeat the domain's whole-bullet tiebreak, since it sees two EXACT
-/// matches and declines -- and that error must land in the same readable
+/// matches and declines — and that error must land in the same readable
 /// message rather than escaping through `.context` as the debug vec this
 /// whole path exists to remove.
 pub fn resolve_chosen<T>(
