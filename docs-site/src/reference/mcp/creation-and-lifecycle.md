@@ -10,6 +10,7 @@ Tools that create new notes or move existing ones through their lifecycle.
 | `create_portfolio` | `question`, `project?`, `vars?` | Create an evidence portfolio. |
 | `create_question` | `domain` (`research`\|`life`), `text`, `vars?` | Create a question note. |
 | `create_stewardship` | `name`, `context`, `expanded?`, `vars?` | Create a stewardship; `expanded` adds a `tracking/` folder. |
+| `create_custom_note` | `type_name`, `title`, `fields?`, `vars?` | Create a note of a **config-defined** custom type (`[note_types.<name>]`); built-in types have their own dedicated create tools, on this page and under [Write tools](writes.md). `fields` is a name → value map of the type's declared frontmatter fields — every `required` one must be present, and each key must be declared. Call [`list_note_types`](reads.md) first to discover a vault's types and their fields. ([`cdno note create`](../cli/note.md)) |
 | `link_portfolio_to_question` | `portfolio`, `question` | Retrofit a portfolio→question link (backlinks both ways). |
 | `link_portfolio_to_project` | `portfolio`, `project` | Retrofit a portfolio→project link (sets `project:` and appends to the project's Links). |
 
