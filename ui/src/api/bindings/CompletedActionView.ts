@@ -5,4 +5,10 @@
  * `CompletedActionEntry` (which carries a `VaultPath` that can't hold a
  * `ts-rs` derive). The seed line needs only title + project.
  */
-export type CompletedActionView = { slug: string, project: string, title: string, completed: string, };
+export type CompletedActionView = { 
+/**
+ * `None` for an inline bullet, which never had a note (#586). The
+ * Wins step renders `title` and `project`, which every completion
+ * has, so a bullet shows up there like any other win.
+ */
+slug: string | null, project: string, title: string, completed: string, };

@@ -13,8 +13,8 @@ use cdno_domain::Vault;
 use cdno_domain::frontmatter::Context;
 use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
 use cdno_domain::{
-    CompletedActionEntry, DailyLogLine, ProjectBacklinks, ProjectStateChange, QuestionBacklinks,
-    TrackingEntry,
+    CompletedActionEntry, CompletedActionSource, DailyLogLine, ProjectBacklinks,
+    ProjectStateChange, QuestionBacklinks, TrackingEntry,
 };
 use chrono::{FixedOffset, NaiveDate, NaiveTime};
 
@@ -138,7 +138,7 @@ fn completed_actions_between_filters_by_date_and_status() {
         .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
         .unwrap();
     assert_eq!(got.len(), 1, "{got:?}");
-    assert_eq!(got[0].slug, "win");
+    assert_eq!(got[0].slug.as_deref(), Some("win"));
     assert_eq!(got[0].project, "alpha");
     assert_eq!(got[0].completed, ymd(2026, 5, 15));
 }
@@ -159,8 +159,8 @@ fn completed_actions_between_sorts_oldest_first() {
         .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
         .unwrap();
     assert_eq!(got.len(), 2);
-    assert_eq!(got[0].slug, "early");
-    assert_eq!(got[1].slug, "late");
+    assert_eq!(got[0].slug.as_deref(), Some("early"));
+    assert_eq!(got[1].slug.as_deref(), Some("late"));
 }
 
 // ---------------------------------------------------------------------
@@ -1918,4 +1918,137 @@ fn a_drop_does_not_clear_a_start_whose_text_merely_resembles_a_reason() {
         focus.action, "Ask Bob",
         "dropping a different bullet must not close this one"
     );
+}
+
+// ---------------------------------------------------------------------
+// completed_actions_between: bullet completions (#586)
+// ---------------------------------------------------------------------
+//
+// The bullet is the DEFAULT form of an action, and completing one creates
+// no note -- only an `action done on [[project]] — text` line in that
+// day's log. Reading the index alone therefore reported nothing for an
+// ordinary week, and the weekly review's wins opened empty. These cover
+// the issue's four acceptance criteria.
+
+#[test]
+fn a_completed_bullet_appears_without_any_note() {
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            "- **17:25**: action done on [[surrogate-model]] \u{2014} Rerun the ablation (deep)\n",
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].project, "surrogate-model");
+    assert_eq!(got[0].title, "Rerun the ablation");
+    assert_eq!(got[0].completed, ymd(2026, 5, 15));
+    assert_eq!(got[0].slug, None, "a bullet has no note to carry a slug");
+    assert_eq!(got[0].path, None);
+    assert_eq!(got[0].source, CompletedActionSource::Bullet);
+}
+
+#[test]
+fn a_completion_with_a_note_is_listed_once() {
+    // Completing a bullet that wikilinks a note archives the note AND
+    // logs a line, so the completion has two traces. The logged text is
+    // the wikilink itself, which is what lets the log half recognise and
+    // skip it -- structurally, not by matching titles.
+    let (vault, _store) = vault_with(&[
+        (
+            "actions/_done/2026/has-a-note.md",
+            &action_note("Has a note", "surrogate-model", "completed", "2026-05-15"),
+        ),
+        (
+            &daily_path(ymd(2026, 5, 15)),
+            &daily_with_logs(
+                ymd(2026, 5, 15),
+                "- **17:25**: action done on [[surrogate-model]] \u{2014} [[actions/has-a-note]] (deep)\n",
+            ),
+        ),
+    ]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 1, "listed twice: {got:?}");
+    assert_eq!(got[0].source, CompletedActionSource::Note);
+    assert_eq!(got[0].slug.as_deref(), Some("has-a-note"));
+}
+
+#[test]
+fn a_dropped_bullet_never_appears() {
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            concat!(
+                "- **17:25**: action dropped on [[surrogate-model]] \u{2014} Abandoned idea (deep)\n",
+                "    reason: superseded\n",
+            ),
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert!(got.is_empty(), "a drop is not a completion: {got:?}");
+}
+
+#[test]
+fn bullet_completions_are_not_lost_to_the_logs_cap() {
+    // The `logs` field a context payload carries is capped at the most
+    // recent lines, which in a busy week cuts off the START of it. This
+    // reader walks the window's daily notes directly, so a completion on
+    // Monday survives a Friday full of noise.
+    let monday = daily_with_logs(
+        ymd(2026, 5, 11),
+        "- **09:00**: action done on [[surrogate-model]] \u{2014} Monday win (deep)\n",
+    );
+    let noise: String = (0..200)
+        .map(|i| {
+            format!(
+                "- **1{:01}:{:02}**: ordinary log line {i}\n",
+                i % 10,
+                i % 60
+            )
+        })
+        .collect();
+    let friday = daily_with_logs(ymd(2026, 5, 15), &noise);
+    let (vault, _store) = vault_with(&[
+        (&daily_path(ymd(2026, 5, 11)), &monday),
+        (&daily_path(ymd(2026, 5, 15)), &friday),
+    ]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 11), ymd(2026, 5, 17))
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].title, "Monday win");
+}
+
+#[test]
+fn prose_that_mentions_completing_is_not_a_completion() {
+    // `## Logs` is free prose. The parser delegates to the same pair
+    // `current_focus` uses, so only the writers' own shape counts.
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            concat!(
+                "- **09:00**: action done on the surrogate model, finally\n",
+                "- **09:10**: I action done on [[surrogate-model]] \u{2014} nonsense\n",
+                "- **09:20**: action done on [[surrogate-model]] - hyphen not em dash\n",
+            ),
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert!(got.is_empty(), "prose must not count: {got:?}");
 }

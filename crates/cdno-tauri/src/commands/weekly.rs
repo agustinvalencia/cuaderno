@@ -135,7 +135,10 @@ pub struct WeeklyContent {
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompletedActionView {
-    pub slug: String,
+    /// `None` for an inline bullet, which never had a note (#586). The
+    /// Wins step renders `title` and `project`, which every completion
+    /// has, so a bullet shows up there like any other win.
+    pub slug: Option<String>,
     pub project: String,
     pub title: String,
     pub completed: NaiveDate,

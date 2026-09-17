@@ -759,7 +759,7 @@ fn resolve_open_action(lines: &[&str], slug: &str, query: &str) -> Result<usize,
 /// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
 /// matching is case-sensitive because `add_action` always emits
 /// lowercase.
-fn strip_energy_suffix(text: &str) -> &str {
+pub(in crate::vault) fn strip_energy_suffix(text: &str) -> &str {
     for suffix in [" (deep)", " (medium)", " (light)"] {
         if let Some(stripped) = text.strip_suffix(suffix) {
             return stripped;

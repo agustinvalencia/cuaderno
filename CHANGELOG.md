@@ -8,6 +8,33 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **Completed bullet actions now reach the weekly and monthly context (#586).** `completed_actions`
+  read the index for `type: action` notes with `status: completed`, but completing an inline bullet
+  — the *default* form of an action — creates no note at all: `complete_action` removes the line and
+  writes one `action done on [[project]] — text` entry to that day's log. So an ordinary week, in
+  which most completions are bullets, returned `"completed_actions": []`. The weekly review opens
+  with wins pre-populated from that field, which meant it opened saying nothing got done in a week
+  where things got done — the opposite of what the review is for, and the worst failure mode for a
+  tool built on momentum.
+
+  Both traces are now read. The log half mirrors `project_state_changes_between`: it walks the
+  window's daily notes directly, so it does **not** reuse the `logs` field capped at 100 lines,
+  which in a busy week cuts off the start of it. Parsing delegates to the same
+  `parse_log_entry_heads` + `parse_focus_marker` pair `current_focus` runs, so it cannot drift from
+  what the writers emit, and prose in `## Logs` is never mistaken for a completion.
+
+  De-duplication is structural rather than heuristic. Completing a bullet that wikilinks a note
+  archives the note *and* logs a line, but the logged text of such a bullet is the wikilink itself
+  (`[[actions/<slug>]] (deep)`), so a log line pointing into `actions/` is exactly the note-backed
+  case and is skipped — the note already reports it. Matching on titles could never be sound, since
+  two actions may share one. Drops stay out: they carry a different log prefix, and a dropped note
+  has no `completed:` date.
+
+  **Payload change:** `slug` and `path` are now nullable on each entry, with a new
+  `source: "bullet" | "note"`. A client that assumed `slug` was always present must handle null —
+  and since the bullet is the default form, null is the common case, not the exception.
+
+
 - **An ambiguous query is readable from every action verb, not just `start`.** `complete`, `drop` and
   `promote` resolve a bullet by substring exactly as `start` does, and have always been able to raise
   `AmbiguousAction` — but each handed it to anyhow, so the candidates arrived as a Rust debug vec:
