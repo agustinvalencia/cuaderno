@@ -6,6 +6,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Fixed
+
+- **An ambiguous query is readable from every action verb, not just `start`.** `complete`, `drop` and
+  `promote` resolve a bullet by substring exactly as `start` does, and have always been able to raise
+  `AmbiguousAction` — but each handed it to anyhow, so the candidates arrived as a Rust debug vec:
+
+  ```text
+  Error: completing action
+  Caused by:
+      ambiguous action match for 'Run sweep' on project 'alpha': ["Run sweep (deep)", "Run sweep (deep)"]
+  ```
+
+  All four verbs now share one helper: a picker in a terminal, a listed set otherwise, each candidate
+  through the same `sanitise` the listing renderer uses. The per-verb anyhow context is still
+  per-verb, so "completing action" does not become a generic "resolving action" in the one place a
+  user reads it.
+
 ### Added
 
 - **`cdno lint` reports a start the daily log will never read back.** `current_focus` accepts exactly
@@ -53,9 +70,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   CLI unpacked them, so they reached users as `["Run sweep B", "Run sweep C"]` inside an anyhow
   chain. `action start` unpacks them — a picker in a terminal, a listed set otherwise, each
   candidate through the same `sanitise` the listing renderer uses, since the debug vec escaped
-  control characters only as a side effect of `{:?}`. It is the first CLI verb to do so, **not** the
-  first that can raise it: `complete`, `drop` and `promote` still print the vec, and routing them
-  through the same helper is worth a separate change.
+  control characters only as a side effect of `{:?}`. `start` was the first CLI verb to do so, **not** the
+  first that can raise it — `complete`, `drop` and `promote` resolve through the same matcher and
+  always could. They now route through the same helper too; see the entry above.
 
   Over MCP: `start_action` and `start_unplanned_action` write; `current_focus` reads, and sits on the
   read-only surface so a client with no write access can still ask what is in progress. The tool

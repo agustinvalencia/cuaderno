@@ -678,9 +678,10 @@ fn start_refuses_an_action_that_is_not_on_the_map() {
 #[test]
 fn an_ambiguous_start_lists_its_candidates_readably() {
     // `AmbiguousAction` carries the candidates as a Vec<String>. Left
-    // to anyhow they reach the user as a Rust debug vec. `start` is the
-    // first CLI verb to UNPACK them -- complete, drop and promote can
-    // all raise it too, and still print the vec.
+    // to anyhow they reach the user as a Rust debug vec. All four verbs
+    // that resolve a bullet by substring now unpack them instead --
+    // `start` first, then complete, drop and promote, which share the
+    // same helper; the three cases below are theirs.
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
     for title in ["Run sweep B", "Run sweep C"] {
@@ -841,12 +842,13 @@ fn the_picker_re_entry_reports_readably_when_the_choice_is_still_ambiguous() {
     let (vault_handle, _report) = cdno_cli::bootstrap::open_vault(dir.path()).expect("open");
     let candidates = vec!["Dup task (deep)".to_owned(), "Dup task (deep)".to_owned()];
 
-    let err = cdno_cli::commands::action::start_chosen_candidate(
-        &vault_handle,
-        moment(2026, 5, 2, 10, 0),
+    let at = moment(2026, 5, 2, 10, 0);
+    let err = cdno_cli::commands::action::resolve_chosen(
         "x",
         "Dup task (deep)",
         &candidates,
+        "starting action",
+        |q| vault_handle.start_action(at, "x", q),
     )
     .expect_err("the picked candidate is still ambiguous");
 
@@ -913,4 +915,159 @@ fn an_ambiguous_candidate_cannot_drive_the_terminal() {
         shown.contains("review draft"),
         "the readable text still survives:\n{shown}"
     );
+}
+
+/// `complete`, `drop` and `promote` resolve through the same matcher as
+/// `start` and have always been able to raise `AmbiguousAction`, but each
+/// handed it to anyhow, so the candidates reached the user as a Rust debug
+/// vec. #588 routed only `start` through the readable message and said so;
+/// this closes the gap. Non-interactive, which is the exit a script and a
+/// piped terminal both take.
+fn vault_with_two_identical_bullets() -> TempDir {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    for _ in 0..2 {
+        action::run(
+            dir.path(),
+            moment(2026, 5, 2, 9, 30),
+            ActionCommands::Add {
+                project: Some("x".to_owned()),
+                title: Some("Sweep run".to_owned()),
+                energy: Some(EnergyLevel::Deep),
+                note: false,
+                var: vec![],
+            },
+            true,
+            false,
+        )
+        .expect("add");
+    }
+    dir
+}
+
+fn assert_readable_ambiguity(err: anyhow::Error, verb: &str) {
+    let shown = format!("{err:#}");
+    assert!(
+        !shown.contains("[\""),
+        "{verb} must not print the debug vec:\n{shown}"
+    );
+    assert!(
+        shown.contains("Sweep run (deep)"),
+        "{verb} must list the candidates:\n{shown}"
+    );
+}
+
+#[test]
+fn complete_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Complete {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "complete");
+}
+
+#[test]
+fn drop_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Drop {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+            reason: None,
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "drop");
+}
+
+#[test]
+fn promote_reports_an_ambiguous_query_readably() {
+    let dir = vault_with_two_identical_bullets();
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Promote {
+            project: Some("x".to_owned()),
+            query: Some("Sweep".to_owned()),
+            var: vec![],
+        },
+        false,
+        false,
+    )
+    .expect_err("ambiguous");
+    assert_readable_ambiguity(err, "promote");
+}
+
+/// The per-verb anyhow context survives the shared helper.
+///
+/// `resolving_ambiguity` bails on `AmbiguousAction` *before* applying
+/// `context`, so the ambiguity tests above cannot catch a copy/paste swap
+/// between verbs -- and the helper takes the string as a parameter, which
+/// is exactly the kind of argument that gets pasted wrong. A query that
+/// matches nothing takes the `Err(e) => Err(e).context(context)` arm, so
+/// it is the path that pins it. The CHANGELOG makes this a headline
+/// claim ("completing action" must not become a generic "resolving
+/// action"), so it needs an assertion behind it.
+#[test]
+fn each_verb_keeps_its_own_error_context() {
+    for (verb, command, expected) in [
+        (
+            "complete",
+            ActionCommands::Complete {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+            },
+            "completing action",
+        ),
+        (
+            "drop",
+            ActionCommands::Drop {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                reason: None,
+            },
+            "dropping action",
+        ),
+        (
+            "promote",
+            ActionCommands::Promote {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                var: vec![],
+            },
+            "promoting action",
+        ),
+        (
+            "start",
+            ActionCommands::Start {
+                project: Some("x".to_owned()),
+                query: Some("nothing matches this".to_owned()),
+                unplanned: false,
+                title: None,
+                energy: None,
+            },
+            "starting action",
+        ),
+    ] {
+        let dir = vault_with_two_identical_bullets();
+        let err = action::run(dir.path(), moment(2026, 5, 2, 10, 0), command, false, false)
+            .expect_err("no bullet matches");
+        let shown = format!("{err:#}");
+        assert!(
+            shown.contains(expected),
+            "{verb} must keep its own context `{expected}`:\n{shown}"
+        );
+    }
 }

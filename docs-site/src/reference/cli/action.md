@@ -79,7 +79,13 @@ then match nothing. Close the action before promoting it, or re-run the start af
 | `--energy <LEVEL>` | `deep`, `medium` or `light`. Requires `--unplanned`. |
 
 An ambiguous `--query` is a question rather than a dead end: in a terminal you get a picker over the
-candidates, and non-interactively they are listed one per line.
+candidates, and non-interactively they are listed one per line. The same holds for
+[`complete`](#cdno-action-complete), [`drop`](#cdno-action-drop) and
+[`promote`](#cdno-action-promote), which resolve through the same matcher.
+
+One case no picker can settle: two open bullets whose text differs only in case, or not at all.
+The domain's whole-bullet tiebreak compares case-insensitively, so it sees two exact matches,
+declines, and picking either re-ambiguates. Edit one of the bullets to tell them apart.
 
 ```bash
 # start something already planned

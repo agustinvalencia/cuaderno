@@ -364,7 +364,9 @@ fn start(
         return Ok(());
     }
 
-    let daily = start_resolving_ambiguity(vault, at, &project, &query, interactive)?;
+    let daily = resolving_ambiguity(&project, &query, interactive, "starting action", |q| {
+        vault.start_action(at, &project, q)
+    })?;
     crate::output::emit_write_result(
         json,
         &daily.to_string(),
@@ -373,74 +375,69 @@ fn start(
     Ok(())
 }
 
-/// Call `start_action`, turning an ambiguous match into a question
-/// rather than a dead end — the shape `cdno open` already uses for an
-/// ambiguous note reference.
+/// Run an action verb that resolves its target by substring, turning an
+/// ambiguous match into a question rather than a dead end.
 ///
-/// Without this the candidates reach the user only as a Rust `{:?}` vec
-/// inside an anyhow chain, because `AmbiguousAction` carries them as a
-/// `Vec<String>` and nothing in the CLI unpacks it.
+/// `AmbiguousAction` carries its candidates as a `Vec<String>`, and a verb
+/// that hands the error straight to anyhow prints them as a Rust debug vec
+/// — `["Run sweep B", "Run sweep C"]` — inside an error chain. Every verb
+/// that resolves this way routes through here instead: a picker when a
+/// terminal can show one, a listed set otherwise.
 ///
-/// `start` is the first CLI verb to *unpack* it, not the first that can
-/// raise it: `complete`, `drop` and `promote` all resolve through the
-/// same `resolve_open_action` (cdno-domain `vault/projects/actions.rs`,
-/// a private free function, so no intra-doc link) and could raise it
-/// before this verb
-/// existed. They still hand it to anyhow, so they
-/// still print the debug vec. Routing them through here too is worth
-/// doing and is deliberately not done in the same change as adding the
-/// verb.
-fn start_resolving_ambiguity(
-    vault: &Vault,
-    at: NaiveDateTime,
+/// `call` takes the query so it can be re-run with the candidate the user
+/// picked; `context` is the anyhow context for any *other* domain error,
+/// and stays per-verb so "completing action" does not become "resolving
+/// action" in the one place a user reads it.
+fn resolving_ambiguity<T>(
     project: &str,
     query: &str,
     interactive: bool,
-) -> Result<cdno_core::path::VaultPath> {
-    match vault.start_action(at, project, query) {
-        Ok(path) => Ok(path),
+    context: &'static str,
+    mut call: impl FnMut(&str) -> std::result::Result<T, cdno_domain::error::DomainError>,
+) -> Result<T> {
+    match call(query) {
+        Ok(value) => Ok(value),
         Err(cdno_domain::error::DomainError::AmbiguousAction { candidates, .. }) => {
             if interactive && prompt::picker_fits(crate::output::terminal_columns()) {
                 // The candidates are already known, so offer exactly
                 // those. A whole bullet usually resolves uniquely on the
                 // second call, via the exact-match tiebreak — but not
-                // when two bullets carry byte-identical text, which
-                // `action add` allows freely. Then the tiebreak sees two
-                // exact matches, declines, and the substring rule
-                // re-ambiguates. Fall into the readable branch below
-                // rather than letting that second error escape through
-                // `.context`, which would print the debug vec this
-                // function exists to remove.
+                // when two bullets' text differs only in case, or not
+                // at all -- `action add` allows both freely, and the
+                // tiebreak compares lowercased. Then it sees two exact
+                // matches, declines, and the substring rule
+                // re-ambiguates.
                 let chosen = prompt::prompt_bullet(project, &candidates)?;
-                return start_chosen_candidate(vault, at, project, &chosen, &candidates);
+                return resolve_chosen(project, &chosen, &candidates, context, call);
             }
             anyhow::bail!(ambiguous_message(project, query, &candidates))
         }
-        Err(e) => Err(e).context("starting action"),
+        Err(e) => Err(e).context(context),
     }
 }
 
-/// Start the candidate the user picked out of the ambiguity picker.
+/// Re-run the verb for the candidate the user picked out of the picker.
 ///
-/// Split out so a test can reach it without driving a pty. The second
-/// call can itself be ambiguous — two bullets carrying byte-identical
-/// text defeat the domain's whole-bullet tiebreak, since it sees two
-/// EXACT matches and declines — and that error must land in the same
-/// readable message rather than escaping through `.context` as the
-/// debug vec this whole path exists to remove.
-pub fn start_chosen_candidate(
-    vault: &Vault,
-    at: NaiveDateTime,
+/// Split out so a test can reach it without driving a pty. The second call
+/// can itself be ambiguous — two bullets whose text differs only in case
+/// (or not at all) defeat the domain's whole-bullet tiebreak, which
+/// compares lowercased and so sees two EXACT matches and declines — and
+/// that error must land in the same readable
+/// message rather than escaping through `.context` as the debug vec this
+/// whole path exists to remove.
+pub fn resolve_chosen<T>(
     project: &str,
     chosen: &str,
     candidates: &[String],
-) -> Result<cdno_core::path::VaultPath> {
-    match vault.start_action(at, project, chosen) {
-        Ok(path) => Ok(path),
+    context: &'static str,
+    mut call: impl FnMut(&str) -> std::result::Result<T, cdno_domain::error::DomainError>,
+) -> Result<T> {
+    match call(chosen) {
+        Ok(value) => Ok(value),
         Err(cdno_domain::error::DomainError::AmbiguousAction { .. }) => {
             anyhow::bail!(ambiguous_message(project, chosen, candidates))
         }
-        Err(e) => Err(e).context("starting action"),
+        Err(e) => Err(e).context(context),
     }
 }
 
@@ -505,9 +502,9 @@ fn promote(
         return Ok(());
     }
 
-    let note_path = vault
-        .promote_action_with_vars(at, &project, &query, &template_vars)
-        .context("promoting action")?;
+    let note_path = resolving_ambiguity(&project, &query, interactive, "promoting action", |q| {
+        vault.promote_action_with_vars(at, &project, q, &template_vars)
+    })?;
     crate::output::emit_write_result(
         json,
         &note_path.to_string(),
@@ -552,9 +549,10 @@ fn complete(
 
     // The CLI reports the primary path only; the outcome's full
     // touched-path set is desktop-journal machinery (#315).
-    let project_path = vault
-        .complete_action(at, &project, &query)
-        .context("completing action")?
+    let project_path =
+        resolving_ambiguity(&project, &query, interactive, "completing action", |q| {
+            vault.complete_action(at, &project, q)
+        })?
         .primary;
     crate::output::emit_write_result(
         json,
@@ -609,9 +607,10 @@ fn drop_verb(
 
     // The CLI reports the primary path only; the outcome's full
     // touched-path set is desktop-journal machinery (#315).
-    let project_path = vault
-        .drop_action(at, &project, &query, reason.as_deref())
-        .context("dropping action")?
+    let project_path =
+        resolving_ambiguity(&project, &query, interactive, "dropping action", |q| {
+            vault.drop_action(at, &project, q, reason.as_deref())
+        })?
         .primary;
     crate::output::emit_write_result(
         json,
