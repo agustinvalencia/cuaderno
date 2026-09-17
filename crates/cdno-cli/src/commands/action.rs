@@ -402,9 +402,10 @@ fn resolving_ambiguity<T>(
                 // The candidates are already known, so offer exactly
                 // those. A whole bullet usually resolves uniquely on the
                 // second call, via the exact-match tiebreak — but not
-                // when two bullets carry byte-identical text, which
-                // `action add` allows freely. Then the tiebreak sees two
-                // exact matches, declines, and the substring rule
+                // when two bullets' text differs only in case, or not
+                // at all -- `action add` allows both freely, and the
+                // tiebreak compares lowercased. Then it sees two exact
+                // matches, declines, and the substring rule
                 // re-ambiguates.
                 let chosen = prompt::prompt_bullet(project, &candidates)?;
                 return resolve_chosen(project, &chosen, &candidates, context, call);
@@ -418,9 +419,10 @@ fn resolving_ambiguity<T>(
 /// Re-run the verb for the candidate the user picked out of the picker.
 ///
 /// Split out so a test can reach it without driving a pty. The second call
-/// can itself be ambiguous — two bullets carrying byte-identical text
-/// defeat the domain's whole-bullet tiebreak, since it sees two EXACT
-/// matches and declines — and that error must land in the same readable
+/// can itself be ambiguous — two bullets whose text differs only in case
+/// (or not at all) defeat the domain's whole-bullet tiebreak, which
+/// compares lowercased and so sees two EXACT matches and declines — and
+/// that error must land in the same readable
 /// message rather than escaping through `.context` as the debug vec this
 /// whole path exists to remove.
 pub fn resolve_chosen<T>(

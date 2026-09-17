@@ -681,7 +681,7 @@ fn an_ambiguous_start_lists_its_candidates_readably() {
     // to anyhow they reach the user as a Rust debug vec. All four verbs
     // that resolve a bullet by substring now unpack them instead --
     // `start` first, then complete, drop and promote, which share the
-    // same helper; the three cases at the end of this file are theirs.
+    // same helper; the three cases below are theirs.
     let dir = vault();
     create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
     for title in ["Run sweep B", "Run sweep C"] {

@@ -72,7 +72,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   candidate through the same `sanitise` the listing renderer uses, since the debug vec escaped
   control characters only as a side effect of `{:?}`. `start` was the first CLI verb to do so, **not** the
   first that can raise it — `complete`, `drop` and `promote` resolve through the same matcher and
-  always could. They now route through the same helper too; see below.
+  always could. They now route through the same helper too; see the entry above.
 
   Over MCP: `start_action` and `start_unplanned_action` write; `current_focus` reads, and sits on the
   read-only surface so a client with no write access can still ask what is in progress. The tool
