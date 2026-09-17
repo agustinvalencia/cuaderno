@@ -11,8 +11,9 @@
 //!
 //! - [`Vault::weekly_logs`] — flat log lines from every daily note
 //!   in the ISO week containing `week_of`.
-//! - [`Vault::completed_actions_between`] — action notes with
-//!   `status: completed` and `completed:` in `[from, to]`.
+//! - [`Vault::completed_actions_between`] — everything closed as done
+//!   in `[from, to]`, in both forms: action notes carrying
+//!   `status: completed`, and inline bullets recorded only in the log.
 //! - [`Vault::project_state_changes_between`] — `was → now` entries
 //!   parsed from daily-note `## Logs`.
 //! - [`Vault::stuck_projects`] — active projects whose project map
@@ -46,10 +47,10 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::ProjectSummary;
-use super::projects::actions::strip_energy_suffix;
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
 };
+use super::projects::actions::{parse_attached_action_slug, strip_energy_suffix};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -255,14 +256,24 @@ impl Vault {
     /// carries, which is capped at the most recent lines and would drop
     /// the start of a busy week.
     ///
-    /// **De-duplication is structural, not heuristic.** Completing a
-    /// bullet that wikilinks a note archives the note *and* logs a line,
-    /// so that completion has both traces. But the logged text of such a
-    /// bullet is the wikilink itself -- `[[actions/<slug>]] (deep)` --
-    /// so a log line whose action text points into `actions/` is exactly
-    /// the note-backed case, and the note already reports it. No title
-    /// matching, which could never be sound: two actions may share a
-    /// title.
+    /// **De-duplication keys on slug identity, not on the shape of the
+    /// text.** Completing a bullet that wikilinks a note archives the
+    /// note *and* logs a line, so that completion has both traces. The
+    /// fix is to drop a log line only when the note half actually
+    /// reported the slug it names, which is what `reported` carries.
+    ///
+    /// Matching the text shape instead -- "starts with `[[actions/`" --
+    /// is subtly wrong, because the writer decides "this archived a
+    /// note" with a *narrower* test: [`parse_attached_action_slug`]
+    /// demands the whole text be `[[actions/<slug>]]` (no `|label`, no
+    /// trailing prose), and [`Vault::stage_action_archival`] no-ops when
+    /// the note is missing. A bullet like `[[actions/foo|Rerun it]]`, or
+    /// one pointing at a note already archived in an earlier week, logs
+    /// a line and produces no note for *this* window -- a shape filter
+    /// drops it and the win vanishes, which is the very failure #586 is
+    /// about. Keying on the slug the note half emitted fails safe toward
+    /// reporting. Title matching could never be sound: two actions may
+    /// share a title.
     ///
     /// Drops never appear. `drop_action` writes `action dropped on`,
     /// a different prefix, and a dropped note carries
@@ -275,6 +286,10 @@ impl Vault {
     ) -> Result<Vec<CompletedActionEntry>, DomainError> {
         let entries = self.index.list_by_type(NoteType::Action.as_str())?;
         let mut out = Vec::new();
+        // The slugs the note half reports for this window. The log half
+        // drops a line only when the completion it records is already in
+        // here -- see `parse_completed_bullets`.
+        let mut reported: BTreeSet<String> = BTreeSet::new();
         for entry in entries {
             let raw = self.store.read_file(&entry.path)?;
             let (fm, body) = Frontmatter::parse(&raw)?;
@@ -288,8 +303,10 @@ impl Vault {
             if completed < from || completed > to {
                 continue;
             }
+            let slug = path_stem(&entry.path);
+            reported.insert(slug.clone());
             out.push(CompletedActionEntry {
-                slug: Some(path_stem(&entry.path)),
+                slug: Some(slug),
                 project: af.project,
                 title: extract_h1(body).unwrap_or_else(|| path_stem(&entry.path)),
                 completed,
@@ -305,7 +322,7 @@ impl Vault {
                 let raw = self.store.read_file(&path)?;
                 let doc = MarkdownDocument::parse(raw)?;
                 if let Ok(section) = doc.section(DAILY_LOGS_SECTION) {
-                    for (project, title) in parse_completed_bullets(section) {
+                    for (project, title) in parse_completed_bullets(section, &reported) {
                         out.push(CompletedActionEntry {
                             slug: None,
                             project,
@@ -1078,16 +1095,61 @@ pub(super) fn parse_log_entry_heads(section: &str) -> Vec<(NaiveTime, String)> {
 /// is stripped so a bullet's title reads like a note's, which
 /// [`extract_h1`] gives without one; the merged list would otherwise
 /// show two title conventions side by side.
-fn parse_completed_bullets(section: &str) -> Vec<(String, String)> {
+fn parse_completed_bullets(section: &str, reported: &BTreeSet<String>) -> Vec<(String, String)> {
     parse_log_entry_heads(section)
         .into_iter()
         .filter_map(|(_, text)| parse_focus_marker(&text, LOG_ACTION_DONE_PREFIX))
-        .filter(|(_, action)| !action.trim_start().starts_with("[[actions/"))
+        .filter(|(_, action)| match parse_attached_action_slug(action) {
+            Some(slug) => !reported.contains(slug),
+            None => true,
+        })
         .map(|(project, action)| {
-            let title = strip_energy_suffix(&action).trim().to_owned();
-            (project, title)
+            let title = bullet_display_title(strip_energy_suffix(&action).trim());
+            (normalise_project_target(&project), title)
         })
         .collect()
+}
+
+/// A bullet's logged text, rendered as a title a person can read.
+///
+/// Usually the text *is* the title. But a bullet whose note was never
+/// archived -- a `|label` link, or one pointing at a missing or already
+/// archived note -- logs the wikilink itself, and putting raw `[[...]]`
+/// markup in a wins list trades a lost win for an unreadable one. Take
+/// the label when the link carries one, otherwise the final path
+/// segment, mirroring how the note half falls back to the file stem when
+/// a note has no `# H1`.
+fn bullet_display_title(action: &str) -> String {
+    let Some(inner) = action.strip_prefix("[[").and_then(|r| r.strip_suffix("]]")) else {
+        return action.to_owned();
+    };
+    if inner.contains('[') || inner.contains(']') {
+        return action.to_owned();
+    }
+    let shown = match inner.split_once('|') {
+        Some((_, label)) => label.trim(),
+        None => inner.rsplit('/').next().unwrap_or(inner).trim(),
+    };
+    if shown.is_empty() {
+        action.to_owned()
+    } else {
+        shown.to_owned()
+    }
+}
+
+/// Reduce a log line's wikilink target to the bare project slug the note
+/// half reports (`af.project`). `complete_action` always emits the bare
+/// form, but the project map is mutable and hand-edited, so a log line
+/// may carry `[[projects/alpha]]` or `[[alpha|Alpha]]`. `project` is the
+/// field a consumer reaches for now that `slug` may be null, so the two
+/// halves must not disagree about how a project is named.
+fn normalise_project_target(target: &str) -> String {
+    let target = target.split_once('|').map_or(target, |(link, _)| link);
+    let target = target.trim();
+    target
+        .strip_prefix(&format!("{}/", cdno_core::paths::PROJECTS))
+        .unwrap_or(target)
+        .to_owned()
 }
 
 /// Split `<prefix>[[project]] — action` into its project and action.

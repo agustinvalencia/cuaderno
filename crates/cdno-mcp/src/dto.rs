@@ -620,7 +620,8 @@ pub struct MonthlyContextDto {
     /// Start of the 30-day "past month" window — `today - 30 days`.
     /// Echoed back so clients render the window explicitly.
     pub since: NaiveDate,
-    /// Completed action notes from the past 30 days, oldest-first.
+    /// Everything completed in the past 30 days, oldest-first, in both
+    /// forms: action notes and inline bullets (#586).
     pub completed_actions: Vec<CompletedActionEntryDto>,
     /// Every question with `status: active`, sorted by (domain, slug).
     pub active_questions: Vec<QuestionSummaryDto>,

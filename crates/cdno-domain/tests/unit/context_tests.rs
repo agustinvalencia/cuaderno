@@ -2000,11 +2000,19 @@ fn a_dropped_bullet_never_appears() {
 }
 
 #[test]
-fn bullet_completions_are_not_lost_to_the_logs_cap() {
-    // The `logs` field a context payload carries is capped at the most
-    // recent lines, which in a busy week cuts off the START of it. This
-    // reader walks the window's daily notes directly, so a completion on
-    // Monday survives a Friday full of noise.
+fn a_completion_on_the_first_day_survives_a_noisy_week() {
+    // Why this matters: the `logs` field a context payload carries is
+    // capped at the most recent lines (`WEEKLY_LOGS_MAX` in cdno-mcp,
+    // `MAX_LOG_LINES` in cdno-tauri), which in a busy week cuts off the
+    // START of it. This reader deliberately does not reuse that field --
+    // it walks the window's daily notes directly -- so a Monday win
+    // survives a Friday full of noise.
+    //
+    // NB this test cannot itself exercise the cap: the cap lives in the
+    // interface layers and `completed_actions_between` has no access to
+    // it. What is pinned here is the `from` edge of the walk under load.
+    // The cap's independence is covered at the MCP layer, in
+    // `handlers_context.rs`.
     let monday = daily_with_logs(
         ymd(2026, 5, 11),
         "- **09:00**: action done on [[surrogate-model]] \u{2014} Monday win (deep)\n",
@@ -2051,4 +2059,199 @@ fn prose_that_mentions_completing_is_not_a_completion() {
         .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
         .unwrap();
     assert!(got.is_empty(), "prose must not count: {got:?}");
+}
+
+// The de-dup filter keys on the slug the note half reported, not on the
+// shape of the logged text. These three bullets all LOOK note-backed and
+// all log a line, but none of them archives a note, so a shape filter
+// would drop a real win -- the exact failure #586 exists to fix.
+
+#[test]
+fn a_bullet_wikilinking_a_missing_note_is_still_a_win() {
+    // Drift: the map points at `actions/ghost`, but the note is gone, so
+    // `stage_action_archival` no-ops and there is no note half at all.
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            "- **17:25**: action done on [[surrogate-model]] \u{2014} [[actions/ghost]] (deep)\n",
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 1, "a drifted bullet is still a win: {got:?}");
+    assert_eq!(got[0].source, CompletedActionSource::Bullet);
+    assert_eq!(
+        got[0].title, "ghost",
+        "raw wikilink markup must not reach a wins list"
+    );
+}
+
+#[test]
+fn a_labelled_wikilink_bullet_is_still_a_win() {
+    // `parse_attached_action_slug` rejects a `|label`, so completion took
+    // the plain-bullet path and archived nothing.
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            "- **17:25**: action done on [[surrogate-model]] \u{2014} [[actions/foo|Rerun the ablation]] (deep)\n",
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 1, "a labelled link is still a win: {got:?}");
+    assert_eq!(got[0].source, CompletedActionSource::Bullet);
+}
+
+#[test]
+fn a_note_archived_in_an_earlier_window_is_still_this_weeks_win() {
+    // The note half finds the note but stamps it with the EARLIER
+    // `completed:` date, so it falls outside this window. Keying the
+    // filter on the slugs actually reported for THIS window keeps the
+    // log line, which is the only trace left inside it.
+    let (vault, _store) = vault_with(&[
+        (
+            "actions/_done/2026/older.md",
+            &action_note("Older", "surrogate-model", "completed", "2026-04-02"),
+        ),
+        (
+            &daily_path(ymd(2026, 5, 15)),
+            &daily_with_logs(
+                ymd(2026, 5, 15),
+                "- **17:25**: action done on [[surrogate-model]] \u{2014} [[actions/older]] (deep)\n",
+            ),
+        ),
+    ]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].source, CompletedActionSource::Bullet);
+    assert_eq!(got[0].completed, ymd(2026, 5, 15));
+}
+
+#[test]
+fn a_completion_on_the_last_day_of_the_window_is_included() {
+    // Pins the `to` edge: `while date <= to`. Without this, mutating the
+    // walk to `date < to` passes the whole suite.
+    let (vault, _store) = vault_with(&[
+        (
+            &daily_path(ymd(2026, 5, 17)),
+            &daily_with_logs(
+                ymd(2026, 5, 17),
+                "- **23:50**: action done on [[surrogate-model]] \u{2014} Sunday win (deep)\n",
+            ),
+        ),
+        (
+            &daily_path(ymd(2026, 5, 18)),
+            &daily_with_logs(
+                ymd(2026, 5, 18),
+                "- **09:00**: action done on [[surrogate-model]] \u{2014} Next Monday (deep)\n",
+            ),
+        ),
+    ]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 11), ymd(2026, 5, 17))
+        .unwrap();
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].title, "Sunday win");
+}
+
+#[test]
+fn both_sources_contribute_to_one_ordered_list() {
+    // Pins the merge and the (completed, project, title) tie-break that
+    // replaced ordering on `slug`. Two entries land on the same day, so
+    // deleting either `.then(...)` arm leaves the order unstable.
+    let (vault, _store) = vault_with(&[
+        (
+            "actions/_done/2026/deep-dive.md",
+            &action_note("Deep dive", "alpha", "completed", "2026-05-15"),
+        ),
+        (
+            &daily_path(ymd(2026, 5, 15)),
+            &daily_with_logs(
+                ymd(2026, 5, 15),
+                concat!(
+                    "- **17:25**: action done on [[alpha]] \u{2014} Bravo bullet (deep)\n",
+                    "- **17:30**: action done on [[alpha]] \u{2014} Alpha bullet (light)\n",
+                ),
+            ),
+        ),
+    ]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 11), ymd(2026, 5, 17))
+        .unwrap();
+    let seen: Vec<(&str, CompletedActionSource)> =
+        got.iter().map(|e| (e.title.as_str(), e.source)).collect();
+    assert_eq!(
+        seen,
+        vec![
+            ("Alpha bullet", CompletedActionSource::Bullet),
+            ("Bravo bullet", CompletedActionSource::Bullet),
+            ("Deep dive", CompletedActionSource::Note),
+        ],
+        "both halves must merge, ordered by title within the day"
+    );
+}
+
+#[test]
+fn a_hand_written_project_link_normalises_to_the_bare_slug() {
+    // The note half reports `af.project`, a bare slug. A hand-edited log
+    // line may carry a folder prefix or a label; `project` is the field a
+    // consumer reaches for now that `slug` may be null, so the two halves
+    // must agree on how a project is named.
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            concat!(
+                "- **09:00**: action done on [[projects/alpha]] \u{2014} Folder prefixed (deep)\n",
+                "- **09:10**: action done on [[alpha|Alpha]] \u{2014} Labelled link (light)\n",
+            ),
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    assert_eq!(got.len(), 2, "{got:?}");
+    assert!(
+        got.iter().all(|e| e.project == "alpha"),
+        "both forms must normalise: {got:?}"
+    );
+}
+
+#[test]
+fn a_wikilink_bullet_title_renders_without_markup() {
+    // A bullet whose note was never archived logs the wikilink itself.
+    // Recovering the win is no good if it renders as `[[actions/foo]]`.
+    let (vault, _store) = vault_with(&[(
+        &daily_path(ymd(2026, 5, 15)),
+        &daily_with_logs(
+            ymd(2026, 5, 15),
+            concat!(
+                "- **09:00**: action done on [[alpha]] \u{2014} [[actions/foo|Rerun the ablation]] (deep)\n",
+                "- **09:10**: action done on [[alpha]] \u{2014} [[actions/plain-slug]] (light)\n",
+                "- **09:20**: action done on [[alpha]] \u{2014} An ordinary bullet (light)\n",
+            ),
+        ),
+    )]);
+
+    let got = vault
+        .completed_actions_between(ymd(2026, 5, 1), ymd(2026, 5, 31))
+        .unwrap();
+    let titles: Vec<&str> = got.iter().map(|e| e.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        vec!["An ordinary bullet", "Rerun the ablation", "plain-slug"],
+        "labels win, then the final path segment; plain text is untouched"
+    );
 }

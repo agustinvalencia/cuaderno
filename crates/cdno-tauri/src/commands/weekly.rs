@@ -88,7 +88,8 @@ pub struct WeeklyBundle {
     /// already-planned goal rather than blindly overwriting it — and
     /// crucially reads NEXT week's goal, not the reviewed week's.
     pub next_week_goal: Option<String>,
-    /// Action notes completed within the reviewed week — the primary
+    /// Everything completed within the reviewed week, in both forms —
+    /// action notes and inline bullets (#586) — and the primary
     /// wins-seed source ("Completed: {title} ({project})").
     pub completed_actions: Vec<CompletedActionView>,
     /// The week's daily-log lines (capped), the secondary wins-seed
@@ -135,9 +136,15 @@ pub struct WeeklyContent {
 #[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CompletedActionView {
-    /// `None` for an inline bullet, which never had a note (#586). The
-    /// Wins step renders `title` and `project`, which every completion
-    /// has, so a bullet shows up there like any other win.
+    /// `None` for an inline bullet, which never had a note (#586), and
+    /// so the common case: the bullet is the default form of an action.
+    /// The Wins step renders `title` and `project`, which every
+    /// completion has, so a bullet shows up there like any other win.
+    ///
+    /// The domain's `source` discriminant is deliberately not mirrored
+    /// here: nothing in the desktop app distinguishes the two forms, and
+    /// `slug.is_some()` answers "can I link to a note?" for the only
+    /// caller that could care. Add it when a view actually needs it.
     pub slug: Option<String>,
     pub project: String,
     pub title: String,

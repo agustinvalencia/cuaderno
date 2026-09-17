@@ -588,7 +588,7 @@ impl Vault {
 /// Plain action bullets, links carrying a `|label`, and anything that
 /// isn't exactly an `actions/` wikilink return `None`, so completion
 /// falls through to the unchanged plain-bullet path.
-fn parse_attached_action_slug(text: &str) -> Option<&str> {
+pub(in crate::vault) fn parse_attached_action_slug(text: &str) -> Option<&str> {
     let inner = strip_energy_suffix(text.trim())
         .trim()
         .strip_prefix("[[")?

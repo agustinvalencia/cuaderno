@@ -51,7 +51,8 @@ weekly: WeeklyContent,
  */
 next_week_goal: string | null, 
 /**
- * Action notes completed within the reviewed week — the primary
+ * Everything completed within the reviewed week, in both forms —
+ * action notes and inline bullets (#586) — and the primary
  * wins-seed source ("Completed: {title} ({project})").
  */
 completed_actions: Array<CompletedActionView>, 
