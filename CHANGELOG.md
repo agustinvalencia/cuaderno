@@ -8,6 +8,32 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **Completed bullet actions now reach the weekly and monthly context (#586).** `completed_actions`
+  read the index for `type: action` notes with `status: completed`, but completing an inline bullet
+  — the *default* form of an action — creates no note at all: `complete_action` removes the line and
+  writes one `action done on [[project]] — text` entry to that day's log. So an ordinary week, in
+  which most completions are bullets, returned `"completed_actions": []`. The weekly review opens
+  with wins pre-populated from that field, which meant it opened saying nothing got done in a week
+  where things got done — the opposite of what the review is for, and the worst failure mode for a
+  tool built on momentum.
+
+  Both traces are now read. The log half mirrors `project_state_changes_between`: it walks the
+  window's daily notes directly, so it is independent of the `logs` field the interface layers cap
+  at 100 lines, which in a busy week cuts off the start of it. Parsing delegates to the same
+  `parse_log_entry_heads` + `parse_focus_marker` pair `current_focus` runs, so it cannot drift from
+  what the writers emit, and prose in `## Logs` is never mistaken for a completion.
+
+  De-duplication keys on slug identity: a log line is dropped only when the note half actually
+  reported the slug that line names. Filtering on the *shape* of the text instead (`starts with
+  [[actions/`) is subtly wrong, because the writer decides "this archived a note" with a narrower
+  test — `parse_attached_action_slug` demands the whole text be `[[actions/<slug>]]`, and archival
+  no-ops when the note is missing. A bullet reading `[[actions/foo|Rerun it]]`, or one pointing at a
+  note archived in an earlier week, logs a line and produces no note for *this* window, so a shape
+  filter would swallow a real win — the very failure this entry is about. Matching on titles could
+  never be sound either, since two actions may share one. Drops stay out: they carry a different log
+  prefix, and a dropped note has no `completed:` date.
+
+
 - **An ambiguous query is readable from every action verb, not just `start`.** `complete`, `drop` and
   `promote` resolve a bullet by substring exactly as `start` does, and have always been able to raise
   `AmbiguousAction` — but each handed it to anyhow, so the candidates arrived as a Rust debug vec:
@@ -98,6 +124,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   two gestures and a context switch to record work already begun.
 
 ### Changed
+
+- **`completed_actions` entries carry nullable `slug`/`path` and a new `source` (#586).** Each entry
+  now reports `source: "bullet" | "note"`, and `slug`/`path` are `null` for a bullet, which never had
+  a note to carry them. Since the inline bullet is the *default* form of an action, **null is the
+  common case, not the exception** — a client that assumed `slug` was always present must handle it.
+  This affects `get_weekly_context` and `get_monthly_context` over MCP and the desktop app's weekly
+  bundle. Nothing in the desktop UI reads either field (the wins seed renders `title` and `project`,
+  which every completion has); agent skills that build a wikilink out of `slug` must fall back to the
+  plain title, as `examples/skills/daily-orientation` now does. See the `Fixed` entry for why.
 
 - **A start now has to name a real action.** `start_action` logged whatever string it was handed;
   the close verbs (`complete_action`, `drop_action`) log *resolved bullet text*, and `current_focus`

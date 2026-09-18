@@ -588,7 +588,7 @@ impl Vault {
 /// Plain action bullets, links carrying a `|label`, and anything that
 /// isn't exactly an `actions/` wikilink return `None`, so completion
 /// falls through to the unchanged plain-bullet path.
-fn parse_attached_action_slug(text: &str) -> Option<&str> {
+pub(in crate::vault) fn parse_attached_action_slug(text: &str) -> Option<&str> {
     let inner = strip_energy_suffix(text.trim())
         .trim()
         .strip_prefix("[[")?
@@ -759,7 +759,7 @@ fn resolve_open_action(lines: &[&str], slug: &str, query: &str) -> Result<usize,
 /// Trim a trailing `(deep)`, `(medium)`, or `(light)` suffix —
 /// matching is case-sensitive because `add_action` always emits
 /// lowercase.
-fn strip_energy_suffix(text: &str) -> &str {
+pub(in crate::vault) fn strip_energy_suffix(text: &str) -> &str {
     for suffix in [" (deep)", " (medium)", " (light)"] {
         if let Some(stripped) = text.strip_suffix(suffix) {
             return stripped;

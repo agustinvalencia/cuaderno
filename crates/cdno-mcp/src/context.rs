@@ -68,7 +68,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. The payload is bounded for token-cap safety: each `state_changes` entry carries only a ~200-char gist (marked with a trailing \u{2026}) of the state the project moved to (`new_state`; the previous state is omitted \u{2014} it is auto-logged to the daily note before every overwrite), and `logs` is capped to the 100 most-recent lines. The full detail stays one `get_project_context` / `read_daily_note` away. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
+        description = "This week's logs, completed actions, project state changes, and the upcoming two weeks of commitments. The ISO week (Mon-Sun) containing today is used; the returned `week_of` field carries the resolved Monday so clients render the window explicitly. The payload is bounded for token-cap safety: each `state_changes` entry carries only a ~200-char gist (marked with a trailing \u{2026}) of the state the project moved to (`new_state`; the previous state is omitted \u{2014} it is auto-logged to the daily note before every overwrite), and `logs` is capped to the 100 most-recent lines. The full detail stays one `get_project_context` / `read_daily_note` away. `completed_actions` covers BOTH forms an action takes: one with its own note carries `slug` and `path` with `source: \"note\"`, while an inline bullet -- the default form, so the common case -- carries `source: \"bullet\"` with both null. Expect nulls there. A completion is listed once even when it has both a note and a log line, and dropped actions never appear. It is read from the daily notes directly, not from the capped `logs` above, so a completion early in a busy week is not lost. Stewardship status, called out in design \u{00a7}11 alongside this tool, is reachable separately through `get_stewardship_tracking`."
     )]
     pub async fn get_weekly_context(
         &self,
@@ -103,7 +103,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Strategic monthly scan: the past 30 days' completed actions (wins patterns), every active question, the portfolio health table, active projects unchanged for >2 weeks (stuck-detection), every stewardship dashboard, a six-week commitments lookahead, and active-project slot allocation against the configured cap."
+        description = "Strategic monthly scan: the past 30 days' completed actions (wins patterns; both note-backed and inline-bullet completions, the latter with `slug`/`path` null and `source: \"bullet\"`), every active question, the portfolio health table, active projects unchanged for >2 weeks (stuck-detection), every stewardship dashboard, a six-week commitments lookahead, and active-project slot allocation against the configured cap."
     )]
     pub async fn get_monthly_context(
         &self,
