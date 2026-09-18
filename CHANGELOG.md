@@ -8,20 +8,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
-- **The weekly review's Wins step no longer offers every completion twice.** `candidatesFor`
-  concatenated `completed_actions` with `logs` raw, but a completion leaves *both* traces — the
-  entry and the `action done on [[project]] — text` line it wrote to that day's log — so each win
-  appeared once as "Completed: {title} ({project})" and again as raw log markup. This was always
-  true for note-backed completions; #586 made it the common case by (correctly) reporting bullet
-  completions too, so the fix for an empty wins list produced a doubled one instead.
-
-  Completion lines are now dropped from the log half. The domain reports every completion in the
-  window in both its forms, so a line carrying the `action done on ` prefix is always already
-  above it in the list. Only completions go: `action dropped on ` is a different prefix and never
-  reaches `completed_actions`, so a dropped action stays a candidate — not a win by default, but
-  the week's record is the reader's to judge. Completions keep the front of the list, which is
-  what lets the renderer read `completed_actions[index]` for a candidate's date.
-
 - **Completed bullet actions now reach the weekly and monthly context (#586).** `completed_actions`
   read the index for `type: action` notes with `status: completed`, but completing an inline bullet
   — the *default* form of an action — creates no note at all: `complete_action` removes the line and

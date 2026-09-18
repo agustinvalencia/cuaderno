@@ -23,34 +23,12 @@ import { parseWins, reorder, serialiseWins, type Win, type WinCard } from "./win
  * first three log lines and dropped the rest silently. */
 const CANDIDATES_SHOWN = 5;
 
-/** The log-line prefix `complete_action` writes for every completion,
- * note-backed or inline (`LOG_ACTION_DONE_PREFIX` in the domain). */
-const LOG_ACTION_DONE_PREFIX = "action done on ";
-
 /** What the week offers as a starting point, in the order the method
- * would read them: what you finished, then what you wrote down.
- *
- * A completion leaves BOTH traces — a `completed_actions` entry and the
- * `action done on [[project]] — text` line it wrote to that day's log —
- * so listing the two sources raw offered every win twice, once as
- * "Completed: …" and once as raw log markup. Since #586 the domain
- * reports every completion in the window, in both its forms, so a
- * completion line in `logs` is always already above: drop it here and
- * the duplicate goes with it.
- *
- * Only completions are dropped. `action dropped on …` is a different
- * prefix and never appears in `completed_actions`, so it stays a
- * candidate — not a win by default, but the week's record is the
- * user's to read.
- *
- * Completions keep the front of the list, which is what lets the
- * renderer read `completed_actions[index]` for a candidate's date. */
+ * would read them: what you finished, then what you wrote down. */
 export function candidatesFor(bundle: WeeklyBundle): string[] {
   return [
     ...bundle.completed_actions.map((c) => `Completed: ${c.title} (${c.project})`),
-    ...bundle.logs
-      .filter((l) => !l.text.startsWith(LOG_ACTION_DONE_PREFIX))
-      .map((l) => l.text),
+    ...bundle.logs.map((l) => l.text),
   ];
 }
 
