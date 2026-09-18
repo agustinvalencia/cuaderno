@@ -17,6 +17,7 @@ use cdno_core::error::StoreError;
 use cdno_core::hash::content_hash;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::CONFIG_FILE;
+use cdno_core::store::VaultStore;
 
 use super::Vault;
 use crate::error::DomainError;
@@ -113,100 +114,101 @@ impl Vault {
     /// stays defensive so the inspector never hard-fails on a fresh or
     /// partially-set-up vault.
     pub fn read_config_raw(&self) -> Result<ConfigDocument, DomainError> {
-        let path = VaultPath::new(CONFIG_FILE)?;
-        let content = match self.store.read_file(&path) {
-            Ok(content) => content,
-            // Absence is not an error here — hand back an empty document.
-            Err(StoreError::NotFound(_)) => String::new(),
-            Err(err) => return Err(err.into()),
-        };
-        let hash = content_hash(&content);
-        Ok(ConfigDocument { content, hash })
+        read_config_from(&*self.store)
     }
 
-    /// The validate-then-compare-and-swap-then-write core of a config save
-    /// (#365, PR3). The ONLY path that writes `.cuaderno/config.toml`, and
-    /// it is structured so a config that would not reopen can never reach
-    /// the disk. Returns the persisted [`ConfigDocument`] — the re-read
-    /// content and its fresh hash — so the caller can update its
-    /// compare-and-swap baseline for the next save without a separate
-    /// read.
-    ///
-    /// The order is load-bearing — do not reorder:
-    ///
-    /// 1. **VALIDATE FIRST (never-brick).** Run [`validate_config_str`],
-    ///    the exact composition `Vault::new` runs. On ANY error return
-    ///    [`ConfigSaveError::Validation`] and write NOTHING — this is the
-    ///    hard guarantee that a committed config is reopenable by
-    ///    construction, so the editor can never brick the vault.
-    /// 2. **COMPARE-AND-SWAP.** Re-read the current on-disk config, hash
-    ///    it, and compare to `expected_hash` (the hash the editor was
-    ///    handed when it last read the file). A mismatch means a
-    ///    concurrent hand-edit landed underneath the editor; return
-    ///    [`ConfigSaveError::Conflict`] and write nothing rather than
-    ///    silently clobber the newer file. (There is a tiny TOCTOU window
-    ///    between this read and the write below; accepted deliberately —
-    ///    this is a single-user desktop app, and a cross-process lock is
-    ///    out of scope for #365.)
-    /// 3. **WRITE VERBATIM.** Write the candidate buffer byte-for-byte via
-    ///    the store, confined to [`CONFIG_FILE`] by [`VaultPath`], so
-    ///    comments, key order, and the `[variables]` block survive
-    ///    exactly. Config is not an append-only note, so this is a plain
-    ///    confined `write_file` — no [`VaultTransaction`](crate::VaultTransaction).
-    ///
-    /// The live-reload (rebuild + swap) and the self-write journalling are
-    /// the async caller's responsibility (the Tauri `save_config`
-    /// command); they need the app handle this pure domain method does not
-    /// have. Keeping them out here is what lets the never-brick invariant
-    /// be proven by a synchronous, disk-free test over the Memory doubles.
     pub fn save_config_raw(
         &self,
         content: &str,
         expected_hash: &str,
     ) -> Result<ConfigDocument, ConfigSaveError> {
-        // STEP 1 — VALIDATE FIRST. The hard precondition: a candidate that
-        // would not reopen is rejected here, before the compare-and-swap
-        // read or any write. This single early return is the never-brick
-        // guarantee — no code path below can run for an invalid config.
-        validate_config_str(content).map_err(ConfigSaveError::Validation)?;
-
-        let path = VaultPath::new(CONFIG_FILE)
-            .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
-
-        // STEP 2 — COMPARE-AND-SWAP against the current on-disk config. A
-        // missing file hashes as empty content (matching `read_config_raw`),
-        // so a first-ever write carries the empty-content hash as its
-        // baseline. Any difference from `expected_hash` means the file
-        // moved under the editor: reject rather than overwrite.
-        let current = match self.store.read_file(&path) {
-            Ok(current) => current,
-            Err(StoreError::NotFound(_)) => String::new(),
-            Err(err) => return Err(ConfigSaveError::Internal(err.to_string())),
-        };
-        if content_hash(&current) != expected_hash {
-            return Err(ConfigSaveError::Conflict);
-        }
-
-        // STEP 3 — WRITE the buffer verbatim. Reaching here means the
-        // candidate validated AND the on-disk file is the one the editor
-        // last saw, so the write is safe by construction.
-        self.store
-            .write_file(&path, content)
-            .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
-
-        // Re-read the persisted file to return an authoritative content +
-        // hash for the caller's next compare-and-swap baseline, rather than
-        // trusting the in-memory buffer.
-        let saved = self
-            .store
-            .read_file(&path)
-            .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
-        let hash = content_hash(&saved);
-        Ok(ConfigDocument {
-            content: saved,
-            hash,
-        })
+        save_config_to(&*self.store, content, expected_hash)
     }
+}
+
+/// Read `.cuaderno/config.toml` verbatim from a store, with its content hash.
+///
+/// Store-level rather than `Vault`-level because the CLI's `cdno config`
+/// verbs must work on a vault that will NOT open — a broken config is
+/// exactly when you need to read, check and fix it, and `Vault::new`
+/// validates the config before it hands you a `Vault`. Taking the store
+/// alone keeps one implementation shared with [`Vault::read_config_raw`].
+pub fn read_config_from(store: &dyn VaultStore) -> Result<ConfigDocument, DomainError> {
+    let path = VaultPath::new(CONFIG_FILE)?;
+    let content = match store.read_file(&path) {
+        Ok(content) => content,
+        // Absence is not an error here — hand back an empty document.
+        Err(StoreError::NotFound(_)) => String::new(),
+        Err(err) => return Err(err.into()),
+    };
+    let hash = content_hash(&content);
+    Ok(ConfigDocument { content, hash })
+}
+
+/// The validate-then-compare-and-swap-then-write core of a config save.
+///
+/// The ONLY path that writes `.cuaderno/config.toml`, structured so a config
+/// that would not reopen can never reach the disk. Store-level for the same
+/// reason as [`read_config_from`]: fixing a broken config must not require a
+/// vault that opens. [`Vault::save_config_raw`] delegates here, so the
+/// desktop and the CLI cannot drift on the gate.
+///
+/// The order is load-bearing — do not reorder:
+///
+/// 1. **VALIDATE FIRST (never-brick).** Run [`validate_config_str`], the
+///    exact composition `Vault::new` runs. On ANY error return
+///    [`ConfigSaveError::Validation`] and write NOTHING.
+/// 2. **COMPARE-AND-SWAP.** Re-read the current on-disk config, hash it, and
+///    compare to `expected_hash`. A mismatch means a concurrent hand-edit
+///    landed underneath the editor; return [`ConfigSaveError::Conflict`] and
+///    write nothing rather than silently clobber the newer file. (A tiny
+///    TOCTOU window between this read and the write is accepted
+///    deliberately — this is a single-user tool.)
+/// 3. **WRITE VERBATIM**, confined to [`CONFIG_FILE`] by [`VaultPath`], so
+///    comments, key order and the `[variables]` block survive exactly.
+///    Config is not an append-only note, so this is a plain confined
+///    `write_file` — no `VaultTransaction`, and no cross-process lock.
+pub fn save_config_to(
+    store: &dyn VaultStore,
+    content: &str,
+    expected_hash: &str,
+) -> Result<ConfigDocument, ConfigSaveError> {
+    // STEP 1 — VALIDATE FIRST. The hard precondition: a candidate that would
+    // not reopen is rejected here, before the compare-and-swap read or any
+    // write. This single early return is the never-brick guarantee.
+    validate_config_str(content).map_err(ConfigSaveError::Validation)?;
+
+    let path =
+        VaultPath::new(CONFIG_FILE).map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
+
+    // STEP 2 — COMPARE-AND-SWAP against the current on-disk config. A missing
+    // file hashes as empty content (matching `read_config_from`), so a
+    // first-ever write carries the empty-content hash as its baseline.
+    let current = match store.read_file(&path) {
+        Ok(current) => current,
+        Err(StoreError::NotFound(_)) => String::new(),
+        Err(err) => return Err(ConfigSaveError::Internal(err.to_string())),
+    };
+    if content_hash(&current) != expected_hash {
+        return Err(ConfigSaveError::Conflict);
+    }
+
+    // STEP 3 — WRITE the buffer verbatim. Reaching here means the candidate
+    // validated AND the on-disk file is the one the caller last saw.
+    store
+        .write_file(&path, content)
+        .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
+
+    // Re-read the persisted file for an authoritative content + hash, rather
+    // than trusting the in-memory buffer.
+    let saved = store
+        .read_file(&path)
+        .map_err(|err| ConfigSaveError::Internal(err.to_string()))?;
+    let hash = content_hash(&saved);
+    Ok(ConfigDocument {
+        content: saved,
+        hash,
+    })
 }
 
 /// Dry-run the exact validation `Vault::new` runs against a candidate

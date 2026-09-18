@@ -32,6 +32,9 @@ anstyle-query.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+# Runtime, not just tests: `cdno config edit` round-trips the config through
+# a scratch buffer so the editor's write cannot bypass the save gate.
+tempfile.workspace = true
 
 [dev-dependencies]
 # Tests measure display width with the same function the renderer

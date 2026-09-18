@@ -2,6 +2,7 @@ pub mod action;
 pub mod capture;
 pub mod commit;
 pub mod commitments;
+pub mod config;
 pub mod file;
 pub mod frontmatter;
 pub mod init;

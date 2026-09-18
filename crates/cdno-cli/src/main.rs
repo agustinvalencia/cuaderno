@@ -14,6 +14,7 @@ use clap_complete::env::CompleteEnv;
 
 use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
+use cdno_cli::commands::config::ConfigCommands;
 use cdno_cli::commands::frontmatter::FrontmatterCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
@@ -283,6 +284,15 @@ enum Commands {
     /// system; pair with `cdno question {park,answer,…}` for
     /// lifecycle changes.
     Questions,
+
+    /// Inspect, check and edit `.cuaderno/config.toml`. `config edit`
+    /// opens it in your editor and saves through the same validate-first,
+    /// compare-and-swap gate the desktop app used, so a config that would
+    /// not reopen is never written.
+    Config {
+        #[command(subcommand)]
+        subcommand: ConfigCommands,
+    },
 
     /// Inspect note templates. `templates vars <type>` lists the
     /// `{{placeholders}}` a type's template supports, for writing a
@@ -590,6 +600,10 @@ fn main() -> Result<()> {
         Commands::Questions => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::questions::run(&root, cli.json)
+        }
+        Commands::Config { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::config::run(&root, subcommand, cli.json, cli.no_interactive)
         }
         Commands::Templates { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

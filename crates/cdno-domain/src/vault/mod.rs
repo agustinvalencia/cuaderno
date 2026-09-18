@@ -32,7 +32,7 @@ use crate::error::DomainError;
 mod actions;
 mod capture;
 mod commitments;
-mod config;
+pub mod config;
 mod context;
 mod custom_notes;
 mod daily;
