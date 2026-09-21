@@ -6,6 +6,29 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Removed
+
+- **Releases no longer ship a macOS `.dmg` (#597).** The `app-dmg` job is gone from
+  `release.yml`, as the desktop-retirement epic recorded it should be. The Homebrew cask
+  `agustinvalencia/tap/cuaderno-app` keeps resolving to the last DMG published before this
+  change: it goes on working and silently stops updating, which the epic records as a
+  deliberate choice rather than an oversight. Installed users get no deprecation signal;
+  deprecating the cask is a two-line change in the tap repo if that is reconsidered. The
+  release notes no longer carry the DMG install instructions, because there is no longer a
+  DMG for them to describe.
+
+### Changed
+
+- **CI coverage is scoped off the desktop app.** `cargo tarpaulin` ran `--workspace`, which
+  took 14 minutes and, since the jobs run in parallel, single-handedly set the whole CI wall
+  clock at ~17 minutes per merge. The cost was the Tauri dependency tree: `-Clink-dead-code`
+  plus full debug info over webkit/objc/GTK also filled the runner's disk, which is why the
+  job reclaimed ~25 GB of preinstalled toolchains and installed the Tauri system libraries
+  before it could run at all. Both steps are now gone with it. Measured, not assumed: the UI
+  job that looked like the expensive one is 63 seconds and finishes three minutes before the
+  test job, so it is untouched — it also keeps `ui/` compiling while #598-#600 still port
+  from the desktop as a working reference.
+
 ## [0.38.0] - 2026-09-21
 
 ### Fixed
