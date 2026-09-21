@@ -5,4 +5,16 @@
  * `CompletedActionEntry` (which carries a `VaultPath` that can't hold a
  * `ts-rs` derive). The seed line needs only title + project.
  */
-export type CompletedActionView = { slug: string, project: string, title: string, completed: string, };
+export type CompletedActionView = { 
+/**
+ * `None` for an inline bullet, which never had a note (#586), and
+ * so the common case: the bullet is the default form of an action.
+ * The Wins step renders `title` and `project`, which every
+ * completion has, so a bullet shows up there like any other win.
+ *
+ * The domain's `source` discriminant is deliberately not mirrored
+ * here: nothing in the desktop app distinguishes the two forms, and
+ * `slug.is_some()` answers "can I link to a note?" for the only
+ * caller that could care. Add it when a view actually needs it.
+ */
+slug: string | null, project: string, title: string, completed: string, };

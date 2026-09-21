@@ -47,7 +47,7 @@ Call in parallel; don't dump raw output on the user:
   - `commitments[]`: `{ date, title, source: { kind, slug }, is_overdue }`. `kind` ∈ `project_milestone | stewardship | standalone_commitment | action_note`.
   - `projects[]`: `{ slug, status, state_snippet, top_action: { text, energy } | null }`. `energy` ∈ `deep | medium | light` or absent.
   - `lapsed_habits[]`: `{ stewardship, detail }`.
-- `get_weekly_context` — read `completed_actions[]` (`{ slug, project, title, completed, path }`); keep those completed yesterday/today for the wins line + standup.
+- `get_weekly_context` — read `completed_actions[]` (`{ slug, project, title, completed, path, source }`); keep those completed yesterday/today for the wins line + standup. `source` is `bullet` or `note`. **A bullet carries `slug: null` and `path: null`, and the bullet is the DEFAULT form of an action — so null is the common case, not the exception.** Every entry has `title` and `project`.
 - `read_daily_note` (today) — if `exists`, scan `markdown` for an existing `## Intention` and `## Agenda`. Store what's there; it changes steps 6–8 (acknowledge, don't re-ask or overwrite).
 - `today_schedule` (apple-calendar) — today's events. On error, note calendar unavailable and continue.
 - `find_free_slots` for today (apple-calendar) — free windows. Same graceful-degrade rule.
@@ -69,7 +69,7 @@ No active projects: "Clean slate — no active projects. Want to start one?"
 
 If `completed_actions` shows anything finished yesterday/today, lead with it:
 
-- "Yesterday you closed [[ACTION-slug|action title]] on [project] — nice."
+- "Yesterday you closed [[ACTION-slug|action title]] on [project] — nice." — **only when `slug` is non-null.** When `slug` is null, say the plain title instead: "Yesterday you closed *action title* on [project] — nice." Never invent a slug to fill the link (`references/LINKING-RULES.md`).
 - "Two actions done this week already — good momentum."
 
 If the daily note already had a pre-planned intention/agenda (step 1), acknowledge that planning effort — for ADHD brains, planning ahead is itself a win. If nothing completed, find something honest and small ("You're here and oriented — that counts"). No manufactured praise, no shame.
@@ -90,7 +90,7 @@ Relative time ("tomorrow", "in 2 days"), not raw dates.
 Compose a short standup from the gathered context and persist it. Don't ask — just write, then mention you did.
 
 ```markdown
-**Yesterday** — [N] action(s) done: [[ACTION-slug|title]], …  (or "light day, no tracked completions")
+**Yesterday** — [N] action(s) done: [[ACTION-slug|title]] when `slug` is non-null, otherwise the bare title, …  (or "light day, no tracked completions")
 **Today** — starting [[project-slug]]: [top action]
 **Due soon** — [commitment titles, or "none"]
 ```

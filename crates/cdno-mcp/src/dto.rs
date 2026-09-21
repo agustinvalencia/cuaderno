@@ -32,9 +32,9 @@ use cdno_domain::frontmatter::{
 };
 use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    CurrentFocus, DailyLogLine, LapsedHabit, OrientationContext, PortfolioSummary,
-    ProjectStateChange, ProjectSummary, QuestionSummary, SearchResultEntry, StewardshipSummary,
-    StewardshipVariant, TopAction, TrackingEntry,
+    CompletedActionSource, CurrentFocus, DailyLogLine, LapsedHabit, OrientationContext,
+    PortfolioSummary, ProjectStateChange, ProjectSummary, QuestionSummary, SearchResultEntry,
+    StewardshipSummary, StewardshipVariant, TopAction, TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -410,13 +410,38 @@ impl From<DailyLogLine> for DailyLogLineDto {
     }
 }
 
+/// One completed action, in either form it can take.
+///
+/// `slug` and `path` are null for an inline bullet, which never had a
+/// note to carry them -- and the bullet is the DEFAULT form, so a caller
+/// must expect null here rather than treat it as the exception. `source`
+/// says which form without making the caller infer it from the nulls.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CompletedActionEntryDto {
-    pub slug: String,
+    pub slug: Option<String>,
     pub project: String,
     pub title: String,
     pub completed: NaiveDate,
-    pub path: String,
+    pub path: Option<String>,
+    pub source: CompletedActionSourceDto,
+}
+
+/// Wire-format mirror of [`CompletedActionSource`], lowercased so the
+/// payload reads `"bullet"` / `"note"`.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CompletedActionSourceDto {
+    Bullet,
+    Note,
+}
+
+impl From<CompletedActionSource> for CompletedActionSourceDto {
+    fn from(s: CompletedActionSource) -> Self {
+        match s {
+            CompletedActionSource::Bullet => Self::Bullet,
+            CompletedActionSource::Note => Self::Note,
+        }
+    }
 }
 
 impl From<CompletedActionEntry> for CompletedActionEntryDto {
@@ -426,7 +451,8 @@ impl From<CompletedActionEntry> for CompletedActionEntryDto {
             project: a.project,
             title: a.title,
             completed: a.completed,
-            path: a.path.to_string(),
+            path: a.path.map(|p| p.to_string()),
+            source: a.source.into(),
         }
     }
 }
@@ -594,7 +620,8 @@ pub struct MonthlyContextDto {
     /// Start of the 30-day "past month" window — `today - 30 days`.
     /// Echoed back so clients render the window explicitly.
     pub since: NaiveDate,
-    /// Completed action notes from the past 30 days, oldest-first.
+    /// Everything completed in the past 30 days, oldest-first, in both
+    /// forms: action notes and inline bullets (#586).
     pub completed_actions: Vec<CompletedActionEntryDto>,
     /// Every question with `status: active`, sorted by (domain, slug).
     pub active_questions: Vec<QuestionSummaryDto>,
