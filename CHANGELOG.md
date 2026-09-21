@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-09-21
+
 ### Fixed
 
 - **Completed bullet actions now reach the weekly and monthly context (#586).** `completed_actions`
@@ -123,6 +125,32 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   work starting now. Previously the only honest route was to add the action, come back, and start it:
   two gestures and a context switch to record work already begun.
 
+- **A commitment can be dropped, not only fulfilled.** The last clause of the promise
+  `docs-site/src/concepts/rlm.md` has always made — "commitments get fulfilled or dropped" — and the
+  last verb missing from the correction-and-abandonment set (#564). A promise that was cancelled,
+  superseded or overtaken had no honest ending: completing it writes `commitment completed [[slug]]`
+  into the daily log every weekly and monthly review reads back from, asserting a promise nobody
+  kept, and deleting the note destroys the record that the promise was ever made while desyncing the
+  index on the way out.
+
+  `cdno commit drop` and the MCP `drop_commitment` archive it to `commitments/_done/<year>/` stamped
+  `status: dropped` with `completed` cleared, and log `commitment dropped on [[slug]]` with an
+  optional `--reason` on a continuation line. `CommitmentStatus` gains a third, terminal variant to
+  carry it. A dropped commitment can afterwards be neither completed nor rescheduled, and never
+  appears in the commitments view — a cancelled promise is not a promise outstanding.
+
+  The three existing guards needed no change: `complete_commitment`, `reschedule_commitment` and the
+  aggregation filter were all already written as `status != Active`, so they do the right thing for a
+  third variant on their own. Status is stored as TEXT, so no migration.
+
+  **`rlm.md` now says what "all reversible" means**, because the wording invited a stronger reading
+  than the tooling has ever offered: nothing is destroyed — every dropped note keeps its body, its
+  `created` date and its history — but a drop is re-decided rather than undone. There is no un-drop
+  verb, for commitments or for actions, and none is planned. If a dropped thing turns out to matter,
+  make it again; the record then shows two decisions rather than pretending the first never happened,
+  which is the same reason a drop is logged as a drop and not as a completion.
+  (#573)
+
 ### Changed
 
 - **`completed_actions` entries carry nullable `slug`/`path` and a new `source` (#586).** Each entry
@@ -159,32 +187,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 ## [0.37.0] - 2026-09-10
 
 ### Added
-
-- **A commitment can be dropped, not only fulfilled.** The last clause of the promise
-  `docs-site/src/concepts/rlm.md` has always made — "commitments get fulfilled or dropped" — and the
-  last verb missing from the correction-and-abandonment set (#564). A promise that was cancelled,
-  superseded or overtaken had no honest ending: completing it writes `commitment completed [[slug]]`
-  into the daily log every weekly and monthly review reads back from, asserting a promise nobody
-  kept, and deleting the note destroys the record that the promise was ever made while desyncing the
-  index on the way out.
-
-  `cdno commit drop` and the MCP `drop_commitment` archive it to `commitments/_done/<year>/` stamped
-  `status: dropped` with `completed` cleared, and log `commitment dropped on [[slug]]` with an
-  optional `--reason` on a continuation line. `CommitmentStatus` gains a third, terminal variant to
-  carry it. A dropped commitment can afterwards be neither completed nor rescheduled, and never
-  appears in the commitments view — a cancelled promise is not a promise outstanding.
-
-  The three existing guards needed no change: `complete_commitment`, `reschedule_commitment` and the
-  aggregation filter were all already written as `status != Active`, so they do the right thing for a
-  third variant on their own. Status is stored as TEXT, so no migration.
-
-  **`rlm.md` now says what "all reversible" means**, because the wording invited a stronger reading
-  than the tooling has ever offered: nothing is destroyed — every dropped note keeps its body, its
-  `created` date and its history — but a drop is re-decided rather than undone. There is no un-drop
-  verb, for commitments or for actions, and none is planned. If a dropped thing turns out to matter,
-  make it again; the record then shows two decisions rather than pretending the first never happened,
-  which is the same reason a drop is logged as a drop and not as a completion.
-  (#573)
 
 - **Dates can move: commitments reschedule, periodic commitments complete.** The write surface could
   create and complete, but not correct. Two halves of the same gap, both about a date that needs to
