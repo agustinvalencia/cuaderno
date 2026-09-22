@@ -762,7 +762,7 @@ fn note_type(root: &Path, command: NoteTypeCommands, json: bool, interactive: bo
             // where its notes live, an existing one already has.
             let folder = match current {
                 Some(existing) => folder.unwrap_or_else(|| existing.folder.clone()),
-                None => gather_or_error(folder, "--folder", interactive, &mut prompted, || {
+                None => gather_or_error(folder, "folder", interactive, &mut prompted, || {
                     prompt_text(&format!("Folder for the new note type '{name}'"))
                 })?,
             };
@@ -847,7 +847,7 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
                     None => existing.ty,
                 },
                 None => {
-                    let raw = gather_or_error(ty, "--type", interactive, &mut prompted, || {
+                    let raw = gather_or_error(ty, "type", interactive, &mut prompted, || {
                         prompt_text(&format!(
                             "Type for '{note_type}.{field}' (bool, int, float, string, date)"
                         ))
@@ -931,7 +931,7 @@ fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Re
         plot,
     } = command;
     let mut prompted = false;
-    let raw = gather_or_error(plot, "--plot", interactive, &mut prompted, || {
+    let raw = gather_or_error(plot, "plot", interactive, &mut prompted, || {
         prompt_text(&format!(
             "Plot for '{activity}.{metric}' (none, line, column, area, scatter)"
         ))
@@ -957,7 +957,7 @@ fn var(root: &Path, command: VarCommands, json: bool, interactive: bool) -> Resu
     match command {
         VarCommands::Set { name, value } => {
             let mut prompted = false;
-            let value = gather_or_error(value, "--value", interactive, &mut prompted, || {
+            let value = gather_or_error(value, "value", interactive, &mut prompted, || {
                 prompt_text(&format!("Value for {{{{{name}}}}}"))
             })?;
             if !confirm_if_prompted(prompted, &format!("Set {{{{{name}}}}} to '{value}'."))? {
@@ -980,10 +980,9 @@ fn prompt_var(root: &Path, command: PromptCommands, json: bool, interactive: boo
     match command {
         PromptCommands::Set { name, message } => {
             let mut prompted = false;
-            let message =
-                gather_or_error(message, "--message", interactive, &mut prompted, || {
-                    prompt_text(&format!("Question to ask for {{{{{name}}}}}"))
-                })?;
+            let message = gather_or_error(message, "message", interactive, &mut prompted, || {
+                prompt_text(&format!("Question to ask for {{{{{name}}}}}"))
+            })?;
             if !confirm_if_prompted(prompted, &format!("Ask '{message}' for {{{{{name}}}}}."))? {
                 println!("Cancelled — nothing was written.");
                 return Ok(());

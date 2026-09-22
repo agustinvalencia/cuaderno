@@ -8,6 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno templates list / show / save / new` (#599).** The other half of a story that was
+  split across two applications: ejecting a template to customise it worked from the CLI,
+  but reading one back, listing them or saving one lived only in the desktop app's
+  Templates view, which is being retired (#597). `list` reports every note type with the
+  template source in effect and the path its override lives (or would live) at; `show`
+  prints the effective content verbatim; `save` writes it, taking the new content from a
+  file, from stdin with `--file -`, or — interactively — from your editor seeded with the
+  template as it stands; `new` scaffolds a starter for a config-defined custom type.
+
+  `save` on a built-in creates the custom override transparently, so it needs no prior
+  `eject` — the same direct edit-and-save model the desktop had. Off a terminal an absent
+  `--file` is an error rather than an empty string, so a scripted `save` cannot silently
+  truncate a template to zero bytes. `new` refuses a built-in type in terms of templates
+  rather than surfacing the domain's own message, which is about creating a *note* and
+  would send the reader to `cdno project create`.
+
 - **`cdno config` — vault config editing on the CLI (#598).** `.cuaderno/config.toml` was
   reachable only from the desktop app's Config view, which is being retired (#597). The
   whole surface moves across: `show` (verbatim, `--json` adds the content hash),

@@ -353,7 +353,7 @@ fn a_new_note_type_needs_a_folder_but_an_existing_one_does_not() {
         .args(["config", "note-type", "set", "--name", "people"])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("--folder"));
+        .stderr(predicates::str::contains("flag: --folder"));
 
     cdno(dir.path())
         .args([

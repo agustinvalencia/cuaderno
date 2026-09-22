@@ -607,7 +607,7 @@ fn main() -> Result<()> {
         }
         Commands::Templates { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::templates::run(&root, subcommand, cli.json)
+            commands::templates::run(&root, subcommand, cli.json, cli.no_interactive)
         }
         Commands::Frontmatter { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
