@@ -16,6 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 cdno-core.workspace = true
+# `FieldSpec::default` is a `toml::Value`, so building one for
+# `config_edit::set_schema_field` needs the type itself.
+toml.workspace = true
 cdno-domain.workspace = true
 clap.workspace = true
 clap_complete.workspace = true

@@ -6,6 +6,41 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`cdno config` — vault config editing on the CLI (#598).** `.cuaderno/config.toml` was
+  reachable only from the desktop app's Config view, which is being retired (#597). The
+  whole surface moves across: `show` (verbatim, `--json` adds the content hash),
+  `validate` (the exact check `Vault::new` runs, `--file` for a candidate, non-zero exit on
+  a bad config), `edit` (an `$EDITOR` round trip), and one subcommand per `config_edit`
+  function — `note-type set/remove`, `field set/remove`, `plot set`, `var set/remove`,
+  `prompt set/remove`.
+
+  These verbs deliberately do **not** open the vault. `Vault::new` validates the config
+  before handing one back, so a broken config means no vault — and a broken config is
+  exactly when you need to read, check and fix one. An earlier draft opened it, and
+  `cdno config validate` on a genuinely broken file answered `loading config.toml` with no
+  line, column or reason: useless on the one input it exists for. The save gate is
+  therefore lifted from `Vault` to the store (`read_config_from` / `save_config_to` taking
+  `&dyn VaultStore`), with the `Vault` methods delegating, so there is one implementation
+  reachable without an index or a config that parses.
+
+  `edit` round-trips a scratch copy rather than opening the file: handing an editor
+  `config.toml` itself routes the write around all three steps of the gate, and a typo
+  would brick the vault. A rejected buffer is kept and its path printed. A detached editor
+  is refused rather than tolerated — there is no moment at which the buffer is known
+  written, so reading it back could save a half-typed config.
+
+  The structured setters **merge** rather than replace. `set_note_type` and
+  `set_schema_field` write every key their model carries and remove every key it does not,
+  which is right for a pre-populated form but not for a flag set: passing the flags
+  straight through would mean `note-type set --name people --folder people` silently
+  dropped an existing type's `required` list, template and date field. Each verb now reads
+  the current value and applies only the flags given; an empty value (`--template ''`)
+  clears, and `--no-append-only` / `--no-settable` clear a boolean. Every setter routes
+  through the same gate as `edit`, so a structured change that would leave an unopenable
+  config is refused identically and nothing is written.
+
 ### Removed
 
 - **Releases no longer ship a macOS `.dmg` (#597).** The `app-dmg` job is gone from

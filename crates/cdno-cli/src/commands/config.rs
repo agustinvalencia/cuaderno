@@ -61,9 +61,14 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, PlotKind, VaultConfig};
+use cdno_core::config_edit;
+use cdno_core::error::ConfigEditError;
 use cdno_core::store::FsVaultStore;
 use cdno_domain::vault::config::{read_config_from, save_config_to};
 use cdno_domain::{ConfigSaveError, validate_config_str};
+
+use crate::prompt::{gather_or_error, prompt_text};
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommands {
@@ -92,13 +97,213 @@ pub enum ConfigCommands {
         #[arg(long, value_name = "COMMAND")]
         editor: Option<String>,
     },
+
+    /// Add, change or remove a custom note type (`[note_types.<name>]`).
+    NoteType {
+        #[command(subcommand)]
+        subcommand: NoteTypeCommands,
+    },
+
+    /// Add, change or remove a schema field
+    /// (`[schemas.<type>.fields.<field>]`).
+    Field {
+        #[command(subcommand)]
+        subcommand: FieldCommands,
+    },
+
+    /// Set how a tracking metric is plotted
+    /// (`[tracking.<activity>.metrics.<metric>]`).
+    Plot {
+        #[command(subcommand)]
+        subcommand: PlotCommands,
+    },
+
+    /// Add, change or remove a static template variable (`[variables]`).
+    Var {
+        #[command(subcommand)]
+        subcommand: VarCommands,
+    },
+
+    /// Add, change or remove a prompted template variable
+    /// (`[variables.prompt]`).
+    Prompt {
+        #[command(subcommand)]
+        subcommand: PromptCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum NoteTypeCommands {
+    /// Create a note type, or change one in place.
+    ///
+    /// Changing is a MERGE: a flag you do not pass keeps its current
+    /// value. `set_note_type` itself replaces the whole table, so passing
+    /// only `--folder` at that layer would silently drop the type's
+    /// `required` list — the merge is what makes a one-flag edit safe.
+    /// Pass an empty value to clear an optional key
+    /// (`--template ''`, `--required ''`).
+    Set {
+        /// Name of the note type, i.e. `[note_types.<name>]`.
+        #[arg(long)]
+        name: String,
+        /// Vault-relative folder its notes live in, e.g. `people`.
+        /// Required when creating; preserved when omitted on an edit.
+        #[arg(long)]
+        folder: Option<String>,
+        /// Comma-separated frontmatter fields that must be present.
+        #[arg(long, value_name = "FIELDS")]
+        required: Option<String>,
+        /// Comma-separated frontmatter fields that may be present.
+        #[arg(long, value_name = "FIELDS")]
+        optional: Option<String>,
+        /// Template filename under `.cuaderno/templates/`.
+        #[arg(long, value_name = "FILE")]
+        template: Option<String>,
+        /// Mark notes of this type append-only.
+        #[arg(long, conflicts_with = "no_append_only")]
+        append_only: bool,
+        /// Clear the append-only mark.
+        #[arg(long, conflicts_with = "append_only")]
+        no_append_only: bool,
+        /// Frontmatter field to draw the display title from.
+        #[arg(long, value_name = "FIELD")]
+        title_field: Option<String>,
+        /// Frontmatter field carrying the note's date.
+        #[arg(long, value_name = "FIELD")]
+        date_field: Option<String>,
+    },
+
+    /// Remove a note type. Idempotent: removing an absent type succeeds.
+    Remove {
+        /// Name of the note type to remove.
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FieldCommands {
+    /// Declare a schema field, or change one in place. Merges like
+    /// `note-type set`: an omitted flag keeps its current value.
+    Set {
+        /// Note type the field belongs to.
+        #[arg(long)]
+        note_type: String,
+        /// Field name.
+        #[arg(long)]
+        field: String,
+        /// Scalar type: bool, int, float, string or date. Required when
+        /// declaring; preserved when omitted on an edit.
+        #[arg(long = "type", value_name = "TYPE")]
+        ty: Option<String>,
+        /// Default value, parsed according to the field's type. Pass an
+        /// empty value to clear it.
+        #[arg(long, value_name = "VALUE")]
+        default: Option<String>,
+        /// Require the field to be present.
+        #[arg(long, conflicts_with = "no_required")]
+        required: bool,
+        /// Clear the required mark.
+        #[arg(long, conflicts_with = "required")]
+        no_required: bool,
+        /// Comma-separated allowed values. Empty clears the list.
+        #[arg(long, value_name = "VALUES")]
+        values: Option<String>,
+        /// Allow the field to be set through the setter surface.
+        #[arg(long, conflicts_with = "no_settable")]
+        settable: bool,
+        /// Clear the settable flag.
+        #[arg(long, conflicts_with = "settable")]
+        no_settable: bool,
+        /// Log a change to this field to the daily note.
+        #[arg(long, conflicts_with = "no_log_on_change")]
+        log_on_change: bool,
+        /// Clear the log-on-change flag.
+        #[arg(long, conflicts_with = "log_on_change")]
+        no_log_on_change: bool,
+    },
+
+    /// Remove a schema field. Idempotent.
+    Remove {
+        /// Note type the field belongs to.
+        #[arg(long)]
+        note_type: String,
+        /// Field name to remove.
+        #[arg(long)]
+        field: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PlotCommands {
+    /// Set how a declared tracking metric is plotted. `--plot none`
+    /// keeps the metric collected and queryable but undrawn, which is
+    /// what an absent `plot` key means.
+    Set {
+        /// Tracking activity, i.e. `[tracking.<activity>]`.
+        #[arg(long)]
+        activity: String,
+        /// Metric name under that activity.
+        #[arg(long)]
+        metric: String,
+        /// One of: none, line, column, area, scatter.
+        #[arg(long)]
+        plot: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VarCommands {
+    /// Set a static template variable, available to every template.
+    Set {
+        /// Variable name.
+        #[arg(long)]
+        name: String,
+        /// Value the placeholder renders to.
+        #[arg(long)]
+        value: Option<String>,
+    },
+
+    /// Remove a static template variable. Idempotent.
+    Remove {
+        /// Variable name to remove.
+        #[arg(long)]
+        name: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PromptCommands {
+    /// Set a prompted template variable — one the create path asks for
+    /// interactively when it is unresolved.
+    Set {
+        /// Variable name.
+        #[arg(long)]
+        name: String,
+        /// The question put to the user when it is unresolved.
+        #[arg(long)]
+        message: Option<String>,
+    },
+
+    /// Remove a prompted template variable. Idempotent.
+    Remove {
+        /// Variable name to remove.
+        #[arg(long)]
+        name: String,
+    },
 }
 
 pub fn run(root: &Path, command: ConfigCommands, json: bool, no_interactive: bool) -> Result<()> {
+    let interactive = crate::prompt::reports_interactively(no_interactive, json);
     match command {
         ConfigCommands::Show => show(root, json),
         ConfigCommands::Validate { file } => validate(root, file.as_deref(), json),
         ConfigCommands::Edit { editor } => edit(root, editor.as_deref(), no_interactive),
+        ConfigCommands::NoteType { subcommand } => note_type(root, subcommand, json, interactive),
+        ConfigCommands::Field { subcommand } => field(root, subcommand, json, interactive),
+        ConfigCommands::Plot { subcommand } => plot(root, subcommand, json, interactive),
+        ConfigCommands::Var { subcommand } => var(root, subcommand, json, interactive),
+        ConfigCommands::Prompt { subcommand } => prompt_var(root, subcommand, json, interactive),
     }
 }
 
@@ -312,4 +517,495 @@ pub fn finish_edit(
     Ok(EditOutcome::Saved {
         bytes: saved.content.len(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// The structured setters
+// ---------------------------------------------------------------------------
+//
+// Every verb below is the same three steps: read the config, hand the buffer
+// to one `cdno_core::config_edit` function, and push the candidate back
+// through `finish_edit` — the SAME gate `cdno config edit` uses. So a
+// structured edit that would produce a config the vault cannot open is
+// refused exactly like a hand-edited one, and a concurrent change is still
+// a conflict rather than a clobber. There is no second write path here.
+//
+// ## Why `set` merges rather than replaces
+//
+// `set_note_type` and `set_schema_field` REPLACE their whole table: they
+// write every key the model carries and remove every key it does not. That
+// is right for the desktop, whose form is pre-populated with the current
+// values before it sends the struct back — the form always has the whole
+// truth to re-send.
+//
+// A CLI flag set is not the whole truth. Passing the flags straight through
+// would mean `cdno config note-type set --name people --folder people` on an
+// existing type silently dropped its `required` list, its template and its
+// date field, because those flags were absent. So these verbs read the
+// current value first and apply only the flags actually given. An omitted
+// flag keeps what is there; an empty value (`--template ''`) clears it.
+// Creating a type is the one case with nothing to merge into, which is why
+// `--folder` is required there and promptable, and optional afterwards.
+
+/// Parse the config into its model so an edit can merge into what is
+/// already there.
+///
+/// A config that does not deserialise cannot be merged into: there is
+/// nothing to preserve and nothing to compare against, and guessing would
+/// either drop the user's keys or invent them. The structured verbs refuse
+/// on it and name the two verbs that do work on a broken config, both of
+/// which deliberately avoid the model for exactly this reason.
+fn read_model(content: &str) -> Result<VaultConfig> {
+    toml::from_str(content).map_err(|err| {
+        anyhow::anyhow!(
+            "this config cannot be read, so a field cannot be changed in place:\n  {err}\n\n\
+             `cdno config show` and `cdno config validate` still work on a broken \
+             config — fix it with `cdno config edit`, then re-run."
+        )
+    })
+}
+
+/// Turn a save-gate refusal into the message for a structured edit.
+///
+/// Unlike `edit`, there is no editor buffer to preserve: the input was
+/// flags, so re-running is the whole recovery. What matters is saying
+/// plainly that nothing was written.
+fn describe(err: ConfigSaveError) -> anyhow::Error {
+    match err {
+        ConfigSaveError::Validation(e) => anyhow::anyhow!(
+            "that change would leave a config the vault cannot open, so nothing was \
+             written:\n  {}\n\nThe config on disk is unchanged.",
+            e.message
+        ),
+        ConfigSaveError::Conflict => anyhow::anyhow!(
+            "the config changed on disk while this edit was being prepared, so nothing \
+             was written rather than overwrite it. Re-run to apply the change against \
+             the current file."
+        ),
+        ConfigSaveError::Internal(message) => {
+            anyhow::anyhow!("could not save the config: {message}")
+        }
+    }
+}
+
+/// Report what a structured edit did.
+///
+/// The `Unchanged` arm is load-bearing rather than cosmetic: setting a key
+/// to the value it already holds writes nothing at all, so a re-run — or a
+/// script that applies the same config repeatedly — does not churn the file
+/// or burn the compare-and-swap.
+fn emit(json: bool, outcome: &EditOutcome, saved: &str) -> Result<()> {
+    match outcome {
+        EditOutcome::Unchanged => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({ "changed": false }))?
+                );
+            } else {
+                println!("No change — the config already says that.");
+            }
+        }
+        EditOutcome::Saved { bytes } => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(
+                        &serde_json::json!({ "changed": true, "bytes": bytes })
+                    )?
+                );
+            } else {
+                println!("{saved}");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Read, transform, save. The shared spine of every structured verb.
+fn apply(
+    root: &Path,
+    transform: impl FnOnce(&str) -> std::result::Result<String, ConfigEditError>,
+) -> Result<EditOutcome> {
+    let store = FsVaultStore::new(root);
+    let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
+    let candidate = transform(&original.content)?;
+    finish_edit(&store, &original, &candidate).map_err(describe)
+}
+
+/// Merge a comma-separated list flag: absent keeps, empty clears.
+pub fn merge_list(flag: Option<String>, current: &[String]) -> Vec<String> {
+    match flag {
+        None => current.to_vec(),
+        Some(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    }
+}
+
+/// Merge an optional scalar flag: absent keeps, empty clears.
+pub fn merge_opt(flag: Option<String>, current: Option<&String>) -> Option<String> {
+    match flag {
+        None => current.cloned(),
+        Some(raw) if raw.is_empty() => None,
+        Some(raw) => Some(raw),
+    }
+}
+
+/// Merge a paired `--x` / `--no-x` flag: neither given keeps the current
+/// value. Clap's `conflicts_with` makes both-at-once unreachable.
+pub fn merge_flag(on: bool, off: bool, current: bool) -> bool {
+    if on {
+        true
+    } else if off {
+        false
+    } else {
+        current
+    }
+}
+
+/// The tri-state form, for the `Option<bool>` keys where absent and
+/// explicit-false mean the same thing to the writer but the current value
+/// still has to survive an unrelated edit.
+pub fn merge_tri(on: bool, off: bool, current: Option<bool>) -> Option<bool> {
+    if on {
+        Some(true)
+    } else if off {
+        None
+    } else {
+        current
+    }
+}
+
+pub fn parse_field_type(raw: &str) -> Result<FieldType> {
+    match raw.to_ascii_lowercase().as_str() {
+        "bool" => Ok(FieldType::Bool),
+        "int" => Ok(FieldType::Int),
+        "float" => Ok(FieldType::Float),
+        "string" => Ok(FieldType::String),
+        "date" => Ok(FieldType::Date),
+        other => bail!("unknown field type '{other}' — valid: bool, int, float, string, date"),
+    }
+}
+
+pub fn parse_plot_kind(raw: &str) -> Result<PlotKind> {
+    match raw.to_ascii_lowercase().as_str() {
+        "none" => Ok(PlotKind::None),
+        "line" => Ok(PlotKind::Line),
+        "column" => Ok(PlotKind::Column),
+        "area" => Ok(PlotKind::Area),
+        "scatter" => Ok(PlotKind::Scatter),
+        other => bail!("unknown plot kind '{other}' — valid: none, line, column, area, scatter"),
+    }
+}
+
+/// Parse a `--default` against the field's own type.
+///
+/// Typed here rather than left to the save gate so the error names the flag
+/// and the expected form. A `date` default is authored as a quoted
+/// `YYYY-MM-DD` string, which is the shape `config_edit`'s own writer emits,
+/// so it is parsed for validity and stored as a string.
+pub fn parse_default(raw: &str, ty: FieldType) -> Result<toml::Value> {
+    match ty {
+        FieldType::Bool => raw
+            .parse::<bool>()
+            .map(toml::Value::Boolean)
+            .map_err(|_| anyhow::anyhow!("--default '{raw}' is not a bool — use true or false")),
+        FieldType::Int => raw
+            .parse::<i64>()
+            .map(toml::Value::Integer)
+            .map_err(|_| anyhow::anyhow!("--default '{raw}' is not an integer")),
+        FieldType::Float => raw
+            .parse::<f64>()
+            .map(toml::Value::Float)
+            .map_err(|_| anyhow::anyhow!("--default '{raw}' is not a number")),
+        FieldType::String => Ok(toml::Value::String(raw.to_owned())),
+        FieldType::Date => match chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+            Ok(_) => Ok(toml::Value::String(raw.to_owned())),
+            Err(_) => bail!("--default '{raw}' is not a date — use YYYY-MM-DD"),
+        },
+    }
+}
+
+/// Confirm a prompted edit, per the flags-and-prompts convention: only
+/// when something was actually asked for interactively.
+fn confirm_if_prompted(prompted: bool, preview: &str) -> Result<bool> {
+    if !prompted {
+        return Ok(true);
+    }
+    crate::prompt::confirm_preview(preview)
+}
+
+fn note_type(root: &Path, command: NoteTypeCommands, json: bool, interactive: bool) -> Result<()> {
+    match command {
+        NoteTypeCommands::Set {
+            name,
+            folder,
+            required,
+            optional,
+            template,
+            append_only,
+            no_append_only,
+            title_field,
+            date_field,
+        } => {
+            let store = FsVaultStore::new(root);
+            let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
+            let model = read_model(&original.content)?;
+            let current = model.note_types.get(&name);
+            let mut prompted = false;
+
+            // The only conditionally-required input: a new type must say
+            // where its notes live, an existing one already has.
+            let folder = match current {
+                Some(existing) => folder.unwrap_or_else(|| existing.folder.clone()),
+                None => gather_or_error(folder, "--folder", interactive, &mut prompted, || {
+                    prompt_text(&format!("Folder for the new note type '{name}'"))
+                })?,
+            };
+
+            let note_type = CustomNoteType {
+                folder,
+                required: merge_list(required, current.map_or(&[], |c| c.required.as_slice())),
+                optional: merge_list(optional, current.map_or(&[], |c| c.optional.as_slice())),
+                template: merge_opt(template, current.and_then(|c| c.template.as_ref())),
+                append_only: merge_flag(
+                    append_only,
+                    no_append_only,
+                    current.is_some_and(|c| c.append_only),
+                ),
+                title_field: merge_opt(title_field, current.and_then(|c| c.title_field.as_ref())),
+                date_field: merge_opt(date_field, current.and_then(|c| c.date_field.as_ref())),
+            };
+
+            let verb = if current.is_some() {
+                "Update"
+            } else {
+                "Create"
+            };
+            if !confirm_if_prompted(
+                prompted,
+                &format!(
+                    "{verb} note type '{name}' with folder '{}'.",
+                    note_type.folder
+                ),
+            )? {
+                println!("Cancelled — nothing was written.");
+                return Ok(());
+            }
+
+            let candidate = config_edit::set_note_type(&original.content, &name, &note_type)?;
+            let outcome = finish_edit(&store, &original, &candidate).map_err(describe)?;
+            emit(json, &outcome, &format!("Note type '{name}' saved."))
+        }
+
+        NoteTypeCommands::Remove { name } => {
+            let outcome = apply(root, |content| {
+                config_edit::remove_note_type(content, &name)
+            })?;
+            // Idempotent at the domain layer, so an absent type reports
+            // "no change" rather than an error — a stale delete or a
+            // re-run is a success, which is what makes this scriptable.
+            emit(json, &outcome, &format!("Note type '{name}' removed."))
+        }
+    }
+}
+
+fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> Result<()> {
+    match command {
+        FieldCommands::Set {
+            note_type,
+            field,
+            ty,
+            default,
+            required,
+            no_required,
+            values,
+            settable,
+            no_settable,
+            log_on_change,
+            no_log_on_change,
+        } => {
+            let store = FsVaultStore::new(root);
+            let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
+            let model = read_model(&original.content)?;
+            let current = model
+                .schemas
+                .get(&note_type)
+                .and_then(|schema| schema.fields.get(&field));
+            let mut prompted = false;
+
+            // A field's type is what every other key is interpreted
+            // against, so it is required when declaring one and preserved
+            // afterwards — the same shape as a note type's folder.
+            let ty = match current {
+                Some(existing) => match ty {
+                    Some(raw) => parse_field_type(&raw)?,
+                    None => existing.ty,
+                },
+                None => {
+                    let raw = gather_or_error(ty, "--type", interactive, &mut prompted, || {
+                        prompt_text(&format!(
+                            "Type for '{note_type}.{field}' (bool, int, float, string, date)"
+                        ))
+                    })?;
+                    parse_field_type(&raw)?
+                }
+            };
+
+            // Parsed against the type resolved above, so `--default` on an
+            // existing field is checked against the type it actually has
+            // rather than a guess.
+            let default = match default {
+                None => current.and_then(|c| c.default.clone()),
+                Some(raw) if raw.is_empty() => None,
+                Some(raw) => Some(parse_default(&raw, ty)?),
+            };
+
+            let spec = FieldSpec {
+                ty,
+                default,
+                required: merge_flag(required, no_required, current.is_some_and(|c| c.required)),
+                values: match values {
+                    None => current.and_then(|c| c.values.clone()),
+                    Some(raw) => {
+                        let list = merge_list(Some(raw), &[]);
+                        if list.is_empty() { None } else { Some(list) }
+                    }
+                },
+                // Deliberately carried through untouched. `set_schema_field`
+                // does not write `list` at all — it is unimplemented, and a
+                // hand-authored value must survive an unrelated edit — so
+                // this mirrors the writer rather than inventing a flag for
+                // a key nothing reads yet.
+                list: current.and_then(|c| c.list),
+                settable: merge_tri(settable, no_settable, current.and_then(|c| c.settable)),
+                log_on_change: merge_tri(
+                    log_on_change,
+                    no_log_on_change,
+                    current.and_then(|c| c.log_on_change),
+                ),
+            };
+
+            if !confirm_if_prompted(
+                prompted,
+                &format!(
+                    "Declare '{note_type}.{field}' as type {}.",
+                    spec.ty.as_str()
+                ),
+            )? {
+                println!("Cancelled — nothing was written.");
+                return Ok(());
+            }
+
+            let candidate =
+                config_edit::set_schema_field(&original.content, &note_type, &field, &spec)?;
+            let outcome = finish_edit(&store, &original, &candidate).map_err(describe)?;
+            emit(
+                json,
+                &outcome,
+                &format!("Field '{note_type}.{field}' saved."),
+            )
+        }
+
+        FieldCommands::Remove { note_type, field } => {
+            let outcome = apply(root, |content| {
+                config_edit::remove_schema_field(content, &note_type, &field)
+            })?;
+            emit(
+                json,
+                &outcome,
+                &format!("Field '{note_type}.{field}' removed."),
+            )
+        }
+    }
+}
+
+fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Result<()> {
+    let PlotCommands::Set {
+        activity,
+        metric,
+        plot,
+    } = command;
+    let mut prompted = false;
+    let raw = gather_or_error(plot, "--plot", interactive, &mut prompted, || {
+        prompt_text(&format!(
+            "Plot for '{activity}.{metric}' (none, line, column, area, scatter)"
+        ))
+    })?;
+    let kind = parse_plot_kind(&raw)?;
+
+    if !confirm_if_prompted(prompted, &format!("Plot '{activity}.{metric}' as {raw}."))? {
+        println!("Cancelled — nothing was written.");
+        return Ok(());
+    }
+
+    let outcome = apply(root, |content| {
+        config_edit::set_metric_plot(content, &activity, &metric, kind)
+    })?;
+    emit(
+        json,
+        &outcome,
+        &format!("Plot for '{activity}.{metric}' set to {raw}."),
+    )
+}
+
+fn var(root: &Path, command: VarCommands, json: bool, interactive: bool) -> Result<()> {
+    match command {
+        VarCommands::Set { name, value } => {
+            let mut prompted = false;
+            let value = gather_or_error(value, "--value", interactive, &mut prompted, || {
+                prompt_text(&format!("Value for {{{{{name}}}}}"))
+            })?;
+            if !confirm_if_prompted(prompted, &format!("Set {{{{{name}}}}} to '{value}'."))? {
+                println!("Cancelled — nothing was written.");
+                return Ok(());
+            }
+            let outcome = apply(root, |content| {
+                config_edit::set_variable(content, &name, &value)
+            })?;
+            emit(json, &outcome, &format!("Variable '{name}' saved."))
+        }
+        VarCommands::Remove { name } => {
+            let outcome = apply(root, |content| config_edit::remove_variable(content, &name))?;
+            emit(json, &outcome, &format!("Variable '{name}' removed."))
+        }
+    }
+}
+
+fn prompt_var(root: &Path, command: PromptCommands, json: bool, interactive: bool) -> Result<()> {
+    match command {
+        PromptCommands::Set { name, message } => {
+            let mut prompted = false;
+            let message =
+                gather_or_error(message, "--message", interactive, &mut prompted, || {
+                    prompt_text(&format!("Question to ask for {{{{{name}}}}}"))
+                })?;
+            if !confirm_if_prompted(prompted, &format!("Ask '{message}' for {{{{{name}}}}}."))? {
+                println!("Cancelled — nothing was written.");
+                return Ok(());
+            }
+            let outcome = apply(root, |content| {
+                config_edit::set_prompt_variable(content, &name, &message)
+            })?;
+            emit(
+                json,
+                &outcome,
+                &format!("Prompted variable '{name}' saved."),
+            )
+        }
+        PromptCommands::Remove { name } => {
+            let outcome = apply(root, |content| {
+                config_edit::remove_prompt_variable(content, &name)
+            })?;
+            emit(
+                json,
+                &outcome,
+                &format!("Prompted variable '{name}' removed."),
+            )
+        }
+    }
 }
