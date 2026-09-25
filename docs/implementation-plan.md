@@ -759,7 +759,7 @@ The `#[tool]` macro generates the JSON Schema from `GetOrientationInput`, regist
 
 The desktop app this section specified was built and later retired (#597, #601). Its
 capabilities reached the CLI first — `cdno config`, `cdno templates`, `cdno watch` — and the
-`pre-desktop-removal` tag marks the last commit containing it. The section is dropped rather
+`pre-desktop-removal` tag marks `84db8ca`, the last commit containing it. The section is dropped rather
 than kept stale: the crate it describes no longer exists, and its IPC and state-management
 detail would only mislead.
 

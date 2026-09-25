@@ -28,7 +28,7 @@ That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mc
 > from the CLI: `cdno config` for vault configuration, `cdno templates` for templates, and `cdno watch`
 > to keep the index current while you edit notes in another editor. The Homebrew cask
 > `cuaderno-app` still installs the last `.dmg` that was published and will not update; the
-> `pre-desktop-removal` tag marks the last commit that contained it.
+> `pre-desktop-removal` tag marks the last commit that contained it (`84db8ca`).
 
 **From source** (everywhere else, or if you want to track `main`):
 
@@ -195,7 +195,7 @@ Phases 1 through 4 of [the build sequence](docs/implementation-plan.md) are comp
 
 The MCP server (Phase 4) is production-ready with all 55 tools wired through to the domain, over both stdio and Streamable HTTP transports.
 
-The Tauri desktop UI built in Phases 5 and 6 was **removed** in #601. Its capabilities reached the CLI first — `cdno config`, `cdno templates` and `cdno watch` — so nothing it did is unreachable; the `pre-desktop-removal` tag marks the last commit containing it.
+The Tauri desktop UI built in Phases 5 and 6 was **removed** in #601. Its capabilities reached the CLI first — `cdno config`, `cdno templates` and `cdno watch` — so nothing it did is unreachable; the `pre-desktop-removal` tag marks the last commit containing it (`84db8ca`).
 
 See **[`STATUS.md`](STATUS.md)** for the per-phase and per-issue breakdown, and **[`CHANGELOG.md`](CHANGELOG.md)** for what's shipped per PR.
 

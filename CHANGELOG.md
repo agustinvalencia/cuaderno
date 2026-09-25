@@ -22,7 +22,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   baseline captured from `main` before any of this work started — no verb and no tool that existed
   then has disappeared, and the catalogue is still 55 tools.
 
-  The `pre-desktop-removal` tag marks the last commit containing the app, so retaking it is a
+  The `pre-desktop-removal` tag marks `84db8ca`, the last commit containing the app, so retaking it is a
   `git revert` rather than an archaeology exercise. Revisiting the desktop is possible but
   unscheduled (#597); nothing should be planned around it returning.
 

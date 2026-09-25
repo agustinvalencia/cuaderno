@@ -93,11 +93,8 @@ as well as anything nested under them. A glob written that way excludes every no
 was meant to tidy, and because an unindexed note is also unsearchable and unlinkable, the symptom
 looks like a broken view rather than a misconfigured vault.
 
-Two things guard against that:
-
-- `cdno reindex` prints how many files the globs excluded.
-- `cdno lint` reports when the count looks disproportionate — a lone
-  `CLAUDE.md` stays silent, a glob swallowing a large share of the vault does not.
+One thing guards against that: `cdno reindex` prints how many files the globs excluded, so an
+over-broad pattern shows up as a number rather than as notes that quietly stopped appearing.
 
 If notes go missing, clear the pattern and run `cdno reindex`: every row comes back.
 

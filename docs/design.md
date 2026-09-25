@@ -1456,7 +1456,7 @@ cdno-mcp-server --bind 127.0.0.1:8787 --vault ~/vault
 
 The desktop app was built as described below and later removed. Its capabilities reached the
 CLI first (`cdno config`, `cdno templates`, `cdno watch`), and the `pre-desktop-removal` tag
-marks the last commit that contained it. Kept here as the record of what was planned and built.
+marks `84db8ca`, the last commit that contained it. Kept here as the record of what was planned and built.
 
 - Implement Tauri backend commands consuming `cdno-domain`
 - **Implement persistent file watcher for live index updates in the desktop app**
