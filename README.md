@@ -23,7 +23,7 @@ brew install agustinvalencia/tap/cuaderno
 
 That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mcp` (the MCP server for Claude / Kiro / Gemini CLI). Pre-built bottles for macOS arm64 + intel and Linux x86_64 + aarch64.
 
-**Desktop app** (macOS, Apple Silicon):
+**Desktop app** (macOS, Apple Silicon) — *no longer published; see below*:
 
 ```bash
 # the xattr because the app is ad-hoc signed, not notarized —
@@ -32,7 +32,12 @@ brew install --cask agustinvalencia/tap/cuaderno-app
 xattr -dr com.apple.quarantine /Applications/cuaderno.app
 ```
 
-Then launch cuaderno from Applications. On first launch the app asks for your vault folder with a native picker and remembers it. `CUADERNO_VAULT_PATH` still overrides it for terminals and dev (`CUADERNO_VAULT_PATH=~/Documents/notebook open -a cuaderno`), but it is no longer required for a Finder launch. Full install notes (manual `.dmg`, caveats) in the [Desktop app guide](https://agustinvalencia.github.io/cuaderno/getting-started/desktop-app.html).
+Then launch cuaderno from Applications. On first launch the app asks for your vault folder with a native picker and remembers it. `CUADERNO_VAULT_PATH` still overrides it for terminals and dev (`CUADERNO_VAULT_PATH=~/Documents/notebook open -a cuaderno`), but it is no longer required for a Finder launch. Full install notes in the [Desktop app guide](https://agustinvalencia.github.io/cuaderno/getting-started/desktop-app.html).
+
+> **The desktop app is being retired** ([#597](https://github.com/agustinvalencia/cuaderno/issues/597)).
+> Releases no longer attach a `.dmg`, so the cask above installs the last one published and will
+> not update. Every capability it had is reachable from the CLI — `cdno config` for vault config,
+> `cdno templates` for templates, `cdno watch` to keep the index current while you edit elsewhere.
 
 **From source** (everywhere else, or if you want to track `main`):
 

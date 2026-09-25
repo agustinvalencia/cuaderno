@@ -14,6 +14,7 @@ use clap_complete::env::CompleteEnv;
 
 use cdno_cli::commands::action::ActionCommands;
 use cdno_cli::commands::commit::CommitCommands;
+use cdno_cli::commands::config::ConfigCommands;
 use cdno_cli::commands::frontmatter::FrontmatterCommands;
 use cdno_cli::commands::portfolio::PortfolioCommands;
 use cdno_cli::commands::project::ProjectCommands;
@@ -113,6 +114,13 @@ enum Commands {
     /// Rebuild the SQLite index from scratch off the markdown source of
     /// truth. The recovery path for a corrupt or stale index.
     Reindex,
+
+    /// Watch the vault and reconcile the index whenever a note changes
+    /// outside cdno, so edits made in another editor reach `search`,
+    /// `lint` and backlinks without waiting for the next command. Runs
+    /// in the foreground until Ctrl-C. A change to
+    /// `.cuaderno/config.toml` needs a restart to take effect.
+    Watch,
 
     /// Reorder note frontmatter into the canonical key order of each
     /// note's template (a custom `.cuaderno/templates/` override if
@@ -284,6 +292,15 @@ enum Commands {
     /// lifecycle changes.
     Questions,
 
+    /// Inspect, check and edit `.cuaderno/config.toml`. `config edit`
+    /// opens it in your editor and saves through the same validate-first,
+    /// compare-and-swap gate the desktop app used, so a config that would
+    /// not reopen is never written.
+    Config {
+        #[command(subcommand)]
+        subcommand: ConfigCommands,
+    },
+
     /// Inspect note templates. `templates vars <type>` lists the
     /// `{{placeholders}}` a type's template supports, for writing a
     /// custom `.cuaderno/templates/` override.
@@ -447,6 +464,10 @@ fn main() -> Result<()> {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::reindex::run(&root)
         }
+        Commands::Watch => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::watch::run(&root)
+        }
         Commands::Normalise { check } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::normalise::run(&root, check)
@@ -591,9 +612,13 @@ fn main() -> Result<()> {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::questions::run(&root, cli.json)
         }
+        Commands::Config { subcommand } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::config::run(&root, subcommand, cli.json, cli.no_interactive)
+        }
         Commands::Templates { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::templates::run(&root, subcommand, cli.json)
+            commands::templates::run(&root, subcommand, cli.json, cli.no_interactive)
         }
         Commands::Frontmatter { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

@@ -269,3 +269,399 @@ fn templates_vars_unknown_type_lists_custom_names() {
     let err = templates::placeholders(dir.path(), "gadget").expect_err("should error");
     assert!(err.to_string().contains("person"), "err: {err}");
 }
+
+// ---------------------------------------------------------------------------
+// list / show / save / new (#599)
+// ---------------------------------------------------------------------------
+//
+// The other half of the template story, which lived only in the desktop app's
+// Templates view until the retirement (#597). Asserted on the data and write
+// seams, in the file's established pattern.
+
+/// Register a config-defined custom type, which is what `new` is for.
+fn add_custom_type(root: &Path) {
+    let cfg = root.join(".cuaderno").join("config.toml");
+    let mut content = fs::read_to_string(&cfg).unwrap();
+    content.push_str("\n[note_types.people]\nfolder = \"people\"\nrequired = [\"name\"]\n");
+    fs::write(&cfg, content).unwrap();
+}
+
+#[test]
+fn show_reads_back_exactly_what_eject_wrote() {
+    // #599's own probe, and the reason it is the one that matters: it
+    // proves the two halves of the story agree byte for byte, so a
+    // customisation workflow that ejects, edits and re-reads cannot drift.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    templates::eject(dir.path(), "project", false).expect("eject");
+    let on_disk = fs::read_to_string(
+        dir.path()
+            .join(".cuaderno")
+            .join("templates")
+            .join("project.md"),
+    )
+    .unwrap();
+
+    let shown = templates::template_content(dir.path(), "project", None).expect("show");
+    assert_eq!(
+        shown.content, on_disk,
+        "show must be byte-identical to the ejected file"
+    );
+}
+
+#[test]
+fn list_covers_every_built_in_and_reports_the_source_in_effect() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let rows = templates::summaries(dir.path()).expect("list");
+    let project = rows
+        .iter()
+        .find(|r| r.note_type == "project")
+        .expect("project is listed");
+    assert!(!project.is_custom_type);
+    assert!(
+        !project.has_custom_file,
+        "a fresh vault has no project override"
+    );
+
+    // Ejecting flips the source from the built-in default to the override,
+    // which is the state change the list exists to show.
+    templates::eject(dir.path(), "project", false).expect("eject");
+    let rows = templates::summaries(dir.path()).expect("list again");
+    let project = rows.iter().find(|r| r.note_type == "project").unwrap();
+    assert!(
+        project.has_custom_file,
+        "the ejected override must show up in the list"
+    );
+}
+
+#[test]
+fn saving_a_built_in_creates_its_override_without_an_eject_first() {
+    // `save_template` transparently creates the override — the desktop's
+    // direct edit-and-save model. Pinned because a `save` that required a
+    // prior `eject` would be a silently worse CLI than the view it replaces.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let body = "---\ntype: action\n---\n\n# {{title}}\n\nmine\n";
+
+    let path = templates::save_content(dir.path(), "action", None, body).expect("save");
+    assert!(path.contains("action.md"), "wrote the override: {path}");
+    assert_eq!(
+        templates::template_content(dir.path(), "action", None)
+            .unwrap()
+            .content,
+        body,
+        "show must read back exactly what save wrote"
+    );
+}
+
+#[test]
+fn new_scaffolds_a_custom_type_and_refuses_a_second_one() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    add_custom_type(dir.path());
+
+    let path = templates::create(dir.path(), "people").expect("scaffold");
+    assert!(path.contains("people.md"), "{path}");
+
+    let content = templates::template_content(dir.path(), "people", None)
+        .unwrap()
+        .content;
+    assert!(
+        content.contains("type: people"),
+        "the starter declares its type:\n{content}"
+    );
+    assert!(
+        content.contains("{{name}}"),
+        "each declared required field becomes a placeholder:\n{content}"
+    );
+
+    // Idempotency is deliberately NOT the contract here: a second scaffold
+    // would silently overwrite an author's work, so it errors instead.
+    assert!(
+        templates::create(dir.path(), "people").is_err(),
+        "scaffolding over an existing template must refuse"
+    );
+}
+
+#[test]
+fn new_on_a_built_in_explains_itself_in_terms_of_templates() {
+    // The domain's own `BuiltinTypeNotCustom` message is about creating a
+    // NOTE of a built-in type — "use `cdno project create`" — which is
+    // right for `create_note` and sends someone running `templates new`
+    // entirely the wrong way. The CLI rephrases it, so this pins the
+    // rephrasing rather than the domain's wording.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let err =
+        templates::create(dir.path(), "project").expect_err("a built-in has nothing to scaffold");
+    let message = format!("{err}");
+    assert!(
+        message.contains("templates eject") || message.contains("templates save"),
+        "the error must name the verb that does work here, got: {message}"
+    );
+    assert!(
+        !message.contains("project create"),
+        "it must not send the user to the note-creation verb, got: {message}"
+    );
+}
+
+#[test]
+fn an_unknown_type_is_refused_by_every_verb() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    assert!(templates::template_content(dir.path(), "nosuch", None).is_err());
+    assert!(templates::save_content(dir.path(), "nosuch", None, "x").is_err());
+    assert!(templates::create(dir.path(), "nosuch").is_err());
+}
+
+#[test]
+fn show_prints_verbatim_with_no_added_newline() {
+    // Deliberately through the binary rather than the seam above. #599's
+    // probe is `templates show project | diff - .cuaderno/templates/project.md`,
+    // which is a claim about STDOUT: swapping `print!` for `println!` leaves
+    // the data seam byte-identical and still breaks the probe, so a seam
+    // test cannot catch it.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    templates::eject(dir.path(), "project", false).expect("eject");
+    let on_disk = fs::read_to_string(
+        dir.path()
+            .join(".cuaderno")
+            .join("templates")
+            .join("project.md"),
+    )
+    .unwrap();
+
+    let out = Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args(["templates", "show", "project"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        on_disk,
+        "stdout must diff clean against the file on disk"
+    );
+}
+
+#[test]
+fn save_without_input_off_a_terminal_errors_rather_than_blanking() {
+    // The failure mode worth pinning: `save` with nothing to save must not
+    // resolve to an empty string. Off a terminal there is no editor to
+    // open, so the absent flag is an error — otherwise a scripted
+    // `templates save --note-type action` would silently truncate the
+    // template to zero bytes and report success.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let body = "---\ntype: action\n---\n\n# {{title}}\n\nkeep me\n";
+    templates::save_content(dir.path(), "action", None, body).expect("seed a template");
+
+    Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args([
+            "--no-interactive",
+            "templates",
+            "save",
+            "--note-type",
+            "action",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("flag: --file"));
+
+    assert_eq!(
+        templates::template_content(dir.path(), "action", None)
+            .unwrap()
+            .content,
+        body,
+        "the refused save must leave the template intact"
+    );
+}
+
+#[test]
+fn save_reads_the_template_from_stdin_when_the_file_is_a_dash() {
+    // `--file -` is documented in the flag's own help, so it is behaviour
+    // rather than an accident of path handling: without the sentinel, `-`
+    // is looked up as a literal filename and the save fails with a
+    // no-such-file error. Piping is the natural way to script this verb,
+    // so it gets a test rather than only a mention.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let body = "---\ntype: question\n---\n\n# {{title}}\n\npiped\n";
+
+    Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args([
+            "--no-interactive",
+            "templates",
+            "save",
+            "--note-type",
+            "question",
+            "--file",
+            "-",
+        ])
+        .write_stdin(body)
+        .assert()
+        .success();
+
+    assert_eq!(
+        templates::template_content(dir.path(), "question", None)
+            .unwrap()
+            .content,
+        body,
+        "stdin must be written verbatim"
+    );
+}
+
+#[test]
+fn list_json_reports_the_source_as_a_token_not_prose() {
+    // `--json` is read by scripts. The human label carries guidance —
+    // "none (run `templates new`)" — which would force a caller to match
+    // prose and break the moment that wording changes. `TemplateSourceKind`
+    // is a closed enum, so it rides the wire as a stable token.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let rows = templates::summaries(dir.path()).expect("list");
+    let json = templates::list_rows(&rows);
+    let sources: std::collections::BTreeSet<&str> = json
+        .iter()
+        .map(|row| row["source"].as_str().expect("source is a string"))
+        .collect();
+
+    for source in &sources {
+        assert!(
+            !source.contains(' '),
+            "a wire token carries no prose, got {source:?}"
+        );
+        assert!(
+            matches!(
+                *source,
+                "custom_variant" | "custom_base" | "builtin_variant" | "builtin_default" | "none"
+            ),
+            "unexpected source token {source:?}"
+        );
+    }
+    assert!(
+        sources.contains("builtin_default"),
+        "a fresh vault's built-ins report their default: {sources:?}"
+    );
+}
+
+#[test]
+fn a_variant_on_a_custom_type_is_refused_rather_than_overwriting_its_base() {
+    // Silent data loss before the guard. `Vault::save_template`'s
+    // custom-type branch resolves the filename from the type's configured
+    // template and never consults `variant`, so `--variant meeting` did
+    // not write `people-meeting.md` — it overwrote `people.md`, the type's
+    // ONLY template, and printed a success naming that file.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    add_custom_type(dir.path());
+    templates::create(dir.path(), "people").expect("scaffold");
+
+    let base = dir
+        .path()
+        .join(".cuaderno")
+        .join("templates")
+        .join("people.md");
+    let before = fs::read_to_string(&base).unwrap();
+
+    let err = templates::save_content(dir.path(), "people", Some("meeting"), "REPLACED")
+        .expect_err("a variant of a single-template type must be refused");
+    assert!(
+        format!("{err}").contains("single template"),
+        "the error should say why, got: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(&base).unwrap(),
+        before,
+        "the base template must be untouched"
+    );
+
+    // `read_template` has the matching blind spot — it returns the base
+    // content for any variant, which is also what seeds the editor in the
+    // interactive save path, so the overwrite looked like an edit of the
+    // right file.
+    assert!(
+        templates::template_content(dir.path(), "people", Some("meeting")).is_err(),
+        "show must refuse the same way, or the editor is seeded from the wrong file"
+    );
+
+    // A built-in type genuinely has variants, and they must keep working.
+    let path = templates::save_content(dir.path(), "tracking", Some("gym"), "x")
+        .expect("built-in variants are real");
+    assert!(path.contains("tracking-gym.md"), "{path}");
+}
+
+#[test]
+fn show_honours_json_without_losing_the_verbatim_guarantee() {
+    // `config show` has the same verbatim constraint and honours `--json`;
+    // `templates list` honours it too. Printing raw markdown regardless
+    // meant `cdno --json templates show project | jq` could not parse,
+    // which is the one thing `--json` promises.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    templates::eject(dir.path(), "project", false).expect("eject");
+    let on_disk = fs::read_to_string(
+        dir.path()
+            .join(".cuaderno")
+            .join("templates")
+            .join("project.md"),
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| -> String {
+        let out = Command::cargo_bin("cdno")
+            .unwrap()
+            .env_remove("CUADERNO_VAULT_PATH")
+            .args(["--vault"])
+            .arg(dir.path())
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&run(&["--json", "templates", "show", "project"]))
+            .expect("--json must emit parseable JSON");
+    assert_eq!(
+        parsed["content"].as_str().unwrap(),
+        on_disk,
+        "the JSON carries the content verbatim"
+    );
+    assert_eq!(parsed["source"].as_str().unwrap(), "custom_base");
+
+    // And the plain form still diffs clean against the file on disk.
+    assert_eq!(run(&["templates", "show", "project"]), on_disk);
+}

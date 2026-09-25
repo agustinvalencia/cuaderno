@@ -30,9 +30,11 @@ jobs:
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Refuse tag/Cargo version drift
-        # The dmg's internal CFBundleVersion comes from the workspace
-        # Cargo version while asset names come from the tag — a drift
-        # would ship a mislabelled app. Fail the release instead.
+        # Asset names come from the tag while the binaries report the
+        # workspace Cargo version, so a drift ships archives whose names
+        # disagree with `cdno --version`. Fail the release instead. (This
+        # guarded the dmg's CFBundleVersion too, until #597 stopped
+        # publishing it — the archives keep the check earning its place.)
         run: |
           CARGO_V=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           TAG_V="${GITHUB_REF#refs/tags/v}"
@@ -52,28 +54,12 @@ jobs:
           # repo home page.
           prerelease: ${{ contains(github.ref, '-') }}
           generate_release_notes: true
-          # The macOS desktop app is ad-hoc signed (no notarization, no
-          # updater — that slice of M10 pulled forward for user testing).
-          # One trap the tester must still be told about accurately:
-          # Sequoia removed the right-click -> Open Gatekeeper bypass, so
-          # the reliable path is stripping quarantine. Vault discovery is
-          # now handled by a first-launch picker (GH #331), so launchctl
-          # is optional. The auto-generated PR list follows.
-          body: |
-            ### Desktop app (macOS) — read before first launch
-
-            The `cuaderno-app-*.dmg` is **ad-hoc signed, not notarized**, and there
-            is no auto-updater yet. To get it running:
-
-            1. **Gatekeeper** (right-click -> Open no longer works on macOS 15+):
-               after copying the app to /Applications, run
-               `xattr -dr com.apple.quarantine /Applications/cuaderno.app`
-               (or use System Settings -> Privacy & Security -> "Open Anyway"
-               after the first blocked attempt).
-            2. **Vault discovery**: on first launch the app asks for your vault
-               folder with a native picker and remembers it. `CUADERNO_VAULT_PATH`
-               overrides it for terminals/dev (`CUADERNO_VAULT_PATH=... open -a
-               cuaderno`), but it is no longer required for a Finder launch.
+          # The macOS desktop app is no longer published (#597): the
+          # `app-dmg` job is gone and these notes no longer describe a
+          # `.dmg`, because none is attached. The Homebrew cask in
+          # `agustinvalencia/homebrew-tap` keeps resolving to the last
+          # DMG released before this change. Assets are now the CLI/MCP
+          # archives only; the auto-generated PR list follows.
 
   build:
     name: Build ${{ matrix.target }}
@@ -120,7 +106,8 @@ jobs:
         # `cdno-mcp` (cdno-mcp). A bare `--bins` would also pull in
         # cdno-tauri, whose release build embeds `ui/dist` (gitignored,
         # absent on these runners) and needs webkit on Linux — it would
-        # break this job. The desktop app is built separately in `app-dmg`.
+        # break this job. Since #597 the desktop app is not built here at
+        # all, but the scoping stays: it is what keeps cdno-tauri out.
         run: cargo build --release --target ${{ matrix.target }} -p cdno-cli -p cdno-mcp --bins
         env:
           # Cross-compiling Linux aarch64 needs the right linker.
@@ -146,66 +133,3 @@ jobs:
           files: |
             cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz
             cuaderno-${{ needs.create-release.outputs.version }}-${{ matrix.target }}.tar.gz.sha256
-
-  # Builds the macOS desktop app disk image for user testing. This
-  # deliberately pulls the ad-hoc-signing slice of M10 forward: the
-  # `.dmg` is ad-hoc signed with no notarization and no updater, so the
-  # release notes tell users to right-click -> Open on first launch.
-  # Kept a separate job (not part of the `build` matrix) because it only
-  # ships aarch64, runs a Bun/Node frontend build, and must not gate the
-  # CLI/MCP archives if the GUI toolchain hiccups.
-  app-dmg:
-    name: Build macOS app DMG
-    needs: create-release
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: app-dmg
-
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Install frontend dependencies
-        run: cd ui && bun install --frozen-lockfile
-
-      - name: Build desktop app bundle
-        # Non-standard layout: the Tauri config lives at
-        # crates/cdno-tauri/tauri.conf.json and the frontend at ui/. The
-        # Tauri CLI locates its project by scanning SUBFOLDERS of the cwd,
-        # so it must run from the repo root (crates/cdno-tauri is a
-        # subfolder) — running from ui/ fails with "couldn't recognize the
-        # current folder as a Tauri project", and `--config` does not
-        # override that project-root search. The CLI binary is installed
-        # under ui/node_modules by the previous step. The config's
-        # beforeBuildCommand runs `bun run build` in ui/ to produce
-        # ui/dist before bundling.
-        run: PATH="ui/node_modules/.bin:$PATH" tauri build
-
-      - name: Rename and checksum the DMG
-        # Tauri names the artifact cuaderno_<version>_aarch64.dmg; rename
-        # to the release's target-triple convention and drop a sidecar.
-        run: |
-          VERSION="${{ needs.create-release.outputs.version }}"
-          SRC="$(ls target/release/bundle/dmg/*.dmg)"
-          DEST="cuaderno-app-${VERSION}-aarch64-apple-darwin.dmg"
-          mv "$SRC" "$DEST"
-          shasum -a 256 "$DEST" > "$DEST.sha256"
-
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            cuaderno-app-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.dmg
-            cuaderno-app-${{ needs.create-release.outputs.version }}-aarch64-apple-darwin.dmg.sha256
