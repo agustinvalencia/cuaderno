@@ -26,4 +26,5 @@ pub mod stewardship;
 pub mod templates;
 pub mod track;
 pub mod triage;
+pub mod watch;
 pub mod weekly;

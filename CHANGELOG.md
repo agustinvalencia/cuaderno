@@ -8,6 +8,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno watch` — reconcile the index on external edits (#600).** Every other verb
+  reconciles once at vault open and exits, so a note edited in another editor is invisible
+  to `search`, `lint` and backlinks until some later command happens to run. `cdno watch`
+  stays in the foreground and reconciles on debounced change, saving
+  `cdno-core/src/watcher.rs`, whose only consumer was the desktop's watcher thread (#597).
+  `Vault::reconcile` is the new domain seam it runs.
+
+  The self-echo hazard turned out not to be where it looked. Reconciliation writes the
+  index, so the obvious risk is reacting to `.cuaderno/index.db` and re-triggering — but
+  filtering that alone still spun 18 passes in 6 seconds on an idle, freshly initialised
+  vault. The real source is the reconcile WALK: it reads every directory in the vault, and
+  inotify reports those reads as changes, so each pass provoked the next. Relevance is
+  therefore decided on the files that can change a row — a path under `.cuaderno/` is
+  ignored, and everything else must be `.md`, which excludes the walk's own directory
+  footprints by the same rule. An idle vault now provokes no passes at all.
+
+  This is also why the desktop's write journal did not need porting: it exists because the
+  app writes *notes* and must not hear itself, while this process writes nothing but the
+  index — but it does need to not hear its own *reads*, which that journal never covered.
+
+  A `config.toml` change is ignored and `watch` says so at startup: honouring new `ignore`
+  globs means rebuilding the vault rather than reconciling it, which is the path #459
+  describes racing. Bursts are coalesced — 30 notes appearing at once reconcile in one pass,
+  not thirty.
+
 - **`cdno templates list / show / save / new` (#599).** The other half of a story that was
   split across two applications: ejecting a template to customise it worked from the CLI,
   but reading one back, listing them or saving one lived only in the desktop app's

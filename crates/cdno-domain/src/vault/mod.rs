@@ -49,6 +49,7 @@ mod orient;
 mod portfolios;
 mod projects;
 mod questions;
+mod reconcile;
 mod search;
 mod set_frontmatter;
 pub(crate) mod slug;

@@ -115,6 +115,13 @@ enum Commands {
     /// truth. The recovery path for a corrupt or stale index.
     Reindex,
 
+    /// Watch the vault and reconcile the index whenever a note changes
+    /// outside cdno, so edits made in another editor reach `search`,
+    /// `lint` and backlinks without waiting for the next command. Runs
+    /// in the foreground until Ctrl-C. A change to
+    /// `.cuaderno/config.toml` needs a restart to take effect.
+    Watch,
+
     /// Reorder note frontmatter into the canonical key order of each
     /// note's template (a custom `.cuaderno/templates/` override if
     /// present, else the built-in). Notes cdno creates are already
@@ -456,6 +463,10 @@ fn main() -> Result<()> {
         Commands::Reindex => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::reindex::run(&root)
+        }
+        Commands::Watch => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::watch::run(&root)
         }
         Commands::Normalise { check } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
