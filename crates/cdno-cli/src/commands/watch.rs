@@ -74,7 +74,7 @@
 use std::path::Path;
 use std::sync::mpsc::channel;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use cdno_core::watcher::{FileEvent, FileWatcher, FsFileWatcher};
 use cdno_core::{paths, reconcile::ReconciliationReport};
@@ -168,27 +168,40 @@ pub fn run(root: &Path) -> Result<()> {
     // stop story: nothing here needs unwinding. A pass interrupted partway
     // leaves the index incomplete, and that is safe — it is a cache, the
     // markdown is untouched, and the next open reconciles it back.
-    while let Ok(batch) = receiver.recv() {
-        let mut relevant = batch.iter().any(is_relevant);
-        // Drain whatever else is already queued so a burst becomes one
-        // pass. `try_recv` is non-blocking, so this stops as soon as the
-        // channel is empty rather than waiting for a quiet period the
-        // debouncer has already waited for.
-        while let Ok(extra) = receiver.try_recv() {
-            relevant |= extra.iter().any(is_relevant);
-        }
-        if !relevant {
-            continue;
-        }
-        match vault.reconcile() {
-            Ok(report) => println!("{}", describe_pass(&report)),
-            // A failed pass must not end the watch: the usual cause is
-            // transient (a file half-written by another process), and the
-            // next event reconciles again. Exiting here would leave the
-            // index stale with nothing watching it.
-            Err(err) => eprintln!("reconcile failed, still watching: {err}"),
+    loop {
+        // `recv` fails only when every sender is gone, and this process
+        // never drops its own: that means the debouncer's worker thread
+        // died. Falling out of the loop would have returned `Ok(())`, so
+        // `cdno watch` exited 0 while nothing was being watched — the one
+        // silent failure in a loop that keeps every other one loud.
+        let batch = match receiver.recv() {
+            Ok(batch) => batch,
+            Err(_) => bail!(
+                "the filesystem watcher stopped unexpectedly, so changes are no longer \
+                 being seen. Re-run `cdno watch`; if it keeps happening, `cdno reindex` \
+                 rebuilds the index from the notes on disk."
+            ),
+        };
+        {
+            let mut relevant = batch.iter().any(is_relevant);
+            // Drain whatever else is already queued so a burst becomes one
+            // pass. `try_recv` is non-blocking, so this stops as soon as the
+            // channel is empty rather than waiting for a quiet period the
+            // debouncer has already waited for.
+            while let Ok(extra) = receiver.try_recv() {
+                relevant |= extra.iter().any(is_relevant);
+            }
+            if !relevant {
+                continue;
+            }
+            match vault.reconcile() {
+                Ok(report) => println!("{}", describe_pass(&report)),
+                // A failed pass must not end the watch: the usual cause is
+                // transient (a file half-written by another process), and the
+                // next event reconciles again. Exiting here would leave the
+                // index stale with nothing watching it.
+                Err(err) => eprintln!("reconcile failed, still watching: {err}"),
+            }
         }
     }
-
-    Ok(())
 }

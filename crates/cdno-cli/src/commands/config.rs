@@ -940,10 +940,21 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
                 }
             };
 
+            // A type change invalidates the constraints scoped to the old
+            // type. `default` is typed, and `values` enumerates values of
+            // that type, so carrying either forward across a change made
+            // the candidate fail `validate_schemas` — which meant EVERY
+            // type change was refused, with an error blaming the config
+            // and never naming the way out. They are dropped instead, and
+            // said out loud: silently discarding a default would be the
+            // other half of the same bug.
+            let retyped = current.is_some_and(|c| c.ty != ty);
+
             // Parsed against the type resolved above, so `--default` on an
             // existing field is checked against the type it actually has
             // rather than a guess.
             let default = match default {
+                None if retyped => None,
                 None => current.and_then(|c| c.default.clone()),
                 Some(raw) if raw.is_empty() => None,
                 Some(raw) => Some(parse_default(&raw, ty)?),
@@ -954,6 +965,7 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
                 default,
                 required: merge_flag(required, no_required, current.is_some_and(|c| c.required)),
                 values: match values {
+                    None if retyped => None,
                     None => current.and_then(|c| c.values.clone()),
                     Some(raw) => {
                         let list = merge_list(Some(raw), &[]);
@@ -983,6 +995,28 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
             )? {
                 println!("Cancelled — nothing was written.");
                 return Ok(());
+            }
+
+            if retyped {
+                let dropped = current
+                    .map(|c| {
+                        let mut what = Vec::new();
+                        if c.default.is_some() {
+                            what.push("default");
+                        }
+                        if c.values.is_some() {
+                            what.push("values");
+                        }
+                        what
+                    })
+                    .unwrap_or_default();
+                if !dropped.is_empty() {
+                    println!(
+                        "Changing the type of '{note_type}.{field}' dropped its {} \
+                         (declared for the old type). Re-set it with --default / --values.",
+                        dropped.join(" and ")
+                    );
+                }
             }
 
             let candidate =

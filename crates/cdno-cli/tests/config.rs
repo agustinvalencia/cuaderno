@@ -1042,3 +1042,89 @@ fn the_config_verbs_refuse_a_directory_that_is_not_a_vault() {
         "a refused verb must not leave a half-initialised vault behind"
     );
 }
+
+#[test]
+fn changing_a_fields_type_drops_the_constraints_scoped_to_the_old_one() {
+    // Before this, EVERY type change was refused. `default` is typed and
+    // `values` enumerates values of that type, so carrying either forward
+    // across a change made the candidate fail `validate_schemas` — and the
+    // error blamed the config rather than naming a way out, so the verb
+    // was simply unusable on any field that had a default.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "project",
+            "--field",
+            "age",
+            "--type",
+            "int",
+            "--default",
+            "3",
+        ])
+        .assert()
+        .success();
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "project",
+            "--field",
+            "age",
+            "--type",
+            "string",
+        ])
+        .assert()
+        .success()
+        // Dropping it silently would be the other half of the same bug.
+        .stdout(predicates::str::contains("dropped its default"));
+
+    let content = fs::read_to_string(config_path(dir.path())).unwrap();
+    assert!(content.contains("type = \"string\""), "the retype applied");
+    assert!(
+        !content.contains("default = 3"),
+        "the old type's default must not survive:\n{content}"
+    );
+
+    // An edit that does NOT change the type still preserves the default.
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "project",
+            "--field",
+            "age",
+            "--default",
+            "unknown",
+        ])
+        .assert()
+        .success();
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "project",
+            "--field",
+            "age",
+            "--required",
+        ])
+        .assert()
+        .success();
+    let content = fs::read_to_string(config_path(dir.path())).unwrap();
+    assert!(
+        content.contains("default = \"unknown\""),
+        "a same-type edit must keep the default:\n{content}"
+    );
+}

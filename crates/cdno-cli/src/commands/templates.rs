@@ -169,10 +169,26 @@ pub fn run(
         }
         TemplatesCommands::Show { note_type, variant } => {
             let content = template_content(root, &note_type, variant.as_deref())?;
-            // Verbatim, and via `print!`: `templates show <t>` has to diff
-            // clean against the file `eject`/`save` wrote, so an added
-            // trailing newline would be a bug rather than a nicety.
-            print!("{}", content.content);
+            if json {
+                // `config show` has the same verbatim constraint and still
+                // honours `--json`; `templates list` one arm up honours it
+                // too. Printing raw markdown regardless meant
+                // `cdno --json templates show project | jq` could not
+                // parse, which is the one thing `--json` promises.
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "content": content.content,
+                        "source": source_token(content.source),
+                    }))?
+                );
+            } else {
+                // Verbatim, and via `print!`: `templates show <t>` has to
+                // diff clean against the file `eject`/`save` wrote, so an
+                // added trailing newline would be a bug rather than a
+                // nicety.
+                print!("{}", content.content);
+            }
             Ok(())
         }
         TemplatesCommands::Save {

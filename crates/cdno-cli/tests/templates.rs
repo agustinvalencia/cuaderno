@@ -617,3 +617,51 @@ fn a_variant_on_a_custom_type_is_refused_rather_than_overwriting_its_base() {
         .expect("built-in variants are real");
     assert!(path.contains("tracking-gym.md"), "{path}");
 }
+
+#[test]
+fn show_honours_json_without_losing_the_verbatim_guarantee() {
+    // `config show` has the same verbatim constraint and honours `--json`;
+    // `templates list` honours it too. Printing raw markdown regardless
+    // meant `cdno --json templates show project | jq` could not parse,
+    // which is the one thing `--json` promises.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    templates::eject(dir.path(), "project", false).expect("eject");
+    let on_disk = fs::read_to_string(
+        dir.path()
+            .join(".cuaderno")
+            .join("templates")
+            .join("project.md"),
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| -> String {
+        let out = Command::cargo_bin("cdno")
+            .unwrap()
+            .env_remove("CUADERNO_VAULT_PATH")
+            .args(["--vault"])
+            .arg(dir.path())
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(out).unwrap()
+    };
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&run(&["--json", "templates", "show", "project"]))
+            .expect("--json must emit parseable JSON");
+    assert_eq!(
+        parsed["content"].as_str().unwrap(),
+        on_disk,
+        "the JSON carries the content verbatim"
+    );
+    assert_eq!(parsed["source"].as_str().unwrap(), "custom_base");
+
+    // And the plain form still diffs clean against the file on disk.
+    assert_eq!(run(&["templates", "show", "project"]), on_disk);
+}
