@@ -244,6 +244,38 @@ fn emit_eject_all(json: bool, report: &EjectAllReport) -> Result<()> {
     Ok(())
 }
 
+/// Refuse `--variant` on a config-defined custom type.
+///
+/// `Vault::save_template`'s custom-type branch resolves the filename from
+/// the type's configured `template` and never consults `variant`, so a
+/// variant save did not write `people-meeting.md` — it overwrote
+/// `people.md`, the type's ONLY template, and reported success. Silent
+/// data loss. `read_template` has the matching blind spot: it returns the
+/// base content for any variant, which is also what seeds the editor in
+/// the interactive `save` path, so the overwrite looked like an edit of
+/// the right file.
+///
+/// Variants are a built-in-type feature (`<type>-<variant>.md`). A custom
+/// type has one template, so asking for a variant of one is a mistake
+/// worth naming rather than a request to be quietly reinterpreted.
+fn reject_variant_on_custom(vault: &Vault, note_type: &str, variant: Option<&str>) -> Result<()> {
+    let Some(variant) = variant else {
+        return Ok(());
+    };
+    if vault
+        .type_registry()
+        .resolve(note_type)
+        .is_some_and(|d| d.is_custom())
+    {
+        bail!(
+            "`{note_type}` is a config-defined custom type, which has a single template — \
+             there is no `{note_type}-{variant}` to read or write. Drop `--variant`, or \
+             declare a separate note type for it in `.cuaderno/config.toml`."
+        );
+    }
+    Ok(())
+}
+
 /// Validate `note_type` against the vault's known set (built-ins + config
 /// custom types), returning a friendly error listing the valid names (richer
 /// than the domain's terser variant).
@@ -353,6 +385,7 @@ pub fn template_content(
 ) -> Result<cdno_domain::TemplateContent> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     validate_known_type(&vault, note_type)?;
+    reject_variant_on_custom(&vault, note_type, variant)?;
     Ok(vault.read_template(note_type, variant)?)
 }
 
@@ -365,6 +398,7 @@ pub fn save_content(
 ) -> Result<String> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     validate_known_type(&vault, note_type)?;
+    reject_variant_on_custom(&vault, note_type, variant)?;
     Ok(vault
         .save_template(note_type, variant, content)?
         .to_string())

@@ -571,3 +571,49 @@ fn list_json_reports_the_source_as_a_token_not_prose() {
         "a fresh vault's built-ins report their default: {sources:?}"
     );
 }
+
+#[test]
+fn a_variant_on_a_custom_type_is_refused_rather_than_overwriting_its_base() {
+    // Silent data loss before the guard. `Vault::save_template`'s
+    // custom-type branch resolves the filename from the type's configured
+    // template and never consults `variant`, so `--variant meeting` did
+    // not write `people-meeting.md` — it overwrote `people.md`, the type's
+    // ONLY template, and printed a success naming that file.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    add_custom_type(dir.path());
+    templates::create(dir.path(), "people").expect("scaffold");
+
+    let base = dir
+        .path()
+        .join(".cuaderno")
+        .join("templates")
+        .join("people.md");
+    let before = fs::read_to_string(&base).unwrap();
+
+    let err = templates::save_content(dir.path(), "people", Some("meeting"), "REPLACED")
+        .expect_err("a variant of a single-template type must be refused");
+    assert!(
+        format!("{err}").contains("single template"),
+        "the error should say why, got: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(&base).unwrap(),
+        before,
+        "the base template must be untouched"
+    );
+
+    // `read_template` has the matching blind spot — it returns the base
+    // content for any variant, which is also what seeds the editor in the
+    // interactive save path, so the overwrite looked like an edit of the
+    // right file.
+    assert!(
+        templates::template_content(dir.path(), "people", Some("meeting")).is_err(),
+        "show must refuse the same way, or the editor is seeded from the wrong file"
+    );
+
+    // A built-in type genuinely has variants, and they must keep working.
+    let path = templates::save_content(dir.path(), "tracking", Some("gym"), "x")
+        .expect("built-in variants are real");
+    assert!(path.contains("tracking-gym.md"), "{path}");
+}

@@ -145,7 +145,7 @@ pub enum NoteTypeCommands {
     Set {
         /// Name of the note type, i.e. `[note_types.<name>]`.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// Vault-relative folder its notes live in, e.g. `people`.
         /// Required when creating; preserved when omitted on an edit.
         #[arg(long)]
@@ -177,7 +177,7 @@ pub enum NoteTypeCommands {
     Remove {
         /// Name of the note type to remove.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
     },
 }
 
@@ -188,10 +188,10 @@ pub enum FieldCommands {
     Set {
         /// Note type the field belongs to.
         #[arg(long)]
-        note_type: String,
+        note_type: Option<String>,
         /// Field name.
         #[arg(long)]
-        field: String,
+        field: Option<String>,
         /// Scalar type: bool, int, float, string or date. Required when
         /// declaring; preserved when omitted on an edit.
         #[arg(long = "type", value_name = "TYPE")]
@@ -227,10 +227,10 @@ pub enum FieldCommands {
     Remove {
         /// Note type the field belongs to.
         #[arg(long)]
-        note_type: String,
+        note_type: Option<String>,
         /// Field name to remove.
         #[arg(long)]
-        field: String,
+        field: Option<String>,
     },
 }
 
@@ -242,10 +242,10 @@ pub enum PlotCommands {
     Set {
         /// Tracking activity, i.e. `[tracking.<activity>]`.
         #[arg(long)]
-        activity: String,
+        activity: Option<String>,
         /// Metric name under that activity.
         #[arg(long)]
-        metric: String,
+        metric: Option<String>,
         /// One of: none, line, column, area, scatter.
         #[arg(long)]
         plot: Option<String>,
@@ -258,7 +258,7 @@ pub enum VarCommands {
     Set {
         /// Variable name.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// Value the placeholder renders to.
         #[arg(long)]
         value: Option<String>,
@@ -268,7 +268,7 @@ pub enum VarCommands {
     Remove {
         /// Variable name to remove.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
     },
 }
 
@@ -279,7 +279,7 @@ pub enum PromptCommands {
     Set {
         /// Variable name.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
         /// The question put to the user when it is unresolved.
         #[arg(long)]
         message: Option<String>,
@@ -289,11 +289,26 @@ pub enum PromptCommands {
     Remove {
         /// Variable name to remove.
         #[arg(long)]
-        name: String,
+        name: Option<String>,
     },
 }
 
 pub fn run(root: &Path, command: ConfigCommands, json: bool, no_interactive: bool) -> Result<()> {
+    // These verbs deliberately never open the vault (see the module docs),
+    // and that left them unable to tell a broken vault from no vault at
+    // all: `config validate` answered "Config is valid." on an empty
+    // directory, and `config var set` created a stray `.cuaderno/config.toml`,
+    // half-initialising somewhere that was never a vault. Skipping
+    // `Vault::new` is the point; skipping the directory check was an
+    // oversight. Mirrors `reindex`, which checks the same way before it
+    // deletes anything.
+    let cuaderno_dir = root.join(cdno_core::paths::CUADERNO_DIR);
+    if !cuaderno_dir.is_dir() {
+        bail!(
+            "no Cuaderno vault at {}; run `cdno init` to create one.",
+            root.display()
+        );
+    }
     let interactive = crate::prompt::reports_interactively(no_interactive, json);
     match command {
         ConfigCommands::Show => show(root, json),
@@ -786,11 +801,14 @@ fn note_type(root: &Path, command: NoteTypeCommands, json: bool, interactive: bo
             title_field,
             date_field,
         } => {
+            let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Name of the note type")
+            })?;
             let store = FsVaultStore::new(root);
             let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
             let model = read_model(&original.content)?;
             let current = model.note_types.get(&name);
-            let mut prompted = false;
 
             // The only conditionally-required input: a new type must say
             // where its notes live, an existing one already has.
@@ -837,6 +855,10 @@ fn note_type(root: &Path, command: NoteTypeCommands, json: bool, interactive: bo
         }
 
         NoteTypeCommands::Remove { name } => {
+            let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Name of the note type to remove")
+            })?;
             let outcome = apply(root, |content| {
                 config_edit::remove_note_type(content, &name)
             })?;
@@ -863,14 +885,42 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
             log_on_change,
             no_log_on_change,
         } => {
+            let mut prompted = false;
+            let note_type =
+                gather_or_error(note_type, "note-type", interactive, &mut prompted, || {
+                    prompt_text("Note type the field belongs to")
+                })?;
+            let field = gather_or_error(field, "field", interactive, &mut prompted, || {
+                prompt_text("Field name")
+            })?;
             let store = FsVaultStore::new(root);
             let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
             let model = read_model(&original.content)?;
+            // The same bug class `plot set` guards against, one verb over:
+            // `validate_reserved_schema_fields` deliberately skips schema
+            // names it does not know, so a typo in `--note-type` wrote
+            // `[schemas.porject.fields.status]`, reported success, and
+            // validated clean — a phantom schema attached to nothing.
+            let known = model
+                .note_types
+                .keys()
+                .cloned()
+                .chain(
+                    cdno_domain::note_type::NoteType::ALL
+                        .iter()
+                        .map(|t| t.as_str().to_owned()),
+                )
+                .collect::<Vec<_>>();
+            if !known.iter().any(|name| name == &note_type) {
+                let mut sorted = known;
+                sorted.sort();
+                bail!("{}", unknown_name("note type", &note_type, &sorted));
+            }
+
             let current = model
                 .schemas
                 .get(&note_type)
                 .and_then(|schema| schema.fields.get(&field));
-            let mut prompted = false;
 
             // A field's type is what every other key is interpreted
             // against, so it is required when declaring one and preserved
@@ -946,6 +996,14 @@ fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> 
         }
 
         FieldCommands::Remove { note_type, field } => {
+            let mut prompted = false;
+            let note_type =
+                gather_or_error(note_type, "note-type", interactive, &mut prompted, || {
+                    prompt_text("Note type the field belongs to")
+                })?;
+            let field = gather_or_error(field, "field", interactive, &mut prompted, || {
+                prompt_text("Field name to remove")
+            })?;
             let outcome = apply(root, |content| {
                 config_edit::remove_schema_field(content, &note_type, &field)
             })?;
@@ -964,6 +1022,13 @@ fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Re
         metric,
         plot,
     } = command;
+    let mut prompted = false;
+    let activity = gather_or_error(activity, "activity", interactive, &mut prompted, || {
+        prompt_text("Tracking activity")
+    })?;
+    let metric = gather_or_error(metric, "metric", interactive, &mut prompted, || {
+        prompt_text("Metric name under that activity")
+    })?;
 
     // `set_metric_plot` writes into `[tracking.<activity>.metrics.<metric>]`,
     // creating every table on the way down. That is right for the desktop,
@@ -995,7 +1060,6 @@ fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Re
         );
     }
 
-    let mut prompted = false;
     let raw = gather_or_error(plot, "plot", interactive, &mut prompted, || {
         prompt_text(&format!(
             "Plot for '{activity}.{metric}' (none, line, column, area, scatter)"
@@ -1008,9 +1072,15 @@ fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Re
         return Ok(());
     }
 
-    let outcome = apply(root, |content| {
-        config_edit::set_metric_plot(content, &activity, &metric, kind)
-    })?;
+    // Deliberately NOT through `apply`, which would take a second read.
+    // The activity and metric were resolved against `original` above; a
+    // fresh read here would make the compare-and-swap baseline newer than
+    // the state that was checked, so a metric deleted while the prompt was
+    // open would be recreated as a phantom, and a concurrent edit would be
+    // overwritten instead of reported as a conflict. `note-type set` and
+    // `field set` already hold their pre-prompt read for the same reason.
+    let candidate = config_edit::set_metric_plot(&original.content, &activity, &metric, kind)?;
+    let outcome = finish_edit(&store, &original, &candidate).map_err(describe)?;
     emit(
         json,
         &outcome,
@@ -1022,6 +1092,9 @@ fn var(root: &Path, command: VarCommands, json: bool, interactive: bool) -> Resu
     match command {
         VarCommands::Set { name, value } => {
             let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Variable name")
+            })?;
             let value = gather_or_error(value, "value", interactive, &mut prompted, || {
                 prompt_text(&format!("Value for {{{{{name}}}}}"))
             })?;
@@ -1035,6 +1108,10 @@ fn var(root: &Path, command: VarCommands, json: bool, interactive: bool) -> Resu
             emit(json, &outcome, &format!("Variable '{name}' saved."))
         }
         VarCommands::Remove { name } => {
+            let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Variable name to remove")
+            })?;
             let outcome = apply(root, |content| config_edit::remove_variable(content, &name))?;
             emit(json, &outcome, &format!("Variable '{name}' removed."))
         }
@@ -1045,6 +1122,9 @@ fn prompt_var(root: &Path, command: PromptCommands, json: bool, interactive: boo
     match command {
         PromptCommands::Set { name, message } => {
             let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Variable name")
+            })?;
             let message = gather_or_error(message, "message", interactive, &mut prompted, || {
                 prompt_text(&format!("Question to ask for {{{{{name}}}}}"))
             })?;
@@ -1062,6 +1142,10 @@ fn prompt_var(root: &Path, command: PromptCommands, json: bool, interactive: boo
             )
         }
         PromptCommands::Remove { name } => {
+            let mut prompted = false;
+            let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+                prompt_text("Prompted variable name to remove")
+            })?;
             let outcome = apply(root, |content| {
                 config_edit::remove_prompt_variable(content, &name)
             })?;

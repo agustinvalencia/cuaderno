@@ -952,3 +952,93 @@ fn a_rejected_edit_is_kept_at_a_path_that_really_exists() {
         "the kept file must hold the rejected edit, not the original"
     );
 }
+
+#[test]
+fn field_set_refuses_an_unknown_note_type() {
+    // The same bug class `plot set` guards against, one verb over:
+    // `validate_reserved_schema_fields` deliberately skips schema names it
+    // does not know, so a typo in `--note-type` wrote
+    // `[schemas.porject.fields.status]`, reported success, and validated
+    // clean — a phantom schema attached to nothing.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let before = fs::read_to_string(config_path(dir.path())).unwrap();
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "porject",
+            "--field",
+            "status",
+            "--type",
+            "string",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unknown note type"))
+        .stderr(predicates::str::contains("project"));
+
+    assert_eq!(
+        fs::read_to_string(config_path(dir.path())).unwrap(),
+        before,
+        "a refused field write must leave the config untouched"
+    );
+
+    // A config-defined custom type is a valid target, not just built-ins.
+    cdno(dir.path())
+        .args([
+            "config",
+            "note-type",
+            "set",
+            "--name",
+            "people",
+            "--folder",
+            "people",
+        ])
+        .assert()
+        .success();
+    cdno(dir.path())
+        .args([
+            "config",
+            "field",
+            "set",
+            "--note-type",
+            "people",
+            "--field",
+            "email",
+            "--type",
+            "string",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn the_config_verbs_refuse_a_directory_that_is_not_a_vault() {
+    // Never opening the vault is deliberate — a broken config is exactly
+    // when these verbs are needed — but it left them unable to tell a
+    // broken vault from no vault. `validate` answered "Config is valid."
+    // on an empty directory, and `var set` created a stray
+    // `.cuaderno/config.toml`, half-initialising somewhere that was never
+    // a vault.
+    let dir = tempdir().unwrap();
+
+    cdno(dir.path())
+        .args(["config", "validate"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("no Cuaderno vault"));
+
+    cdno(dir.path())
+        .args(["config", "var", "set", "--name", "x", "--value", "y"])
+        .assert()
+        .failure();
+
+    assert!(
+        !dir.path().join(".cuaderno").exists(),
+        "a refused verb must not leave a half-initialised vault behind"
+    );
+}

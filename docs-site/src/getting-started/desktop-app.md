@@ -22,8 +22,14 @@ blocks the first launch.
 
 ### Manual `.dmg`
 
-Download `cuaderno-app-<version>-aarch64-apple-darwin.dmg` from the
-[releases page](https://github.com/agustinvalencia/cuaderno/releases), copy the app to
+> **No longer published.** Releases stopped attaching a `.dmg` when the desktop app was
+> retired ([#597](https://github.com/agustinvalencia/cuaderno/issues/597)). The most recent
+> release that has one still works, and the Homebrew cask resolves to it, but no future
+> release will add another. The CLI covers what the app did: `cdno config`,
+> `cdno templates`, and `cdno watch`.
+
+Download `cuaderno-app-<version>-aarch64-apple-darwin.dmg` from a release that still carries
+one on the [releases page](https://github.com/agustinvalencia/cuaderno/releases), copy the app to
 `/Applications`, then strip the quarantine flag (right-click → Open no longer works on macOS 15+):
 
 ```bash
