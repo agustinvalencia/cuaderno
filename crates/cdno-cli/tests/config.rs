@@ -797,3 +797,125 @@ fn the_setter_flags_survive_an_unrelated_edit() {
         "clearing one setter flag must not clear the other:\n{content}"
     );
 }
+
+/// Declare a tracking activity with one metric, so `plot set` has a real
+/// target to aim at.
+fn add_tracking(root: &Path) {
+    let cfg = config_path(root);
+    let mut content = fs::read_to_string(&cfg).unwrap();
+    content.push_str(
+        "\n[tracking.gym]\nrecords = \"sets\"\n\n[tracking.gym.metrics.weight]\nunit = \"kg\"\n",
+    );
+    fs::write(&cfg, content).unwrap();
+}
+
+#[test]
+fn plot_set_writes_the_plot_for_a_declared_metric() {
+    // The whole `plot` family had no test at all, which is how the bug
+    // below survived a green suite.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    add_tracking(dir.path());
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "plot",
+            "set",
+            "--activity",
+            "gym",
+            "--metric",
+            "weight",
+            "--plot",
+            "line",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(config_path(dir.path())).unwrap();
+    assert!(
+        content.contains("plot = \"line\""),
+        "the plot is written onto the declared metric:\n{content}"
+    );
+}
+
+#[test]
+fn plot_set_refuses_an_undeclared_activity_or_metric_rather_than_creating_it() {
+    // `set_metric_plot` creates every table on the way down, which is
+    // right for a form that only offers metrics that exist and wrong for
+    // free text on a command line. Unfixed, a typed `--metric` typo was
+    // WRITTEN: a phantom metric declared on the activity, reported as a
+    // success, with the real metric's plot untouched — and the result
+    // still validates, so nothing downstream caught it either.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    add_tracking(dir.path());
+    let before = fs::read_to_string(config_path(dir.path())).unwrap();
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "plot",
+            "set",
+            "--activity",
+            "gymm",
+            "--metric",
+            "weight",
+            "--plot",
+            "line",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unknown tracking activity"))
+        // The valid set is the point: the likely cause is a typo, and the
+        // fix is usually obvious once the real names are printed.
+        .stderr(predicates::str::contains("gym"));
+
+    cdno(dir.path())
+        .args([
+            "config",
+            "plot",
+            "set",
+            "--activity",
+            "gym",
+            "--metric",
+            "wieght",
+            "--plot",
+            "line",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("unknown metric"));
+
+    assert_eq!(
+        fs::read_to_string(config_path(dir.path())).unwrap(),
+        before,
+        "neither refusal may write anything"
+    );
+}
+
+#[test]
+fn config_edit_refuses_a_closed_stdin_not_merely_the_flag() {
+    // `docs/cli-ergonomics.md` is explicit that interactivity is
+    // `!--no-interactive && stdin AND stdout are both TTYs`, and warns
+    // against simplifying the formula — stdin is the term that matters,
+    // because a verb that checks only the flag will happily spawn
+    // `$EDITOR` against a closed stdin from a script.
+    //
+    // The subprocess here has neither a terminal stdin nor stdout, and
+    // passes NO `--no-interactive`, so it fails only if the TTY terms are
+    // actually consulted.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .env("EDITOR", "false")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args(["config", "edit"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("interactive terminal"));
+}

@@ -298,7 +298,7 @@ pub fn run(root: &Path, command: ConfigCommands, json: bool, no_interactive: boo
     match command {
         ConfigCommands::Show => show(root, json),
         ConfigCommands::Validate { file } => validate(root, file.as_deref(), json),
-        ConfigCommands::Edit { editor } => edit(root, editor.as_deref(), no_interactive),
+        ConfigCommands::Edit { editor } => edit(root, editor.as_deref(), interactive),
         ConfigCommands::NoteType { subcommand } => note_type(root, subcommand, json, interactive),
         ConfigCommands::Field { subcommand } => field(root, subcommand, json, interactive),
         ConfigCommands::Plot { subcommand } => plot(root, subcommand, json, interactive),
@@ -382,10 +382,17 @@ fn validate(root: &Path, file: Option<&Path>, json: bool) -> Result<()> {
     }
 }
 
-fn edit(root: &Path, editor_flag: Option<&str>, no_interactive: bool) -> Result<()> {
+fn edit(root: &Path, editor_flag: Option<&str>, interactive: bool) -> Result<()> {
     // An editor needs a human. Failing fast is better than launching one
     // into a pipe, and matches how every other interactive path behaves.
-    if no_interactive {
+    //
+    // The test is the full interactivity rule, NOT the `--no-interactive`
+    // flag alone: `is_interactive` requires stdin AND stdout to be
+    // terminals, and stdin is the term that matters here. Gating on the
+    // flag meant `cdno config edit < /dev/null` from a script spawned
+    // `$EDITOR` against a closed stdin — which is precisely the regression
+    // `docs/cli-ergonomics.md` warns not to simplify the formula into.
+    if !interactive {
         bail!(
             "`cdno config edit` needs an interactive terminal. \
              Use `cdno config show` to read the config, or edit \
@@ -470,15 +477,37 @@ fn edit(root: &Path, editor_flag: Option<&str>, no_interactive: bool) -> Result<
 
 /// Copy a rejected buffer somewhere it will outlive the scratch directory.
 ///
-/// Best-effort by design: this runs on a path that is already failing, and
-/// an error here must not replace the real reason the save was refused. If
-/// the copy cannot be made the scratch path is still named — it survives
-/// until the process exits, which is long enough to retrieve by hand.
+/// Created through `tempfile`, not written to a name built from the pid.
+/// The pid form had two problems on a shared `/tmp`: the path is
+/// predictable, so `fs::write` would follow a symlink planted there and
+/// truncate whatever it pointed at, and pids are reused, so a later
+/// rejected edit could silently overwrite an earlier one the user had
+/// been told to go and recover. `tempfile` creates with `O_EXCL` and a
+/// random name, which fixes both — a rejected edit is the user's work,
+/// and losing it to the recovery path would be worse than the save that
+/// was refused.
+///
+/// Best-effort by design: this runs on a path that is already failing,
+/// and an error here must not replace the real reason the save was
+/// refused. If the copy cannot be made the scratch path is still named —
+/// it survives until the process exits, which is long enough to retrieve
+/// by hand.
 fn preserve(buffer: &Path, _original: &str, edited: &str) -> std::path::PathBuf {
-    let target =
-        std::env::temp_dir().join(format!("cdno-config-rejected-{}.toml", std::process::id()));
-    match std::fs::write(&target, edited) {
-        Ok(()) => target,
+    let built = tempfile::Builder::new()
+        .prefix("cdno-config-rejected-")
+        .suffix(".toml")
+        .tempfile();
+    match built {
+        Ok(file) => match file.keep() {
+            Ok((mut handle, path)) => {
+                use std::io::Write;
+                match handle.write_all(edited.as_bytes()) {
+                    Ok(()) => path,
+                    Err(_) => buffer.to_path_buf(),
+                }
+            }
+            Err(_) => buffer.to_path_buf(),
+        },
         Err(_) => buffer.to_path_buf(),
     }
 }
@@ -930,6 +959,37 @@ fn plot(root: &Path, command: PlotCommands, json: bool, interactive: bool) -> Re
         metric,
         plot,
     } = command;
+
+    // `set_metric_plot` writes into `[tracking.<activity>.metrics.<metric>]`,
+    // creating every table on the way down. That is right for the desktop,
+    // whose form only ever offers metrics that exist — but it means a typed
+    // `--metric` typo here would be WRITTEN rather than refused: a phantom
+    // metric declared on an activity, reported as a success, with the real
+    // metric's plot left untouched. The config still validates, so nothing
+    // downstream catches it either.
+    //
+    // `set_metric_plot`'s own docs state the "already declared" precondition.
+    // This CLI is the first caller able to break it, so the check belongs
+    // here.
+    let store = FsVaultStore::new(root);
+    let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
+    let model = read_model(&original.content)?;
+    let spec = model.tracking.get(&activity).ok_or_else(|| {
+        let known = model.tracking.keys().cloned().collect::<Vec<_>>();
+        anyhow::anyhow!("{}", unknown_name("tracking activity", &activity, &known))
+    })?;
+    if !spec.metrics.contains_key(&metric) {
+        let known = spec.metrics.keys().cloned().collect::<Vec<_>>();
+        bail!(
+            "{}",
+            unknown_name(
+                &format!("metric on tracking activity '{activity}'"),
+                &metric,
+                &known
+            )
+        );
+    }
+
     let mut prompted = false;
     let raw = gather_or_error(plot, "plot", interactive, &mut prompted, || {
         prompt_text(&format!(
@@ -1006,5 +1066,18 @@ fn prompt_var(root: &Path, command: PromptCommands, json: bool, interactive: boo
                 &format!("Prompted variable '{name}' removed."),
             )
         }
+    }
+}
+
+/// Phrase an unknown-name refusal, listing what the config does declare.
+///
+/// The valid set is the whole point: these names are free text on the
+/// command line, so the likely cause of a miss is a typo, and the fix is
+/// usually visible the moment the real names are printed.
+fn unknown_name(what: &str, given: &str, known: &[String]) -> String {
+    if known.is_empty() {
+        format!("no {what} is declared in .cuaderno/config.toml, so '{given}' cannot be set")
+    } else {
+        format!("unknown {what} '{given}' — declared: {}", known.join(", "))
     }
 }
