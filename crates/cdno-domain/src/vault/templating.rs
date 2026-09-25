@@ -35,8 +35,6 @@ use crate::type_registry::NoteTypeDescriptor;
 /// `{ "kind": "prompt", "data": { "message": … } }`) for the desktop
 /// Templates view's placeholder-reference panel, which groups the set by
 /// `kind`.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum PlaceholderSource {
@@ -61,8 +59,6 @@ pub enum PlaceholderSource {
 
 /// A `{{placeholder}}` a note type's template supports, plus where its
 /// value comes from. Returned by [`Vault::template_placeholders`].
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TemplatePlaceholder {
     pub name: String,
@@ -74,8 +70,6 @@ pub struct TemplatePlaceholder {
 /// `cdno-core` and carries no serde/ts-rs derives). Reported by
 /// [`Vault::read_template`] and [`Vault::list_templates`] so the desktop
 /// Templates view can say "custom override" vs "built-in default".
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TemplateSourceKind {
@@ -106,8 +100,6 @@ impl From<TemplateSource> for TemplateSourceKind {
 /// built-in default, unless overridden); a config-defined custom type may
 /// have none yet, which the view offers to scaffold via
 /// [`Vault::create_template`].
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TemplateSummary {
     /// The type key — `project`, `daily`, or a config custom type's name.
@@ -132,8 +124,6 @@ pub struct TemplateSummary {
 /// returned by [`Vault::read_template`]. `source` is `None` when the
 /// content is a synthesised starter for a custom type with no template
 /// file — nothing on disk backs it yet.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct TemplateContent {
     pub content: String,

@@ -9,12 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
-  # System libraries cdno-tauri needs to compile on Linux (webkit2gtk
-  # pulls in soup/javascriptcore). Kept in one place; every job that
-  # builds the WHOLE workspace installs them. `coverage` no longer does:
-  # it is scoped to the crates that outlive the desktop app (#597).
-  TAURI_LINUX_DEPS: >-
-    libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf
 
 jobs:
   check:
@@ -22,18 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Tauri system dependencies
-        run: |
-          # The runner image ships third-party apt sources (Chrome) that
-          # intermittently serve a Packages index whose hash disagrees with
-          # the Release file they were published against. `apt-get update`
-          # treats that as fatal, exits 100, and takes down every job that
-          # needs these libraries before a line of Rust is compiled. None of
-          # the packages below come from those sources, so drop them first.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/microsoft-prod.list
-          sudo apt-get update
-          sudo apt-get install -y $TAURI_LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
@@ -53,18 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Tauri system dependencies
-        run: |
-          # The runner image ships third-party apt sources (Chrome) that
-          # intermittently serve a Packages index whose hash disagrees with
-          # the Release file they were published against. `apt-get update`
-          # treats that as fatal, exits 100, and takes down every job that
-          # needs these libraries before a line of Rust is compiled. None of
-          # the packages below come from those sources, so drop them first.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/microsoft-prod.list
-          sudo apt-get update
-          sudo apt-get install -y $TAURI_LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -76,37 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install Tauri system dependencies
-        run: |
-          # The runner image ships third-party apt sources (Chrome) that
-          # intermittently serve a Packages index whose hash disagrees with
-          # the Release file they were published against. `apt-get update`
-          # treats that as fatal, exits 100, and takes down every job that
-          # needs these libraries before a line of Rust is compiled. None of
-          # the packages below come from those sources, so drop them first.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/microsoft-prod.list
-          sudo apt-get update
-          sudo apt-get install -y $TAURI_LINUX_DEPS
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-
-  ui:
-    name: UI
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ui
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: bun install --frozen-lockfile
-      - run: bun run build
-      - run: bun run test
 
   coverage:
     name: Coverage
@@ -116,24 +58,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-tarpaulin
-      # Scoped off the desktop app (#597) rather than `--workspace`.
-      # Coverage of a surface being deleted is noise, and the Tauri tree
-      # was this job's entire cost: on `--workspace` tarpaulin took 14
-      # minutes and defined the whole CI wall clock, because
-      # `-Clink-dead-code` plus full debug info over the webkit/objc/GTK
-      # dependency tree also filled the runner's disk. That is why this
-      # job used to reclaim ~25 GB of preinstalled toolchains and install
-      # the Tauri system libraries before it could run at all; no kept
-      # crate depends on tauri/wry/webkit2gtk, so both steps went with it.
-      #
-      # BOTH flags are needed and they do different things. `--exclude`
-      # drops the package from the build and test run; the report still
-      # lists every workspace source file, so cdno-tauri would come back
-      # as 0/N and crater the published number. Measured: excluding the
-      # package alone left `crates/cdno-tauri/src/vault_locator.rs: 0/9`
-      # in the output. `--exclude-files` is what keeps it out of the
-      # denominator.
-      - run: cargo tarpaulin --workspace --exclude cdno-tauri --exclude-files 'crates/cdno-tauri/*' --out xml
+      # Plain `--workspace` again. It was scoped off cdno-tauri while the
+      # desktop app still existed (#597): that tree was this job's entire
+      # cost, since `-Clink-dead-code` plus full debug info over
+      # webkit/objc/GTK both took ~14 minutes and filled the runner's
+      # disk, which is why the job once reclaimed ~25 GB of preinstalled
+      # toolchains and installed system libraries before it could run.
+      # With the package gone the exclusions would name nothing, and
+      # `--exclude` on an absent package is an error rather than a no-op.
+      - run: cargo tarpaulin --workspace --out xml
       - uses: codecov/codecov-action@v5
         with:
           files: cobertura.xml

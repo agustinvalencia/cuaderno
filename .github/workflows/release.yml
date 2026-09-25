@@ -103,11 +103,11 @@ jobs:
 
       - name: Build release binaries
         # Scope to the two shipped binaries: `cdno` (cdno-cli) and
-        # `cdno-mcp` (cdno-mcp). A bare `--bins` would also pull in
-        # cdno-tauri, whose release build embeds `ui/dist` (gitignored,
-        # absent on these runners) and needs webkit on Linux — it would
-        # break this job. Since #597 the desktop app is not built here at
-        # all, but the scoping stays: it is what keeps cdno-tauri out.
+        # `cdno-mcp` (cdno-mcp). This existed to keep cdno-tauri out of a
+        # bare `--bins` — its release build embedded `ui/dist` and needed
+        # webkit on Linux. The desktop app is gone (#601), so nothing is
+        # being excluded any more; the scoping stays as a statement of
+        # what this job ships rather than as a workaround.
         run: cargo build --release --target ${{ matrix.target }} -p cdno-cli -p cdno-mcp --bins
         env:
           # Cross-compiling Linux aarch64 needs the right linker.

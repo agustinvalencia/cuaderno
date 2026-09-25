@@ -5,6 +5,11 @@
 | **Status** | Accepted — 2026-07-26 |
 | **Tracked by** | #478 (epic), #479–#491 |
 | **Affects** | `cdno-core`, `cdno-domain`, `cdno-mcp`, `cdno-tauri`, `ui` |
+
+> **Note (2026-09-25).** This RFC was written while the desktop app existed, and its `cdno-tauri`
+> and `ui/` references describe a surface removed in #601. It is left as written: an accepted RFC
+> is a record of a decision at a point in time, and editing it would misrepresent what was decided.
+> The declarative metric model it specifies lives in `cdno-core`/`cdno-domain` and is unaffected.
 | **Related** | #453 (stewardship line parsing), #461 (stewardship detail draft bug), #492 (`as_json`, split out) |
 
 > **Authorship.** This RFC was produced collaboratively between the repository maintainer and

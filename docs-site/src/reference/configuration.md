@@ -24,7 +24,7 @@ extra_required = ["collaborators"]
 [schemas.evidence]
 extra_required = []
 
-# Typed frontmatter fields for a built-in type. Recognised by the desktop
+# Typed frontmatter fields for a built-in type. Recognised by the
 # Templates editor and type-checked by `cdno lint`.
 [schemas.daily.fields.meds]
 type = "bool"                     # bool | int | float | string | date
@@ -96,7 +96,7 @@ looks like a broken view rather than a misconfigured vault.
 Two things guard against that:
 
 - `cdno reindex` prints how many files the globs excluded.
-- The desktop app shows a dismissible notice when the count looks disproportionate — a lone
+- `cdno lint` reports when the count looks disproportionate — a lone
   `CLAUDE.md` stays silent, a glob swallowing a large share of the vault does not.
 
 If notes go missing, clear the pattern and run `cdno reindex`: every row comes back.
@@ -110,7 +110,7 @@ automatically, by location. See [vault structure](../concepts/vault-structure.md
 is the richer sibling of `extra_required`: instead of just a name, each field carries a type (and
 optionally a default and an allowed-value set). Four things consume it today:
 
-- the desktop **Templates editor** recognises the field, so a custom template referencing
+- `cdno templates` recognises the field, so a custom template referencing
   `{{<name>}}` no longer warns "renders literally";
 - **note creation** populates the field's `default` at create — a custom template referencing
   `{{<name>}}` renders that default (a field with no default renders `null`), so the value lands in
@@ -206,7 +206,7 @@ aggregate = "mean"         # a RATING - a sum would grow with how often you log
 | `derived` | metric | An expression computing this metric from sibling fields, e.g. `"km * rate_per_km"`. Evaluated **per record, before aggregation**. Declare `type` on it and the vault refuses to open. |
 | `unit` | metric | Display unit (`min`, `kg`, `EUR`). Carried through to the chart and the MCP series. |
 | `label` | metric | Display name for the series, when the metric's key is not what you want on a chart (`resting_hr` → `Resting heart rate`). |
-| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws, and whether the desktop draws it at all — see the note below. |
+| `plot` | metric | `none` \| `line` \| `column` \| `area` \| `scatter`. Defaults to `none`. Chooses the **mark** the chart draws, and whether a chart consumer draws it at all — see the note below. |
 
 ### Derived metrics
 
@@ -249,7 +249,7 @@ OP      := '+' | '-' | '*'
 - **Every operand must name a metric the same activity declares.** A typo is a vault-open error
   naming the field, rather than a silently empty chart. The cost of that requirement: an operand
   that exists only to be multiplied — a rate, say — still becomes a metric of its own. Leave its
-  `plot` undeclared (the default) and the desktop will not chart it alongside the result — see
+  `plot` undeclared (the default) and it is not charted alongside the result — see
   below.
 - **`type` must be omitted** — the output is numeric by construction, so declaring one can only
   contradict it.
@@ -278,10 +278,10 @@ Notes and limits:
   the same metric can never appear twice under two disagreeing numbers. This rule is unconditional
   — it keys on the frontmatter derivation's full produced set, not on what any individual metric's
   `plot` says, so a declared-but-unplotted metric still suppresses its body-table equivalent.
-- **`plot` chooses the mark, and gates whether the desktop draws it.** A declared `line`/`column`
+- **`plot` chooses the mark, and gates whether it is drawn at all.** A declared `line`/`column`
   is used as the chart's mark (an `area` or `scatter` resolves to the closest of the two the chart
   draws). `plot = "none"` — the default for a declared metric that names no mark — is still
-  emitted and still queryable over MCP, but the desktop leaves it out of the chart pane. Declaring
+  emitted and still queryable over MCP, but left out of any chart pane. Declaring
   an activity is an explicit act, and is allowed to change what is drawn: its frontmatter series
   replace its body-table ones (the rule above, unaffected by this), and only the metrics that opt
   into a mark are charted.
@@ -304,26 +304,34 @@ Static `[variables]` resolve in any custom template (e.g. `{{author}}`). Prompte
 static default) — see the
 [tutorial](../tutorials/templates-and-frontmatter.md#prompted-variables).
 
-## Editing from the desktop app
+## Editing from the CLI
 
-You can edit `.cuaderno/config.toml` directly from the desktop app's **Config** view, without
-hand-editing the file. It offers a **Raw** text editor and a structured **Form** for note types and
-schema extensions; **Check** dry-runs the same validation the app runs when it opens a vault.
+`cdno config` edits this file without hand-editing it, and every write goes through the same gate:
 
-Saving is gated so an edit — from either view — can never leave the vault unopenable:
+```bash
+cdno config show                    # verbatim, comments and key order intact
+cdno config validate                # the exact check running a vault performs
+cdno config edit                    # $EDITOR round trip
+cdno config note-type set --name people --folder people --required name,email
+cdno config field set --note-type people --field email --type string
+cdno config var set --name author --value "Your Name"
+```
 
-1. The whole candidate is **validated first** — the exact check the app runs at open (TOML parse,
-   `ignore` globs, and the `[note_types.*]` / `[schemas.*]` rules). If it would not reopen, the save
-   is refused and the file is left untouched.
+Saving is gated so an edit can never leave the vault unopenable:
+
+1. The whole candidate is **validated first** — TOML parse, `ignore` globs, and the
+   `[note_types.*]` / `[schemas.*]` rules. If it would not reopen, the save is refused and the file
+   is left untouched.
 2. A **content-hash compare-and-swap** then guards against a concurrent hand-edit: if the file
-   changed on disk since the editor read it, the save is refused with a "changed on disk — reload"
-   notice rather than overwriting the newer version.
-3. The vault is then **reloaded live**, so the edit applies with no restart. A Raw save writes the
-   buffer **verbatim**; a Form save applies a **surgical** edit to just the table it changed — either
-   way comments, key order, and the `[variables]` block are preserved.
+   changed on disk since it was read, the save is refused rather than overwriting the newer version.
+3. Only then is the candidate **written verbatim**, so comments and key order survive.
 
-The full walkthrough of the Config view is in
-[Editing the config in the app](../getting-started/config-editor.md).
+The structured setters *merge*: a flag you do not pass keeps its current value, so changing one key
+cannot silently drop the rest of an entry. Pass an empty value to clear one (`--template ''`), or
+the paired negative flag for a boolean (`--no-append-only`).
+
+See the [`config` reference](cli/config.md) for every subcommand.
+
 
 ## See also
 

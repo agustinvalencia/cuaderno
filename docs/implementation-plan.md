@@ -362,7 +362,7 @@ impl TryFrom<Frontmatter> for ProjectFrontmatter {
 
 ### 4.3 Domain Operations
 
-Domain operations are methods on the `Vault` struct. Each operation encapsulates a complete workflow — reading files, validating state, applying changes, updating the index, and logging to the daily entry. The key design choice: **every domain operation returns a `VaultTransaction` that must be explicitly committed.** This gives the caller (CLI, MCP, Tauri) control over when the transaction is finalised, and ensures that all changes within an operation are atomic.
+Domain operations are methods on the `Vault` struct. Each operation encapsulates a complete workflow — reading files, validating state, applying changes, updating the index, and logging to the daily entry. The key design choice: **every domain operation returns a `VaultTransaction` that must be explicitly committed.** This gives the caller (CLI, MCP) control over when the transaction is finalised, and ensures that all changes within an operation are atomic.
 
 *A brief refresher on the Command pattern.* The Command pattern encapsulates a request as an object, allowing you to parameterise operations, queue them, and support undo. In cuaderno, the `VaultTransaction` is the command object: it captures all the file writes and index updates that an operation requires, and the `commit()` method executes them atomically.
 
@@ -413,7 +413,7 @@ impl<S: VaultStore, I: VaultIndex> Vault<S, I> {
 }
 ```
 
-This pattern is repeated for every domain operation. The caller — whether CLI, MCP handler, or Tauri command — receives the transaction and commits it:
+This pattern is repeated for every domain operation. The caller — whether CLI or MCP handler — receives the transaction and commits it:
 
 ```rust
 // In the CLI layer:
@@ -659,7 +659,7 @@ impl<S: VaultStore, I: VaultIndex> Vault<S, I> {
 
 ## 5. The Interface Layers
 
-The CLI, MCP, and Tauri crates are intentionally thin. They translate between their respective protocols and the domain layer. The domain layer does all the thinking.
+The CLI and MCP crates are intentionally thin. They translate between their respective protocols and the domain layer. The domain layer does all the thinking.
 
 ### 5.1 CLI (`cdno-cli`)
 
@@ -755,51 +755,13 @@ The `#[tool]` macro generates the JSON Schema from `GetOrientationInput`, regist
 
 **`schemars` version pinning.** `schemars` is pinned directly to the same major as rmcp's transitive version (1.x). The derive macro generates code referencing `::schemars::...` paths, so a top-level `schemars` crate must be in the dependency tree — the `rmcp::schemars` re-export alone is not enough.
 
-### 5.3 Tauri Backend (`cdno-tauri`)
+### 5.3 Tauri Backend (`cdno-tauri`) — removed
 
-The Tauri crate follows the same pattern as the MCP crate, but translates between Tauri IPC (`invoke`) and domain methods instead of JSON-RPC and domain methods.
-
-Tauri manages state through its built-in state management. The `Vault` is wrapped in a `Mutex` and registered as Tauri managed state:
-
-```rust
-fn main() {
-    let config = VaultConfig::load(&vault_path).unwrap();
-    let store = FsVaultStore::new(&vault_path);
-    let index = SqliteIndex::open(&db_path).unwrap();
-    let vault = Vault::new(store, index, config);
-
-    // Start file watcher for live index updates.
-    let watcher = FsFileWatcher::new(&vault_path);
-    let (tx, rx) = channel();
-    watcher.watch(tx).unwrap();
-    // Spawn a thread to process file events and update the index.
-    spawn_watcher_thread(rx, vault.clone());
-
-    tauri::Builder::default()
-        .manage(Mutex::new(vault))
-        .invoke_handler(tauri::generate_handler![
-            get_orientation,
-            get_weekly_context,
-            update_project_state,
-            // ... all commands
-        ])
-        .run(tauri::generate_context!())
-        .unwrap();
-}
-
-#[tauri::command]
-fn get_orientation(
-    vault: tauri::State<'_, Mutex<Vault<FsVaultStore, SqliteIndex>>>,
-) -> Result<OrientationOutput, String> {
-    let vault = vault.lock().map_err(|e| e.to_string())?;
-    let input = OrientationInput::default();
-    handle_get_orientation(&vault, input).map_err(|e| e.to_string())
-}
-```
-
-**Shared layer clarification.** The Tauri commands should call domain methods directly (`vault.commitments()`, `vault.update_project_state()`), not the MCP handler wrappers. MCP handlers deal with JSON-serializable input/output types and add serialisation overhead that Tauri doesn't need — Tauri can work with richer Rust types directly via Tauri's own serde bridge. The right shared layer is the domain methods themselves, not the MCP handlers. Both MCP and Tauri are thin translation layers over the same domain API, but they translate differently.
-
------
+The desktop app this section specified was built and later retired (#597, #601). Its
+capabilities reached the CLI first — `cdno config`, `cdno templates`, `cdno watch` — and the
+`pre-desktop-removal` tag marks the last commit containing it. The section is dropped rather
+than kept stale: the crate it describes no longer exists, and its IPC and state-management
+detail would only mislead.
 
 ## 6. Error Handling Strategy
 
@@ -841,7 +803,7 @@ pub enum DomainError {
 }
 ```
 
-The CLI translates `DomainError` into user-facing messages. The MCP layer translates it into JSON-RPC error responses. The Tauri layer translates it into a string returned to the React frontend. Each translation is a simple `match` on the error variants, formatting appropriately for the medium.
+The CLI translates `DomainError` into user-facing messages. The MCP layer translates it into JSON-RPC error responses. Each translation is a simple `match` on the error variants, formatting appropriately for the medium.
 
 -----
 
@@ -894,7 +856,6 @@ fn project_state_update_logs_history() {
 
 **cdno-mcp**: integration tests that send JSON-RPC messages to the stdio transport and verify responses. Tests the serialisation/deserialisation and the handler dispatch, not the domain logic.
 
-**cdno-tauri**: tested via the React frontend’s integration tests (Playwright or similar), not directly.
 
 -----
 
@@ -982,7 +943,7 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 ### Phase 5: Cuaderno UI (estimated: 4-6 weeks)
 
-**Tauri setup.** Create the `cdno-tauri` crate. Register `Vault` as managed state. Implement Tauri commands that call the shared handler functions. Set up the React frontend with Vite and Tremor.
+**Tauri setup.** *(Built, then retired — #597, #601.)* Created the `cdno-tauri` crate, registered `Vault` as managed state, and implemented Tauri commands over the shared handler functions, with a React frontend.
 
 **Home / Daily Orientation view.** The most important UI view. Commitments strip, project cards with state and top action, energy selector. Implement file watching for live updates.
 
@@ -1022,9 +983,8 @@ External crates the project will depend on:
 |`xxhash-rust`                        |Fast content hashing             |core                |
 |`rmcp`                               |Official MCP SDK: `#[tool_router]` dispatch, `ServerHandler` trait, stdio + HTTP transports, JSON-RPC framing|mcp                 |
 |`schemars`                           |JSON Schema generation from typed structs (pinned to rmcp's transitive major)|mcp                 |
-|`tokio`                              |Async runtime for the MCP service loop (and HTTP server, Tauri)|mcp, tauri          |
+|`tokio`                              |Async runtime for the MCP service loop (and HTTP server)|mcp                 |
 |`axum`                               |HTTP routing (used together with rmcp's HTTP transport feature)|mcp (HTTP transport)|
-|`tauri`                              |Desktop app framework            |tauri               |
 |`tempfile`                           |Temporary directories for tests  |core (dev)          |
 
 -----
@@ -1033,7 +993,7 @@ External crates the project will depend on:
 
 A few decisions deferred to implementation time:
 
-**Async or sync in the domain layer?** The domain layer’s operations are fundamentally synchronous (read file, compute, write file). Making them async adds complexity without obvious benefit for the CLI. However, the MCP HTTP transport and the Tauri app benefit from async I/O. The pragmatic answer is: keep the domain layer synchronous and use `tokio::task::spawn_blocking` in the async contexts (MCP HTTP, Tauri) to call domain methods without blocking the event loop.
+**Async or sync in the domain layer?** The domain layer’s operations are fundamentally synchronous (read file, compute, write file). Making them async adds complexity without obvious benefit for the CLI. However, the MCP HTTP transport benefits from async I/O. The pragmatic answer is: keep the domain layer synchronous and use `tokio::task::spawn_blocking` in the async contexts (MCP HTTP) to call domain methods without blocking the event loop.
 
 **How deep should deadline parsing go?** Parsing “hard: 2026-05-22” from a milestone line is straightforward regex. Parsing “every 6 months — next: 2026-04” from a stewardship periodic commitment requires understanding recurrence patterns. How much of this should be in the indexer (fast but limited) versus computed on-the-fly by the domain layer (flexible but slower)? The recommendation is: index the next occurrence date only, and let the domain layer compute future occurrences when needed.
 

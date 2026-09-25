@@ -15,7 +15,6 @@ Cuaderno is a vault management tool that implements the Research Logbook Method 
 The tool has four consumers:
 
 - **The researcher** via the CLI in a terminal
-- **The researcher** via the Cuaderno desktop UI (Tauri)
 - **Claude** via the MCP server (stdio for local, HTTP for self-hosted)
 - **Claude skills** as choreographed workflows combining MCP calls with ADHD-friendly interaction patterns
 
@@ -274,7 +273,7 @@ Open the follow-up study and line up two reading blocks a week.
 - [[journal/2026/weekly/2026-W17]]
 ```
 
-**Created by**: scaffolded for the calendar month on first write, keyed by month (any day in the month resolves to the same note at `journal/<year>/monthly/<YYYY-MM>.md`). The three review sections — Wins, Themes, Next Month's Focus — are composed by Claude during the monthly-review ritual, mirroring the weekly note's celebration-first ethos. There is deliberately **no Metrics section**: quantitative metrics stay behind the desktop "show metrics" toggle, not a note section. The `## Weeks` block **links, doesn't copy** — one wikilink per Monday falling within the calendar month, pointing at that Monday's weekly note — so the weekly notes remain the source of truth and the month points at them (respecting markdown-as-truth + append-only). Unlike the weekly note there is no cross-note carry-forward: every section lands in the same month's note.
+**Created by**: scaffolded for the calendar month on first write, keyed by month (any day in the month resolves to the same note at `journal/<year>/monthly/<YYYY-MM>.md`). The three review sections — Wins, Themes, Next Month's Focus — are composed by Claude during the monthly-review ritual, mirroring the weekly note's celebration-first ethos. There is deliberately **no Metrics section**: quantitative metrics were a desktop-only view (since removed, #601) rather than a note section. The `## Weeks` block **links, doesn't copy** — one wikilink per Monday falling within the calendar month, pointing at that Monday's weekly note — so the weekly notes remain the source of truth and the month points at them (respecting markdown-as-truth + append-only). Unlike the weekly note there is no cross-note carry-forward: every section lands in the same month's note.
 
 ### 5.3 Project Map
 
@@ -738,8 +737,6 @@ cuaderno/
 │   │           └── server.rs   ← cdno-mcp-server binary (Streamable HTTP,
 │   │                             stateless JSON — rmcp supplies both
 │   │                             transports, so no transport/ module)
-│   └── cdno-tauri/         ← Tauri backend commands for Cuaderno UI
-├── ui/                     ← React + Tremor frontend (Cuaderno UI)
 └── skills/                 ← Claude skill definitions (markdown)
 ```
 
@@ -751,26 +748,21 @@ graph TD
     DOMAIN["cdno-domain\n(types, rules, queries)"]
     CLI["cdno-cli\n(terminal)"]
     MCP["cdno-mcp\n(MCP handlers)"]
-    TAURI["cdno-tauri\n(Tauri backend)"]
     STDIO["stdio transport"]
     HTTP["http transport\n(Axum)"]
-    UI["React UI\n(Cuaderno UI)"]
     SKILLS["Claude skills\n(markdown)"]
 
     CORE --> DOMAIN
     DOMAIN --> CLI
     DOMAIN --> MCP
-    DOMAIN --> TAURI
     MCP --> STDIO
     MCP --> HTTP
-    TAURI --> UI
     MCP -.->|"consumed by"| SKILLS
 
     style CORE fill:#eaf5ee,stroke:#4a9a5b
     style DOMAIN fill:#e8edf5,stroke:#4a6fa5
     style CLI fill:#faf3eb,stroke:#c4833e
     style MCP fill:#faf3eb,stroke:#c4833e
-    style TAURI fill:#faf3eb,stroke:#c4833e
 ```
 
 ### Crate responsibilities
@@ -782,8 +774,6 @@ graph TD
 **cdno-cli**: thin translation layer. Parses command-line arguments, calls domain functions, formats output for the terminal. No business logic.
 
 **cdno-mcp**: thin translation layer. Defines MCP tool schemas (derived from domain types via serde), receives JSON-RPC requests, calls domain functions, returns JSON-RPC responses. The handler layer is transport-agnostic. Two binaries serve it: `cdno-mcp` (stdio, locally spawned) and `cdno-mcp-server` (MCP Streamable HTTP in stateless JSON mode — not SSE, which Claude's remote-connector infrastructure doesn't support).
-
-**cdno-tauri**: thin translation layer. Defines Tauri commands that call domain methods directly (not MCP handler wrappers — Tauri can work with richer Rust types via its own serde bridge, avoiding unnecessary serialisation overhead). Manages the Tauri state (vault path, index handle). The React frontend calls these commands via `invoke()`. The right shared layer between MCP and Tauri is the domain API itself, not the MCP handlers.
 
 ### Index integrity
 
@@ -799,7 +789,7 @@ The SQLite index is a cache over the vault’s markdown files. In mdv, this cach
 
 If any file write fails, all successfully written files are restored from their saved content and the SQLite transaction is rolled back. If the process crashes between file writes and the SQLite commit, the startup reconciliation (below) detects the index-vs-filesystem inconsistency and re-indexes the changed files. The invariant is: **a stale index is recoverable; a stale file is data loss** — so the system always fails in the safe direction. **Important caveat**: this provides **file-level consistency** (every file on disk is correctly indexed), not **operation-level atomicity across crashes**. If a multi-file operation (e.g., update project state + append to daily log) is interrupted mid-way, reconciliation will index the files that were written but has no concept of "this logical operation was partial." In practice, most operations touch 1-2 files and the daily log is append-only, so the worst case is a missing log entry — not data corruption.
 
-**Startup reconciliation.** On every CLI invocation, MCP session start, or Tauri app launch, the tool performs a fast consistency check:
+**Startup reconciliation.** On every CLI invocation or MCP session start, the tool performs a fast consistency check:
 
 ```
 for each file in vault:
@@ -819,7 +809,7 @@ for each file in vault not in index:
 
 This is O(n) in files but each check is a stat call — no file reads unless mtime differs. For a vault of a few thousand files, this completes in milliseconds. The content hash (xxhash or similar, fast and non-cryptographic) is stored in the index alongside each file’s mtime and is updated on every indexed write.
 
-**File watching.** For long-running processes (MCP HTTP server, Tauri app), a filesystem watcher (via the `notify` crate) detects external changes in real time and updates the index incrementally. File watching is a best-effort optimisation — it reduces latency but is not relied upon for correctness, because watchers can miss events (overflow, race conditions, OS limitations). The startup reconciliation is the correctness backstop.
+**File watching.** For long-running processes (the MCP HTTP server, `cdno watch`), a filesystem watcher (via the `notify` crate) detects external changes in real time and updates the index incrementally. File watching is a best-effort optimisation — it reduces latency but is not relied upon for correctness, because watchers can miss events (overflow, race conditions, OS limitations). The startup reconciliation is the correctness backstop.
 
 For the HTTP transport specifically, a periodic full reconciliation (every 5 minutes) runs as a safety net alongside the watcher, catching any events the watcher missed.
 
@@ -1146,14 +1136,14 @@ cdno normalise --check   # Report out-of-order notes (non-zero exit), write noth
 
 Every mutating CLI command supports two paths to the same domain operation:
 
-1. **Non-interactive (full args).** All required inputs supplied via flags, e.g. `cdno action add surrogate-model "Run sweep" --energy deep`. The command runs without prompting and without a confirmation step. This is the path used for scripting, for muscle-memory invocation, and (by mirror) for agentic clients (MCP, Tauri) which always supply full args at the transport boundary.
+1. **Non-interactive (full args).** All required inputs supplied via flags, e.g. `cdno action add surrogate-model "Run sweep" --energy deep`. The command runs without prompting and without a confirmation step. This is the path used for scripting, for muscle-memory invocation, and (by mirror) for agentic clients (MCP) which always supply full args at the transport boundary.
 2. **Interactive (prompt missing fields).** Required flags can be omitted; if stdout is a TTY the CLI prompts for them — fuzzy-search selectors for finite sets (project slug, milestone, energy, status), text input for titles, calendar widget for dates. After all values are gathered, a preview is shown and the user confirms before the `VaultTransaction` is committed.
 
 **Confirmation policy: confirm-on-prompt, not always.** If the user supplied every required field via flags, the command proceeds without an extra confirmation — they already showed they know what they want. If at least one field was prompted (i.e. the user wasn't fully sure), a preview-and-confirm runs before commit. This preserves typing speed on the deliberate path and adds a safety net on the exploratory path. Agentic clients never see prompts at all; their input is validated by the transport's schema before reaching the handler.
 
 **TTY detection and override.** Non-TTY sessions (piped, CI, redirected) skip prompting entirely and error with a clear "missing --flag" message. A `--no-interactive` flag forces the same behaviour explicitly. There is no `--yes` / autoconfirm flag because the only confirmation is on the prompt path, and on that path you've already typed values into prompts — saying yes once at the end is honest.
 
-**Implementation.** Prompting lives entirely in `cdno-cli` (a `prompt` module with helpers like `prompt_project`, `prompt_milestone`, `prompt_energy`, `confirm_preview`). The `cdno-domain` crate stays sync, pure, and I/O-free; it never knows about prompts. The selectors read from the existing index — `Vault::list_active_projects()`, the `milestones` index table — so no new domain surface is required. The library is `inquire` (chosen over `dialoguer` for fuzzy-by-default selectors and a built-in date widget — exactly the "I don't remember the slug" and "what's the deadline" cases). The size cost (~200-400 KB binary, 25-40 transitive deps) is noise next to rusqlite/axum/tauri.
+**Implementation.** Prompting lives entirely in `cdno-cli` (a `prompt` module with helpers like `prompt_project`, `prompt_milestone`, `prompt_energy`, `confirm_preview`). The `cdno-domain` crate stays sync, pure, and I/O-free; it never knows about prompts. The selectors read from the existing index — `Vault::list_active_projects()`, the `milestones` index table — so no new domain surface is required. The library is `inquire` (chosen over `dialoguer` for fuzzy-by-default selectors and a built-in date widget — exactly the "I don't remember the slug" and "what's the deadline" cases). The size cost (~200-400 KB binary, 25-40 transitive deps) is noise next to rusqlite/axum.
 
 -----
 
@@ -1402,10 +1392,6 @@ cdno-mcp-server --bind 127.0.0.1:8787 --vault ~/vault
 - `--smoke` (no-vault echo fixture for proving infra) and `--read-only` (context tools only)
 - Enables: access from any device, mobile Claude usage, multi-machine setups
 
-### Tauri (direct)
-
-The Cuaderno UI does **not** use either MCP transport. It imports `cdno-domain` directly via Tauri commands — no serialisation overhead, no separate process. The UI is an internal consumer; MCP transports are for external consumers (Claude Desktop, remote clients).
-
 ### Future extensions
 
 - **WebSocket transport**: for real-time bidirectional communication (e.g., live collaboration)
@@ -1466,7 +1452,11 @@ The Cuaderno UI does **not** use either MCP transport. It imports `cdno-domain` 
 
 **Deliverable**: Claude integration is working. Daily orientation, weekly review, and all capture workflows function via conversation.
 
-### Phase 5: UI (Cuaderno UI)
+### Phase 5: UI (Cuaderno UI) — built, then retired (#597, #601)
+
+The desktop app was built as described below and later removed. Its capabilities reached the
+CLI first (`cdno config`, `cdno templates`, `cdno watch`), and the `pre-desktop-removal` tag
+marks the last commit that contained it. Kept here as the record of what was planned and built.
 
 - Implement Tauri backend commands consuming `cdno-domain`
 - **Implement persistent file watcher for live index updates in the desktop app**
