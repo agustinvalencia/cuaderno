@@ -394,6 +394,24 @@ pub fn create(root: &Path, note_type: &str) -> Result<String> {
     }
 }
 
+/// The source rung as a stable wire token.
+///
+/// Separate from the human label because `--json` is read by scripts:
+/// `source_label`'s "none (run `templates new`)" would force a caller to
+/// match prose, and would break the moment that prose is reworded.
+/// `TemplateSourceKind` is a closed enum, so it rides the wire as a token
+/// and the label stays free to change.
+fn source_token(source: Option<cdno_domain::TemplateSourceKind>) -> &'static str {
+    use cdno_domain::TemplateSourceKind::*;
+    match source {
+        Some(CustomVariant) => "custom_variant",
+        Some(CustomBase) => "custom_base",
+        Some(BuiltinVariant) => "builtin_variant",
+        Some(BuiltinDefault) => "builtin_default",
+        None => "none",
+    }
+}
+
 /// The source rung as a column value.
 fn source_label(source: Option<cdno_domain::TemplateSourceKind>) -> &'static str {
     use cdno_domain::TemplateSourceKind::*;
@@ -439,7 +457,7 @@ pub fn list_rows(rows: &[cdno_domain::TemplateSummary]) -> Vec<serde_json::Value
                 "note_type": row.note_type,
                 "display_name": row.display_name,
                 "is_custom_type": row.is_custom_type,
-                "source": source_label(row.source),
+                "source": source_token(row.source),
                 "has_custom_file": row.has_custom_file,
                 "path": row.path,
             })

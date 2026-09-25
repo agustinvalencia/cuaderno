@@ -447,7 +447,7 @@ fn edit(root: &Path, editor_flag: Option<&str>, interactive: bool) -> Result<()>
         // the scratch buffer. Persisting it and naming the path is the whole
         // point — a rejected save must not also destroy the work.
         Err(ConfigSaveError::Validation(err)) => {
-            let kept = preserve(&buffer, &original.content, &edited);
+            let kept = preserve(scratch, &buffer, &edited);
             bail!(
                 "that config would not open, so nothing was written:\n  {}\n\n\
                  Your edit is kept at {}",
@@ -456,7 +456,7 @@ fn edit(root: &Path, editor_flag: Option<&str>, interactive: bool) -> Result<()>
             )
         }
         Err(ConfigSaveError::Conflict) => {
-            let kept = preserve(&buffer, &original.content, &edited);
+            let kept = preserve(scratch, &buffer, &edited);
             bail!(
                 "the config changed on disk while you were editing, so nothing \
                  was written rather than clobber it.\n\n\
@@ -466,7 +466,7 @@ fn edit(root: &Path, editor_flag: Option<&str>, interactive: bool) -> Result<()>
             )
         }
         Err(ConfigSaveError::Internal(message)) => {
-            let kept = preserve(&buffer, &original.content, &edited);
+            let kept = preserve(scratch, &buffer, &edited);
             bail!(
                 "could not save the config: {message}\n\nYour edit is kept at {}",
                 kept.display()
@@ -477,39 +477,44 @@ fn edit(root: &Path, editor_flag: Option<&str>, interactive: bool) -> Result<()>
 
 /// Copy a rejected buffer somewhere it will outlive the scratch directory.
 ///
-/// Created through `tempfile`, not written to a name built from the pid.
-/// The pid form had two problems on a shared `/tmp`: the path is
-/// predictable, so `fs::write` would follow a symlink planted there and
-/// truncate whatever it pointed at, and pids are reused, so a later
-/// rejected edit could silently overwrite an earlier one the user had
-/// been told to go and recover. `tempfile` creates with `O_EXCL` and a
-/// random name, which fixes both — a rejected edit is the user's work,
-/// and losing it to the recovery path would be worse than the save that
-/// was refused.
+/// TAKES THE SCRATCH GUARD BY VALUE, and that is the point. `scratch` is a
+/// `TempDir`, so the directory is removed when it drops — which happens on
+/// the very `bail!` that tells the user where their edit is. The earlier
+/// version returned the in-scratch path as its fallback and claimed it
+/// "survives until the process exits"; both were wrong, so a user whose
+/// save was refused AND whose temp copy failed was pointed at a path that
+/// no longer existed by the time they read the message.
 ///
-/// Best-effort by design: this runs on a path that is already failing,
-/// and an error here must not replace the real reason the save was
-/// refused. If the copy cannot be made the scratch path is still named —
-/// it survives until the process exits, which is long enough to retrieve
-/// by hand.
-fn preserve(buffer: &Path, _original: &str, edited: &str) -> std::path::PathBuf {
+/// Now the fallback calls `TempDir::keep`, which disarms the deletion, so
+/// the named path is really there. A rejected edit is the user's work: the
+/// recovery path must not be the thing that loses it.
+///
+/// The happy path still copies out to a `tempfile`-created file — `O_EXCL`
+/// and a random name, so a predictable path in a shared /tmp can neither
+/// be pre-empted by a symlink nor clobber an earlier rejected edit — and
+/// lets the scratch directory drop as usual.
+pub fn preserve(scratch: tempfile::TempDir, buffer: &Path, edited: &str) -> std::path::PathBuf {
     let built = tempfile::Builder::new()
         .prefix("cdno-config-rejected-")
         .suffix(".toml")
         .tempfile();
-    match built {
-        Ok(file) => match file.keep() {
-            Ok((mut handle, path)) => {
-                use std::io::Write;
-                match handle.write_all(edited.as_bytes()) {
-                    Ok(()) => path,
-                    Err(_) => buffer.to_path_buf(),
-                }
-            }
-            Err(_) => buffer.to_path_buf(),
-        },
-        Err(_) => buffer.to_path_buf(),
+    if let Ok(file) = built
+        && let Ok((mut handle, path)) = file.keep()
+    {
+        use std::io::Write;
+        if handle.write_all(edited.as_bytes()).is_ok() {
+            return path;
+        }
     }
+    // Could not copy it out, so keep the scratch directory instead of
+    // deleting it, and name the buffer still sitting in it.
+    let kept = scratch.keep();
+    kept.join(
+        buffer
+            .file_name()
+            .map(std::path::Path::new)
+            .unwrap_or_else(|| std::path::Path::new("config.toml")),
+    )
 }
 
 /// What a completed edit did, once the buffer came back from the editor.

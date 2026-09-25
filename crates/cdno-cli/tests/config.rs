@@ -919,3 +919,36 @@ fn config_edit_refuses_a_closed_stdin_not_merely_the_flag() {
         .failure()
         .stderr(predicates::str::contains("interactive terminal"));
 }
+
+#[test]
+fn a_rejected_edit_is_kept_at_a_path_that_really_exists() {
+    // The recovery path must not be the thing that loses the work.
+    //
+    // `edit` round-trips through a `tempfile::TempDir`, and that guard
+    // deletes the directory when `edit` returns — including on the very
+    // `bail!` that tells the user where their edit is. An earlier version
+    // returned the in-scratch path as its fallback and its doc comment
+    // claimed it "survives until the process exits"; both were wrong, so a
+    // refused save whose temp copy also failed named a path that was
+    // already gone.
+    //
+    // Tested at the seam rather than through the binary: `config edit`
+    // now (correctly) refuses when stdin is not a terminal, so a
+    // subprocess test can never reach this code at all.
+    let scratch = tempfile::tempdir().expect("scratch dir");
+    let buffer = scratch.path().join("config.toml");
+    fs::write(&buffer, "garbage = [\n").unwrap();
+
+    let kept = config::preserve(scratch, &buffer, "garbage = [\n");
+
+    assert!(
+        kept.exists(),
+        "preserve named {} but nothing is there",
+        kept.display()
+    );
+    assert_eq!(
+        fs::read_to_string(&kept).unwrap(),
+        "garbage = [\n",
+        "the kept file must hold the rejected edit, not the original"
+    );
+}

@@ -536,3 +536,38 @@ fn save_reads_the_template_from_stdin_when_the_file_is_a_dash() {
         "stdin must be written verbatim"
     );
 }
+
+#[test]
+fn list_json_reports_the_source_as_a_token_not_prose() {
+    // `--json` is read by scripts. The human label carries guidance —
+    // "none (run `templates new`)" — which would force a caller to match
+    // prose and break the moment that wording changes. `TemplateSourceKind`
+    // is a closed enum, so it rides the wire as a stable token.
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+
+    let rows = templates::summaries(dir.path()).expect("list");
+    let json = templates::list_rows(&rows);
+    let sources: std::collections::BTreeSet<&str> = json
+        .iter()
+        .map(|row| row["source"].as_str().expect("source is a string"))
+        .collect();
+
+    for source in &sources {
+        assert!(
+            !source.contains(' '),
+            "a wire token carries no prose, got {source:?}"
+        );
+        assert!(
+            matches!(
+                *source,
+                "custom_variant" | "custom_base" | "builtin_variant" | "builtin_default" | "none"
+            ),
+            "unexpected source token {source:?}"
+        );
+    }
+    assert!(
+        sources.contains("builtin_default"),
+        "a fresh vault's built-ins report their default: {sources:?}"
+    );
+}
