@@ -52,7 +52,7 @@ mdbook serve docs-site             # live preview
 mdbook build docs-site             # warns on broken intra-book links — keep it clean
 ```
 
-CI (`.github/workflows/ci.yml`) runs the jobs check / fmt / clippy / test / ui / coverage
+CI (`.github/workflows/ci.yml`) runs the jobs check / fmt / clippy / test / coverage
 with `RUSTFLAGS: -Dwarnings` (coverage is tarpaulin with xml output). Release is tag-driven (`vX.Y.Z`) and **fails if the tag does not
 match the workspace `version` in the root `Cargo.toml`** — bump both together.
 
