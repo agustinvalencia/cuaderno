@@ -59,6 +59,8 @@
 - [stewardship](reference/cli/stewardship.md)
 - [track](reference/cli/track.md)
 - [templates](reference/cli/templates.md)
+- [config](reference/cli/config.md)
+- [watch](reference/cli/watch.md)
 - [frontmatter](reference/cli/frontmatter.md)
 - [note](reference/cli/note.md)
 - [commit](reference/cli/commit.md)
