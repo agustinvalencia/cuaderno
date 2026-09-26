@@ -87,9 +87,9 @@ pub enum ConfigCommands {
         file: Option<std::path::PathBuf>,
     },
 
-    /// Open the config in your editor, then save it through the same
-    /// validate-first, compare-and-swap gate the desktop used — so a
-    /// config that would not reopen is never written.
+    /// Open the config in your editor, then save it through a
+    /// validate-first, compare-and-swap gate — so a config that would
+    /// not reopen is never written.
     Edit {
         /// Editor command to use, overriding `$VISUAL` / `$EDITOR`.
         /// Must wait for the file to be closed: a detached editor cannot
