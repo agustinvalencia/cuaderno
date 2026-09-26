@@ -19,7 +19,7 @@ Three audiences hit the same dispatcher with different expectations:
 2. **Humans scripting** — invoke from `.zshrc` aliases, `make`
    targets, or one-liners; want the command to fail-fast on missing
    args, never hang waiting for stdin.
-3. **Agentic clients** (MCP, Tauri) — always supply full args at the
+3. **Agentic clients** (MCP) — always supply full args at the
    transport boundary; never run in a TTY. The transport layer
    collapses to the same code path as the scripted human.
 
@@ -78,7 +78,7 @@ About to add to project 'surrogate':
 Proceed? [Y/n]
 ```
 
-This matches the agentic shape — MCP and Tauri always supply full
+This matches the agentic shape — MCP always supplies full
 args, so they never see the confirm step.
 
 ### 4. `is_interactive` combines `--no-interactive` and TTY detection

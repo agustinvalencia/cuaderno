@@ -6,6 +6,35 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Removed
+
+- **The Tauri desktop app (#597, #601).** `crates/cdno-tauri` and `ui/` are deleted, with their
+  build, CI and release wiring: the workspace member, the `tauri*` / `arc-swap` / `ts-rs` / `base64`
+  workspace dependencies, the `ts-bindings` feature and its ~36 `ts_rs::TS` derive sites, the
+  `gen-bindings` and `app-dev` recipes, the `ui` CI job and the Tauri system-dependency steps, and
+  the two desktop pages in the user guide. `toml_edit`, `notify` and `notify-debouncer-mini` are
+  deliberately kept — `cdno config` and `cdno watch` depend on them.
+
+  **Nothing is lost.** The epic sequenced this port-first, delete-last precisely so capability never
+  dipped: vault config editing became `cdno config` (#598), templates became
+  `cdno templates list/show/save/new` (#599), and the file watcher became `cdno watch` (#600). The
+  differential probe that guards it compares the CLI verb tree and the MCP `tools/list` against a
+  baseline captured from `main` before any of this work started — no verb and no tool that existed
+  then has disappeared, and the catalogue is still 55 tools.
+
+  The `pre-desktop-removal` tag marks `84db8ca`, the last commit containing the app, so retaking it is a
+  `git revert` rather than an archaeology exercise. Revisiting the desktop is possible but
+  unscheduled (#597); nothing should be planned around it returning.
+
+  Two consequences worth recording rather than discovering later. `into_mcp_error` flattens every
+  `DomainError` to `INTERNAL_ERROR`, and **Tauri was the only surface that branched on the variant**
+  — so structured `AmbiguousAction` candidates now reach an agent as a debug-formatted string, and
+  anything needing to act on them will have to rebuild that. And several `pub` domain items are now
+  without a caller, left in place deliberately (a `pub` item in a library crate raises no dead-code
+  warning): `resolve_wikilink` and `vault/links.rs`, `question_backlinks`, `read_note`,
+  `read_asset_bytes`, `write_note_raw`, `daily_dates_in_month`, `stuck_project_days`, and
+  `add_action_with_note`.
+
 ### Added
 
 - **`cdno watch` — reconcile the index on external edits (#600).** Every other verb

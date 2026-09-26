@@ -5,7 +5,6 @@ members = [
     "crates/cdno-domain",
     "crates/cdno-cli",
     "crates/cdno-mcp",
-    "crates/cdno-tauri",
 ]
 
 [workspace.package]
@@ -27,10 +26,6 @@ toml_edit = "0.22"
 
 # Error handling
 thiserror = "2"
-
-# Base64-encode in-vault image bytes into a `data:` URI for the desktop
-# note reader (the CSP already allows `data:`, so no custom protocol).
-base64 = "0.22"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
@@ -204,59 +199,6 @@ jsonwebtoken = "9"
 # leaks into other crates.
 notify = "8"
 notify-debouncer-mini = "0.6"
-
-# Desktop app shell (GH #53, Phase 5). The Tauri commands are thin
-# wrappers over cdno-domain methods — no DTO layer; domain types
-# serialise directly over the IPC bridge. `macos-private-api` matches
-# tauri.conf.json's macOSPrivateApi (transparent capture window);
-# accepted cost: no Mac App Store distribution. `tray-icon` backs the
-# minimal menu-bar tray (M10); the tray reuses the codegen-embedded
-# app icon, so no `image-png` runtime decoding is needed.
-tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
-tauri-build = "2"
-
-# Global capture hotkey (⌘⇧C, M3). Registered from Rust `setup()` —
-# JS registration is racy — so no JS capability is needed. Summons the
-# dedicated capture window app-wide.
-tauri-plugin-global-shortcut = "2"
-
-# Single-instance guard (M3). Registered FIRST in the builder chain
-# (the plugin's hard requirement); a second launch focuses the running
-# main window instead of spawning a duplicate app.
-tauri-plugin-single-instance = "2"
-
-# `cuaderno://note/<path>` deep links: open a note in the centred reader
-# from outside the app (e.g. a link an agent hands the user). Integrates
-# with single-instance so a link routes to the running app.
-tauri-plugin-deep-link = "2"
-
-# Open a note in the user's default editor (M3 "open in editor"). The
-# only file access that bypasses the domain layer — guarded by a
-# VaultPath check before the vault-root join so it can't escape.
-tauri-plugin-opener = "2"
-
-# Native folder picker + message dialogs for first-launch vault
-# discovery (GH #331). A Finder-launched app inherits no shell
-# environment, so `CUADERNO_VAULT_PATH` is unset and the app used to
-# abort silently; the picker gives it a vault instead. Invoked from
-# Rust `setup()` (via a background thread — the blocking pick posts to
-# the main event loop, which is not pumping while `setup` runs), so no
-# JS capability is needed — same as the opener plugin.
-tauri-plugin-dialog = "2"
-
-# Lock-free atomic swap for the desktop app's live-reloadable vault
-# (GH #365, PR2). `AppState.vault` is an `ArcSwap<Vault>` so a config
-# save can rebuild the vault (same store/index, fresh config) and swap
-# it in without a restart; in-flight commands finish against the Arc
-# they loaded. Read-mostly and never blocks — a config reload is rare
-# versus the vault reads every command performs.
-arc-swap = "1"
-
-# TypeScript bindings generated from the Rust wire types (plan §3.5).
-# `serde-compat` (default) honours the serde attrs; `chrono-impl` maps
-# NaiveDate to `string`. Optional everywhere — only the `ts-bindings`
-# feature (a codegen-time concern) pulls it in.
-ts-rs = { version = "12", features = ["chrono-impl"] }
 
 # Internal crates
 cdno-core = { path = "crates/cdno-core" }

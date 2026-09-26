@@ -305,7 +305,7 @@ values = ["low", "ok", "good"]
 ```
 
 Now a `daily` note whose `meds:` isn't a boolean, or whose `mood:` isn't one of the three allowed
-values, gets a `cdno lint` warning. Typed fields are also recognised by the desktop Templates editor,
+values, gets a `cdno lint` warning. Typed fields are also recognised by `cdno templates`,
 so a custom template referencing `{{meds}}` no longer warns that it "renders literally".
 
 A typed field's `default` is **populated at create**, too: add `meds: {{meds}}` to your custom
@@ -316,32 +316,29 @@ supplies that name, or a `[variables]` static var does, that value wins over the
 [Typed schema fields](../reference/configuration.md#typed-schema-fields) in the configuration
 reference for the full grammar and its limits.
 
-## Edit templates in the desktop app
+## Edit templates from the CLI
 
-Everything above works from the CLI, but the desktop app also has a **Templates** editor that does
-the same job without a terminal — press `⌘,` and pick **Templates** from the settings rail.
+`cdno templates` covers the whole loop without leaving the terminal.
 
-You get a chip for every note type — the built-ins plus any custom types you declared
-under `[note_types.<name>]`. Selecting one names its source in the editor's header:
+```bash
+cdno templates list                         # every type, which template is in effect, and where
+cdno templates show project                 # the effective content, verbatim
+cdno templates eject project                # copy the built-in default into .cuaderno/templates/
+cdno templates save --note-type project     # write it: --file, --file - for stdin, or $EDITOR
+cdno templates new --note-type people       # scaffold a starter for a custom type
+```
 
-- **Built-in** — the type is using its built-in default (no override yet).
-- **Custom** — a custom override exists in `.cuaderno/templates/`.
-- **No template** — a custom type that has no template file yet.
+`list` names the source in effect for each type — `builtin_default`, `custom_base`, a variant, or
+`none` for a custom type with no template yet. `save` on a built-in creates the override for you,
+so it needs no prior `eject`, and `show` is byte-verbatim, which means the round trip holds:
 
-The chips themselves flag only the last two, since most types sit on their built-in default.
+```bash
+cdno templates eject project
+cdno templates show project | diff - .cuaderno/templates/project.md   # no output
+```
 
-Select a type to see its effective template in the editor. Edit the text and press **Save**: the
-app writes `.cuaderno/templates/<type>.md`. For a type currently on the built-in default, that first
-save *creates* the custom override — the same edit-and-save model as `cdno templates eject` followed
-by an edit, but in one step. A custom type showing **No template** offers **Create**, which
-scaffolds a starter from the type's declared required fields.
+See the [`templates` reference](../reference/cli/templates.md) for every flag.
 
-The side panel lists the placeholders you can use, grouped by where their value comes from —
-*supplied* keys the create path fills, a custom type's own *schema fields*, and any *config
-variables* or *prompted* variables. If you type a `{{token}}` that isn't in that set, the editor
-shows a calm inline notice so you can catch a typo before it renders literally — but it never blocks
-you from saving. An edit made outside the app (in your editor, or by another tool) refreshes the
-view automatically.
 
 ## See also
 

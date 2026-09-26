@@ -23,21 +23,12 @@ brew install agustinvalencia/tap/cuaderno
 
 That installs both binaries — `cdno` (the CLI for the daily loop) and `cdno-mcp` (the MCP server for Claude / Kiro / Gemini CLI). Pre-built bottles for macOS arm64 + intel and Linux x86_64 + aarch64.
 
-**Desktop app** (macOS, Apple Silicon) — *no longer published; see below*:
-
-```bash
-# the xattr because the app is ad-hoc signed, not notarized —
-# without it Gatekeeper blocks the first launch.
-brew install --cask agustinvalencia/tap/cuaderno-app
-xattr -dr com.apple.quarantine /Applications/cuaderno.app
-```
-
-Then launch cuaderno from Applications. On first launch the app asks for your vault folder with a native picker and remembers it. `CUADERNO_VAULT_PATH` still overrides it for terminals and dev (`CUADERNO_VAULT_PATH=~/Documents/notebook open -a cuaderno`), but it is no longer required for a Finder launch. Full install notes in the [Desktop app guide](https://agustinvalencia.github.io/cuaderno/getting-started/desktop-app.html).
-
-> **The desktop app is being retired** ([#597](https://github.com/agustinvalencia/cuaderno/issues/597)).
-> Releases no longer attach a `.dmg`, so the cask above installs the last one published and will
-> not update. Every capability it had is reachable from the CLI — `cdno config` for vault config,
-> `cdno templates` for templates, `cdno watch` to keep the index current while you edit elsewhere.
+> **The desktop app has been removed** ([#597](https://github.com/agustinvalencia/cuaderno/issues/597),
+> [#601](https://github.com/agustinvalencia/cuaderno/issues/601)). Everything it could do is reachable
+> from the CLI: `cdno config` for vault configuration, `cdno templates` for templates, and `cdno watch`
+> to keep the index current while you edit notes in another editor. The Homebrew cask
+> `cuaderno-app` still installs the last `.dmg` that was published and will not update; the
+> `pre-desktop-removal` tag marks the last commit that contained it (`84db8ca`).
 
 **From source** (everywhere else, or if you want to track `main`):
 
@@ -151,9 +142,7 @@ cuaderno/
 │   ├── cdno-core/          ← file I/O, markdown parsing, SQLite indexing, file watching
 │   ├── cdno-domain/        ← note types, business rules, queries, state transitions
 │   ├── cdno-cli/           ← terminal commands (`cdno`)
-│   ├── cdno-mcp/           ← MCP server — stdio + Streamable HTTP binaries
-│   └── cdno-tauri/         ← Tauri backend for the desktop app (shipped: every view, plus capture)
-├── ui/                     ← React + Tailwind frontend (shipped)
+│   └── cdno-mcp/           ← MCP server — stdio + Streamable HTTP binaries
 └── skills/                 ← Claude skill definitions (Phase 4 skill adaptation, not yet created)
 ```
 
@@ -161,14 +150,13 @@ cuaderno/
 cdno-core → cdno-domain → cdno-cli
                         → cdno-mcp → stdio transport (`cdno-mcp`, shipped)
                                    → Streamable HTTP transport (`cdno-mcp-server`, shipped)
-                        → cdno-tauri (Phase 5) → React UI
 ```
 
 **cdno-core** has no domain knowledge — it handles markdown files with YAML frontmatter, section manipulation, SQLite indexing, and filesystem watching. Reusable in any markdown vault tool.
 
 **cdno-domain** contains all RLM business logic. Defines note types, enforces rules (5-project cap, required frontmatter, enforced linking), implements queries (commitments aggregation, portfolio health), and handles state transitions. Pure logic — no file I/O, no networking.
 
-**cdno-cli**, **cdno-mcp**, and **cdno-tauri** are thin translation layers that call domain methods through their respective protocols.
+**cdno-cli** and **cdno-mcp** are thin translation layers that call domain methods through their respective protocols.
 
 ## Design Principles
 
@@ -195,18 +183,19 @@ cdno-core → cdno-domain → cdno-cli
 
 ## Consumers
 
-The tool has four consumers:
+The tool has three consumers:
 
 - **The researcher** via the CLI in a terminal
-- **The researcher** via the Cuaderno desktop UI (Tauri 2.0)
 - **Claude** via the MCP server (stdio for local; Streamable HTTP via `cdno-mcp-server` for self-hosted/remote, behind an OAuth-terminating proxy)
 - **Claude skills** as choreographed workflows combining MCP calls with ADHD-friendly interaction patterns
 
 ## Status
 
-Phases 1 through 5 of [the build sequence](docs/implementation-plan.md) are complete (Phase 4's skill adaptations remain). **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
+Phases 1 through 4 of [the build sequence](docs/implementation-plan.md) are complete (Phase 4's skill adaptations remain). Phases 5 and 6 built a Tauri desktop app, which has since been retired (#597). **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
 
-The MCP server (Phase 4) is production-ready with all 55 tools wired through to the domain, over both stdio and Streamable HTTP transports. The Tauri desktop UI (Phase 5/6) is complete: every view plus the app shell, global `⌘⇧C` capture, a menu-bar tray, and live refresh from external edits — installable via the Homebrew cask above. Deliberately deferred: notarization, an auto-updater, an NSPanel capture overlay, and an Intel `.dmg`.
+The MCP server (Phase 4) is production-ready with all 55 tools wired through to the domain, over both stdio and Streamable HTTP transports.
+
+The Tauri desktop UI built in Phases 5 and 6 was **removed** in #601. Its capabilities reached the CLI first — `cdno config`, `cdno templates` and `cdno watch` — so nothing it did is unreachable; the `pre-desktop-removal` tag marks the last commit containing it (`84db8ca`).
 
 See **[`STATUS.md`](STATUS.md)** for the per-phase and per-issue breakdown, and **[`CHANGELOG.md`](CHANGELOG.md)** for what's shipped per PR.
 

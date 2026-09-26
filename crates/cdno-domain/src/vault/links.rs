@@ -31,12 +31,9 @@ use super::Vault;
 /// through (they aren't in `list_all_paths` to begin with, so they can
 /// never resolve here).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct ResolvedLink {
     /// Serialised as a plain string over the wire (VaultPath's Display
     /// form) — the same shape every other path field promises.
-    #[cfg_attr(feature = "ts-bindings", ts(type = "string"))]
     pub path: VaultPath,
     pub note_type: Option<String>,
 }

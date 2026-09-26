@@ -32,8 +32,6 @@ use crate::type_registry::TypeRegistry;
 /// compare-and-swap write (PR3): the read hands the UI a hash it can
 /// echo back on save so a concurrent hand-edit is detected rather than
 /// clobbered.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ConfigDocument {
     /// The verbatim file text — comments, ordering, and `[variables]`
@@ -53,8 +51,6 @@ pub struct ConfigDocument {
 /// PR1 dry-run and the eventual PR3 save gate, so the two cannot
 /// disagree. `line`/`col` are populated only for a TOML parse failure;
 /// validation errors carry a message alone.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, thiserror::Error)]
 #[error("{message}")]
 pub struct ConfigValidationError {
@@ -80,8 +76,6 @@ pub struct ConfigValidationError {
 /// before anything is written; [`Conflict`](Self::Conflict) is the
 /// compare-and-swap guard against a concurrent hand-edit; and
 /// [`Internal`](Self::Internal) covers a store/disk fault.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, serde::Serialize, thiserror::Error)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum ConfigSaveError {

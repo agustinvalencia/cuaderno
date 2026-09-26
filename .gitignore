@@ -27,12 +27,6 @@ cobertura.xml
 # mdBook docs-site build output
 docs-site/book/
 
-# Desktop app build artefacts
-ui/node_modules/
-ui/dist/
-crates/cdno-tauri/gen/
-ui/tsconfig.tsbuildinfo
-
 # The repo-root dev vault's runtime state. The SQLite index is a
 # rebuildable cache (markdown is the source of truth; startup
 # reconciliation rebuilds it), and the lock is per-process — both are
@@ -58,9 +52,3 @@ ui/tsconfig.tsbuildinfo
 /portfolios/
 /stewardships/
 /inbox/
-
-# ts-rs writes here when TS_RS_EXPORT_DIR is unset (a bare
-# `cargo test --features ts-bindings`). The bindings the UI consumes are
-# generated into ui/src/api/bindings by `just gen-bindings`; a second copy
-# would go stale the first time a type changed, with nothing comparing them.
-crates/*/bindings/
