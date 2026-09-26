@@ -16,12 +16,24 @@ pub(crate) fn json_result<S: serde::Serialize>(value: S) -> Result<CallToolResul
 
 /// Translate a [`DomainError`] into an rmcp [`ErrorData`]. We surface
 /// the domain's `Display` output as the JSON-RPC error message — it's
-/// already human-readable (see `cdno-domain/src/error.rs`). All
-/// variants land as `InternalError` for now; the JSON-RPC code-mapping
-/// table (per design §5.2) is a follow-up if clients start branching
-/// on the code.
+/// already human-readable (see `cdno-domain/src/error.rs`).
+///
+/// Every variant still lands as `InternalError` *here*, but that is no
+/// longer the end of the story: a **caller-actionable** rejection also
+/// carries a structured payload in `data`, which
+/// [`crate::rejection::decode`] turns into a tool result with
+/// `isError: true` at the single conversion point in
+/// `CuadernoServer::call_tool` (GH #560). Mechanical failures carry no
+/// payload and stay protocol errors.
+///
+/// So the JSON-RPC code stays uniform while the *shape* of the response
+/// splits along the spec's own line — a malformed call is a protocol
+/// error, an error raised inside a successful invocation is a result the
+/// model can read. See [`crate::rejection`] for which is which and why
+/// the classification lives one hop away from this function.
 pub(crate) fn into_mcp_error(e: DomainError) -> ErrorData {
-    ErrorData::internal_error(e.to_string(), None)
+    let data = crate::rejection::envelope(&e);
+    ErrorData::internal_error(e.to_string(), data)
 }
 
 /// Build an InvalidParams error pointing at a specific input field.

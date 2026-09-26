@@ -253,7 +253,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire."
+        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire. `new_state` is capped at the vault's `max_state_chars` (default 500) and over-length text is REJECTED rather than truncated, so write a summary and put the detail in the daily log — which is where the previous state goes anyway."
     )]
     pub async fn update_project_state(
         &self,

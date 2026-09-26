@@ -315,4 +315,166 @@ fn tools_call_with_unknown_tool_name_returns_jsonrpc_error() {
         response.get("error").is_some(),
         "expected an `error` field on the response: {response}"
     );
+    // The other half of the #560 split, and the pass-through branch of
+    // `rejection::decode`: a MALFORMED CALL stays a protocol error. Only
+    // errors raised inside a successful invocation become tool results,
+    // so an unknown tool must not acquire a `result`.
+    assert!(
+        response.get("result").is_none(),
+        "an unknown tool is a protocol error, not a tool result: {response}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Domain rejections on the wire (GH #560)
+// ---------------------------------------------------------------------
+//
+// These are the cases the handler tests structurally cannot see. A
+// rejection becomes a tool result in `CuadernoServer::call_tool`, which
+// only runs when a call arrives through the router — a handler test calls
+// the method body directly and still gets an `Err`. So the *client-visible
+// shape* has no coverage anywhere but here.
+
+/// Extract a created note's slug from a write result, rather than
+/// assuming the slugifier's output. A test that hard-codes the slug
+/// fails for the wrong reason the day slugification changes.
+fn slug_of(write_result: &Value) -> String {
+    let content = write_result["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("setup call returned no text payload: {write_result}"));
+    let parsed: Value = serde_json::from_str(content).expect("JSON payload");
+    let path = parsed["path"].as_str().expect("path field");
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .expect("slug from path")
+        .to_owned()
+}
+
+/// Read the rejection payload out of a tool result, asserting the two
+/// properties that #560 is about: it is **not** a JSON-RPC protocol
+/// error, and it is flagged `isError` so a client renders it as a failure
+/// rather than as a successful answer.
+fn rejection_payload(response: &Value) -> Value {
+    assert!(
+        response.get("error").is_none(),
+        "a caller-actionable rejection must not come back as a JSON-RPC protocol error \
+         — that is the shape the client in #560 renders as a bare \"Tool execution failed\": \
+         {response}"
+    );
+    assert_eq!(
+        response["result"]["isError"],
+        json!(true),
+        "a rejection must set isError, or a client reads it as success: {response}"
+    );
+    let content = response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("rejection carried no text payload: {response}"));
+    serde_json::from_str(content).expect("rejection payload is JSON")
+}
+
+#[test]
+fn a_domain_rejection_arrives_as_a_tool_result_carrying_its_message() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+        "params": { "name": "create_project", "arguments": {
+            "title": "Surrogate Model", "context": "university"
+        }}
+    }));
+    let created = mcp.read_response(10);
+    let slug = slug_of(&created);
+
+    // 501 characters: one past the documented default cap, which is the
+    // exact boundary #560 established by binary search over the wire.
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 11, "method": "tools/call",
+        "params": { "name": "update_project_state", "arguments": {
+            "project": slug, "new_state": "a".repeat(501)
+        }}
+    }));
+    let payload = rejection_payload(&mcp.read_response(11));
+
+    assert_eq!(payload["code"], json!("state_too_long"));
+    assert_eq!(payload["details"]["chars"], json!(501));
+    assert_eq!(payload["details"]["max"], json!(500));
+
+    // The message that used to reach the model as nothing at all. Both
+    // numbers asserted separately so half a break still fails.
+    let message = payload["message"].as_str().expect("message field");
+    assert!(
+        message.contains("summarise"),
+        "the advice that makes `reject` mode work is missing: {message}"
+    );
+    assert!(
+        message.contains("501") && message.contains("500"),
+        "the message must name both the actual length and the limit: {message}"
+    );
+}
+
+#[test]
+fn an_ambiguous_action_delivers_its_candidates_as_data_not_prose() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 20, "method": "tools/call",
+        "params": { "name": "create_project", "arguments": {
+            "title": "Ablation Study", "context": "university"
+        }}
+    }));
+    let slug = slug_of(&mcp.read_response(20));
+
+    for (id, title) in [
+        (21, "Draft the methods section"),
+        (22, "Revise the methods appendix"),
+    ] {
+        mcp.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "add_action", "arguments": {
+                "project": slug, "title": title, "energy": "deep", "with_note": false
+            }}
+        }));
+        let added = mcp.read_response(id);
+        assert!(
+            added.get("error").is_none() && added["result"]["isError"] != json!(true),
+            "setup add_action failed: {added}"
+        );
+    }
+
+    // "methods" matches both bullets.
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 23, "method": "tools/call",
+        "params": { "name": "complete_action", "arguments": {
+            "project": slug, "query": "methods"
+        }}
+    }));
+    let payload = rejection_payload(&mcp.read_response(23));
+
+    assert_eq!(payload["code"], json!("ambiguous_action"));
+    assert_eq!(payload["details"]["query"], json!("methods"));
+
+    // The point of the whole change, and the prerequisite #602 is
+    // blocked on: a railguard must be able to ACT on candidates. An
+    // array of strings is actionable; the same list rendered into the
+    // message is not.
+    let candidates = payload["details"]["candidates"]
+        .as_array()
+        .unwrap_or_else(|| panic!("candidates must be a JSON array, got: {payload}"));
+    assert_eq!(candidates.len(), 2, "both matching bullets: {payload}");
+    let texts: Vec<&str> = candidates
+        .iter()
+        .map(|c| c.as_str().expect("candidate string"))
+        .collect();
+    assert!(
+        texts.iter().any(|t| t.contains("methods section"))
+            && texts.iter().any(|t| t.contains("methods appendix")),
+        "candidates should name both bullets verbatim: {texts:?}"
+    );
 }

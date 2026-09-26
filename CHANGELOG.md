@@ -6,6 +6,31 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`
+  flattened every `DomainError` to a `-32603` JSON-RPC error, and at least one client renders that
+  as a bare "Tool execution failed" without ever showing `error.message` to the model — so an agent
+  could not tell a validation rejection from a transport failure. That defeated the point of the
+  `reject` overflow policy, whose job is to push a verbose agent to re-condense in its own loop.
+
+  A **caller-actionable** rejection now comes back as a tool result with `isError: true`, carrying
+  `{ code, message, details }`: a stable snake_case `code` to branch on, the domain's own sentence,
+  and the fields needed to recover. `ambiguous_action` and its siblings hand back **`candidates` as
+  an array**, so a client picks from a list instead of parsing names out of prose — which is what
+  #602's railguard needs, and the reason that issue listed this as its blocker.
+
+  The line: a variant `cdno-domain` defines itself is a business-rule rejection; one it forwards from
+  `cdno-core` is a mechanical failure and stays a protocol error, as do malformed calls. Core's
+  `ValidationError` is the one exception, since both its variants name a field the caller supplied.
+  The classifying match is **exhaustive with no wildcard**, so a new `DomainError` variant fails to
+  compile until somebody decides which side it falls on. Conversion happens at one point in
+  `call_tool` rather than at ~55 handler call sites, so a new handler cannot forget to opt in.
+
+  Also: `update_project_state`'s tool description now states the `max_state_chars` cap (default 500)
+  and that over-length text is rejected rather than truncated — most of these rejections are
+  preventable up front, independently of how they are reported.
+
 ### Removed
 
 - **The Tauri desktop app (#597, #601).** `crates/cdno-tauri` and `ui/` are deleted, with their

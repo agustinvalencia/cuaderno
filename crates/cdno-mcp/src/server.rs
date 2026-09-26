@@ -165,6 +165,31 @@ impl CuadernoServer {
 // `Self::tool_router()` default.
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CuadernoServer {
+    /// Dispatch, then split the error path (GH #560).
+    ///
+    /// This is the body `#[tool_handler]` would generate, plus one step:
+    /// a **caller-actionable** domain rejection comes back as a tool
+    /// result with `isError: true` instead of a JSON-RPC protocol error,
+    /// so the model actually sees it. (The macro skips generating
+    /// `call_tool` when the impl already defines one, so the attribute
+    /// above still supplies `list_tools` and the rest.)
+    ///
+    /// One site rather than ~55: handlers keep converting with
+    /// `.map_err(into_mcp_error)?`, and a new handler cannot forget to
+    /// opt in. See [`crate::rejection`] for the classification and for
+    /// why it travels through `ErrorData::data` to get here.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router
+            .call(tcc)
+            .await
+            .or_else(crate::rejection::decode)
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::default()
             .with_protocol_version(ProtocolVersion::default())
