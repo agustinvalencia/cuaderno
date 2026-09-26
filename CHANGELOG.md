@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-26
+
 ### Removed
 
 - **The Tauri desktop app (#597, #601).** `crates/cdno-tauri` and `ui/` are deleted, with their
