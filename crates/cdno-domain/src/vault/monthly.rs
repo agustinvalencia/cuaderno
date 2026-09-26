@@ -51,8 +51,8 @@ pub struct MonthlyNoteView {
 /// review content composed during the ritual. There is no append-only
 /// history section, so — like the weekly note — nothing is held back
 /// from the writer. Deliberately celebration-first and lean: no Metrics
-/// section, since quantitative metrics live behind the desktop
-/// "show metrics" toggle, not in a note section.
+/// section, since quantitative metrics were a desktop-only view
+/// (removed in #601) rather than note content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MonthlySection {
     Wins,

@@ -293,17 +293,18 @@ enum Commands {
     Questions,
 
     /// Inspect, check and edit `.cuaderno/config.toml`. `config edit`
-    /// opens it in your editor and saves through the same validate-first,
-    /// compare-and-swap gate the desktop app used, so a config that would
-    /// not reopen is never written.
+    /// opens it in your editor and saves through a validate-first,
+    /// compare-and-swap gate, so a config that would not reopen is never
+    /// written.
     Config {
         #[command(subcommand)]
         subcommand: ConfigCommands,
     },
 
-    /// Inspect note templates. `templates vars <type>` lists the
-    /// `{{placeholders}}` a type's template supports, for writing a
-    /// custom `.cuaderno/templates/` override.
+    /// Inspect and edit note templates: `list` every type and the
+    /// template in effect, `show` one verbatim, `save` an override,
+    /// `eject` a built-in to start from, `new` a starter for a custom
+    /// type, and `vars` the `{{placeholders}}` a type supports.
     Templates {
         #[command(subcommand)]
         subcommand: TemplatesCommands,

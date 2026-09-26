@@ -114,6 +114,12 @@ Reachable from the terminal via `cdno`:
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)
 - `stewardship create / list / show / add-periodic / complete-periodic` and `track <activity>`
 - `search <query>` — full-text content search across the vault, ranked best-first, with optional `--type` / `--from` / `--to` / `--portfolio` / `--limit` filters
+- `config show / validate / edit / note-type {set,remove} / field {set,remove} / plot set / var {set,remove} / prompt {set,remove}` — inspect, check and edit `.cuaderno/config.toml`. Every write goes through a validate-first, compare-and-swap gate, so a config that would not reopen is never saved; these verbs deliberately do not open the vault, because a broken config is exactly when you need to read and fix one (#598)
+- `templates list / show / save / new / eject / vars` — the whole template surface: which template each note type uses and where its override lives, a template's effective content verbatim, a custom `.cuaderno/templates/` override written from a file, from stdin or from your editor, and a starter scaffolded for a config-defined custom type (#599)
+- `watch` — stay in the foreground and reconcile the index whenever a note changes outside cdno, so edits made in another editor reach `search`, `lint` and backlinks without waiting for the next command (#600)
+- `review weekly` / `weekly` / `monthly` / `open` / `triage` — the guided review ritual, the weekly and monthly review notes, opening a note in your editor, and draining `inbox/`
+- `note create / list <type>` and `frontmatter set` — config-defined custom note types (`[note_types.<type>]`) and typed frontmatter writes routed through the index, so no hand-edit desyncs it
+- `reindex` / `normalise` — rebuild the SQLite index from the markdown source of truth; reorder note frontmatter into each template's canonical key order (`--check` reports without writing)
 - `completions <shell>` — emit a shell-completion shim (bash, zsh, fish, elvish, powershell) with **dynamic vault-aware tab completion** for slug-valued flags (`--project`, `--portfolio`, `--stewardship`, `--slug` on project/question verbs)
 
 Reachable from Claude via MCP (`cdno-mcp` binary):

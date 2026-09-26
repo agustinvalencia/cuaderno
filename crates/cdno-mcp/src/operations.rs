@@ -651,7 +651,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Write a section of the monthly note for the calendar month containing `date` (any day in the month; defaults to this month). `section` is one of `Wins`, `Themes`, `Next Month's Focus` (case-insensitive); any other value is rejected. Creates the monthly note (frontmatter + the three section headings + a `## Weeks` block linking the month's weekly notes) if absent. With `append: false` (default) the section is replaced — compose the review; with `append: true` the content is appended — accrue within a section across a session. The monthly note links (never copies) its weeks, so the weekly notes stay the source of truth; there is no Metrics section (quantitative metrics live behind the desktop 'show metrics' toggle)."
+        description = "Write a section of the monthly note for the calendar month containing `date` (any day in the month; defaults to this month). `section` is one of `Wins`, `Themes`, `Next Month's Focus` (case-insensitive); any other value is rejected. Creates the monthly note (frontmatter + the three section headings + a `## Weeks` block linking the month's weekly notes) if absent. With `append: false` (default) the section is replaced — compose the review; with `append: true` the content is appended — accrue within a section across a session. The monthly note links (never copies) its weeks, so the weekly notes stay the source of truth; there is no Metrics section — quantitative metrics are not note content, so never add one."
     )]
     pub async fn upsert_monthly_section(
         &self,

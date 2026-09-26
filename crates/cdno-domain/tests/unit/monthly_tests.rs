@@ -115,8 +115,8 @@ fn upsert_scaffolds_the_note_with_month_frontmatter_and_three_sections() {
     assert!(raw.contains("## Wins\n- Shipped the release."), "{raw}");
     assert!(raw.contains("## Themes"), "{raw}");
     assert!(raw.contains("## Next Month's Focus"), "{raw}");
-    // No Metrics section — quantitative metrics stay behind the desktop
-    // 'show metrics' toggle, not a note section (design law).
+    // No Metrics section — quantitative metrics are not note content;
+    // they were a desktop-only view, removed in #601 (design law).
     assert!(!raw.contains("## Metrics"), "no Metrics section:\n{raw}");
     // ...in ritual order.
     let wins = raw.find("## Wins").unwrap();
