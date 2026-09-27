@@ -31,6 +31,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and that over-length text is rejected rather than truncated — most of these rejections are
   preventable up front, independently of how they are reported.
 
+## [0.39.0] - 2026-09-26
+
 ### Removed
 
 - **The Tauri desktop app (#597, #601).** `crates/cdno-tauri` and `ui/` are deleted, with their
@@ -158,6 +160,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   job that looked like the expensive one is 63 seconds and finishes three minutes before the
   test job, so it is untouched — it also keeps `ui/` compiling while #598-#600 still port
   from the desktop as a working reference.
+
+- **Help text and status no longer point at the removed app (#608).** `cdno --help` described `config`
+  as saving "through the same validate-first, compare-and-swap gate the desktop app used" and
+  `templates` as though `vars` were still its whole surface — written before #599 added `list`,
+  `show`, `save` and `new`. Both now describe what the verbs do rather than where they came
+  from. The `upsert_monthly_section` tool description mattered more: tool descriptions are the
+  only instruction surface an agent sees, and it justified the absence of a Metrics section by
+  saying quantitative metrics "live behind the desktop 'show metrics' toggle" — an agent was
+  being pointed at a UI that no longer exists. The design law is unchanged and the reason is
+  now stated without the referent: metrics are not note content. `STATUS.md`'s "What works
+  today" also gained the verbs it never listed — `config`, `templates` and `watch` from this
+  cycle, plus `review`/`weekly`/`monthly`/`open`/`triage`, `note`, `frontmatter`, `reindex` and
+  `normalise`, which had been missing for longer.
 
 ## [0.38.0] - 2026-09-21
 
