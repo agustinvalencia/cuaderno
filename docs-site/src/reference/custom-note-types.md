@@ -56,7 +56,24 @@ The note is written to `<folder>/<slug(title)>.md`. If the type has a template
 (`.cuaderno/templates/person.md`), it is rendered; otherwise Cuaderno **synthesises** a minimal note
 — a frontmatter block of your fields plus a `# <title>` heading — so a type works before you author
 its template. (Field values are always emitted as strings, so a value with a colon, `#`, or newline
-round-trips safely; author a template if you need richer frontmatter shapes.)
+round-trips safely; author a template if you need richer frontmatter shapes for keys you do not pass
+as fields.)
+
+Whatever a template renders, the frontmatter that is written carries `type: <type>` and every field
+you passed (including `--origin`) as a string equal to what you passed. If the rendered frontmatter
+already does, the note is written exactly as rendered. Otherwise Cuaderno repairs it — a missing
+field is appended, an unquoted `origin: {{origin}}` that YAML would read as a list (or reject) is
+rewritten as a quoted string — and re-serialises just the frontmatter block, which drops that
+block's comments and quoting style; the note body is left as rendered. So a template that forgets
+`{{origin}}`, or renders no frontmatter at all, still records every field you supplied.
+
+The body (`--body-file`, or `body` over MCP) is written without its title heading: the engine
+writes the `# <title>` H1, and a leading `# <title>` line in the body is dropped. It fills the
+template's `{{body}}` placeholder, or is inserted after the H1 when there is none. The body wins
+over any other value of `{{body}}`; without one, a declared `body` field, a `[variables]` value or
+a prompted `body` fills the placeholder as usual, and it renders empty only when nothing does. The
+body is substituted as raw text, so keep `{{body}}` in the note body: in the template's frontmatter
+a multi-line body can add or break YAML keys, and nothing refuses that.
 
 From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars, body, origin }`).
 

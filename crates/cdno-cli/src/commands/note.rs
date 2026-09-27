@@ -32,17 +32,19 @@ pub enum NoteCommands {
         /// `name=value`. Repeatable.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
         var: Vec<(String, String)>,
-        /// A file whose contents become the note's body: it fills the type
-        /// template's `{{body}}` placeholder, or is inserted after the H1
-        /// when the template has none. Prompted in an editor when the
-        /// template has `{{body}}` and the session is interactive; required
-        /// then when it is not.
-        #[arg(long = "body-file")]
+        /// A file whose contents become the note's body, without the title
+        /// heading (the engine writes the H1; a leading `# <title>` line is
+        /// dropped). It fills the type template's `{{body}}` placeholder, or
+        /// is inserted after the H1 when the template has none. When the
+        /// template has `{{body}}` and no `--field body=` or `--var body=`
+        /// fills it, it is prompted in an editor in an interactive session
+        /// and required otherwise.
+        #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         /// Where the note came from: one string of wikilinks, e.g.
         /// `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion,
         /// RFC 0002). The type must declare an `origin` field.
-        #[arg(long)]
+        #[arg(long, value_name = "STRING")]
         origin: Option<String>,
     },
 
@@ -83,8 +85,10 @@ pub fn run(
                 .transpose()?;
             let mut prompted = false;
             // A body is gathered (prompted or demanded) only when the type's
-            // template has a `{{body}}` slot for it; otherwise it is optional.
-            let body = if vault.custom_template_has_body(&note_type)? {
+            // template has a `{{body}}` slot for it and neither a `body` field
+            // nor a `body` variable already fills it; otherwise it is optional.
+            let body_given_elsewhere = fields.contains_key("body") || vars.contains_key("body");
+            let body = if !body_given_elsewhere && vault.custom_template_has_body(&note_type)? {
                 Some(prompt::gather_or_error(
                     body_from_file,
                     "body-file",

@@ -2276,3 +2276,44 @@ async fn start_unplanned_action_rejects_an_unknown_energy() {
         "and nothing was written:\n{map}"
     );
 }
+
+/// An unquoted `origin: {{origin}}` in the type's template, a two-link
+/// origin, and a body that repeats the title heading: the origin still
+/// round-trips as one string, and the note keeps a single H1.
+#[tokio::test]
+async fn create_custom_note_reconciles_origin_and_drops_a_repeated_title_heading() {
+    let (server, store) = server_with_config(config_with_person_and_concept(), |_v, s| {
+        seed_today_daily(&s);
+        s.write_file(
+            &vp(".cuaderno/templates/concept.md"),
+            "---\ntype: concept\ncreated: {{created}}\norigin: {{origin}}\n---\n\n# {{title}}\n\n{{body}}\n",
+        )
+        .unwrap();
+    });
+    let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]";
+    server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "concept".to_owned(),
+            title: "Woodbury identity".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars: None,
+            body: Some("# Woodbury identity\n\nThe inverse of a low-rank update.".to_owned()),
+            origin: Some(origin.to_owned()),
+        }))
+        .await
+        .expect("create_custom_note");
+
+    let content = store
+        .read_file(&vp("concepts/woodbury-identity.md"))
+        .unwrap();
+    let (fm, body) = cdno_core::frontmatter::Frontmatter::parse(&content).unwrap();
+    assert_eq!(
+        fm.optional_field::<String>("origin").unwrap().as_deref(),
+        Some(origin),
+        "{content}"
+    );
+    assert_eq!(
+        body, "\n# Woodbury identity\n\nThe inverse of a low-rank update.\n",
+        "{content}"
+    );
+}

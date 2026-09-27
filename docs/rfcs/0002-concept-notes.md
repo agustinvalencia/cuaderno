@@ -333,7 +333,7 @@ One file per operation under `src/vault/`, each through `VaultTransaction`:
   `DailySection` gains a `Notes` arm with append forced, so `upsert_daily_section` can also reach
   the section for callers that want no pointer line.
 - **`create_custom_note`** gains an optional **`body`** (with a template, it fills a
-  `{{body}}` placeholder, else it is appended after the H1) and an optional **`origin`** string.
+  `{{body}}` placeholder, else it is inserted after the H1) and an optional **`origin`** string.
   **Every custom-note creation stages a log line** in its transaction:
   `<type> created [[<folder>/<slug>]] — <title>`, matching the commitment line that exists today.
 - **`revise_note(path, expected_hash, revision, reason)`** for custom types, where `revision` is

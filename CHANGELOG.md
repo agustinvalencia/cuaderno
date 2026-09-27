@@ -12,16 +12,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   type now takes an optional body and an optional origin at every surface: `cdno note create`
   gains `--body-file <PATH>` and `--origin <STRING>`, the `create_custom_note` MCP tool gains
   `body` and `origin`, and `Vault::create_custom_note_with_vars` gains two trailing
-  `Option<&str>` parameters. The body is written verbatim: it fills the type template's
-  `{{body}}` placeholder when there is one (which now renders empty rather than literally when
-  no body is given, and is listed by `cdno templates vars` and `list_note_types` as a supplied
-  placeholder of every custom type), and is otherwise inserted after the note's H1. `origin`
-  (RFC 0002 §5.5: promotion is create-with-`origin`) is one string of wikilinks written as a
-  plain frontmatter field; it goes through the declared-field check, so a type that does not
-  declare `origin` (the `concept` type declares it optional) refuses it as `unknown_field` and
-  nothing is written. Blank values count as absent. On the CLI, `--body-file` is prompted in an
-  editor, or demanded under `--no-interactive`, only when the template has a `{{body}}` slot.
-  The creation log line is unchanged.
+  `Option<&str>` parameters. The body excludes the title heading (the engine writes the H1, and
+  a leading H1 equal to the title is dropped) and is written verbatim apart from leading and
+  trailing blank lines and trailing whitespace: it fills the type template's `{{body}}`
+  placeholder when there is one (listed by `cdno templates vars` and `list_note_types` as a
+  supplied placeholder of every custom type), and is otherwise inserted after the note's first
+  ATX H1, skipping backtick and `~~~` fences. The `body` parameter wins over every other value
+  of `{{body}}`; without it, a declared `body` field, a `[variables]` value or a prompted
+  `body` fills the placeholder in the engine's normal order, and it renders empty rather than
+  literally only when none does, so a vault that already fed `{{body}}` from a variable keeps
+  that value unless a body is now passed. `origin` (RFC 0002 §5.5: promotion is
+  create-with-`origin`) is one string of wikilinks, stored trimmed as a frontmatter string; it
+  goes through the declared-field check, so a type that does not declare `origin` (the
+  `concept` type declares it optional) refuses it as `unknown_field` and nothing is written.
+  Blank values count as absent. After rendering, a custom note's frontmatter is reconciled:
+  `type` and every field the caller supplied (including `origin`) must be present as a string
+  equal to the supplied value, and when one is not (a template without `{{origin}}`, an
+  unquoted `origin: {{origin}}` that YAML reads as a list or rejects, a template that renders
+  no frontmatter) the block is repaired and re-serialised, the body untouched; a template that
+  already renders every field correctly is written byte for byte. On the CLI, `--body-file` is
+  prompted in an editor, or demanded under `--no-interactive`, only when the template has a
+  `{{body}}` slot and neither `--field body=` nor `--var body=` fills it. The creation log line
+  is unchanged.
 
 - **`Vault::note_to_daily`, the worked-note entry in today's daily note (T1, T2, #615, #616,
   #638, #647).** `DailySection::Notes` is a second append-only history section next to `## Logs`:

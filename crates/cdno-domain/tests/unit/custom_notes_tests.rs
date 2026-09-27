@@ -671,7 +671,8 @@ fn body_fills_a_body_placeholder_in_a_custom_template() {
     assert_eq!(
         content,
         "---\ntype: concept\ncreated: 2026-04-26\n---\n\n# Woodbury identity\n\n\
-         The inverse of a low-rank update.\n\nSee [[projects/alpha]].\n\n## See also\n"
+         \x20 The inverse of a low-rank update.\n\nSee [[projects/alpha]].\n\n## See also\n",
+        "the first-line indent survives; only trailing whitespace is stripped"
     );
 }
 
@@ -906,4 +907,522 @@ fn origin_with_a_heading_anchor_resolves_to_its_daily_note_after_reindex() {
         .read_note(&vp("journal/2026/daily/2026-09-02.md"))
         .unwrap();
     assert!(view.backlinks.contains(&path), "{:?}", view.backlinks);
+}
+
+// ---------------------------------------------------------------------
+// Frontmatter reconciliation after rendering (#648 review: A1, A2, B2, B7)
+// ---------------------------------------------------------------------
+
+const DAILY_0902: &str = "---\ntype: daily\ndate: 2026-09-02\n---\n\n# 2026-09-02\n\n## Notes\n\n### Woodbury identity\n\nA low-rank inverse.\n";
+const DAILY_0924: &str = "---\ntype: daily\ndate: 2026-09-24\n---\n\n# 2026-09-24\n\n## Notes\n\n### Low-rank refit\n\nRefit.\n";
+const TWO_ORIGINS: &str = "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]";
+
+fn frontmatter_of(content: &str) -> cdno_core::frontmatter::Frontmatter {
+    cdno_core::frontmatter::Frontmatter::parse(content)
+        .unwrap_or_else(|e| panic!("frontmatter parses ({e:?}):\n{content}"))
+        .0
+}
+
+/// Every outgoing edge of `path`, as its resolved target, from a fresh index
+/// rebuilt from the markdown alone.
+fn resolved_targets_after_reindex(store: &Arc<dyn VaultStore>, path: &VaultPath) -> Vec<String> {
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let _fresh = Vault::new(Arc::clone(store), Arc::clone(&index), config_with_concept())
+        .expect("Vault::new");
+    index
+        .find_outgoing_links(path)
+        .unwrap()
+        .into_iter()
+        .filter_map(|l| l.resolved_path.map(|p| p.to_string()))
+        .collect()
+}
+
+#[test]
+fn origin_reaches_the_frontmatter_when_the_template_lacks_the_placeholder() {
+    let template = "---\ntype: concept\ncreated: {{created}}\n---\n\n# {{title}}\n\n{{body}}\n";
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("Body."),
+        Some(WOODBURY_ORIGIN),
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        frontmatter_of(&content)
+            .optional_field::<String>("origin")
+            .unwrap()
+            .as_deref(),
+        Some(WOODBURY_ORIGIN),
+        "{content}"
+    );
+    assert!(
+        content.ends_with("---\n\n# Woodbury identity\n\nBody.\n"),
+        "the body after the frontmatter is untouched:\n{content}"
+    );
+}
+
+fn create_through_unquoted_origin_template(origin: &str) -> (Arc<dyn VaultStore>, VaultPath) {
+    let template = "---\ntype: concept\ncreated: {{created}}\norigin: {{origin}}\n---\n\n# {{title}}\n\n{{body}}\n";
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[
+            (".cuaderno/templates/concept.md", template),
+            ("journal/2026/daily/2026-09-02.md", DAILY_0902),
+            ("journal/2026/daily/2026-09-24.md", DAILY_0924),
+        ],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("Promoted."),
+        Some(origin),
+    )
+    .expect("create");
+    (store, path)
+}
+
+#[test]
+fn unquoted_origin_placeholder_with_one_link_parses_back_as_the_string_and_resolves() {
+    let (store, path) = create_through_unquoted_origin_template(WOODBURY_ORIGIN);
+    let content = store.read_file(&path).unwrap();
+    let fm = frontmatter_of(&content);
+    assert_eq!(
+        fm.optional_field::<String>("origin").unwrap().as_deref(),
+        Some(WOODBURY_ORIGIN),
+        "not a nested flow sequence:\n{content}"
+    );
+    // Key order is kept: the repaired `origin` stays where the template put it.
+    let keys: Vec<&str> = content
+        .lines()
+        .skip(1)
+        .take_while(|l| *l != "---")
+        .filter_map(|l| l.split(':').next())
+        .collect();
+    assert_eq!(keys, ["type", "created", "origin"], "{content}");
+    assert!(content.ends_with("---\n\n# Woodbury identity\n\nPromoted.\n"));
+    assert_eq!(
+        resolved_targets_after_reindex(&store, &path),
+        ["journal/2026/daily/2026-09-02.md"]
+    );
+}
+
+#[test]
+fn unquoted_origin_placeholder_with_two_links_parses_back_as_the_string_and_resolves() {
+    // Pasted raw, `origin: [[a]] [[b]]` is not even YAML; the create used to
+    // fail with a parse error.
+    let (store, path) = create_through_unquoted_origin_template(TWO_ORIGINS);
+    let content = store.read_file(&path).unwrap();
+    let fm = frontmatter_of(&content);
+    assert_eq!(
+        fm.optional_field::<String>("origin").unwrap().as_deref(),
+        Some(TWO_ORIGINS),
+        "{content}"
+    );
+    assert_eq!(
+        fm.optional_field::<String>("created").unwrap().as_deref(),
+        Some("2026-04-26")
+    );
+    assert!(content.ends_with("---\n\n# Woodbury identity\n\nPromoted.\n"));
+    let mut targets = resolved_targets_after_reindex(&store, &path);
+    targets.sort();
+    assert_eq!(
+        targets,
+        [
+            "journal/2026/daily/2026-09-02.md",
+            "journal/2026/daily/2026-09-24.md"
+        ]
+    );
+}
+
+#[test]
+fn a_template_without_frontmatter_gets_type_and_the_supplied_fields() {
+    let template = "# {{title}}\n\n{{body}}\n";
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Degenerate",
+        &fields(&[("tags", "maths")]),
+        Some("Body."),
+        Some(WOODBURY_ORIGIN),
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        content,
+        "---\ntype: concept\ntags: maths\norigin: '[[journal/2026/daily/2026-09-02#Woodbury identity]]'\n---\n\n# Degenerate\n\nBody.\n",
+        "type first, then the supplied fields in declared order"
+    );
+}
+
+#[test]
+fn a_template_that_renders_every_field_correctly_is_byte_identical() {
+    // A YAML comment and a double-quoted scalar would not survive a
+    // re-serialisation, so their presence proves the text was left alone.
+    let template = "---\ntype: concept # the type\ncreated: {{created}}\ntags: {{tags}}\norigin: \"{{origin}}\"\n---\n\n# {{title}}\n\n{{body}}\n";
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Faithful",
+        &fields(&[("tags", "maths")]),
+        Some("Body."),
+        Some(WOODBURY_ORIGIN),
+    )
+    .expect("create");
+    assert_eq!(
+        store.read_file(&path).unwrap(),
+        "---\ntype: concept # the type\ncreated: 2026-04-26\ntags: maths\norigin: \"[[journal/2026/daily/2026-09-02#Woodbury identity]]\"\n---\n\n# Faithful\n\nBody.\n"
+    );
+}
+
+#[test]
+fn a_wrong_type_is_repaired_and_other_keys_keep_their_order() {
+    let template = "---\ncreated: {{created}}\ntype: other\nextra: kept\n---\n\n# {{title}}\n";
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Retyped",
+        &fields(&[("tags", "maths")]),
+        None,
+        None,
+    )
+    .expect("create");
+    assert_eq!(
+        store.read_file(&path).unwrap(),
+        "---\ncreated: 2026-04-26\ntype: concept\nextra: kept\ntags: maths\n---\n\n# Retyped\n"
+    );
+}
+
+#[test]
+fn a_body_that_looks_like_frontmatter_cannot_drop_the_type() {
+    // B7: a template that is only `{{body}}` lets the body's own `---` block
+    // become the note's frontmatter; reconciliation restores `type`.
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", "{{body}}\n")],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Hijack",
+        &HashMap::new(),
+        Some("---\nfoo: bar\n---\n\nText."),
+        None,
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        frontmatter_of(&content)
+            .optional_field::<String>("type")
+            .unwrap()
+            .as_deref(),
+        Some("concept"),
+        "{content}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// `{{body}}` precedence (#648 review: A4, B1, C2)
+// ---------------------------------------------------------------------
+
+const BODY_TEMPLATE: &str =
+    "---\ntype: concept\ncreated: {{created}}\n---\n\n# {{title}}\n\n{{body}}\n";
+
+/// `concept` with an optional declared `body` field, a `[variables] body`,
+/// or a `[variables.prompt] body`, as the flags ask.
+fn config_with_body_sources(field: bool, static_var: bool, prompt: bool) -> VaultConfig {
+    let mut ty = concept();
+    if field {
+        ty.optional.push("body".to_owned());
+    }
+    let mut config = VaultConfig::default();
+    config.note_types.insert("concept".to_owned(), ty);
+    if static_var {
+        config
+            .variables
+            .static_vars
+            .insert("body".to_owned(), "from static".to_owned());
+    }
+    if prompt {
+        config
+            .variables
+            .prompt
+            .insert("body".to_owned(), "Body?".to_owned());
+    }
+    config
+}
+
+fn create_body_source(
+    config: VaultConfig,
+    fields: &HashMap<String, String>,
+    prompted: &HashMap<String, String>,
+    body: Option<&str>,
+) -> Result<String, DomainError> {
+    let (vault, store) = vault_with(config, &[(".cuaderno/templates/concept.md", BODY_TEMPLATE)]);
+    let path = vault.create_custom_note_with_vars(
+        at(),
+        "concept",
+        "Sourced",
+        fields,
+        prompted,
+        body,
+        None,
+    )?;
+    Ok(store.read_file(&path).unwrap())
+}
+
+#[test]
+fn body_parameter_wins_over_every_other_body_source() {
+    let content = create_body_source(
+        config_with_body_sources(true, true, true),
+        &fields(&[("body", "from field")]),
+        &fields(&[("body", "from var")]),
+        Some("from parameter"),
+    )
+    .expect("create");
+    assert!(
+        content.ends_with("# Sourced\n\nfrom parameter\n"),
+        "{content}"
+    );
+}
+
+#[test]
+fn a_declared_body_field_fills_the_placeholder_without_a_body_parameter() {
+    let content = create_body_source(
+        config_with_body_sources(true, true, false),
+        &fields(&[("body", "from field")]),
+        &HashMap::new(),
+        None,
+    )
+    .expect("create");
+    assert!(content.ends_with("# Sourced\n\nfrom field\n"), "{content}");
+}
+
+#[test]
+fn a_vault_variable_body_fills_the_placeholder_without_a_body_parameter() {
+    let content = create_body_source(
+        config_with_body_sources(false, true, false),
+        &HashMap::new(),
+        &HashMap::new(),
+        None,
+    )
+    .expect("create");
+    assert!(content.ends_with("# Sourced\n\nfrom static\n"), "{content}");
+}
+
+#[test]
+fn a_prompted_body_fills_the_placeholder_without_a_body_parameter() {
+    let content = create_body_source(
+        config_with_body_sources(false, false, true),
+        &HashMap::new(),
+        &fields(&[("body", "from var")]),
+        None,
+    )
+    .expect("create");
+    assert!(content.ends_with("# Sourced\n\nfrom var\n"), "{content}");
+}
+
+#[test]
+fn an_unanswered_body_prompt_is_reported_rather_than_rendered_empty() {
+    let err = create_body_source(
+        config_with_body_sources(false, false, true),
+        &HashMap::new(),
+        &HashMap::new(),
+        None,
+    )
+    .expect_err("the prompt is unanswered");
+    match err {
+        DomainError::UnresolvedPrompts { names, .. } => assert_eq!(names, ["body"]),
+        other => panic!("expected UnresolvedPrompts, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------
+// The title heading, verbatim bodies and trimmed origins
+// (#648 review: A3, B3, B4)
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_leading_title_h1_in_the_body_is_dropped_on_the_placeholder_path() {
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", BODY_TEMPLATE)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("\n# Woodbury identity\n\n\nThe inverse.\n"),
+        None,
+    )
+    .expect("create");
+    assert_eq!(
+        store.read_file(&path).unwrap(),
+        "---\ntype: concept\ncreated: 2026-04-26\n---\n\n# Woodbury identity\n\nThe inverse.\n"
+    );
+}
+
+#[test]
+fn a_leading_title_h1_in_the_body_is_dropped_on_the_insert_after_h1_path() {
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("# Woodbury identity #\n\nThe inverse.\n"),
+        None,
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        content.matches("# Woodbury identity").count(),
+        1,
+        "{content}"
+    );
+    assert!(
+        content.ends_with("\n# Woodbury identity\n\nThe inverse.\n"),
+        "{content}"
+    );
+}
+
+#[test]
+fn a_leading_h1_that_is_not_the_title_is_kept() {
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("# Something else\n\nText.\n"),
+        None,
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.ends_with("# Woodbury identity\n\n# Something else\n\nText.\n"),
+        "{content}"
+    );
+}
+
+#[test]
+fn an_indented_code_block_opening_the_body_survives() {
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = create_with(
+        &vault,
+        "concept",
+        "Code",
+        &HashMap::new(),
+        Some("\n\n    fn main() {}\n    // indented code   \n\n\n"),
+        None,
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.ends_with("# Code\n\n    fn main() {}\n    // indented code\n"),
+        "leading/trailing blank lines and trailing whitespace go, the indent stays:\n{content}"
+    );
+}
+
+#[test]
+fn origin_is_stored_trimmed() {
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = create_with(
+        &vault,
+        "concept",
+        "Padded",
+        &HashMap::new(),
+        None,
+        Some("  [[x/a]]  "),
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        frontmatter_of(&content)
+            .optional_field::<String>("origin")
+            .unwrap()
+            .as_deref(),
+        Some("[[x/a]]"),
+        "{content}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// `insert_body_after_h1` fences and headings (#648 review: A5, B5, C1)
+// ---------------------------------------------------------------------
+
+fn insert_after_h1_with(template: &str) -> String {
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some("BODY"),
+        None,
+    )
+    .expect("create");
+    store.read_file(&path).unwrap()
+}
+
+#[test]
+fn a_backtick_fenced_heading_before_the_h1_is_not_the_insertion_point() {
+    let content = insert_after_h1_with(
+        "---\ntype: concept\ncreated: {{created}}\n---\n\n```md\n# not a heading\n```\n\n# {{title}}\n\n## See also\n",
+    );
+    assert!(
+        content.ends_with(
+            "```md\n# not a heading\n```\n\n# Woodbury identity\n\nBODY\n\n## See also\n"
+        ),
+        "{content}"
+    );
+}
+
+#[test]
+fn a_tilde_fenced_heading_before_the_h1_is_not_the_insertion_point() {
+    // A backtick line inside a `~~~` fence does not close it.
+    let content = insert_after_h1_with(
+        "---\ntype: concept\ncreated: {{created}}\n---\n\n~~~\n```\n# not a heading\n~~~\n\n# {{title}}\n\n## See also\n",
+    );
+    assert!(
+        content.ends_with(
+            "~~~\n```\n# not a heading\n~~~\n\n# Woodbury identity\n\nBODY\n\n## See also\n"
+        ),
+        "{content}"
+    );
+}
+
+#[test]
+fn an_h1_indented_by_up_to_three_spaces_is_the_insertion_point() {
+    let content = insert_after_h1_with(
+        "---\ntype: concept\ncreated: {{created}}\n---\n\n   # {{title}}\n\n## See also\n",
+    );
+    assert!(
+        content.ends_with("   # Woodbury identity\n\nBODY\n\n## See also\n"),
+        "{content}"
+    );
 }

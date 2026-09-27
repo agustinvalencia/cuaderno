@@ -203,6 +203,12 @@ fn note_create_writes_body_file_and_origin() {
         "{content}"
     );
     assert!(!content.contains("{{body}}"), "{content}");
+    // The template has no `{{origin}}`; the frontmatter is reconciled so the
+    // promotion link is still recorded, as a string.
+    assert!(
+        content.contains("origin: '[[journal/2026/daily/2026-09-02#Woodbury identity]]'"),
+        "{content}"
+    );
 }
 
 #[test]
@@ -280,4 +286,83 @@ fn note_create_without_body_file_succeeds_when_the_template_has_no_body_slot() {
         .assert()
         .success();
     assert!(dir.path().join("concepts/woodbury-identity.md").exists());
+}
+
+#[test]
+fn note_create_with_a_body_var_does_not_demand_body_file() {
+    // A `--var body=` fills `{{body}}` itself, so `--body-file` is neither
+    // prompted nor demanded under `--no-interactive`.
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    write_concept_template_with_body(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+            "--var",
+            "body=from the var",
+        ])
+        .assert()
+        .success();
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    assert!(
+        content.ends_with("# Woodbury identity\n\nfrom the var\n"),
+        "{content}"
+    );
+}
+
+#[test]
+fn note_create_drops_a_leading_title_heading_from_the_body_file() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    write_concept_template_with_body(dir.path());
+    let v = vault_arg(dir.path());
+    let body_file = dir.path().join("body.md");
+    fs::write(&body_file, "# Woodbury identity\n\nThe inverse.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+            "--body-file",
+            body_file.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    assert_eq!(
+        content.matches("# Woodbury identity").count(),
+        1,
+        "{content}"
+    );
+}
+
+#[test]
+fn note_create_help_names_its_value_types_and_the_title_rule() {
+    cdno()
+        .args(["note", "create", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--body-file <PATH>"))
+        .stdout(predicate::str::contains("--origin <STRING>"))
+        .stdout(predicate::str::contains("without the title"));
+    cdno()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("`note create`"));
 }

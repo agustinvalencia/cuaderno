@@ -365,3 +365,20 @@ fn no_advertised_tool_flags_itself_as_unimplemented() {
         );
     }
 }
+
+/// `create_custom_note`'s description must tell the agent to leave the title
+/// heading out of `body` (the engine writes the H1), and use the same
+/// "inserted after the H1" wording as every other surface.
+#[test]
+fn create_custom_note_says_body_excludes_the_title_heading() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    let desc = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "create_custom_note")
+        .and_then(|t| t.description.clone())
+        .expect("tool 'create_custom_note' not advertised");
+    assert!(desc.contains("WITHOUT the title heading"), "{desc}");
+    assert!(desc.contains("inserted after the H1"), "{desc}");
+    assert!(!desc.contains("appended after the H1"), "{desc}");
+}

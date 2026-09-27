@@ -129,6 +129,14 @@ impl Frontmatter {
     }
 }
 
+/// Split a raw markdown document into its frontmatter YAML block and the
+/// body after the closing delimiter, by the same delimiter rules as
+/// [`Frontmatter::parse`] but without parsing the YAML. `None` when the
+/// document does not open with a `---` line or the block is never closed.
+pub fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
+    split_at_closing_delim(strip_opening_delim(raw)?)
+}
+
 fn deserialise_field<T: DeserializeOwned>(name: &str, value: &Value) -> Result<T, ValidationError> {
     serde_yaml::from_value(value.clone()).map_err(|e| ValidationError::InvalidField {
         field: name.to_owned(),

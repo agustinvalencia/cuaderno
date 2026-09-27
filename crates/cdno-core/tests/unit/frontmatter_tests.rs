@@ -1,5 +1,5 @@
 use cdno_core::error::{ParseError, ValidationError};
-use cdno_core::frontmatter::Frontmatter;
+use cdno_core::frontmatter::{Frontmatter, split_frontmatter};
 
 #[test]
 fn parses_minimal_frontmatter_with_body() {
@@ -147,4 +147,17 @@ fn empty_frontmatter_block_parses_as_empty() {
     let (fm, body) = Frontmatter::parse(raw).unwrap();
     assert!(fm.optional_field::<String>("anything").unwrap().is_none());
     assert_eq!(body, "body\n");
+}
+
+#[test]
+fn split_frontmatter_returns_the_raw_block_and_the_untouched_body() {
+    let raw = "---\ntype: concept\norigin: [[a]] [[b]]\n---\n\n# T\n";
+    // The block is returned unparsed, so YAML that would not parse still splits.
+    assert_eq!(
+        split_frontmatter(raw),
+        Some(("type: concept\norigin: [[a]] [[b]]\n", "\n# T\n"))
+    );
+    assert_eq!(split_frontmatter("---\n---\nbody"), Some(("", "body")));
+    assert_eq!(split_frontmatter("# T\n"), None);
+    assert_eq!(split_frontmatter("---\nunclosed: 1\n"), None);
 }

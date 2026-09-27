@@ -66,8 +66,8 @@ struct Cli {
     /// Read verbs (`commitments`, `questions`, `status`, `now`, `orient`,
     /// `search`, `open`, and the `list`/`show` verbs of `project`, `portfolio`,
     /// `stewardship`, plus `action list`) emit their listing/detail;
-    /// write verbs (`log`, `capture`, `file`, `track`, and the
-    /// create/update verbs of `project`, `action`, `portfolio`,
+    /// write verbs (`log`, `capture`, `file`, `track`, `note create`, and
+    /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
     /// result and run non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
