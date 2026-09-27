@@ -362,7 +362,7 @@ Against the #597 baseline:
 - **`create_custom_note`** gains `body` and `log_line`; **`search_notes`** gains `tag`. No new
   tool.
 
-That makes net **+3 tools**, not +2, with `note_to_daily` the one that every daily-note writer
+Net **+3 tools**, with `note_to_daily` the one that every daily-note writer
 benefits from regardless of concepts.
 
 The **method text** lives where an agent reads it:
