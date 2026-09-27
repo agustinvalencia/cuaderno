@@ -23,7 +23,7 @@ use chrono::NaiveDateTime;
 use cdno_core::error::ManipulationError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::hash::content_hash;
-use cdno_core::markdown::{MarkdownDocument, heading_outline};
+use cdno_core::markdown::{MarkdownDocument, headings};
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -180,7 +180,7 @@ impl Vault {
                 // level-2 section at the end of the body. Ambiguity is
                 // still an error.
                 let target_level = match doc.section(heading) {
-                    Ok(_) => heading_outline(body)
+                    Ok(_) => headings(body)
                         .into_iter()
                         .find(|(_, text)| text == heading)
                         .map_or(2, |(level, _)| level),
@@ -299,7 +299,7 @@ fn validate_anchor(heading: &str) -> Result<(), DomainError> {
 /// (a smaller number): it would end the section early and add sections
 /// to the note behind the revision's back.
 fn ensure_no_restructuring_heading(content: &str, target_level: u8) -> Result<(), DomainError> {
-    match heading_outline(content)
+    match headings(content)
         .into_iter()
         .find(|(level, _)| *level <= target_level)
     {

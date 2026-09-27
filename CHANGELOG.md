@@ -23,6 +23,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   editor, or demanded under `--no-interactive`, only when the template has a `{{body}}` slot.
   The creation log line is unchanged.
 
+- **`Vault::note_to_daily`, the worked-note entry in today's daily note (T1, T2, #615, #616,
+  #638, #647).** `DailySection::Notes` is a second append-only history section next to `## Logs`:
+  entries are added, never replaced, through `upsert_daily_section(Notes, …, append: true)` or the
+  new `note_to_daily(at, heading, body)`, which writes one `### <heading>` entry under `## Notes`
+  and one `noted [[journal/…/<date>#<heading>]] (<links>)` pointer in `## Logs`, in one
+  transaction, and returns the anchored target so an agent can cite it (RFC 0002 §5.4). Heading
+  rules are enforced as `MarkdownDocument` resolves them, markup stripped, code fences skipped,
+  setext headings included, Unicode case-folded: an entry heading must be a valid wikilink anchor
+  (no `[`, `]`, `|`, `#`, leading `^`, line break or inline markup), and no heading in the entry
+  may be level 1–2, reuse a daily-section name, or duplicate a heading already in that day's note
+  or elsewhere in the same entry (`HistoryEntryHeadingInvalid`, nothing written). The check runs
+  under the write lock in both entry points. The pointer's link list is deduplicated by target,
+  keeping the first rendered form, so labels and embeds survive.
 - **`Vault::revise_note`, the logged, hash-guarded in-place edit for mutable custom notes (T7,
   #620, #645).** A concept note is refined in place (RFC 0002 §5.3), and every revision leaves one
   `revised [[path]] — reason` or `revised [[path#Section]] — reason` line in today's daily log, in
