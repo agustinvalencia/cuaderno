@@ -50,6 +50,7 @@ pub mod input;
 mod lifecycle;
 pub mod nudge;
 mod operations;
+mod rejection;
 pub mod server;
 pub mod smoke;
 pub mod startup;

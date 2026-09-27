@@ -224,7 +224,7 @@ pub fn validate_config_str(content: &str) -> Result<(), ConfigValidationError> {
     // 1. Parse. TOML's error Display already names the line/column and
     //    shows the snippet, so it is the message verbatim; the span (if
     //    any) is turned into structured line/col for the editor.
-    let config: VaultConfig = match toml::from_str(content) {
+    let mut config: VaultConfig = match toml::from_str(content) {
         Ok(config) => config,
         Err(err) => {
             let (line, col) = err.span().map(|span| line_col(content, span.start)).unzip();
@@ -241,7 +241,7 @@ pub fn validate_config_str(content: &str) -> Result<(), ConfigValidationError> {
     config
         .ignore_set()
         .map_err(|err| ConfigValidationError::from_message(err.to_string()))?;
-    TypeRegistry::validate(&config)
+    TypeRegistry::validate(&mut config)
         .map_err(|err| ConfigValidationError::from_message(err.to_string()))?;
     Ok(())
 }

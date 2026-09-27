@@ -145,15 +145,17 @@ impl Vault {
     pub fn new(
         store: Arc<dyn VaultStore>,
         index: Arc<dyn VaultIndex>,
-        config: VaultConfig,
+        mut config: VaultConfig,
     ) -> Result<(Self, ReconciliationReport), DomainError> {
         // Compile the config `ignore` globs once and hand the matcher to
         // reconciliation. A malformed pattern surfaces here, at vault
         // open, rather than silently skipping the rule.
         let ignore = config.ignore_set()?;
         // Validate `[note_types.*]` at vault-open so a malformed or built-in-
-        // shadowing custom type fails fast, not mid-operation.
-        crate::type_registry::TypeRegistry::validate(&config)?;
+        // shadowing custom type fails fast, not mid-operation. This also
+        // normalises each custom type's `folder` in place, so the `config`
+        // stored on `Vault` below already carries the canonical form.
+        crate::type_registry::TypeRegistry::validate(&mut config)?;
         let report = reconcile(&store, &index, &ignore)?;
         Ok((
             Self {

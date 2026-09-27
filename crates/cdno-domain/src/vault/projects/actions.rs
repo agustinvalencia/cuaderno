@@ -676,9 +676,12 @@ pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 
 /// Collapse every whitespace run — newlines included — to a single
 /// space, so a multi-line reason cannot split one log entry into
-/// several lines that no reader would parse as one.
+/// several lines that no reader would parse as one. A thin re-export of
+/// [`super::super::log::flatten_for_log`], the one flattener shared by
+/// creation lines, action/milestone/commitment drop reasons, and inbox
+/// discard captures.
 pub(in crate::vault) fn flatten_reason(reason: &str) -> String {
-    reason.split_whitespace().collect::<Vec<_>>().join(" ")
+    super::super::log::flatten_for_log(reason)
 }
 
 /// If `line` is an open action bullet (`- [ ] <text>`), return the
