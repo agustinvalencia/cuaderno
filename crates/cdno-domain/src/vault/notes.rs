@@ -7,6 +7,8 @@
 
 use cdno_core::extractors::first_h1;
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::hash::content_hash;
+use cdno_core::markdown::heading_texts;
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
 
@@ -34,6 +36,20 @@ pub struct NoteView {
     /// Markdown body after the closing `---` (or the whole file when
     /// there is no frontmatter block).
     pub body: String,
+    /// `cdno_core::hash::content_hash` of the raw bytes just read from
+    /// the store — never `notes.content_hash` from the index, which
+    /// lags an editor's direct write until the next reconcile. A
+    /// caller that means to revise this note safely (RFC 0002 §6.2)
+    /// passes this back as `expected_hash` so the write can detect a
+    /// lost update.
+    pub content_hash: String,
+    /// Distinct notes that link to this one (`VaultIndex::find_backlinks`),
+    /// sorted ascending by path — answers "is this used" before a
+    /// caller edits or deletes it.
+    pub backlinks: Vec<VaultPath>,
+    /// Heading text of every heading in the body, all levels, in
+    /// document order.
+    pub headings: Vec<String>,
 }
 
 impl Vault {
@@ -49,18 +65,24 @@ impl Vault {
     /// Errors with `Store(NotFound)` when no file exists at `path`.
     pub fn read_note(&self, path: &VaultPath) -> Result<NoteView, DomainError> {
         let raw = self.store.read_file(path)?;
+        let content_hash = content_hash(&raw);
         let note_type = self.index.find_by_path(path)?.map(|entry| entry.note_type);
         let (frontmatter, body) = match Frontmatter::parse(&raw) {
             Ok((fm, body)) => (fm.as_json(), body.to_owned()),
             Err(_) => (serde_json::Value::Null, raw),
         };
         let title = first_h1(&body);
+        let headings = heading_texts(&body);
+        let backlinks = self.index.find_backlinks(path)?;
         Ok(NoteView {
             path: path.clone(),
             note_type,
             title,
             frontmatter,
             body,
+            content_hash,
+            backlinks,
+            headings,
         })
     }
 

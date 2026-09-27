@@ -233,6 +233,15 @@ impl MarkdownDocument {
     }
 }
 
+/// Heading text of every heading in `body`, all levels, in document
+/// order — the same scan `MarkdownDocument` uses internally for
+/// section lookup, exposed as a standalone helper for callers (such
+/// as `Vault::read_note`) that only need the outline, not a document
+/// they intend to mutate.
+pub fn heading_texts(body: &str) -> Vec<String> {
+    scan_headings(body).into_iter().map(|h| h.text).collect()
+}
+
 /// Walk the markdown body through `pulldown-cmark` and collect one
 /// [`HeadingSpan`] per heading, including its content range.
 ///
