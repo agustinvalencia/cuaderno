@@ -165,6 +165,48 @@ impl CuadernoServer {
 // `Self::tool_router()` default.
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for CuadernoServer {
+    /// Dispatch, then split the error path (GH #560).
+    ///
+    /// This is the body `#[tool_handler]` would generate, plus one step:
+    /// a **caller-actionable** domain rejection comes back as a tool
+    /// result with `isError: true` instead of a JSON-RPC protocol error,
+    /// so the model actually sees it. (The macro skips generating
+    /// `call_tool` when the impl already defines one, so the attribute
+    /// above still supplies `list_tools` and the rest.)
+    ///
+    /// One site rather than ~55: handlers keep converting with
+    /// `.map_err(into_mcp_error)?`, and a new handler cannot forget to
+    /// opt in. See [`crate::rejection`] for the classification and for
+    /// why it travels through `ErrorData::data` to get here.
+    ///
+    /// # Forked from the macro, so it can drift
+    ///
+    /// The two lines before `.or_else` are a verbatim copy of what
+    /// `rmcp-macros` **1.7.0** generates (`src/tool_handler.rs`), and the
+    /// workspace depends on `rmcp = "1.7"` — a caret range. If a later
+    /// 1.x adds a step to the generated `call_tool`, this copy silently
+    /// loses it and nothing fails: dispatch still works, so the e2e
+    /// suites stay green while whatever the new step did is gone.
+    ///
+    /// **On an rmcp upgrade, re-diff this body against
+    /// `tool_handler.rs`.** `tests/forked_macro_guard.rs` fails the moment
+    /// the lockfile leaves the 1.7.x series and says so, so this does not
+    /// depend on the next reader noticing a comment. Pinning `=1.7` was
+    /// rejected: the lockfile is committed, so rmcp cannot move on a build
+    /// or in CI, and a pin would charge a manual bump on every patch
+    /// release to guard against a deliberate `cargo update`.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResult, rmcp::model::ErrorData> {
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router
+            .call(tcc)
+            .await
+            .or_else(crate::rejection::decode)
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::default()
             .with_protocol_version(ProtocolVersion::default())
