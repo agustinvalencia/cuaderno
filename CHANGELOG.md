@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Example `concept` type and template (T14, #627).** `examples/note-types/concept/` carries
+  `config.toml`, byte-identical to the `[note_types.concept]` block `cdno init` writes (a test,
+  `example_matches_init`, pins them together), and `concept.md`, a template with `{{body}}` above
+  the fallback sections *Statement / Why it matters / See also* and a quoted `origin:
+  "{{origin}}"`, for existing vaults to copy. `examples/note-types/README.md` describes the type,
+  how to install it, and creating with `--body-file` / `--origin` (promotion is
+  create-with-`origin`).
 - **`body` and `origin` on custom-note creation (T6, #619).** Creating a note of a config-defined
   type now takes an optional body and an optional origin at every surface: `cdno note create`
   gains `--body-file <PATH>` and `--origin <STRING>`, the `create_custom_note` MCP tool gains

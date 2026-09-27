@@ -31,3 +31,34 @@ Reference a person from your daily logs, meeting notes, and action notes with
 
 See the full recipe in
 [Tracking people](https://agustinvalencia.github.io/cuaderno/tutorials/tracking-people.html).
+
+## `concept/` — a library of reusable understanding
+
+A concept note is a unit of understanding worth keeping and reusing, tied to no project, question,
+stewardship or portfolio: a theorem and the intuition behind it, a definition, a technique and when
+it applies, a procedure you will run again (RFC 0002). `cdno init` already writes the same
+`[note_types.concept]` block into a new vault's config; this copy is for vaults created before
+that, and a test keeps the two byte-identical.
+
+1. Copy the block in [`concept/config.toml`](concept/config.toml) into your vault's
+   `.cuaderno/config.toml`.
+2. Copy [`concept/concept.md`](concept/concept.md) to `.cuaderno/templates/concept.md` (the block
+   names it as the type's template).
+3. Create concepts, supplying the body and, when promoting from the daily log, the origin:
+
+   ```bash
+   cdno note create concept --title "Woodbury identity" --body-file woodbury.md \
+     --origin "[[journal/2026/daily/2026-09-02#Woodbury identity]]"
+   ```
+
+   The MCP `create_custom_note` tool takes the same `body` and `origin`. Promotion is simply
+   create-with-`origin`: there is no separate operation, and `origin` records the daily-log
+   entries the concept came from. It is written as a quoted YAML string, so several links in one
+   value stay valid.
+
+The body is inserted where `{{body}}` sits, under the title and above the fallback sections
+*Statement*, *Why it matters* and *See also*. Those sections appear always, whether or not a body
+is supplied: an agent that drafted a full body can pass its own headings and delete or ignore the
+empty ones, and a note started empty still shows a human what to write. A procedure or a definition
+simply uses different headings. The template's frontmatter keys are in canonical order (`type`, the
+declared fields, then `title`), so a new concept note is clean under `cdno lint --strict`.

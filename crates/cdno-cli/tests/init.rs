@@ -137,3 +137,110 @@ fn run_creates_target_directory_when_missing() {
     assert!(target.join(".cuaderno").is_dir());
     assert!(target.join("inbox").is_dir());
 }
+
+/// A file from `examples/note-types/concept/`, the copy of the concept type
+/// existing vaults adopt by hand (RFC 0002 §6.1, T14).
+fn concept_example(file: &str) -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/note-types/concept")
+        .join(file);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
+}
+
+#[test]
+fn example_matches_init() {
+    // The example block is what an existing vault copies; `cdno init` writes
+    // `CONCEPT_TYPE_BLOCK` for a new one. The two must not drift.
+    let example = concept_example("config.toml");
+    assert_eq!(
+        example, CONCEPT_TYPE_BLOCK,
+        "examples/note-types/concept/config.toml must be byte-identical to CONCEPT_TYPE_BLOCK"
+    );
+
+    // And that block is exactly the text `cdno init` appends to the config.
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).unwrap();
+    let config = fs::read_to_string(dir.path().join(".cuaderno/config.toml")).unwrap();
+    assert!(
+        config.ends_with(&example),
+        "the config init writes must end with the example block:\n{config}"
+    );
+}
+
+#[test]
+fn example_concept_template_takes_body_and_origin() {
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).unwrap();
+    fs::write(
+        dir.path().join(".cuaderno/templates/concept.md"),
+        concept_example("concept.md"),
+    )
+    .unwrap();
+    let vault = dir.path().to_str().unwrap().to_owned();
+    let cdno = || {
+        let mut cmd = Command::cargo_bin("cdno").expect("cdno binary built");
+        cmd.env_remove("CUADERNO_VAULT_PATH");
+        cmd.args(["--vault", &vault]);
+        cmd
+    };
+
+    // `templates vars concept` lists the caller-supplied placeholders.
+    let out = cdno()
+        .args(["--json", "templates", "vars", "concept"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let names: Vec<&str> = rows.iter().filter_map(|r| r["name"].as_str()).collect();
+    for expected in ["title", "created", "body", "origin"] {
+        assert!(
+            names.contains(&expected),
+            "{expected} missing from {names:?}"
+        );
+    }
+
+    // Create with a body and a two-link origin (promotion is create-with-origin).
+    let body_file = dir.path().join("body.md");
+    fs::write(&body_file, "A rank-k correction to an inverse.\n").unwrap();
+    let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]] \
+                  [[journal/2026/daily/2026-09-24#Low-rank refit]]";
+    cdno()
+        .args(["note", "create", "concept", "--title", "Woodbury identity"])
+        .arg("--body-file")
+        .arg(&body_file)
+        .args(["--origin", origin])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    let (fm, rest) = cdno_core::frontmatter::Frontmatter::parse(&content)
+        .unwrap_or_else(|e| panic!("frontmatter parses: {e}\n{content}"));
+    let string = |key: &str| fm.optional_field::<String>(key).unwrap();
+    assert_eq!(string("type").as_deref(), Some("concept"), "{content}");
+    assert_eq!(
+        string("title").as_deref(),
+        Some("Woodbury identity"),
+        "{content}"
+    );
+    let json = fm.as_json();
+    assert!(json.get("created").is_some(), "{content}");
+    assert!(json.get("tags").is_some(), "{content}");
+    assert_eq!(string("origin").as_deref(), Some(origin), "{content}");
+    assert!(
+        content.contains(&format!("origin: \"{origin}\"")),
+        "origin stays quoted: {content}"
+    );
+
+    // The body sits under the H1 and above the fallback sections.
+    let h1 = rest.find("# Woodbury identity").expect("H1");
+    let body = rest.find("A rank-k correction").expect("body");
+    let statement = rest.find("## Statement").expect("## Statement");
+    assert!(h1 < body && body < statement, "{rest}");
+    assert!(rest.contains("## Why it matters") && rest.contains("## See also"));
+
+    // The template's key order is canonical (`type`, declared fields, then
+    // `title`), so a note made from it is lint-clean, warnings included.
+    cdno().args(["lint", "--strict"]).assert().success();
+}
