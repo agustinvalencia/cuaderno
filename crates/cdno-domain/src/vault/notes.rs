@@ -131,6 +131,14 @@ impl Vault {
     /// surfaced separately — not the write refusing it. `path` is confined
     /// by the `VaultPath` newtype (no absolute paths, no `..`), and the
     /// store writes atomically (temp + rename).
+    ///
+    /// **Superseded by [`revise_note`](Self::revise_note)** (RFC 0002
+    /// §6.2), which writes through `VaultTransaction` under the vault
+    /// write lock, guards against lost updates with the caller's
+    /// `content_hash`, refuses built-in and append-only types, and logs
+    /// the revision to the daily note. This primitive bypasses all of
+    /// that; it has no live caller and is kept only per #601. Do not add
+    /// new callers.
     pub fn write_note_raw(&self, path: &VaultPath, content: &str) -> Result<(), DomainError> {
         self.store.write_file(path, content)?;
         let ignore = self.config.ignore_set()?;
