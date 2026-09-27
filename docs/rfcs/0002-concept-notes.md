@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | Draft — revised after review-panel round 2 on #610; awaiting maintainer acceptance |
-| **Tracked by** | — (no issue yet) |
+| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9) |
+| **Tracked by** | epic to be opened; task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
 | **Affects** | `cdno-core` (one resolver fix), `cdno-domain`, `cdno-cli`, `cdno-mcp`, `docs/design.md`, `docs/implementation-plan.md`, `docs-site`, `examples/` |
 | **Related** | RFC 0001 (format precedent); custom note types (`docs-site/src/reference/custom-note-types.md`); #597 (desktop retirement — CLI and MCP surfaces only); `docs/implementation-plan.md` Phase 7 (the "standalone note" this RFC resolves); #604 (superseded draft) |
 
@@ -411,32 +411,34 @@ The **method text** lives where an agent reads it:
 
 ## 8. Implementation plan — staged
 
-**Stage 0: anchor-aware links.** The `resolve_one` fix with its tests, and `design.md:587`
+The task-level plan, with one issue per task and a verification probe for each, is the companion
+document [0002-implementation-plan.md](0002-implementation-plan.md). The stages are:
+
+**Stage 0: anchor-aware links** (T0). The `resolve_one` fix with its tests, and `design.md:587`
 rewritten to heading-text form. Independent of everything else; repairs the existing milestone
 backlinks.
 
-**Stage 1: generic tooling**, each a small PR: `DailySection::Notes` and `note_to_daily`;
-`read_note` with hash, backlinks and headings; `body` and `origin` on `create_custom_note` with the
-creation line for every custom type; `revise_note`; CLI `note revise` and `log note`; creation
-lines for the built-ins.
+**Stage 1: generic tooling** (T1 to T12), each a small PR: `DailySection::Notes` and
+`note_to_daily`; `read_note` with hash, backlinks and headings; `body` and `origin` on
+`create_custom_note` with the creation line for every custom type; creation lines for the
+built-ins; `revise_note`; CLI `note revise` and `log note`.
 
-**Stage 2: method text and the example type.** The conditional server bullet, the tool
-descriptions, `cdno init` writing the declaration, `examples/note-types/concept/`, the
-`design.md` §3 table row, §5.1 daily shape and §5 filing test, the §7 exception, `CLAUDE.md`,
-`implementation-plan.md` Phase 7 (`zettel → evidence or concept`), and a docs-site concepts page.
+**Stage 2: method text and the type** (T13 to T17). `cdno init` writing the declaration, the
+example type, the conditional server bullet and tool descriptions, `design.md`,
+`implementation-plan.md` Phase 7 (`zettel → evidence or concept`), `CLAUDE.md`, and the
+docs-site pages.
 
-**Stage 3: the trial.** Four to six weeks of use, measured from disk, no telemetry: backlinks to
-each concept from notes dated after its `created` (`links` table); `created [[` and `revised [[`
-lines in the log; a hand-read `git log -- concepts/`. Target, not counter: more than half of concept
-notes carry a later backlink after six weeks. Three prose questions at the end:
+**Stage 3: the trial** (T18). Four to six weeks of use, measured from disk, no telemetry:
+backlinks to each concept from notes dated after its `created`; `created [[` and `revised [[`
+lines in the log; a hand-read `git log -- concepts/`. Target, not counter: more than half of
+concept notes carry a later backlink after six weeks. Three prose questions at the end:
 
 1. Did you re-derive anything the library already had?
 2. Were most promotions same-day, or did second-use promotion happen?
 3. Did a weekly or monthly review, or a project, miss a derivation that lived only in `## Notes`?
 
-**Stage 4: the decision.** If the trial shows a need no generic operation meets, a follow-up RFC
-proposes a built-in. If it does not, the custom type is the design, and this RFC is marked
-accepted as is.
+**Stage 4: the decision** (T19). If the trial shows a need no generic operation meets, a
+follow-up RFC proposes a built-in. If it does not, the custom type is the design.
 
 **Deferred**, named so they are not forgotten: a tag filter on search (an index-layer join, not a
 post-filter); `description` on `[note_types.*]` surfaced through `list_note_types`; headings on
@@ -447,7 +449,7 @@ search hits; a heading-rename warning in `revise_note`; ordered-insert on `set_f
 
 ## 9. Decisions and open questions
 
-Recorded rulings (maintainer, 2026-09-27, after panel round 2):
+Recorded rulings (maintainer, 2026-09-27, after panel round 2), on which the RFC was accepted:
 
 1. **`## Notes` keeps its pointer line and its tool.** The lean `DailySection::Notes` alone was
    the panel's floor; the maintainer keeps `note_to_daily` in stage 1 because agents have been
