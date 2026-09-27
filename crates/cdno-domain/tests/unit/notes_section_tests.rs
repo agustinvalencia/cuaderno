@@ -119,19 +119,19 @@ fn pointer_line_deduplicates_links_by_target_keeping_the_first_form() {
     let (vault, _store, _index) = make_vault();
 
     // Same target `projects/a` three times with different labels, and an
-    // embed of `b` after a plain link to it: only the first rendered form
-    // of each target survives.
+    // embed of `b` before a plain link to it: only the first rendered form
+    // of each target survives, and an embed keeps its `!` when it is first.
     let outcome = vault
         .note_to_daily(
             at(10, 0),
             "Dedup entry",
-            "[[projects/a|x)y]] then [[projects/a|other]] and [[projects/a]]; [[b]] and ![[b]].",
+            "[[projects/a|x)y]] then [[projects/a|other]] and [[projects/a]]; ![[b]] and [[b]].",
         )
         .unwrap();
 
     assert_eq!(
         outcome.log_line,
-        "noted [[journal/2026/daily/2026-09-27#Dedup entry]] ([[projects/a|x)y]] [[b]])"
+        "noted [[journal/2026/daily/2026-09-27#Dedup entry]] ([[projects/a|x)y]] ![[b]])"
     );
 }
 
