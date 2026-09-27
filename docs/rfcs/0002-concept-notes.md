@@ -30,10 +30,10 @@ Five points carry the weight:
 - **A filing test** that separates a concept from evidence, with a **provenance rule** so that
   refining a concept never changes what a piece of evidence meant (§5.1).
 - **One concept per note**, linked, with structure emerging from links, tags and hand-written
-  hub notes rather than from folders (§5.2, §5.6).
+  hub notes rather than from folders (§5.2, §5.7).
 - **Logged refinement**, so the daily log keeps its role as the record of how mutable notes evolve
   (§5.3).
-- **Promotion from the log** as the default habit, cheap but never enforced (§5.4).
+- **A `## Notes` section in the daily note** for substance, so `## Logs` stays a sequence, and **promotion from it** as the default habit, cheap but never enforced (§5.4, §5.5).
 - **A staged rollout** on generic tooling: a custom note type plus four small generic operations,
   a trial with exit criteria, and a built-in type only if the trial shows a need no generic
   operation meets (§6, §8).
@@ -115,7 +115,7 @@ Ask of the thing you want to keep: *what is it?*
    tracking entry points at it through `routine:`.
 4. **Understanding you will reuse, independent of any deliverable**: a theorem, a definition, a
    technique, a procedure, an idea → a **concept note**.
-5. **Not yet settled** (still being worked out) → the **daily log**, until promoted (§5.4).
+5. **Not yet settled** (still being worked out) → the **daily log**, until promoted (§5.4, §5.5).
 
 A benchmark result is evidence. What the benchmark taught you about the technique is a concept.
 The command that ran it is part of the evidence note, and may also become a concept note if you
@@ -134,7 +134,7 @@ type: concept
 title: Woodbury identity
 created: 2026-09-25
 tags: [linear-algebra, optimisation]
-origin: ["[[journal/2026/daily/2026-09-02]]", "[[journal/2026/daily/2026-09-24]]"]
+origin: ["[[journal/2026/daily/2026-09-02#Woodbury identity]]", "[[journal/2026/daily/2026-09-24#Low-rank refit]]"]
 ---
 
 # Woodbury identity
@@ -153,7 +153,7 @@ origin: ["[[journal/2026/daily/2026-09-02]]", "[[journal/2026/daily/2026-09-24]]
 - **Required:** `type`, `title`, `created`.
 - **Optional:** `tags` (the subject vocabulary: open, indexed, no config); `origin` (wikilinks to
   where it was worked out, filled in by promotion); `verified` (a date, by convention only for
-  procedural concepts: the day you last ran the procedure and it worked; §5.5).
+  procedural concepts: the day you last ran the procedure and it worked; §5.6).
 - **Links:** none is required. A concept with no links in or out is not a lint finding. Links to
   projects, questions, stewardships and other concepts go in the body like any other wikilink.
 - **Unit:** one concept per note. If a note needs two headings that could each be cited on their
@@ -187,24 +187,64 @@ Every refinement made through the tool writes **one line to today's daily log**:
 Edits made outside cuaderno (in an editor) are legitimate, since markdown is the source of truth,
 but they leave no log line. That is stated as a limit of the invariant, not enforced by lint.
 
-### 5.4 Promotion
+### 5.4 Where a concept starts: the daily note's `## Notes`
 
-The default habit: **work it out in the log first, and write the concept note the second time
+Today everything written during the day lands in `## Logs`, and substance (a derivation, a
+meeting, a worked-out procedure) ends up as a block of text inside what is meant to be a
+*sequence*. The daily module already anticipates a second history section, `## Notes`, that is
+append-only like `## Logs` and outside the `upsert_daily_section` allow-list
+(`vault/daily.rs`); it is not yet written. This RFC gives it its job:
+
+- **`## Logs` is the sequence.** One line per event, pointers only.
+- **`## Notes` is the substance.** Append-only. Each entry is its own `### ` heading, so it can
+  be addressed: `### Woodbury identity`, `### Meeting with Erik`. A candidate concept is an
+  entry tagged `#concept` in its body; since body tags are indexed, "the same thing on two or
+  more dates" is a tag search across daily notes.
+- **The log line points at the entry**: `- **14:32**: noted [[2026-09-27#Woodbury identity]]`.
+  `noted [[` is a fixed prefix in the family of `state on [[` and `revised [[`.
+
+```markdown
+## Logs
+- **14:32**: noted [[2026-09-27#Woodbury identity]]
+
+## Notes
+
+### Woodbury identity
+#concept
+(A + UCV)^-1 = A^-1 - A^-1 U (C^-1 + V A^-1 U)^-1 V A^-1 — cheap when A^-1 is known and the
+update is low-rank; today's use was the k=3 refit.
+```
+
+The `was:`/`now:` blocks that project state changes write are outside this RFC, but they are the
+same problem and would fit the same section later.
+
+**Heading links must resolve.** `[[note#Heading]]` is the Obsidian form and is already used by
+`docs/design.md` for milestone links, but the resolver (`resolve_one`,
+`cdno-core/src/extractors.rs`) matches the whole target including the anchor, so every heading
+link is a dangling link today. Splitting the target on the first `#` before matching is a
+prerequisite for this section and for `origin:` below, and is a small fix in its own right.
+Nested anchors (`[[note#A#B]]`) are not supported: `MarkdownDocument::section()` addresses
+headings by flat text, so entries under `## Notes` use unique `### ` headings instead.
+
+### 5.5 Promotion
+
+The default habit: **work it out in `## Notes` first, and write the concept note the second time
 you reach for it.** One use does not justify a note; two do. The tool supports the habit without
 enforcing it:
 
-- **Promote** creates a concept note with `origin:` pre-filled from the daily notes it came from
-  and a drafted body, and logs `promoted to [[concepts/<slug>]]`, in one transaction. No past
-  daily note is touched; the frontmatter links count as backlinks.
+- **Promote** creates a concept note from a `## Notes` entry, with `origin:` pre-filled with the
+  entries it came from (`[[journal/2026/daily/2026-09-27#Woodbury identity]]`, naming the entry
+  rather than the day) and a drafted body, and logs `promoted to [[concepts/<slug>]]`, in one
+  transaction. No past daily note is touched; the frontmatter links count as backlinks.
 - **Create** without an origin is always allowed, for understanding you already know you will
   reuse.
 - **Triage** can route an inbox capture into a new concept note.
 - **Spotting the second use** belongs to the agent. The `search_notes` and `read_note`
-  descriptions tell an agent to offer promotion when the same thing turns up in daily notes on two
-  or more dates, and to search before creating so it extends an existing concept rather than
-  minting a duplicate. The tool never counts.
+  descriptions tell an agent to offer promotion when `#concept` entries on the same subject turn
+  up in daily notes on two or more dates, and to search before creating so it extends an existing
+  concept rather than minting a duplicate. The tool never counts.
 
-### 5.5 No staleness
+### 5.6 No staleness
 
 Understanding does not go stale. A theorem is as true untouched after two years as on the day it
 was written, and an explanation that has not changed is one you were happy with. Concept notes
@@ -221,7 +261,7 @@ Two things are available on request, and nothing acts on them:
   note's backlinks (already in the `links` table), and "mentioned in the log" is a search. An
   unreferenced concept costs nothing and is left alone.
 
-### 5.6 Layout — flat, structured by links
+### 5.7 Layout — flat, structured by links
 
 - A flat `concepts/` folder. A concept usually belongs to several subjects at once (a theorem is
   both linear algebra and optimisation), so a folder is the wrong axis; **tags** carry
@@ -282,6 +322,13 @@ One file per operation under `src/vault/`, each through `VaultTransaction`:
   (lost-update guard), logs `revised [[…]] — <reason>` with a section anchor when one section
   changed, and writes nothing when the text is identical.
 - **`search`** gains a **tag filter**, since tags are indexed but not queryable.
+- **`note_to_daily(date, heading, body)`** appends a `### heading` entry to `## Notes` (creating
+  the section after `## Logs` if absent) and the `noted [[<date>#<heading>]]` line to `## Logs`,
+  in one transaction. Append-only, like `log_to_daily_note`; it rejects a heading that already
+  exists in that day's `## Notes`, so anchors stay unique.
+- **Anchor-aware link resolution** (`cdno-core`, the one core change): `resolve_one` splits the
+  target on the first `#` and matches the path part; the anchor is kept on the `LinkEntry` for a
+  later lint check that the heading exists.
 
 Verification of a procedural concept is the existing `set_frontmatter` on `verified`, with the
 `[schemas.concept.fields.verified]` declaration above; it needs a test proving the path works for
@@ -305,13 +352,18 @@ the editor closes; a conflicting edit in between is refused rather than overwrit
 
 ### 6.4 MCP
 
-Net **+2 tools** against the #597 baseline:
+Against the #597 baseline:
 
 - **`read_note`** (new): path or slug; returns frontmatter, body, `content_hash`, backlinks.
 - **`revise_note`** (new): as §6.2; the description states the reason requirement and that the
   agent drafts the reason.
+- **`note_to_daily`** (new): as §6.2. Its description tells the agent that substance goes here
+  and the log line is written for it, and to tag a candidate concept `#concept`.
 - **`create_custom_note`** gains `body` and `log_line`; **`search_notes`** gains `tag`. No new
   tool.
+
+That makes net **+3 tools**, not +2, with `note_to_daily` the one that every daily-note writer
+benefits from regardless of concepts.
 
 The **method text** lives where an agent reads it:
 
@@ -319,7 +371,7 @@ The **method text** lives where an agent reads it:
   end, stewardships do not": *understanding you will reuse is a concept, not evidence; evidence is
   dated and never depends on a concept's current text*.
 - The `create_custom_note`, `search_notes` and `read_note` descriptions carry the filing test,
-  the search-before-create rule and the promotion offer (§5.4).
+  the search-before-create rule and the promotion offer (§5.5).
 - `list_note_types` surfaces an optional `description` declared on `[note_types.*]`, so a vault's
   own types can explain themselves to an agent.
 
@@ -340,9 +392,14 @@ The **method text** lives where an agent reads it:
 
 ## 8. Implementation plan — staged
 
-**Stage 1: generic tooling.** `read_note` with hash and backlinks; `body` and `log_line` on
-`create_custom_note`; `revise_note`; the `tag` filter; the `description` on custom types; a test
-of `set_frontmatter` on a custom type. Each is useful for every custom type and is a small PR.
+**Stage 0: anchor-aware links.** The `resolve_one` fix, with lint's dangling-link check
+updated, so `[[note#Heading]]` resolves. Independent of everything else and fixes the existing
+milestone links; it goes first because `## Notes` entries and `origin:` depend on it.
+
+**Stage 1: generic tooling.** `note_to_daily`; `read_note` with hash and backlinks; `body` and
+`log_line` on `create_custom_note`; `revise_note`; the `tag` filter; the `description` on custom
+types; a test of `set_frontmatter` on a custom type. Each is useful beyond concepts and is a small
+PR.
 
 **Stage 2: method text and the example type.** The server-instruction bullet, the tool
 descriptions, `examples/note-types/concept/`, the `design.md` §3 table row and §5 filing test,
