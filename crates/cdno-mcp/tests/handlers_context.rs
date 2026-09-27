@@ -28,7 +28,7 @@ use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     EmptyInput, GetActiveQuestionsInput, GetCommitmentsInput, GetOrientationInput,
-    PortfolioSlugInput, SearchNotesInput,
+    PortfolioSlugInput, ReadNoteInput, SearchNotesInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -1756,4 +1756,268 @@ async fn current_focus_clears_once_the_log_records_a_close() {
         .await
         .expect("current_focus");
     assert!(decode_json(&result).is_null(), "closed, so nothing is open");
+}
+
+// ---------------------------------------------------------------------
+// read_note (RFC 0002 T8, #621)
+// ---------------------------------------------------------------------
+
+const CONCEPT_PATH: &str = "concepts/woodbury-identity.md";
+const CONCEPT: &str = "---\ntype: concept\ncreated: 2026-09-01\ntags:\n- linear-algebra\n---\n\n# Woodbury identity\n\nInverting a low-rank update.\n\n## Statement\n\n(A + UCV)^-1 = ...\n\n## Why it matters\n\nCheap updates to **big** inverses.\n";
+
+/// A vault declaring the example `concept` type, as
+/// `examples/note-types/concept/config.toml` does.
+fn concept_config() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec!["tags".to_owned(), "origin".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+}
+
+/// The concept vault, keeping the store and vault handles so a test can
+/// write behind the server's back and reconcile.
+fn concept_vault(notes: &[(&str, &str)]) -> (Arc<dyn VaultStore>, Arc<Vault>, CuadernoServer) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(&VaultPath::new(CONCEPT_PATH).unwrap(), CONCEPT)
+        .unwrap();
+    for (path, body) in notes {
+        store
+            .write_file(&VaultPath::new(path).unwrap(), body)
+            .unwrap();
+    }
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, concept_config()).unwrap();
+    let vault = Arc::new(vault);
+    let server = CuadernoServer::new(Arc::clone(&vault));
+    (store, vault, server)
+}
+
+async fn read(server: &CuadernoServer, note: &str) -> Result<CallToolResult, rmcp::ErrorData> {
+    server
+        .read_note(Parameters(ReadNoteInput {
+            note: note.to_owned(),
+        }))
+        .await
+}
+
+/// The rejection payload a handler error carries for `call_tool` to turn
+/// into an `isError` tool result (#560, #634).
+fn rejection(err: &rmcp::ErrorData) -> serde_json::Value {
+    err.data
+        .as_ref()
+        .and_then(|d| d.get("cdno_rejection"))
+        .cloned()
+        .unwrap_or_else(|| panic!("not marked as a rejection: {err:?}"))
+}
+
+#[tokio::test]
+async fn read_note_round_trips_a_concept_note_with_all_seven_fields() {
+    let (_store, _vault, server) = concept_vault(&[]);
+
+    let json = decode_json(&read(&server, CONCEPT_PATH).await.expect("read_note"));
+
+    let mut keys: Vec<&str> = json
+        .as_object()
+        .expect("object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "backlinks",
+            "body",
+            "content_hash",
+            "frontmatter",
+            "headings",
+            "note_type",
+            "path",
+        ],
+        "the response is exactly the seven ruled fields"
+    );
+    assert_eq!(json["path"], CONCEPT_PATH);
+    assert_eq!(json["note_type"], "concept");
+    assert_eq!(json["frontmatter"]["type"], "concept");
+    assert_eq!(json["frontmatter"]["created"], "2026-09-01");
+    assert_eq!(
+        json["frontmatter"]["tags"],
+        serde_json::json!(["linear-algebra"])
+    );
+    let body = json["body"].as_str().expect("body");
+    assert!(body.starts_with("\n# Woodbury identity\n"), "{body:?}");
+    assert!(body.ends_with("Cheap updates to **big** inverses.\n"));
+    assert!(!body.contains("type: concept"), "frontmatter stays out");
+    assert_eq!(
+        json["content_hash"],
+        cdno_core::hash::content_hash(CONCEPT),
+        "the hash is the domain's hash of the file's exact bytes"
+    );
+    assert_eq!(json["backlinks"], serde_json::json!([]));
+    assert_eq!(
+        json["headings"],
+        serde_json::json!(["Woodbury identity", "Statement", "Why it matters"])
+    );
+}
+
+#[tokio::test]
+async fn read_note_body_is_not_capped() {
+    // `get_project_context` caps its body at 20k chars; this tool must not.
+    let long = format!(
+        "---\ntype: concept\ncreated: 2026-09-01\n---\n\n# Long\n\n{}\n",
+        "x".repeat(50_000)
+    );
+    let (_store, _vault, server) = concept_vault(&[("concepts/long.md", &long)]);
+
+    let json = decode_json(&read(&server, "concepts/long.md").await.expect("read"));
+
+    let body = json["body"].as_str().expect("body");
+    assert!(body.chars().filter(|c| *c == 'x').count() == 50_000);
+    assert!(!body.ends_with('\u{2026}'));
+}
+
+#[tokio::test]
+async fn read_note_backlinks_appear_after_a_reconcile() {
+    let (store, vault, server) = concept_vault(&[]);
+    let before = decode_json(&read(&server, "woodbury-identity").await.expect("read"));
+    assert_eq!(before["backlinks"], serde_json::json!([]));
+
+    // Another note links to the concept, written behind the server's back
+    // the way an editor would: the index learns of it on reconcile.
+    store
+        .write_file(
+            &VaultPath::new("concepts/low-rank-updates.md").unwrap(),
+            "---\ntype: concept\ncreated: 2026-09-02\n---\n\n# Low-rank updates\n\nSee [[concepts/woodbury-identity]].\n",
+        )
+        .unwrap();
+    vault.reconcile().expect("reconcile");
+
+    let after = decode_json(&read(&server, "woodbury-identity").await.expect("read"));
+    assert_eq!(
+        after["backlinks"],
+        serde_json::json!(["concepts/low-rank-updates.md"])
+    );
+}
+
+#[tokio::test]
+async fn read_note_resolves_every_reference_form_to_the_same_note() {
+    let (_store, _vault, server) = concept_vault(&[]);
+
+    for note in [
+        "woodbury-identity",
+        "concept:woodbury-identity",
+        "concepts/woodbury-identity.md",
+        // The wikilink spelling, without the extension.
+        "concepts/woodbury-identity",
+    ] {
+        let json = decode_json(
+            &read(&server, note)
+                .await
+                .unwrap_or_else(|e| panic!("`{note}` did not resolve: {e:?}")),
+        );
+        assert_eq!(json["path"], CONCEPT_PATH, "`{note}`");
+        assert_eq!(
+            json["content_hash"],
+            cdno_core::hash::content_hash(CONCEPT),
+            "`{note}`"
+        );
+    }
+}
+
+#[tokio::test]
+async fn read_note_reads_a_daily_note_by_path() {
+    let path = today_daily_path();
+    let raw = daily_with_logs("- **09:30**: wrote [[concepts/woodbury-identity]]\n");
+    let (_store, _vault, server) = concept_vault(&[(&path, &raw)]);
+
+    let json = decode_json(&read(&server, &path).await.expect("read daily"));
+
+    assert_eq!(json["path"], path.as_str());
+    assert_eq!(json["note_type"], "daily");
+    assert_eq!(json["content_hash"], cdno_core::hash::content_hash(&raw));
+    assert_eq!(json["headings"], serde_json::json!(["Today", "Logs"]));
+    // And the concept sees the daily note's link.
+    let concept = decode_json(&read(&server, CONCEPT_PATH).await.expect("read"));
+    assert_eq!(concept["backlinks"], serde_json::json!([path]));
+}
+
+#[tokio::test]
+async fn read_note_refuses_an_unknown_reference_as_a_not_found_rejection() {
+    let (_store, _vault, server) = concept_vault(&[]);
+
+    // Consistent with `get_project_context` on a wrong slug: a
+    // caller-actionable rejection (`not_found`), which `call_tool` turns
+    // into an `isError` tool result, not an INVALID_PARAMS protocol error.
+    let err = read(&server, "no-such-concept")
+        .await
+        .expect_err("an unknown slug is refused");
+    assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    let payload = rejection(&err);
+    assert_eq!(payload["code"], "not_found", "{payload}");
+    assert_eq!(payload["details"]["what"], "no-such-concept");
+    assert_eq!(payload["details"]["miss"], "slug");
+    assert!(
+        payload["message"]
+            .as_str()
+            .expect("message")
+            .contains("search_notes"),
+        "a slug miss points at search: {payload}"
+    );
+
+    let err = read(&server, "concepts/missing.md")
+        .await
+        .expect_err("an unknown path is refused");
+    let payload = rejection(&err);
+    assert_eq!(payload["code"], "not_found", "{payload}");
+    assert_eq!(payload["details"]["miss"], "path");
+}
+
+#[tokio::test]
+async fn read_note_reports_an_ambiguous_slug_with_its_candidates() {
+    let (_store, _vault, server) = concept_vault(&[(
+        "projects/woodbury-identity.md",
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Woodbury project\n",
+    )]);
+
+    let err = read(&server, "woodbury-identity")
+        .await
+        .expect_err("two notes share the slug");
+    let payload = rejection(&err);
+    assert_eq!(payload["code"], "ambiguous_slug", "{payload}");
+    let mut paths: Vec<&str> = payload["details"]["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .map(|c| c["path"].as_str().expect("path"))
+        .collect();
+    paths.sort_unstable();
+    assert_eq!(paths, [CONCEPT_PATH, "projects/woodbury-identity.md"]);
+
+    // The typed form is the way out, as the CLI advises.
+    let json = decode_json(
+        &read(&server, "concept:woodbury-identity")
+            .await
+            .expect("typed form"),
+    );
+    assert_eq!(json["path"], CONCEPT_PATH);
+}
+
+#[tokio::test]
+async fn read_note_rejects_a_path_outside_the_vault_as_invalid_params() {
+    let (_store, _vault, server) = concept_vault(&[]);
+    for note in ["../secrets.md", "/etc/passwd"] {
+        let err = read(&server, note).await.expect_err("outside the vault");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "`{note}`");
+    }
 }

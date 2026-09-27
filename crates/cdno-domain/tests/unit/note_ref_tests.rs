@@ -266,6 +266,42 @@ fn resolves_a_vault_relative_path() {
     );
 }
 
+/// A wikilink spells a note without its extension (`[[projects/foo]]`), so a
+/// path copied from one resolves to the `.md` file. The retry lives here so
+/// that every caller (`cdno open`, `read_note`) accepts the same spellings.
+#[test]
+fn a_path_without_its_extension_resolves_to_the_markdown_file() {
+    let vault = vault_with(&[(
+        "projects/surrogate-model.md",
+        note("project", "Surrogate model"),
+    )]);
+    assert_eq!(
+        resolved(&vault, "projects/surrogate-model", day(2026, 8, 21)),
+        "projects/surrogate-model.md"
+    );
+}
+
+/// The `.md` retry is a second lookup, not a fallback to slug matching: a
+/// multi-segment reference that misses both as given and with `.md` appended
+/// is a path miss, reported under the reference as typed.
+#[test]
+fn a_path_that_misses_with_and_without_its_extension_is_not_found() {
+    let vault = vault_with(&[(
+        "projects/surrogate-model.md",
+        note("project", "Surrogate model"),
+    )]);
+    let result = vault
+        .resolve_note_ref("projects/surrogate-modle", day(2026, 8, 21))
+        .expect("resolve");
+    assert_eq!(
+        result,
+        RefResolution::NotFound {
+            reference: "projects/surrogate-modle".to_owned(),
+            miss: Miss::Path,
+        }
+    );
+}
+
 // ---------------------------------------------------------------------
 // Slug tiers
 // ---------------------------------------------------------------------

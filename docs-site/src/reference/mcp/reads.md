@@ -19,6 +19,7 @@ anything. Inputs marked optional may be omitted.
 | `read_daily_note` | `date?` (default today) | The daily log for a date. |
 | `read_weekly_note` | `date?` (default this week) | The weekly note for an ISO week. |
 | `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |
+| `read_note` | `note` (path, slug, `type:slug` or journal date) | Any note, whole: `path`, `note_type`, `frontmatter`, `body` (uncapped), `content_hash`, `backlinks` and `headings`. Takes the references [`cdno open`](../cli/open.md) takes, plus a path without its `.md`. |
 | `search_notes` | `query`, `note_type?`, `from?`, `to?`, `portfolio?`, `limit?` (default 20) | Ranked full-text hits. The MCP form of [`cdno search`](../cli/search.md). |
 | `lint` | — | Vault-wide problems: frontmatter, broken wikilinks, attachment pairing, and lines the canonical parsers silently skip — malformed stewardship-dashboard bullets and daily-log focus markers [`cdno now`](../cli/now.md) will not read back. |
 | `triage_inbox` | — | Pending inbox captures awaiting triage. |
@@ -35,5 +36,11 @@ anything. Inputs marked optional may be omitted.
   there.** A completion that has both a note and a log line is listed once, and dropped actions
   never appear. The list is read from the daily notes directly rather than from the capped `logs`
   field, so a completion early in a busy week is not lost to that cap.
+- **`read_note`** reads any note, of any type. `content_hash` is the hash of the bytes just read,
+  the value to hand back as `expected_hash` when revising the note, so a change made in between is
+  detected rather than overwritten. `backlinks` comes from the index, which reconciliation
+  refreshes, so a link written moments ago may not appear yet. A slug several notes share is
+  refused with code `ambiguous_slug` and the candidates' paths; a reference matching nothing is
+  refused with code `not_found`.
 - These pair naturally with the [write tools](writes.md): read context, propose an action, then
   write it.

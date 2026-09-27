@@ -1081,6 +1081,57 @@ impl From<cdno_domain::DailyNoteView> for DailyNoteViewDto {
     }
 }
 
+// ---------------------------------------------------------------------
+// Any note (RFC 0002 T8, #621)
+// ---------------------------------------------------------------------
+
+/// Output of `read_note`: one vault note of any type, split for reading.
+///
+/// Unlike [`ProjectContextDto::body_markdown`], `body` is **uncapped**: this
+/// is the tool an agent calls to see a note whole (the capped context tools
+/// point here), and a note it is about to revise must arrive intact.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReadNoteResponse {
+    /// Vault-relative path of the note that was read, `.md` included.
+    pub path: String,
+    /// The note's type as the index records it (`concept`, `project`,
+    /// `daily`, ...), or null when the file is not indexed (an ignored
+    /// file, or one written since the last reconcile).
+    pub note_type: Option<String>,
+    /// The full frontmatter as JSON, or null when the note has no
+    /// parseable frontmatter block (the whole file is then the body).
+    pub frontmatter: serde_json::Value,
+    /// The markdown after the closing `---`, uncapped.
+    pub body: String,
+    /// Hash of the exact bytes just read from disk (never the index's
+    /// copy). Pass it back as `expected_hash` when revising the note, so a
+    /// write made in between is detected rather than overwritten.
+    pub content_hash: String,
+    /// Paths of the distinct notes that link to this one, sorted by path.
+    /// Read from the index's link table, which reconcile refreshes, so a
+    /// link written moments ago may not appear yet. Uncapped, like the
+    /// body; flat rather than grouped by type, because the grouping
+    /// [`ProjectBacklinksDto`] carries is specific to project maps.
+    pub backlinks: Vec<String>,
+    /// Text of every heading in the body, all levels, in document order,
+    /// with inline markup stripped: the form a section argument matches.
+    pub headings: Vec<String>,
+}
+
+impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
+    fn from(v: cdno_domain::vault::NoteView) -> Self {
+        Self {
+            path: v.path.to_string(),
+            note_type: v.note_type,
+            frontmatter: v.frontmatter,
+            body: v.body,
+            content_hash: v.content_hash,
+            backlinks: v.backlinks.into_iter().map(|p| p.to_string()).collect(),
+            headings: v.headings,
+        }
+    }
+}
+
 /// Output of `read_weekly_note` — mirrors [`DailyNoteViewDto`]. A week
 /// with no note yet returns `exists: false` and empty `markdown`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]

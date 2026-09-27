@@ -262,6 +262,26 @@ fn a_missing_path_does_not_mention_the_journal() {
     assert!(err.contains("--list"), "got: {err}");
 }
 
+/// A wikilink spells a note without its extension (`[[concepts/foo]]`), so a
+/// path copied from one must open the `.md` file rather than report no such
+/// file. The retry is the domain resolver's, so `read_note` agrees.
+#[test]
+fn a_path_without_its_extension_opens_the_markdown_file() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::create_dir_all(dir.path().join("concepts")).unwrap();
+    fs::write(
+        dir.path().join("concepts/foo.md"),
+        "---\ntype: concept\ncreated: 2026-08-21\n---\n\n# Foo\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolve_in(dir.path(), "concepts/foo").unwrap(),
+        "concepts/foo.md"
+    );
+}
+
 /// `exists()` is true for a directory, so without an explicit file check this
 /// handed back a path no editor can open and no `$(…)` can use.
 #[test]

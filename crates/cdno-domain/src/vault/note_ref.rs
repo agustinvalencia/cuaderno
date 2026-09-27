@@ -267,20 +267,37 @@ impl super::Vault {
         // typed a path with a typo wants "no such file", not a picker that
         // opens something adjacent.
         let path = VaultPath::new(&relpath)?;
-        // `.md` as well as existence, because `exists` is true for a
-        // directory: without this, `cdno open projects/` would hand back a
-        // directory that no editor can open and no `$(…)` can use. A note is
-        // always a markdown file.
-        let is_note_file =
-            path.as_path().extension().is_some_and(|e| e == "md") && self.store.exists(&path)?;
-        if is_note_file {
-            Ok(RefResolution::Resolved(path))
-        } else {
-            Ok(RefResolution::NotFound {
-                reference: reference.to_owned(),
-                miss,
-            })
+        if self.is_note_file(&path)? {
+            return Ok(RefResolution::Resolved(path));
         }
+        // A path without `.md` is how a wikilink spells a note
+        // (`[[concepts/foo]]`), so a reference copied from one names
+        // `concepts/foo.md`. Retried here rather than in each interface so
+        // that `cdno open`, `read_note` and every later verb accept the same
+        // spellings. Only path-shaped references qualify (the calendar forms
+        // already name a `.md` file), and a trailing `/` names a directory,
+        // not a note. The miss still reports the reference as typed.
+        if matches!(parsed, NoteRef::Path(_))
+            && !relpath.ends_with(".md")
+            && !relpath.ends_with('/')
+        {
+            let with_extension = VaultPath::new(format!("{relpath}.md"))?;
+            if self.is_note_file(&with_extension)? {
+                return Ok(RefResolution::Resolved(with_extension));
+            }
+        }
+        Ok(RefResolution::NotFound {
+            reference: reference.to_owned(),
+            miss,
+        })
+    }
+
+    /// Whether `path` names an existing note file. `.md` as well as
+    /// existence, because `exists` is true for a directory: without this,
+    /// `cdno open projects/` would hand back a directory that no editor can
+    /// open and no `$(…)` can use. A note is always a markdown file.
+    fn is_note_file(&self, path: &VaultPath) -> Result<bool, DomainError> {
+        Ok(path.as_path().extension().is_some_and(|e| e == "md") && self.store.exists(path)?)
     }
 
     /// `type:slug` — scoped to one type, so a slug shared across types is no

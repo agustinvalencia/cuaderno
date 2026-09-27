@@ -8,16 +8,17 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
+use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
-use cdno_domain::SearchFilters;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
+use cdno_domain::{Miss, RefResolution, SearchFilters};
 
 use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
     MonthlyContextDto, MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS,
     PROJECT_MENTIONS_MAX, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
-    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, SearchResultDto,
+    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, ReadNoteResponse, SearchResultDto,
     StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
     WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
@@ -29,6 +30,7 @@ use crate::util::{
     parse_question_slug_from_wikilink,
 };
 
+use crate::rejection::{RejectionCode, reject};
 use crate::server::CuadernoServer;
 
 #[tool_router(router = context_router, vis = "pub")]
@@ -467,6 +469,44 @@ impl CuadernoServer {
     }
 
     #[tool(
+        description = "Read any vault note whole. Returns `{ path, note_type, frontmatter, body, content_hash, backlinks, headings }`. `note` takes the references `cdno open` takes: a vault path with or without `.md` (`concepts/woodbury-identity`), a bare slug (`woodbury-identity`), a typed slug (`concept:woodbury-identity`), or a journal date (`2026-09-27`, `2026-W39`, `2026-09`, `today`). A slug shared by several notes is refused with code `ambiguous_slug` and the candidates' paths in `details.candidates` -- pass one of those paths; a reference that matches no note is refused with code `not_found` (`search_notes` finds a note by its title). The body is uncapped, unlike `get_project_context`'s. `content_hash` is the hash of the bytes just read: pass it to `revise_note` as `expected_hash`, so a change made since this read is detected rather than overwritten. `headings` lists every heading in the body with inline markup stripped, the form a section argument takes. `backlinks` lists the paths of notes that link here; it comes from the index, which reconcile refreshes, so a link written moments ago may not appear yet."
+    )]
+    pub async fn read_note(
+        &self,
+        Parameters(input): Parameters<ReadNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
+        let reference = input.note.trim().to_owned();
+        // `VaultPath` rejects these with a message written for a programmer
+        // and as a mechanical error; the caller passed a bad argument, so
+        // say so plainly (`cdno open` draws the same line).
+        if reference_escapes_the_vault(&reference) {
+            return Err(invalid_argument(
+                "note",
+                &format!(
+                    "`{reference}` is outside the vault; pass a vault-relative path or a slug"
+                ),
+            ));
+        }
+        let outcome = self
+            .with_vault(move |vault| {
+                // The resolver owns the reference grammar, including the
+                // wikilink spelling of a path without `.md`.
+                let resolution = vault.resolve_note_ref(&reference, today)?;
+                Ok::<_, DomainError>(match resolution {
+                    RefResolution::Resolved(path) => Ok(vault.read_note(&path)?),
+                    RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(&reference, &hits)),
+                    RefResolution::NotFound { reference, miss } => {
+                        Err(unresolved_note_ref(&reference, miss))
+                    }
+                })
+            })
+            .await?
+            .map_err(into_mcp_error)??;
+        json_result(ReadNoteResponse::from(outcome))
+    }
+
+    #[tool(
         description = "Full-text search across all notes, ranked best-first. Matches note **titles as well as bodies**, with a title hit weighted ten times a body hit — so this is also how you find a note whose title you half-remember, not only one whose contents you recall. Optional filters: `note_type` (e.g. `project`, `evidence`, `daily`), a `from`/`to` ISO date window (matched against the note's date), and `portfolio`. Free-text `query` is matched case-insensitively with terms ANDed. Returns `{ path, note_type, title, snippet, score }` per hit — `snippet` brackets the matched terms; lower `score` is a better match."
     )]
     pub async fn search_notes(
@@ -500,6 +540,64 @@ impl CuadernoServer {
         let dtos: Vec<SearchResultDto> = results.into_iter().map(Into::into).collect();
         json_result(dtos)
     }
+}
+
+/// Whether a reference names somewhere outside the vault, which
+/// `VaultPath` would reject as a mechanical error.
+fn reference_escapes_the_vault(reference: &str) -> bool {
+    let p = std::path::Path::new(reference);
+    p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir)
+}
+
+/// `read_note`'s answer to a slug several notes share: a rejection carrying
+/// every candidate's path, since a path is always unambiguous.
+fn ambiguous_note_ref(reference: &str, hits: &[NoteCandidate]) -> ErrorData {
+    let paths: Vec<String> = hits.iter().map(|c| c.path.to_string()).collect();
+    let candidates: Vec<serde_json::Value> = hits
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "path": c.path.to_string(),
+                "note_type": c.note_type,
+                "title": c.title,
+            })
+        })
+        .collect();
+    reject(
+        RejectionCode::AmbiguousSlug,
+        format!(
+            "ambiguous reference `{reference}`: {} notes share it; pass one of their paths: {}",
+            hits.len(),
+            paths.join(", ")
+        ),
+        serde_json::json!({ "slug": reference, "candidates": candidates }),
+    )
+}
+
+/// `read_note`'s answer to a reference that matches no note. Worded per
+/// miss, as `cdno open` words it: a missing journal note is routine, a
+/// missing path wants "no such file", and only a slug miss points at search.
+fn unresolved_note_ref(reference: &str, miss: Miss) -> ErrorData {
+    let (kind, message) = match miss {
+        Miss::JournalNote => (
+            "journal_note",
+            format!(
+                "no journal note at `{reference}` yet; one is created the first time something is written to it"
+            ),
+        ),
+        Miss::Path => ("path", format!("no note at `{reference}`")),
+        Miss::Slug => (
+            "slug",
+            format!(
+                "no note matches `{reference}`; pass a vault path, a slug or `type:slug`, or find the note with `search_notes`"
+            ),
+        ),
+    };
+    reject(
+        RejectionCode::NotFound,
+        message,
+        serde_json::json!({ "what": reference, "miss": kind }),
+    )
 }
 
 /// Build a `list_projects` row from a domain `(path, frontmatter)`
