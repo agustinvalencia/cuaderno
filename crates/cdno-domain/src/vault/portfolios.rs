@@ -182,8 +182,15 @@ impl Vault {
         }
 
         let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
+        let target = format!("{}/{slug}", cdno_core::paths::PORTFOLIOS);
+        // Collapsed to one line the way `state.rs`'s creation-log lines
+        // are (`flatten_for_log`); duplicated in miniature here rather
+        // than reaching across modules for a one-liner (#618).
+        let question_flat = question.split_whitespace().collect::<Vec<_>>().join(" ");
+        let log_entry = format!("portfolio created [[{target}]] \u{2014} {question_flat}");
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(path)

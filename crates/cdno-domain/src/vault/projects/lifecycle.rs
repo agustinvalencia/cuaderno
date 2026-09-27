@@ -155,8 +155,25 @@ impl Vault {
         let content = self.scaffold("project", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
+        // The creation line needs a time-of-day, but `create_project`
+        // only takes a `NaiveDate` (`today`) — every caller already
+        // discards the wall-clock time it may hold before reaching
+        // here (see `cdno-cli/src/commands/project.rs::create`, which
+        // has a full `at: NaiveDateTime` and passes `at.date()`).
+        // Rather than widen the signature, stamp the creation line at
+        // midnight on `today`, matching the `--at`-as-bare-date
+        // convention already used for `cdno track` (#618 note in
+        // `stage_daily_log`'s call sites).
+        let target = path.to_string();
+        let target = target.strip_suffix(".md").unwrap_or(&target);
+        let log_entry = format!(
+            "project created [[{target}]] \u{2014} {}",
+            super::state::flatten_for_log(title)
+        );
+
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
+        self.stage_daily_log(today.and_time(chrono::NaiveTime::MIN), &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(path)

@@ -1176,10 +1176,16 @@ async fn search_notes_passes_the_date_window_through() {
             )
             .unwrap();
     });
+    // Scoped to `question` (#618): question creation now also logs a
+    // `question created […] — sparse attention in …` line to its daily
+    // note, so an unscoped "sparse" query would additionally match the
+    // June daily note within the same date window — a correct new
+    // search result, but a distraction from what this test checks
+    // (that `from` reaches the domain filter, not from/to transposed).
     let result = server
         .search_notes(Parameters(SearchNotesInput {
             query: "sparse".to_owned(),
-            note_type: None,
+            note_type: Some("question".to_owned()),
             from: Some(NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()),
             to: None,
             portfolio: None,

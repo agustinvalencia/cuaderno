@@ -113,8 +113,17 @@ impl Vault {
         let content = self.scaffold("question", None, &mut ctx)?;
         let entry = build_index_entry_for(&path, &content, NoteType::Question.as_str())?;
 
+        let target = path.to_string();
+        let target = target.strip_suffix(".md").unwrap_or(&target);
+        // Collapsed to one line as `state.rs`'s creation-log lines are
+        // (`flatten_for_log`); duplicated here rather than reaching
+        // across modules for a one-liner (#618).
+        let text_flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let log_entry = format!("question created [[{target}]] \u{2014} {text_flat}");
+
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(path)

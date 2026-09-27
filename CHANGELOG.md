@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Built-in project, question, portfolio and stewardship creation now log themselves (#618).**
+  Each stages a `<type> created [[…]] — <title>` line to today's daily log inside its own
+  transaction, so creation and log entry commit or roll back together — matching the line
+  `create_commitment` already wrote and the shape custom-type creation gains alongside it. A
+  project created directly into `_parked/` (cap already reached) logs its real
+  `projects/_parked/<slug>` path; a stewardship logs the folder/slug form (`stewardships/<slug>`)
+  regardless of whether it's flat or expanded, since the resolver maps it to `_index.md` either
+  way.
+
 ## [0.39.0] - 2026-09-26
 
 ### Removed

@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cdno_core::config::{StateOverflow, VaultConfig};
 use cdno_core::error::StoreError;
+use cdno_core::file_meta::FileMeta;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
@@ -336,6 +337,159 @@ fn create_project_substitutes_kebab_case_for_multi_word_context() {
         raw.contains("context: side-project"),
         "expected kebab-case 'side-project' in YAML, got:\n{raw}"
     );
+}
+
+#[test]
+fn project_creation_logs_one_line() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    vault
+        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .expect("create succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-28.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec!["- **00:00**: project created [[projects/icml-paper]] \u{2014} ICML paper"],
+        "daily note:\n{daily}"
+    );
+}
+
+/// A project created directly into `_parked/` (cap already reached)
+/// logs its *real* path, not the bare `projects/<slug>` form.
+#[test]
+fn parked_project_creation_logs_the_parked_path() {
+    let cfg = config_with_cap(1);
+    let a = project_body("work", "active", "2026-01-10", "Alpha");
+    let (vault, store) = vault_with_seeded_store(&[("projects/alpha.md", &a)], cfg);
+
+    vault
+        .create_project(day(2026, 4, 28), "Beta", Context::Work, None)
+        .expect("create succeeds, seeded as parked");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-28.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("project created [[projects/_parked/beta]] \u{2014} Beta"),
+        "daily note:\n{daily}"
+    );
+}
+
+/// The daily-log write and the project file write must commit
+/// together: if the daily-note write fails, the just-written project
+/// file must not linger (mirrors `actions_tests.rs`'s atomicity test
+/// for `add_action_with_note`).
+#[test]
+fn project_creation_is_atomic_with_its_log_line() {
+    let backing = Arc::new(MemoryVaultStore::new());
+    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(Arc::clone(&backing), 2));
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+
+    let err = vault
+        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::Transaction(_)), "got {err:?}");
+
+    assert!(
+        !backing.exists(&vp("projects/icml-paper.md")).unwrap(),
+        "rolled-back project note must not linger",
+    );
+    assert!(
+        !backing
+            .exists(&vp("journal/2026/daily/2026-04-28.md"))
+            .unwrap(),
+        "the failed daily-note write must leave no file behind either",
+    );
+}
+
+/// Wraps a `MemoryVaultStore`, failing the Nth write/append/move/delete
+/// so the transaction rollback path can be exercised at the domain
+/// level. Reads, `exists`, and directory walks never fail or count, so
+/// `Vault::new` reconciliation runs cleanly before the counter matters.
+/// Copied from `actions_tests.rs::FailingStore`, which is private to
+/// that file.
+struct FailingStore {
+    inner: Arc<MemoryVaultStore>,
+    fail_on: usize,
+    count: Mutex<usize>,
+}
+
+impl FailingStore {
+    fn new(inner: Arc<MemoryVaultStore>, fail_on: usize) -> Self {
+        Self {
+            inner,
+            fail_on,
+            count: Mutex::new(0),
+        }
+    }
+
+    /// Increment the write counter; return true exactly when this is
+    /// the write that should fail.
+    fn tick(&self) -> bool {
+        let mut c = self.count.lock().unwrap();
+        *c += 1;
+        *c == self.fail_on
+    }
+}
+
+impl VaultStore for FailingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(src.to_string()));
+        }
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
+        self.inner.import_external(src, dest)
+    }
 }
 
 // ---------------------------------------------------------------------
