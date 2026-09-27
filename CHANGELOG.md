@@ -8,13 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **Example `concept` type and template (T14, #627).** `examples/note-types/concept/` carries
-  `config.toml`, byte-identical to the `[note_types.concept]` block `cdno init` writes (a test,
-  `example_matches_init`, pins them together), and `concept.md`, a template with `{{body}}` above
-  the fallback sections *Statement / Why it matters / See also* and a quoted `origin:
-  "{{origin}}"`, for existing vaults to copy. `examples/note-types/README.md` describes the type,
-  how to install it, and creating with `--body-file` / `--origin` (promotion is
-  create-with-`origin`).
+- **Example `concept` type and template, installed by `cdno init` (T14, #627).** `cdno init` now
+  also writes `.cuaderno/templates/concept.md` (never overwriting an existing file), so a new
+  vault gets both the `[note_types.concept]` declaration and its template; before, the block named
+  a template no vault had, and a new concept got none of the fallback sections.
+  `examples/note-types/concept/` carries the same two files for existing vaults to copy:
+  `config.toml` and `concept.md`, byte-identical to `CONCEPT_TYPE_BLOCK` and `CONCEPT_TEMPLATE`
+  (`example_matches_init` pins both). The template puts `{{body}}` under the H1 and above the
+  fallback sections *Statement / Why it matters / See also*. Its frontmatter is `type`, `created`
+  and `tags: []` only: no `title`, because the title is the body H1 and an unquoted `title:
+  {{title}}` broke the YAML for a title containing `: `; and no `origin`, because an unresolved
+  `{{origin}}` stayed in the file as literal text whenever no origin was given. A supplied
+  `origin` is added by creation, quoted and in declared order. `examples/note-types/README.md`
+  describes the type, how to install it, and creating with `--body-file` / `--origin` (promotion
+  is create-with-`origin`).
 - **`body` and `origin` on custom-note creation (T6, #619).** Creating a note of a config-defined
   type now takes an optional body and an optional origin at every surface: `cdno note create`
   gains `--body-file <PATH>` and `--origin <STRING>`, the `create_custom_note` MCP tool gains

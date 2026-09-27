@@ -21,6 +21,33 @@ optional = ["tags", "origin"]
 template = "concept.md"
 "#;
 
+/// The concept template `cdno init` writes to `.cuaderno/templates/concept.md`
+/// (RFC 0002 §5.2, §6.1), the file `CONCEPT_TYPE_BLOCK` names. Byte-identical
+/// to `examples/note-types/concept/concept.md` (T14), which a test pins.
+///
+/// The frontmatter deliberately carries no `title` and no `origin`. The title
+/// is the body H1 (§6.1), and a `title: {{title}}` line would break the YAML
+/// for any title containing `: `. `origin` is added, quoted and in declared
+/// order, by creation's frontmatter reconciliation only when one is supplied;
+/// an `origin: "{{origin}}"` line would leave the placeholder as literal text
+/// in every note created without one.
+pub const CONCEPT_TEMPLATE: &str = r#"---
+type: concept
+created: {{created}}
+tags: []
+---
+
+# {{title}}
+
+{{body}}
+
+## Statement
+
+## Why it matters
+
+## See also
+"#;
+
 /// Default note templates dumped into `.cuaderno/templates/` at init.
 ///
 /// Each entry is `(filename, content)`. The user can edit or delete
@@ -78,6 +105,15 @@ pub fn run(target: &Path) -> Result<()> {
         let dest = templates_dir.join(filename);
         fs::write(&dest, content)
             .with_context(|| format!("writing default template {}", dest.display()))?;
+    }
+
+    // The concept template goes with the concept declaration above: without
+    // it, `template = "concept.md"` finds nothing and a new concept gets none
+    // of the §5.2 fallback sections. Never overwrite a file already there.
+    let concept_template = templates_dir.join("concept.md");
+    if !concept_template.exists() {
+        fs::write(&concept_template, CONCEPT_TEMPLATE)
+            .with_context(|| format!("writing concept template {}", concept_template.display()))?;
     }
 
     // Canonicalise for clarity in the success message; fall back to

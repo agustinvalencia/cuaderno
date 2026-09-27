@@ -36,9 +36,10 @@ See the full recipe in
 
 A concept note is a unit of understanding worth keeping and reusing, tied to no project, question,
 stewardship or portfolio: a theorem and the intuition behind it, a definition, a technique and when
-it applies, a procedure you will run again (RFC 0002). `cdno init` already writes the same
-`[note_types.concept]` block into a new vault's config; this copy is for vaults created before
-that, and a test keeps the two byte-identical.
+it applies, a procedure you will run again (RFC 0002). A new vault needs
+nothing from this folder: `cdno init` writes the same `[note_types.concept]` block into its config
+and installs the same template as `.cuaderno/templates/concept.md`. These two files are for existing
+vaults created before that, and a test keeps both byte-identical to what `cdno init` writes.
 
 1. Copy the block in [`concept/config.toml`](concept/config.toml) into your vault's
    `.cuaderno/config.toml`.
@@ -54,11 +55,18 @@ that, and a test keeps the two byte-identical.
    The MCP `create_custom_note` tool takes the same `body` and `origin`. Promotion is simply
    create-with-`origin`: there is no separate operation, and `origin` records the daily-log
    entries the concept came from. It is written as a quoted YAML string, so several links in one
-   value stay valid.
+   value stay valid, and only when supplied: a concept created without one has no `origin` key.
 
 The body is inserted where `{{body}}` sits, under the title and above the fallback sections
 *Statement*, *Why it matters* and *See also*. Those sections appear always, whether or not a body
 is supplied: an agent that drafted a full body can pass its own headings and delete or ignore the
 empty ones, and a note started empty still shows a human what to write. A procedure or a definition
-simply uses different headings. The template's frontmatter keys are in canonical order (`type`, the
-declared fields, then `title`), so a new concept note is clean under `cdno lint --strict`.
+simply uses different headings.
+
+The template's frontmatter is only `type`, `created` and `tags: []`, and two keys are absent on
+purpose. There is no `title`: the title is the body H1, as for every note, and a `title: {{title}}`
+line would break the YAML for any title containing `: `. There is no `origin` line: the template
+engine keeps an unresolved placeholder as literal text, so `origin: "{{origin}}"` would leave
+`{{origin}}` in every concept created without one. Instead, creation adds a supplied `origin`
+itself, quoted and after `tags` in declared order. The keys are therefore in canonical order and a
+new concept note is clean under `cdno lint --strict`.

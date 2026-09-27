@@ -20,8 +20,9 @@ The hands-on walkthrough is [Customising templates and frontmatter](../tutorials
 ## Templates
 
 When `cdno` scaffolds a note, it fills a template. Templates are **pure variable substitution** — no
-conditionals, no logic. `cdno init` writes one starter template (`.cuaderno/templates/daily.md`);
-every other type uses its built-in default until you add a file for it. `cdno` picks the most
+conditionals, no logic. `cdno init` writes two starter templates (`.cuaderno/templates/daily.md`, and
+`concept.md` for the `concept` type it declares); every other built-in type uses its built-in
+default until you add a file for it. `cdno` picks the most
 specific template that exists:
 
 1. a custom **variant** template (for tracking, e.g. `tracking-gym.md`), then

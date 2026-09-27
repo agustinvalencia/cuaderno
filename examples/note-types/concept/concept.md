@@ -2,8 +2,6 @@
 type: concept
 created: {{created}}
 tags: []
-origin: "{{origin}}"
-title: {{title}}
 ---
 
 # {{title}}

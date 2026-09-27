@@ -285,8 +285,9 @@ Notes and limits:
 
 ## Templates
 
-Templates live in `.cuaderno/templates/` and are pure variable substitution. `cdno init` writes one
-starter (`daily.md`); other types use their built-in default until you add a file. `cdno` selects the
+Templates live in `.cuaderno/templates/` and are pure variable substitution. `cdno init` writes two
+starters (`daily.md`, and `concept.md` for the `concept` type it declares); other built-in types use
+their built-in default until you add a file. `cdno` selects the
 most specific template that exists: a custom variant (e.g. `tracking-gym.md`), then a custom type
 (e.g. `project.md`), then the built-in variant default, then the built-in type default. Template
 field order is the canonical order
