@@ -490,25 +490,9 @@ impl CuadernoServer {
         }
         let outcome = self
             .with_vault(move |vault| {
-                let mut resolution = vault.resolve_note_ref(&reference, today)?;
-                // A path without `.md` is how a wikilink spells a note
-                // (`[[concepts/foo]]`), so an agent copying one from the log
-                // must not be refused over the extension.
-                if matches!(
-                    resolution,
-                    RefResolution::NotFound {
-                        miss: Miss::Path,
-                        ..
-                    }
-                ) && !reference.ends_with(".md")
-                {
-                    let with_extension = format!("{reference}.md");
-                    if let found @ RefResolution::Resolved(_) =
-                        vault.resolve_note_ref(&with_extension, today)?
-                    {
-                        resolution = found;
-                    }
-                }
+                // The resolver owns the reference grammar, including the
+                // wikilink spelling of a path without `.md`.
+                let resolution = vault.resolve_note_ref(&reference, today)?;
                 Ok::<_, DomainError>(match resolution {
                     RefResolution::Resolved(path) => Ok(vault.read_note(&path)?),
                     RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(&reference, &hits)),

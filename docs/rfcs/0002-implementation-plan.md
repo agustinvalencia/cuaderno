@@ -299,7 +299,8 @@ to `revise_note`.
 
 **Probes.**
 - `cargo test -p cdno-mcp --test handlers_context` passes: a concept note round-trips with all
-  seven fields; an unknown reference is `INVALID_PARAMS`.
+  seven fields; an unknown reference is a `not_found` rejection, an ambiguous slug is
+  `ambiguous_slug` with its candidates, and only a path outside the vault is `INVALID_PARAMS`.
 - `cargo test -p cdno-mcp --test server` passes with the pinned count moved from 55 to 56.
 - Differential: `tools/list` on the branch minus `tools/list` on `main` (the #597 baseline
   script) is exactly `{read_note}`; the reverse difference is empty.
