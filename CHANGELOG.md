@@ -8,6 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The `revise_note` MCP tool (T9, #622).** Refines a mutable custom note in place through
+  `Vault::revise_note`, logging `revised [[path]] — reason` (with `#Section` for a section
+  revision) to today's daily note. `ReviseNoteInput` takes `note` (resolved exactly as `read_note`
+  resolves it), `reason`, and either `body` with `expected_hash` or `section` with `content`. The
+  handler is stricter than the domain: a whole-body revision without `expected_hash` is
+  `INVALID_PARAMS`, as are both or neither of `body` and `section`, `section` without `content`
+  (or `content` without `section`) and a blank `reason`; a hash passed with a section is ignored.
+  Domain refusals arrive as the existing rejections (`stale_revision`, `note_not_revisable`,
+  `revision_invalid`, `ambiguous_section`, `not_found`). A changed note goes through read-back
+  verification; identical text returns `changed: false` with no write, no log line and no
+  verification. `ReviseNoteResponse` carries `path`, `changed`, `new_hash`, `log_line` and the
+  anchored `section_target`. It is a write tool, so it is not on the read-only server; the
+  catalogue grows from 56 to 57 tools.
 - **The `read_note` MCP tool (T8, #621).** Reads any vault note whole and returns `path`,
   `note_type`, `frontmatter`, `body`, `content_hash`, `backlinks` and `headings`, built from the
   domain's `NoteView` (`ReadNoteResponse` in `dto.rs`). `note` takes the references `cdno open`

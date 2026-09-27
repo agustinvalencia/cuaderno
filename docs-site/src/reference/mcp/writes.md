@@ -106,6 +106,12 @@ the content.
 | `complete_periodic` | `stewardship`, `title`, `at?` | Complete one occurrence of a stewardship's periodic commitment, rolling `next:` forward by that line's recurrence. Anchored to the due date, so completing early never drags the schedule earlier. |
 | `create_tracking_entry` | `stewardship`, `activity`, `routine?`, `content?`, `vars?`, `metrics?`, `date?` | File a tracking note under an expanded stewardship. `metrics` is a JSON object merged into the entry's frontmatter — a scalar per reading (`{"balance": 1240.5}`), or an array of flat records when one entry holds several comparable items (`{"detail": [{"subject": "harmony", "minutes": 25}]}`); a scalar whose key is declared under `[schemas.tracking.fields]` is type-checked, and a key naming the note's identity (`type`, `stewardship`, `activity`, `date`) is refused. `date` files the entry for a past day (bounded to 50 years back, 1 year ahead). A second call for the same `(activity, date)` **merges** into the first: content appended, metrics folded in. Records carrying a stable `id` replace the record with that `id`; records without one append, so re-sending a payload without ids double-counts summed metrics. Either way the write is journalled to today's daily log. |
 
+## Revising a note
+
+| Tool | Inputs | Effect |
+|------|--------|--------|
+| `revise_note` | `note`, `reason`, and either `body` + `expected_hash` or `section` + `content` | Refine a mutable custom note (a concept, say) in place; built-in and append-only types are refused (`note_not_revisable`). `note` takes the references [`read_note`](reads.md) takes. A whole-body rewrite needs the `content_hash` from `read_note` as `expected_hash`, and is refused as `stale_revision` if the note changed since that read. A section revision upserts one section (an existing one is replaced with its sub-sections, a missing one is appended as `## <section>`) and needs no hash. `reason` is required and becomes the daily-log line `revised [[path#Section]] — reason`. Identical text writes and logs nothing (`changed: false`). The result adds `changed`, `new_hash` (pass it as the next `expected_hash`), `log_line` and, for a section, `section_target`; `verification` is `null` when nothing changed. |
+
 ## Frontmatter
 
 | Tool | Inputs | Effect |

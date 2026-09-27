@@ -17,12 +17,12 @@ Two binaries serve the same tool catalogue:
 
 ## The tool surface
 
-The server advertises **56 tools**. This reference groups them by purpose:
+The server advertises **57 tools**. This reference groups them by purpose:
 
 | Group | Page | What's in it |
 |-------|------|--------------|
 | Context-gathering reads | [Context-gathering tools](reads.md) | Orientation, project/portfolio/weekly context, search, reads, lint, triage list |
-| Writes | [Write tools](writes.md) | Log, capture, file evidence, project/action/milestone/waiting edits, commitments, tracking, daily/weekly sections |
+| Writes | [Write tools](writes.md) | Log, capture, file evidence, project/action/milestone/waiting edits, note revision, commitments, tracking, daily/weekly sections |
 | Creation & lifecycle | [Creation and lifecycle tools](creation-and-lifecycle.md) | Create projects/portfolios/questions/stewardships, link portfolios, park/activate, status transitions |
 
 Every tool returns typed JSON; the shapes mirror the CLI's [`--json`](../json-output.md) output, so a

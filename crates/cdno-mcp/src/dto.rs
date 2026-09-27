@@ -1132,6 +1132,64 @@ impl From<cdno_domain::vault::NoteView> for ReadNoteResponse {
     }
 }
 
+/// Output of `revise_note` (RFC 0002 T9, #622).
+///
+/// A superset of [`WriteResultDto`]: the same `path`, `message` and
+/// `verification`, plus what a caller chaining revisions needs. When the
+/// revision changed nothing, no write happened, so there is nothing to
+/// verify and `verification` is null.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ReviseNoteResponse {
+    /// Vault-relative path of the revised note, `.md` included.
+    pub path: String,
+    /// Short summary line.
+    pub message: String,
+    /// `false` when the revision matched the note's current text: nothing
+    /// was written and nothing was logged.
+    pub changed: bool,
+    /// `content_hash` of the note after the call. Pass it as
+    /// `expected_hash` on the next revision instead of reading again.
+    pub new_hash: String,
+    /// The daily-log entry written (without its `- **HH:MM**: ` stamp),
+    /// or null when nothing changed.
+    pub log_line: Option<String>,
+    /// The anchored wikilink target the log line points at
+    /// (`concepts/woodbury-identity#Statement`) when a section was
+    /// revised; null for a whole-body revision or when nothing changed.
+    pub section_target: Option<String>,
+    /// Read-back proof the write landed, as every write tool carries; null
+    /// when `changed` is false.
+    pub verification: Option<WriteVerificationDto>,
+}
+
+impl From<cdno_domain::vault::ReviseOutcome> for ReviseNoteResponse {
+    fn from(o: cdno_domain::vault::ReviseOutcome) -> Self {
+        let path = o.path.to_string();
+        // The domain writes `revised [[<target>]] — <reason>`, and a section
+        // heading may not contain `]`, so the first `]]` closes the link.
+        let section_target = o.log_line.as_deref().and_then(|line| {
+            let target = line.strip_prefix("revised [[")?.split_once("]]")?.0;
+            target.contains('#').then(|| target.to_owned())
+        });
+        let message = if o.changed {
+            format!("Revised {path}")
+        } else {
+            format!(
+                "No change to {path}: the revision matches its current text; nothing written or logged"
+            )
+        };
+        Self {
+            path,
+            message,
+            changed: o.changed,
+            new_hash: o.new_hash,
+            log_line: o.log_line,
+            section_target,
+            verification: None,
+        }
+    }
+}
+
 /// Output of `read_weekly_note` — mirrors [`DailyNoteViewDto`]. A week
 /// with no note yet returns `exists: false` and empty `markdown`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]

@@ -86,12 +86,14 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (33)
+        // Operations (34)
         "append_to_log",
         "capture",
         "discard_inbox_item",
         "file_to_portfolio",
         "update_project_state",
+        // Revise a mutable custom note in place (RFC 0002 T9, #622).
+        "revise_note",
         "add_action",
         "promote_action",
         "start_action",
@@ -130,7 +132,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 56);
+    assert_eq!(tools.len(), 57);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
@@ -154,6 +156,33 @@ fn read_only_server_advertises_read_note() {
         18,
         "the read-only surface is the context router: {names:?}"
     );
+}
+
+/// `revise_note` writes, so it is on the full catalogue and not on the
+/// read-only server: the read-only surface is the context router alone
+/// (RFC 0002 T9).
+#[test]
+fn revise_note_is_a_write_tool_absent_from_the_read_only_server() {
+    let full: Vec<String> = empty_server()
+        .advertised_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(full.iter().any(|n| n == "revise_note"), "{full:?}");
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
+    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault))
+        .advertised_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(
+        !read_only.iter().any(|n| n == "revise_note"),
+        "{read_only:?}"
+    );
+    assert_eq!(read_only.len(), 18, "{read_only:?}");
 }
 
 #[test]

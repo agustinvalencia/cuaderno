@@ -26,10 +26,10 @@ use cdno_mcp::server::{
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, DropActionInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
     LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadMonthlyNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput, SetCoreQuestionInput,
-    SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
-    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
-    UpsertWeeklySectionInput,
+    ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
+    ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput, SetQuestionStatusInput,
+    StartActionInput, StartUnplannedActionInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -2316,4 +2316,234 @@ async fn create_custom_note_reconciles_origin_and_drops_a_repeated_title_heading
         body, "\n# Woodbury identity\n\nThe inverse of a low-rank update.\n",
         "{content}"
     );
+}
+
+// ---------------------------------------------------------------------
+// revise_note (RFC 0002 T9, #622)
+// ---------------------------------------------------------------------
+
+const REVISE_PATH: &str = "concepts/woodbury-identity.md";
+const REVISE_NOTE: &str = "---\ntype: concept\ncreated: 2026-09-01\n---\n\n# Woodbury identity\n\nInverting a low-rank update.\n\n## Statement\n\n(A + UCV)^-1 = ...\n";
+
+/// A concept vault holding [`REVISE_NOTE`] and a project, both indexed.
+fn revise_server() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with_config(config_with_person_and_concept(), |v, s| {
+        s.write_file(&vp(REVISE_PATH), REVISE_NOTE).unwrap();
+        s.write_file(
+            &vp("projects/demo.md"),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Demo\n",
+        )
+        .unwrap();
+        v.reconcile().unwrap();
+    })
+}
+
+fn revise_input(note: &str) -> ReviseNoteInput {
+    ReviseNoteInput {
+        note: note.to_owned(),
+        expected_hash: None,
+        body: None,
+        section: None,
+        content: None,
+        reason: "tightened the statement".to_owned(),
+    }
+}
+
+async fn revise(
+    server: &CuadernoServer,
+    input: ReviseNoteInput,
+) -> Result<CallToolResult, rmcp::ErrorData> {
+    server.revise_note(Parameters(input)).await
+}
+
+/// The `content_hash` a fresh `read_note` reports for `note`.
+async fn read_hash(server: &CuadernoServer, note: &str) -> String {
+    let json = decode_json(
+        &server
+            .read_note(Parameters(ReadNoteInput {
+                note: note.to_owned(),
+            }))
+            .await
+            .expect("read_note"),
+    );
+    json["content_hash"].as_str().expect("hash").to_owned()
+}
+
+/// Today's daily note, or empty when none has been written.
+fn today_daily(store: &Arc<dyn VaultStore>) -> String {
+    let today = chrono::Local::now().date_naive();
+    store
+        .read_file(&vp(&cdno_core::paths::daily_note_relpath(today)))
+        .unwrap_or_default()
+}
+
+fn rejection_code(err: &rmcp::ErrorData) -> String {
+    err.data
+        .as_ref()
+        .and_then(|d| d.get("cdno_rejection"))
+        .and_then(|r| r["code"].as_str())
+        .unwrap_or_else(|| panic!("not marked as a rejection: {err:?}"))
+        .to_owned()
+}
+
+/// Assert an `INVALID_PARAMS` naming `field`, and that nothing was written.
+async fn assert_invalid(input: ReviseNoteInput, field: &str) {
+    let (server, store) = revise_server();
+    let err = revise(&server, input).await.expect_err("refused");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "{err:?}");
+    assert!(err.message.contains(&format!("'{field}'")), "{err:?}");
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+    assert!(today_daily(&store).is_empty());
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_body_revision_without_a_hash() {
+    let mut input = revise_input(REVISE_PATH);
+    input.body = Some("\nNew body.\n".to_owned());
+    assert_invalid(input, "expected_hash").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_both_body_and_section() {
+    let mut input = revise_input(REVISE_PATH);
+    input.expected_hash = Some("any".to_owned());
+    input.body = Some("\nNew body.\n".to_owned());
+    input.section = Some("Statement".to_owned());
+    input.content = Some("x".to_owned());
+    assert_invalid(input, "body").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_neither_body_nor_section() {
+    assert_invalid(revise_input(REVISE_PATH), "body").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_section_without_content_and_content_without_a_section() {
+    let mut input = revise_input(REVISE_PATH);
+    input.section = Some("Statement".to_owned());
+    assert_invalid(input, "content").await;
+
+    let mut input = revise_input(REVISE_PATH);
+    input.content = Some("x".to_owned());
+    assert_invalid(input, "content").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_blank_reason_in_its_own_words() {
+    let mut input = revise_input(REVISE_PATH);
+    input.section = Some("Statement".to_owned());
+    input.content = Some("x".to_owned());
+    input.reason = "  \n".to_owned();
+    assert_invalid(input, "reason").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_stale_hash_and_leaves_the_note_untouched() {
+    let (server, store) = revise_server();
+    let mut input = revise_input(REVISE_PATH);
+    input.expected_hash = Some("not-the-hash".to_owned());
+    input.body = Some("\nNew body.\n".to_owned());
+
+    let err = revise(&server, input).await.expect_err("stale");
+    assert_eq!(rejection_code(&err), "stale_revision");
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+    assert!(!today_daily(&store).contains("revised"));
+}
+
+#[tokio::test]
+async fn revise_note_rewrites_the_body_with_the_read_hash_and_logs_the_reason() {
+    let (server, store) = revise_server();
+    let hash = read_hash(&server, "concept:woodbury-identity").await;
+    let mut input = revise_input("concept:woodbury-identity");
+    input.expected_hash = Some(hash.clone());
+    input.body = Some("\n# Woodbury identity\n\nA sharper account.\n".to_owned());
+
+    let json = decode_json(&revise(&server, input).await.expect("revised"));
+    assert_eq!(json["path"], REVISE_PATH);
+    assert_eq!(json["changed"], true);
+    assert!(json["section_target"].is_null(), "{json}");
+    assert!(json["verification"]["content_hash"].is_string(), "{json}");
+    let new_hash = json["new_hash"].as_str().expect("new_hash");
+    assert_ne!(new_hash, hash);
+    assert_eq!(new_hash, read_hash(&server, REVISE_PATH).await);
+
+    assert!(
+        store
+            .read_file(&vp(REVISE_PATH))
+            .unwrap()
+            .ends_with("---\n\n# Woodbury identity\n\nA sharper account.\n")
+    );
+    let daily = today_daily(&store);
+    assert!(
+        daily.contains("revised [[concepts/woodbury-identity]] \u{2014} tightened the statement"),
+        "{daily}"
+    );
+}
+
+#[tokio::test]
+async fn revise_note_upserts_a_section_without_a_hash_and_anchors_the_log_line() {
+    let (server, store) = revise_server();
+    let mut input = revise_input("concepts/woodbury-identity");
+    input.section = Some("Statement".to_owned());
+    input.content = Some("(A + UCV)^-1 = A^-1 - ...".to_owned());
+
+    let json = decode_json(&revise(&server, input).await.expect("revised"));
+    assert_eq!(json["changed"], true);
+    assert_eq!(
+        json["section_target"],
+        "concepts/woodbury-identity#Statement"
+    );
+    assert!(
+        store
+            .read_file(&vp(REVISE_PATH))
+            .unwrap()
+            .contains("## Statement\n\n(A + UCV)^-1 = A^-1 - ...\n")
+    );
+    let daily = today_daily(&store);
+    assert!(
+        daily.contains(
+            "revised [[concepts/woodbury-identity#Statement]] \u{2014} tightened the statement"
+        ),
+        "{daily}"
+    );
+}
+
+#[tokio::test]
+async fn revise_note_with_identical_text_reports_no_change_and_logs_nothing() {
+    let (server, store) = revise_server();
+    let mut input = revise_input(REVISE_PATH);
+    input.section = Some("Statement".to_owned());
+    input.content = Some("(A + UCV)^-1 = ...".to_owned());
+
+    let json = decode_json(&revise(&server, input).await.expect("no-op"));
+    assert_eq!(json["changed"], false, "{json}");
+    assert!(json["verification"].is_null(), "no write, no verification");
+    assert!(json["log_line"].is_null());
+    assert_eq!(json["new_hash"], read_hash(&server, REVISE_PATH).await);
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+    assert!(!today_daily(&store).contains("revised"));
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_built_in_type() {
+    let (server, store) = revise_server();
+    let mut input = revise_input("projects/demo.md");
+    input.section = Some("Notes".to_owned());
+    input.content = Some("x".to_owned());
+
+    let err = revise(&server, input).await.expect_err("a project");
+    assert_eq!(rejection_code(&err), "note_not_revisable");
+    assert!(!today_daily(&store).contains("revised"));
+}
+
+#[tokio::test]
+async fn revise_note_refuses_an_unknown_reference_as_not_found() {
+    let (server, _store) = revise_server();
+    let mut input = revise_input("no-such-note");
+    input.section = Some("Statement".to_owned());
+    input.content = Some("x".to_owned());
+
+    let err = revise(&server, input).await.expect_err("unknown");
+    assert_eq!(rejection_code(&err), "not_found");
 }
