@@ -367,22 +367,65 @@ fn project_creation_logs_one_line() {
 }
 
 /// A project created directly into `_parked/` (cap already reached)
-/// logs its *real* path, not the bare `projects/<slug>` form.
+/// still logs the canonical `projects/<slug>` form, not
+/// `projects/_parked/<slug>`: that is the form `mentions_project`
+/// matches, and the one links keep across park/unpark, so the
+/// project's own creation line must be a mention of it.
 #[test]
-fn parked_project_creation_logs_the_parked_path() {
+fn parked_project_creation_logs_the_canonical_path() {
     let cfg = config_with_cap(1);
     let a = project_body("work", "active", "2026-01-10", "Alpha");
-    let (vault, store) = vault_with_seeded_store(&[("projects/alpha.md", &a)], cfg);
+    let (vault, _store) = vault_with_seeded_store(&[("projects/alpha.md", &a)], cfg);
 
     vault
         .create_project(dt(2026, 4, 28, 9, 0), "Beta", Context::Work, None)
         .expect("create succeeds, seeded as parked");
 
+    let mentions = vault
+        .daily_log_mentions(
+            "beta",
+            chrono::NaiveDate::from_ymd_opt(2026, 4, 28).unwrap(),
+        )
+        .expect("daily_log_mentions succeeds");
+    assert_eq!(
+        mentions.len(),
+        1,
+        "creation line for a parked project should be a mention of it: {mentions:?}"
+    );
+    assert_eq!(
+        mentions[0].text,
+        "project created [[projects/beta]] \u{2014} Beta"
+    );
+}
+
+/// A title with an embedded newline collapses to a single log line
+/// via `flatten_for_log`, rather than breaking the line-oriented
+/// daily-log format.
+#[test]
+fn project_creation_line_flattens_a_multiline_title() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    vault
+        .create_project(
+            dt(2026, 4, 28, 9, 0),
+            "ICML paper\nsecond line",
+            Context::Work,
+            None,
+        )
+        .expect("create succeeds");
+
     let daily = store
         .read_file(&vp("journal/2026/daily/2026-04-28.md"))
         .expect("daily note exists");
-    assert!(
-        daily.contains("project created [[projects/_parked/beta]] \u{2014} Beta"),
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: project created [[projects/icml-paper-second-line]] \u{2014} ICML paper second line"
+        ],
         "daily note:\n{daily}"
     );
 }

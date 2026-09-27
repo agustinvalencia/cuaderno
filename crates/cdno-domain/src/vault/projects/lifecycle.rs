@@ -139,7 +139,7 @@ impl Vault {
         }
 
         let path = if status == ProjectStatus::Active {
-            active_path
+            active_path.clone()
         } else {
             parked_path
         };
@@ -157,7 +157,15 @@ impl Vault {
         let content = self.scaffold("project", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
-        let target = path.to_string();
+        // Always log the canonical `projects/<slug>` form, never the
+        // parked path a capped-out create lands in: `mentions_project`
+        // only matches the bare or `projects/<slug>` shapes, and a
+        // project's own creation line should be a mention of it. The
+        // link also keeps resolving across park/unpark (the resolver's
+        // last-segment rule finds the file wherever it sits), so the
+        // parked path buys nothing and would break the very mention it
+        // is meant to record.
+        let target = active_path.to_string();
         let target = target.strip_suffix(".md").unwrap_or(&target);
         let log_entry = format!(
             "project created [[{target}]] \u{2014} {}",

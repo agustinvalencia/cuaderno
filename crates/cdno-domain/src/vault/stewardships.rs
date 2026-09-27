@@ -486,10 +486,7 @@ fn write_stewardship(
 ) -> Result<VaultPath, DomainError> {
     let entry = build_index_entry_for(path, content, NoteType::Stewardship.as_str())?;
     let target = format!("{}/{slug}", cdno_core::paths::STEWARDSHIPS);
-    // Collapsed to one line as `state.rs`'s creation-log lines are
-    // (`flatten_for_log`); duplicated here rather than reaching
-    // across modules for a one-liner (#618).
-    let title_flat = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let title_flat = crate::vault::projects::state::flatten_for_log(title);
     let log_entry = format!("stewardship created [[{target}]] \u{2014} {title_flat}");
     let mut tx = vault.transaction()?;
     tx.write_file(path.clone(), content.to_owned());

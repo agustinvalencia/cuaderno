@@ -115,10 +115,7 @@ impl Vault {
 
         let target = path.to_string();
         let target = target.strip_suffix(".md").unwrap_or(&target);
-        // Collapsed to one line as `state.rs`'s creation-log lines are
-        // (`flatten_for_log`); duplicated here rather than reaching
-        // across modules for a one-liner (#618).
-        let text_flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let text_flat = crate::vault::projects::state::flatten_for_log(text);
         let log_entry = format!("question created [[{target}]] \u{2014} {text_flat}");
 
         tx.write_file(path.clone(), content);
