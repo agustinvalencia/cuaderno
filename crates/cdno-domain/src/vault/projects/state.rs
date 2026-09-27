@@ -16,6 +16,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
+use super::super::log::flatten_for_log;
 use super::CURRENT_STATE_SECTION;
 
 impl Vault {
@@ -168,13 +169,4 @@ fn format_state_change_log_entry(slug: &str, old_state: &str, new_state: &str) -
         flatten_for_log(old_state),
         flatten_for_log(new_state),
     )
-}
-
-/// Collapse whitespace runs (including newlines) to single spaces, so
-/// a multiline value folds onto one log line. `pub(crate)` so the
-/// built-in creation-log lines (#618) can reuse it without duplicating
-/// the behaviour; the coordinating fix for custom types (T4, #642)
-/// will later move both onto a shared `vault/log.rs` helper.
-pub(crate) fn flatten_for_log(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
