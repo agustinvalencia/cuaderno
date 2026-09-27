@@ -224,14 +224,57 @@ impl Vault {
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let path = daily_note_path(date)?;
+        let base = self.read_or_scaffold_daily(date)?;
+        let new_content = self.fold_daily_section(base, section, content, append)?;
+
+        let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
+
+        tx.write_file(path.clone(), new_content);
+        tx.upsert_note(entry_meta);
+        tx.commit()?;
+
+        Ok(path)
+    }
+
+    /// The daily note for `date` as it stands in the store, or a fresh
+    /// scaffold when no note exists yet — the base every daily-note
+    /// write folds its change into.
+    pub(in crate::vault) fn read_or_scaffold_daily(
+        &self,
+        date: NaiveDate,
+    ) -> Result<String, DomainError> {
+        let path = daily_note_path(date)?;
+        if self.store.exists(&path)? {
+            Ok(self.store.read_file(&path)?)
+        } else {
+            self.scaffold_daily_base(date)
+        }
+    }
+
+    /// Fold a write of `section` into `base` — an already-materialised
+    /// daily-note document — returning the rendered content, without
+    /// touching the store. This is the whole of
+    /// [`Vault::upsert_daily_section`]'s document edit: `ensure_section`,
+    /// then `append_to_section` or `replace_section`, then re-pin the
+    /// anchor section to the bottom.
+    ///
+    /// Split out (RFC 0002 T2) so `note_to_daily` can append a `## Notes`
+    /// entry *and* fold its `## Logs` pointer line into the same
+    /// in-flight content, writing the file once in one transaction —
+    /// staging two separate writes to the same file would have the
+    /// second read the pre-change content back from the store and drop
+    /// the first. Performs no validation: the caller runs the
+    /// history-section guard and [`Vault::validate_history_entry`]
+    /// first.
+    pub(in crate::vault) fn fold_daily_section(
+        &self,
+        base: String,
+        section: DailySection,
+        content: &str,
+        append: bool,
+    ) -> Result<String, DomainError> {
         let heading = section.heading();
         let body = format_section_body(content);
-
-        let base = if self.store.exists(&path)? {
-            self.store.read_file(&path)?
-        } else {
-            self.scaffold_daily_base(date)?
-        };
 
         let mut doc = MarkdownDocument::parse(base)?;
         doc.ensure_section(heading)?;
@@ -245,15 +288,7 @@ impl Vault {
         // section (the daily template's last one — `## Logs` by default)
         // back to the bottom (#232, #212).
         doc.move_section_to_end(&self.daily_anchor_section()?)?;
-        let new_content = doc.render().to_owned();
-
-        let entry_meta = build_index_entry_for(&path, &new_content, "daily")?;
-
-        tx.write_file(path.clone(), new_content);
-        tx.upsert_note(entry_meta);
-        tx.commit()?;
-
-        Ok(path)
+        Ok(doc.render().to_owned())
     }
 
     /// Validate a body about to be appended to a **history** section
