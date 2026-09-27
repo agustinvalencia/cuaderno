@@ -92,19 +92,23 @@ impl Vault {
     ///
     /// **Frontmatter reconciliation.** Whatever the template renders, the
     /// written frontmatter carries `type: <type_name>` and every non-blank
-    /// caller-supplied field (`fields`, plus `origin`) as a YAML string equal
-    /// to the supplied value. After rendering, the frontmatter is parsed; if
-    /// it already satisfies that, the rendered text is written byte for byte.
-    /// Otherwise the mapping is repaired — a wrong or missing `type` and any
-    /// missing or mis-parsed supplied field are set, existing keys keep their
+    /// caller-supplied field (`fields`, plus `origin`) carrying the supplied
+    /// value: a YAML string equal to it, or a plain scalar (number, boolean,
+    /// null) whose canonical text equals it — `priority: {{priority}}` with
+    /// `5` stays the number `5`, `done: {{done}}` with `true` stays `true`.
+    /// After rendering, the frontmatter is parsed; if it already satisfies
+    /// that, the rendered text is written byte for byte. Otherwise (a missing
+    /// key, a sequence or mapping, a differing string) the mapping is
+    /// repaired — a wrong or missing `type` and each such field are set as
+    /// strings, fields that already carry their value keep it, existing keys keep their
     /// order, missing ones are appended in declared order — and the
     /// frontmatter is re-serialised with `serde_yaml` (so `[[a]] [[b]]` is
     /// quoted), the body after it left untouched. A template that forgets a
     /// placeholder, or pastes `origin: {{origin}}` unquoted, therefore still
     /// yields the field as a string, and a template that renders no
-    /// frontmatter at all gets one. Re-serialising drops the template's YAML
-    /// comments and quoting style, and a supplied value the template wrote
-    /// as a number or boolean becomes a string. Engine-supplied values the
+    /// frontmatter at all gets one. A repair re-serialises the whole block,
+    /// which drops the template's YAML comments and quoting style; a block
+    /// that needs none is never rewritten. Engine-supplied values the
     /// caller did not pass (`created`, …) are not reconciled: a template
     /// that omits them still produces a note `cdno lint` reports.
     ///
@@ -454,16 +458,37 @@ fn holds_string(mapping: &serde_yaml::Mapping, key: &str, value: &str) -> bool {
     matches!(mapping.get(key), Some(serde_yaml::Value::String(s)) if s == value)
 }
 
+/// Whether a parsed frontmatter value faithfully carries the supplied
+/// `value`: a string equal to it, or a plain scalar (number, boolean,
+/// null) whose canonical text equals it, so `priority: {{priority}}` with
+/// `5` stays the number `5`. A sequence, a mapping or a differing string
+/// does not.
+fn carries_supplied(value: &serde_yaml::Value, supplied: &str) -> bool {
+    use serde_yaml::Value;
+    match value {
+        Value::String(s) => s == supplied,
+        Value::Number(n) => n.to_string() == supplied,
+        Value::Bool(b) => b.to_string() == supplied,
+        Value::Null => supplied == "null",
+        _ => false,
+    }
+}
+
 fn frontmatter_is_reconciled(
     mapping: &serde_yaml::Mapping,
     type_name: &str,
     supplied: &[(&str, &str)],
 ) -> bool {
     holds_string(mapping, "type", type_name)
-        && supplied.iter().all(|(k, v)| holds_string(mapping, k, v))
+        && supplied.iter().all(|(k, v)| {
+            mapping
+                .get(*k)
+                .is_some_and(|value| carries_supplied(value, v))
+        })
 }
 
-/// Set `type` and every supplied field as strings: existing keys keep their
+/// Set `type` and every supplied field that does not already carry its
+/// value (see [`carries_supplied`]) as strings: existing keys keep their
 /// position, a missing `type` goes first, and missing supplied fields are
 /// appended in the (declared) order of `supplied`.
 fn repair_frontmatter(
@@ -479,7 +504,11 @@ fn repair_frontmatter(
     for (key, value) in mapping {
         let replacement = match key.as_str() {
             Some("type") => Some(type_name),
-            Some(k) => supplied.iter().find(|(s, _)| *s == k).map(|(_, v)| *v),
+            Some(k) => supplied
+                .iter()
+                .find(|(s, _)| *s == k)
+                .map(|(_, v)| *v)
+                .filter(|v| !carries_supplied(&value, v)),
             None => None,
         };
         let value = replacement.map_or(value, |v| Value::String(v.to_owned()));

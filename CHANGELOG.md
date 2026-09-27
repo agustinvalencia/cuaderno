@@ -27,7 +27,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `concept` type declares it optional) refuses it as `unknown_field` and nothing is written.
   Blank values count as absent. After rendering, a custom note's frontmatter is reconciled:
   `type` and every field the caller supplied (including `origin`) must be present as a string
-  equal to the supplied value, and when one is not (a template without `{{origin}}`, an
+  equal to the supplied value (or, for a field, a plain number, boolean or null whose canonical
+  text equals it, so `priority: 5` stays a number), and when one is not (a template without `{{origin}}`, an
   unquoted `origin: {{origin}}` that YAML reads as a list or rejects, a template that renders
   no frontmatter) the block is repaired and re-serialised, the body untouched; a template that
   already renders every field correctly is written byte for byte. On the CLI, `--body-file` is

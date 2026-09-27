@@ -1426,3 +1426,47 @@ fn an_h1_indented_by_up_to_three_spaces_is_the_insertion_point() {
         "{content}"
     );
 }
+
+/// `concept` with optional `priority` and `done` fields as well.
+fn config_with_scalar_fields() -> VaultConfig {
+    let mut ty = concept();
+    ty.optional.push("priority".to_owned());
+    ty.optional.push("done".to_owned());
+    let mut config = VaultConfig::default();
+    config.note_types.insert("concept".to_owned(), ty);
+    config
+}
+
+#[test]
+fn a_numeric_field_rendered_by_the_template_is_left_as_a_number() {
+    // A plain number or boolean whose text is the supplied value is correct
+    // as rendered: nothing is rewritten, and the comment proves it.
+    let template = "---\ntype: concept # kept\ncreated: {{created}}\npriority: {{priority}}\ndone: {{done}}\n---\n\n# {{title}}\n";
+    let (vault, store) = vault_with(
+        config_with_scalar_fields(),
+        &[(".cuaderno/templates/concept.md", template)],
+    );
+    let scalars = fields(&[("priority", "5"), ("done", "true")]);
+    let path = create_with(&vault, "concept", "Ranked", &scalars, None, None).expect("create");
+    assert_eq!(
+        store.read_file(&path).unwrap(),
+        "---\ntype: concept # kept\ncreated: 2026-04-26\npriority: 5\ndone: true\n---\n\n# Ranked\n"
+    );
+
+    // When another field forces a repair, the correct scalars keep their
+    // type rather than being turned into strings.
+    let path = create_with(
+        &vault,
+        "concept",
+        "Ranked and promoted",
+        &scalars,
+        None,
+        Some(WOODBURY_ORIGIN),
+    )
+    .expect("create");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.contains("\npriority: 5\ndone: true\norigin: '[[journal/2026/daily/2026-09-02#Woodbury identity]]'\n"),
+        "{content}"
+    );
+}

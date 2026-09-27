@@ -60,8 +60,9 @@ round-trips safely; author a template if you need richer frontmatter shapes for 
 as fields.)
 
 Whatever a template renders, the frontmatter that is written carries `type: <type>` and every field
-you passed (including `--origin`) as a string equal to what you passed. If the rendered frontmatter
-already does, the note is written exactly as rendered. Otherwise Cuaderno repairs it — a missing
+you passed (including `--origin`) with the value you passed: a string equal to it, or a plain
+number, boolean or null that reads back as the same text (so `priority: {{priority}}` with `5` stays
+the number `5`). If the rendered frontmatter already does, the note is written exactly as rendered. Otherwise Cuaderno repairs it — a missing
 field is appended, an unquoted `origin: {{origin}}` that YAML would read as a list (or reject) is
 rewritten as a quoted string — and re-serialises just the frontmatter block, which drops that
 block's comments and quoting style; the note body is left as rendered. So a template that forgets
