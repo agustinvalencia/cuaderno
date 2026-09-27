@@ -1015,13 +1015,55 @@ fn unquoted_origin_placeholder_with_one_link_parses_back_as_the_string_and_resol
     );
 }
 
+/// Create a `concept` through `template` with the two-link origin, whose
+/// unquoted `origin: {{origin}}` renders a block that is not YAML.
+fn create_through_unparseable_template(
+    template: &str,
+    body: &str,
+) -> (Arc<dyn VaultStore>, VaultPath) {
+    let (vault, store) = vault_with(
+        config_with_concept(),
+        &[
+            (".cuaderno/templates/concept.md", template),
+            ("journal/2026/daily/2026-09-02.md", DAILY_0902),
+            ("journal/2026/daily/2026-09-24.md", DAILY_0924),
+        ],
+    );
+    let path = create_with(
+        &vault,
+        "concept",
+        "Woodbury identity",
+        &HashMap::new(),
+        Some(body),
+        Some(TWO_ORIGINS),
+    )
+    .expect("create");
+    (store, path)
+}
+
+/// The top-level keys of a note's frontmatter, in written order.
+fn frontmatter_keys(content: &str) -> Vec<&str> {
+    content
+        .lines()
+        .skip(1)
+        .take_while(|l| *l != "---")
+        .filter(|l| !l.starts_with([' ', '-']))
+        .filter_map(|l| l.split(':').next())
+        .collect()
+}
+
 #[test]
-fn unquoted_origin_placeholder_with_two_links_parses_back_as_the_string_and_resolves() {
+fn an_unparseable_rendered_frontmatter_is_rebuilt_from_the_declared_fields() {
     // Pasted raw, `origin: [[a]] [[b]]` is not even YAML; the create used to
-    // fail with a parse error.
+    // fail with a parse error. The block is rebuilt in declared order from
+    // `type`, the engine's `created` and the supplied `origin`.
     let (store, path) = create_through_unquoted_origin_template(TWO_ORIGINS);
     let content = store.read_file(&path).unwrap();
     let fm = frontmatter_of(&content);
+    assert_eq!(
+        fm.optional_field::<String>("type").unwrap().as_deref(),
+        Some("concept")
+    );
     assert_eq!(
         fm.optional_field::<String>("origin").unwrap().as_deref(),
         Some(TWO_ORIGINS),
@@ -1031,7 +1073,15 @@ fn unquoted_origin_placeholder_with_two_links_parses_back_as_the_string_and_reso
         fm.optional_field::<String>("created").unwrap().as_deref(),
         Some("2026-04-26")
     );
-    assert!(content.ends_with("---\n\n# Woodbury identity\n\nPromoted.\n"));
+    assert_eq!(
+        frontmatter_keys(&content),
+        ["type", "created", "origin"],
+        "{content}"
+    );
+    assert!(
+        content.ends_with("---\n\n# Woodbury identity\n\nPromoted.\n"),
+        "the rendered body is untouched:\n{content}"
+    );
     let mut targets = resolved_targets_after_reindex(&store, &path);
     targets.sort();
     assert_eq!(
@@ -1041,6 +1091,63 @@ fn unquoted_origin_placeholder_with_two_links_parses_back_as_the_string_and_reso
             "journal/2026/daily/2026-09-24.md"
         ]
     );
+}
+
+#[test]
+fn a_template_quoting_the_placeholder_inside_a_sequence_never_leaks_a_marker() {
+    // `see: ["{{origin}}"]` parses on its own, but the unquoted `origin`
+    // line breaks the block, so it is rebuilt from the declared fields; the
+    // template-only `see` key is lost rather than written with a stand-in.
+    let template = "---\ntype: concept\ncreated: {{created}}\norigin: {{origin}}\nsee: [\"{{origin}}\"]\n---\n\n# {{title}}\n\n{{body}}\n";
+    let (store, path) = create_through_unparseable_template(template, "Promoted.");
+    let content = store.read_file(&path).unwrap();
+    let fm = frontmatter_of(&content);
+    assert_eq!(
+        fm.optional_field::<String>("origin").unwrap().as_deref(),
+        Some(TWO_ORIGINS),
+        "{content}"
+    );
+    assert_eq!(
+        frontmatter_keys(&content),
+        ["type", "created", "origin"],
+        "{content}"
+    );
+    // No stand-in text anywhere: every value in the block is one the
+    // caller or the engine supplied, and the body is exactly as rendered.
+    assert_eq!(
+        fm.optional_field::<String>("created").unwrap().as_deref(),
+        Some("2026-04-26")
+    );
+    assert_eq!(
+        fm.optional_field::<String>("type").unwrap().as_deref(),
+        Some("concept")
+    );
+    assert!(fm.optional_field::<String>("see").unwrap().is_none());
+    let (_, body) = cdno_core::frontmatter::split_frontmatter(&content).unwrap();
+    assert_eq!(body, "\n# Woodbury identity\n\nPromoted.\n");
+}
+
+#[test]
+fn body_text_is_never_rewritten_by_the_reconciliation() {
+    // On the rebuild path, a body carrying an unusual token string, a
+    // placeholder-looking string and the origin's own links comes out byte
+    // for byte.
+    let body = "Literal zzmarker0x token, {{origin}} and \
+                [[journal/2026/daily/2026-09-02#Woodbury identity]] here.\n\n    \
+                indented: [[a]] [[b]]\n\n---\n\nEnd.";
+    let template = "---\ntype: concept\ncreated: {{created}}\norigin: {{origin}}\n---\n\n# {{title}}\n\n{{body}}\n";
+    let (store, path) = create_through_unparseable_template(template, body);
+    let content = store.read_file(&path).unwrap();
+    assert_eq!(
+        frontmatter_of(&content)
+            .optional_field::<String>("origin")
+            .unwrap()
+            .as_deref(),
+        Some(TWO_ORIGINS),
+        "the fallback path ran:\n{content}"
+    );
+    let (_, written_body) = cdno_core::frontmatter::split_frontmatter(&content).unwrap();
+    assert_eq!(written_body, format!("\n# Woodbury identity\n\n{body}\n"));
 }
 
 #[test]

@@ -68,6 +68,13 @@ rewritten as a quoted string — and re-serialises just the frontmatter block, w
 block's comments and quoting style; the note body is left as rendered. So a template that forgets
 `{{origin}}`, or renders no frontmatter at all, still records every field you supplied.
 
+If the rendered frontmatter is not valid YAML at all (for example an unquoted `origin: {{origin}}`
+given two links), it cannot be repaired key by key, so Cuaderno rebuilds it: `type`, then the
+type's declared fields in declared order, each with the value you passed or, for `title`, `slug`,
+`created` and `date`, the value create computes. The note body is again left exactly as rendered.
+Any key that only the template wrote is lost in that case. The simplest way to avoid it is to
+leave `origin` out of the template and let the repair add it.
+
 The body (`--body-file`, or `body` over MCP) is written without its title heading: the engine
 writes the `# <title>` H1, and a leading `# <title>` line in the body is dropped. It fills the
 template's `{{body}}` placeholder, or is inserted after the H1 when there is none. The body wins

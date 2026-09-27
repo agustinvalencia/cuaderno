@@ -36,9 +36,10 @@ pub enum NoteCommands {
         /// heading (the engine writes the H1; a leading `# <title>` line is
         /// dropped). It fills the type template's `{{body}}` placeholder, or
         /// is inserted after the H1 when the template has none. When the
-        /// template has `{{body}}` and no `--field body=` or `--var body=`
-        /// fills it, it is prompted in an editor in an interactive session
-        /// and required otherwise.
+        /// template has `{{body}}` and nothing else (`--field body=`,
+        /// `--var body=`, a `[variables] body` in the config) fills it, it is
+        /// prompted in an editor in an interactive session and required
+        /// otherwise.
         #[arg(long = "body-file", value_name = "PATH")]
         body_file: Option<PathBuf>,
         /// Where the note came from: one string of wikilinks, e.g.
@@ -85,10 +86,10 @@ pub fn run(
                 .transpose()?;
             let mut prompted = false;
             // A body is gathered (prompted or demanded) only when the type's
-            // template has a `{{body}}` slot for it and neither a `body` field
-            // nor a `body` variable already fills it; otherwise it is optional.
-            let body_given_elsewhere = fields.contains_key("body") || vars.contains_key("body");
-            let body = if !body_given_elsewhere && vault.custom_template_has_body(&note_type)? {
+            // template has a `{{body}}` slot that nothing else (a `body`
+            // field, a `[variables] body`, a `--var body=`) fills; otherwise
+            // it is optional.
+            let body = if vault.custom_note_needs_body(&note_type, &fields, &vars)? {
                 Some(prompt::gather_or_error(
                     body_from_file,
                     "body-file",

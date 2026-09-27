@@ -52,15 +52,24 @@ impl Vault {
         self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new(), None, None)
     }
 
-    /// Whether the template a custom type renders from references a
-    /// `{{body}}` placeholder. `false` when the type ships no template file
-    /// (the synthesised note has none). The CLI asks this to decide whether a
-    /// body is something to prompt for; the create path asks it to decide
-    /// between filling the placeholder and inserting the body after the H1.
+    /// Whether creating a note of custom type `type_name` with these
+    /// `fields` and prompted-variable values `vars` needs a `body` from the
+    /// caller: `true` only when the type's template references `{{body}}`
+    /// and nothing else resolves it — no `fields["body"]`, no `[variables]`
+    /// `body`, no supplied `vars["body"]`. `false` when the type ships no
+    /// template file (the synthesised note has no placeholder). The CLI asks
+    /// this to decide whether to prompt for (or demand) a body; the create
+    /// path uses the same test to decide when the placeholder renders empty,
+    /// so the two cannot disagree.
     ///
     /// Errors as [`create_custom_note_with_vars`](Self::create_custom_note_with_vars)
     /// does for a type that is unknown or built-in.
-    pub fn custom_template_has_body(&self, type_name: &str) -> Result<bool, DomainError> {
+    pub fn custom_note_needs_body(
+        &self,
+        type_name: &str,
+        fields: &HashMap<String, String>,
+        vars: &HashMap<String, String>,
+    ) -> Result<bool, DomainError> {
         let registry = self.type_registry();
         let Some(descriptor) = registry.resolve(type_name) else {
             return Err(DomainError::UnknownNoteType {
@@ -72,7 +81,30 @@ impl Vault {
                 note_type: type_name.to_owned(),
             });
         };
-        self.custom_template_references(&custom_template_filename(type_name, def), BODY)
+        let slot = self.body_slot(&custom_template_filename(type_name, def), fields, vars)?;
+        Ok(slot == BodySlot::Unfilled)
+    }
+
+    /// Whether the template `template_name` has a `{{body}}` placeholder
+    /// and, if so, whether a source other than the `body` parameter fills
+    /// it (see [`custom_note_needs_body`](Self::custom_note_needs_body)).
+    fn body_slot(
+        &self,
+        template_name: &str,
+        fields: &HashMap<String, String>,
+        prompted: &HashMap<String, String>,
+    ) -> Result<BodySlot, DomainError> {
+        if !self.custom_template_references(template_name, BODY)? {
+            return Ok(BodySlot::Absent);
+        }
+        let filled = fields.contains_key(BODY)
+            || self.config().variables.static_vars.contains_key(BODY)
+            || prompted.contains_key(BODY);
+        Ok(if filled {
+            BodySlot::Filled
+        } else {
+            BodySlot::Unfilled
+        })
     }
 
     /// Create a note of a config-defined custom type, with caller-supplied
@@ -111,6 +143,15 @@ impl Vault {
     /// that needs none is never rewritten. Engine-supplied values the
     /// caller did not pass (`created`, …) are not reconciled: a template
     /// that omits them still produces a note `cdno lint` reports.
+    ///
+    /// A rendered block that does not parse as YAML at all (an unquoted
+    /// `origin: {{origin}}` given two links) cannot be repaired key by key,
+    /// so it is rebuilt from scratch in declared order: `type`, the engine
+    /// values the declared fields name (`title`, `slug`, `created`, `date`),
+    /// and every caller-supplied declared field, serialised with
+    /// `serde_yaml`; the body after the block is kept byte for byte. Any key
+    /// only the template wrote is lost on that path — such a note could not
+    /// be created at all before reconciliation existed.
     ///
     /// `body` (RFC 0002 §6.2) is the note's prose, without the title heading
     /// (the engine writes the H1). It is kept verbatim except that leading
@@ -273,20 +314,19 @@ impl Vault {
         // `[variables]`, prompted) stands, and only when nothing resolves
         // `body` — and no prompt is declared for it — does it render empty
         // (the engine would otherwise leave the placeholder in literally).
-        let body_in_template = self.custom_template_references(&template_name, BODY)?;
-        if body_in_template {
-            // `scaffold_custom` loads `[variables]` too; loading it here
-            // first lets the fallback below see a vault-level `body`.
-            ctx.load_from_config(self.config());
-            match body {
-                Some(b) => ctx.set_contextual(BODY, b),
-                None if ctx.resolve(BODY).is_none()
-                    && !self.config().variables.prompt.contains_key(BODY) =>
-                {
-                    ctx.set_contextual(BODY, "");
-                }
-                None => {}
+        // The same test `custom_note_needs_body` gives the CLI. A declared
+        // but unanswered `[variables.prompt] body` is left to the engine,
+        // which reports it rather than rendering it empty.
+        let slot = self.body_slot(&template_name, fields, prompted)?;
+        let body_in_template = slot != BodySlot::Absent;
+        match body {
+            Some(b) if body_in_template => ctx.set_contextual(BODY, b),
+            None if slot == BodySlot::Unfilled
+                && !self.config().variables.prompt.contains_key(BODY) =>
+            {
+                ctx.set_contextual(BODY, "");
             }
+            _ => {}
         }
 
         let field_order = descriptor
@@ -305,14 +345,22 @@ impl Vault {
                     .map(|v| (k.as_str(), v.as_str()))
             })
             .collect();
-        let mut content = self.reconcile_custom_frontmatter(
-            content,
-            type_name,
-            &template_name,
-            &field_order,
-            &supplied,
-            &mut ctx,
-        )?;
+        // Every declared field with a value — the caller's, else the
+        // engine's — in declared order: what an unparseable rendered block
+        // is rebuilt from.
+        let declared: Vec<(&str, &str)> = field_order
+            .iter()
+            .filter(|k| k.as_str() != "type")
+            .filter_map(|k| {
+                supplied
+                    .iter()
+                    .find(|(s, _)| *s == k.as_str())
+                    .map(|(_, v)| *v)
+                    .or_else(|| engine_value(k))
+                    .map(|v| (k.as_str(), v))
+            })
+            .collect();
+        let mut content = reconcile_custom_frontmatter(content, type_name, &supplied, &declared);
         if let Some(body) = body.filter(|_| !body_in_template) {
             content = insert_body_after_h1(&content, body);
         }
@@ -362,82 +410,58 @@ impl Vault {
     }
 }
 
-impl Vault {
-    /// Reconcile the frontmatter of a rendered custom note (see the
-    /// "Frontmatter reconciliation" paragraph on
-    /// [`create_custom_note_with_vars`](Self::create_custom_note_with_vars)).
-    /// Returns `rendered` unchanged when no repair is needed.
-    ///
-    /// When the rendered frontmatter does not parse as YAML at all (an
-    /// unquoted `origin: [[a]] [[b]]`), the note is rendered once more with
-    /// each supplied field replaced by an inert sentinel, so the template's
-    /// own frontmatter can be parsed and repaired; the sentinels are then
-    /// swapped back for the real values. If even that does not parse, the
-    /// original text is returned and the index-entry build reports the
-    /// parse error, as before.
-    fn reconcile_custom_frontmatter(
-        &self,
-        rendered: String,
-        type_name: &str,
-        template_name: &str,
-        field_order: &[String],
-        supplied: &[(&str, &str)],
-        ctx: &mut VariableContext,
-    ) -> Result<String, DomainError> {
-        let (block, body) = match split_frontmatter(&rendered) {
-            Some((block, body)) => (Some(block), body),
-            None => (None, rendered.as_str()),
-        };
-        if let Some(mapping) = parse_frontmatter_block(block.unwrap_or("")) {
-            if frontmatter_is_reconciled(&mapping, type_name, supplied) {
-                return Ok(rendered);
-            }
-            return Ok(assemble_note(
-                &repair_frontmatter(mapping, type_name, supplied),
-                block.is_some(),
-                body,
-            ));
-        }
+/// Where a custom template stands on `{{body}}`: no placeholder, a
+/// placeholder another source fills, or one only the `body` parameter can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodySlot {
+    Absent,
+    Filled,
+    Unfilled,
+}
 
-        // Unparseable: re-render with sentinels in place of the supplied
-        // values. A sentinel is set only where the context currently
-        // resolves the key to the supplied value, so a key another source
-        // shadows (a builtin, the `body` parameter) renders as before.
-        let mut swaps: Vec<(String, &str)> = Vec::new();
-        for (i, (key, value)) in supplied.iter().enumerate() {
-            if ctx.resolve(key) != Some(*value) {
-                continue;
-            }
-            let sentinel = format!("cdnoreconcilesentinel{i}x");
-            ctx.set_contextual(*key, sentinel.as_str());
-            if ctx.resolve(key) == Some(sentinel.as_str()) {
-                swaps.push((sentinel, value));
-            }
+/// Reconcile the frontmatter of a rendered custom note (see the
+/// "Frontmatter reconciliation" paragraph on
+/// [`create_custom_note_with_vars`](Vault::create_custom_note_with_vars)).
+/// Returns `rendered` unchanged when no repair is needed.
+///
+/// When the rendered frontmatter block does not parse as YAML at all (an
+/// unquoted `origin: [[a]] [[b]]`), it is rebuilt from scratch: `type`,
+/// then `declared` — every declared field with a caller-supplied or engine
+/// value (`title`, `slug`, `created`, `date` when the type declares them),
+/// in declared order — serialised with `serde_yaml`. The body after the
+/// block is kept byte for byte. Any key only the template wrote (a
+/// constant, an undeclared placeholder) is lost on this path; such a note
+/// could not be created at all before the reconciliation existed, since
+/// its index-entry build failed on the parse error.
+fn reconcile_custom_frontmatter(
+    rendered: String,
+    type_name: &str,
+    supplied: &[(&str, &str)],
+    declared: &[(&str, &str)],
+) -> String {
+    let (block, body) = match split_frontmatter(&rendered) {
+        Some((block, body)) => (Some(block), body),
+        None => (None, rendered.as_str()),
+    };
+    if let Some(mapping) = parse_frontmatter_block(block.unwrap_or("")) {
+        if frontmatter_is_reconciled(&mapping, type_name, supplied) {
+            return rendered;
         }
-        let probe = self.scaffold_custom(type_name, template_name, field_order, ctx)?;
-        let (probe_block, probe_body) = match split_frontmatter(&probe) {
-            Some((block, body)) => (Some(block), body),
-            None => (None, probe.as_str()),
-        };
-        let Some(mut mapping) = parse_frontmatter_block(probe_block.unwrap_or("")) else {
-            return Ok(rendered);
-        };
-        let unswap = |s: &str| {
-            swaps.iter().fold(s.to_owned(), |acc, (sentinel, value)| {
-                acc.replace(sentinel.as_str(), value)
-            })
-        };
-        for (_, v) in mapping.iter_mut() {
-            if let serde_yaml::Value::String(s) = v {
-                *s = unswap(s);
-            }
-        }
-        Ok(assemble_note(
+        return assemble_note(
             &repair_frontmatter(mapping, type_name, supplied),
-            probe_block.is_some(),
-            &unswap(probe_body),
-        ))
+            block.is_some(),
+            body,
+        );
     }
+
+    // Unparseable (only a present block can be): rebuild it from the
+    // declared fields, leaving the body alone.
+    let mut mapping = serde_yaml::Mapping::new();
+    mapping.insert("type".into(), type_name.into());
+    for (key, value) in declared {
+        mapping.insert((*key).into(), (*value).into());
+    }
+    assemble_note(&mapping, true, body)
 }
 
 /// Parse a frontmatter YAML block as a mapping; an empty or `null` block is

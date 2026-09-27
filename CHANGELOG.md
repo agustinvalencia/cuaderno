@@ -31,10 +31,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   text equals it, so `priority: 5` stays a number), and when one is not (a template without `{{origin}}`, an
   unquoted `origin: {{origin}}` that YAML reads as a list or rejects, a template that renders
   no frontmatter) the block is repaired and re-serialised, the body untouched; a template that
-  already renders every field correctly is written byte for byte. On the CLI, `--body-file` is
-  prompted in an editor, or demanded under `--no-interactive`, only when the template has a
-  `{{body}}` slot and neither `--field body=` nor `--var body=` fills it. The creation log line
-  is unchanged.
+  already renders every field correctly is written byte for byte. A block that does not parse
+  as YAML at all (an unquoted `origin: {{origin}}` given two links) is rebuilt from scratch in
+  declared order from `type`, the engine values the declared fields name and every supplied
+  field, the body again untouched; a key only the template wrote is lost on that path (such a
+  note could not be created at all before). On the CLI, `--body-file` is prompted in an
+  editor, or demanded under `--no-interactive`, only when the template has a `{{body}}` slot
+  that nothing else fills (`--field body=`, `--var body=` or a `[variables] body`), the same
+  test the create path applies before rendering the placeholder empty
+  (`Vault::custom_note_needs_body`). The creation log line is unchanged.
 
 - **`Vault::note_to_daily`, the worked-note entry in today's daily note (T1, T2, #615, #616,
   #638, #647).** `DailySection::Notes` is a second append-only history section next to `## Logs`:

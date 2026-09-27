@@ -320,6 +320,39 @@ fn note_create_with_a_body_var_does_not_demand_body_file() {
 }
 
 #[test]
+fn note_create_with_a_vault_variable_body_does_not_demand_body_file() {
+    // A `[variables] body` in the config fills `{{body}}` too, so under
+    // `--no-interactive` the create succeeds without `--body-file`.
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    write_concept_template_with_body(dir.path());
+    let cfg = dir.path().join(".cuaderno/config.toml");
+    let mut config = fs::read_to_string(&cfg).unwrap();
+    config.push_str("\n[variables]\nbody = \"from the vault\"\n");
+    fs::write(&cfg, config).unwrap();
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+        ])
+        .assert()
+        .success();
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    assert!(
+        content.ends_with("# Woodbury identity\n\nfrom the vault\n"),
+        "{content}"
+    );
+}
+
+#[test]
 fn note_create_drops_a_leading_title_heading_from_the_body_file() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
