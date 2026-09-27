@@ -375,8 +375,8 @@ fn concept_declaration_parses() {
     write_config(
         dir.path(),
         r#"
-# A declared custom type: the concept library (RFC 0002). Delete this block if you
-# do not want one; nothing else depends on it.
+# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
 [note_types.concept]
 folder = "concepts"
 required = ["created"]

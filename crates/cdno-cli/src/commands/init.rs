@@ -12,8 +12,8 @@ const DEFAULT_CONFIG_TOML: &str = include_str!("../../templates/default_config.t
 /// vault's config (RFC 0002 §6.1). Kept in one place so `examples/note-types/
 /// concept/config.toml` (T14) can be tested against it byte-for-byte rather
 /// than drifting from a second hand-copied block.
-pub const CONCEPT_TYPE_BLOCK: &str = r#"# A declared custom type: the concept library (RFC 0002). Delete this block if you
-# do not want one; nothing else depends on it.
+pub const CONCEPT_TYPE_BLOCK: &str = r#"# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
 [note_types.concept]
 folder = "concepts"
 required = ["created"]

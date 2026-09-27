@@ -50,11 +50,17 @@ impl Vault {
     /// The note is written to `<folder>/<slug(title)>.md`, its frontmatter shaped
     /// by the type's declared fields. `fields` maps frontmatter field → value;
     /// every key must be a declared `required`/`optional` field, and every
-    /// `required` field must end up with a non-empty value — either supplied
+    /// `required` field satisfies the create-time check — either supplied
     /// by the caller, or, for a name in [`ENGINE_SUPPLIED_FIELDS`] (`title`,
     /// `slug`, `created`, `date`), filled from the value the create path
     /// itself computes. A vault declaring `required = ["created"]` is
     /// declaring "stamp this", not "make the caller repeat today's date".
+    /// For an engine-supplied name, a non-blank caller value still wins over
+    /// the engine's own (backdating a `created` is deliberate); a blank one
+    /// is ignored and the engine value is used instead. Passing the check
+    /// does not guarantee the rendered note has a non-empty value: a
+    /// template that omits the placeholder can still produce a note that
+    /// `cdno lint` reports as missing the field.
     ///
     /// Errors:
     /// - [`DomainError::UnknownNoteType`] — `type_name` isn't a config type
@@ -153,6 +159,14 @@ impl Vault {
         ctx.set_contextual("created", date.as_str());
         ctx.set_contextual("date", date.as_str());
         for (k, v) in fields {
+            // A blank value for an engine-supplied name is treated as
+            // absent, so the engine's own value stands rather than being
+            // overwritten with blank; a non-blank value still wins, so
+            // backdating `created` works. For a caller-only field a blank
+            // value is already rejected above by the required-field check.
+            if engine_value(k).is_some() && v.trim().is_empty() {
+                continue;
+            }
             ctx.set_contextual(k, v.as_str());
         }
         for (k, v) in prompted {

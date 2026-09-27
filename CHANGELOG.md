@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- `cdno init` now declares a `concept` custom type (folder `concepts/`) as an ordinary, deletable
+  declaration, and creating a note of any custom type now fills a required `title`, `slug`,
+  `created` or `date` from the engine when the caller omits it (#626).
+
 ## [0.39.0] - 2026-09-26
 
 ### Removed
