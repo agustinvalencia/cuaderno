@@ -39,7 +39,7 @@ pub(in crate::vault) mod actions;
 mod core_question;
 mod lifecycle;
 mod milestones;
-mod state;
+pub(crate) mod state;
 mod summary;
 mod waiting;
 

@@ -54,6 +54,26 @@ fn config_with_person() -> VaultConfig {
     config
 }
 
+/// A `concept` custom type (RFC 0002 §6.1): folder `concepts`, required
+/// `created` — an engine-supplied name, not a caller-supplied one.
+fn concept() -> CustomNoteType {
+    CustomNoteType {
+        folder: "concepts".to_owned(),
+        required: vec!["created".to_owned()],
+        optional: vec!["tags".to_owned(), "origin".to_owned()],
+        template: None,
+        append_only: false,
+        title_field: None,
+        date_field: None,
+    }
+}
+
+fn config_with_concept() -> VaultConfig {
+    let mut config = VaultConfig::default();
+    config.note_types.insert("concept".to_owned(), concept());
+    config
+}
+
 fn fields(pairs: &[(&str, &str)]) -> HashMap<String, String> {
     pairs
         .iter()
@@ -126,6 +146,58 @@ fn rejects_a_missing_required_field() {
     let (vault, _store) = vault_with(config_with_person(), &[]);
     let err = vault
         .create_custom_note(at(), "person", "Nameless", &fields(&[("role", "x")]))
+        .expect_err("should reject");
+    assert!(matches!(err, DomainError::MissingRequiredField { field, .. } if field == "name"));
+}
+
+#[test]
+fn engine_supplied_required_field_is_filled_without_caller_input() {
+    // `required = ["created"]` (RFC 0002's concept type) must not force the
+    // caller to repeat a value the create path stamps itself.
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = vault
+        .create_custom_note(at(), "concept", "Probe", &fields(&[]))
+        .expect("create succeeds with no caller fields");
+    assert_eq!(path, vp("concepts/probe.md"));
+
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("created: '2026-04-26'") || content.contains("created: 2026-04-26"));
+}
+
+#[test]
+fn caller_supplied_required_field_is_still_enforced() {
+    // A `required` field outside the engine-supplied set (`title`, `slug`,
+    // `created`, `date`) is unaffected: the caller must still supply it.
+    let (vault, _store) = vault_with(config_with_person(), &[]);
+    let err = vault
+        .create_custom_note(at(), "person", "Nameless", &fields(&[]))
+        .expect_err("should reject");
+    assert!(matches!(err, DomainError::MissingRequiredField { field, .. } if field == "name"));
+}
+
+#[test]
+fn blank_caller_value_for_engine_field_keeps_the_engine_value() {
+    // A blank `created` passes the required check because the name is
+    // engine-supplied, but must not overwrite the engine's own date with
+    // the blank — the engine value must stand.
+    let (vault, store) = vault_with(config_with_concept(), &[]);
+    let path = vault
+        .create_custom_note(at(), "concept", "Probe", &fields(&[("created", "   ")]))
+        .expect("create succeeds; blank engine-field value is ignored");
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.contains("created: '2026-04-26'") || content.contains("created: 2026-04-26"),
+        "engine value must stand:\n{content}"
+    );
+}
+
+#[test]
+fn blank_caller_value_for_caller_field_is_still_rejected() {
+    // A blank value for a caller-only required field is still rejected, as
+    // on main — only engine-supplied names get the blank-is-absent leniency.
+    let (vault, _store) = vault_with(config_with_person(), &[]);
+    let err = vault
+        .create_custom_note(at(), "person", "Nameless", &fields(&[("name", "   ")]))
         .expect_err("should reject");
     assert!(matches!(err, DomainError::MissingRequiredField { field, .. } if field == "name"));
 }

@@ -119,6 +119,7 @@ pub(crate) enum RejectionCode {
     HistoryEntryHeadingInvalid,
     MissingSection,
     NotFound,
+    NoteNotRevisable,
     PeriodicDateUnwritable,
     PeriodicNotFound,
     PeriodicRecurrenceUnreadable,
@@ -127,7 +128,9 @@ pub(crate) enum RejectionCode {
     ProjectNotParked,
     ReservedSchemaField,
     ReservedTypeName,
+    RevisionInvalid,
     SectionNotFound,
+    StaleRevision,
     StateTooLong,
     TemplateAlreadyExists,
     TrackingOnFlatStewardship,
@@ -308,6 +311,28 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::UnresolvedPrompts { note_type, names } => (
             RejectionCode::UnresolvedPrompts,
             json!({ "note_type": note_type, "names": names }),
+        ),
+
+        // -------------------------------------------------------------
+        // Revising a note in place (T7). A non-revisable note is revised
+        // through its own commands instead; a malformed revision succeeds
+        // with a different heading or content; a stale hash succeeds after
+        // reading the note again — `actual` is the hash to re-read against.
+        // -------------------------------------------------------------
+        DomainError::NoteNotRevisable { path, reason } => (
+            RejectionCode::NoteNotRevisable,
+            json!({ "path": path, "reason": reason }),
+        ),
+        DomainError::RevisionInvalid { reason } => {
+            (RejectionCode::RevisionInvalid, json!({ "reason": reason }))
+        }
+        DomainError::StaleRevision {
+            path,
+            expected,
+            actual,
+        } => (
+            RejectionCode::StaleRevision,
+            json!({ "path": path, "expected": expected, "actual": actual }),
         ),
 
         // -------------------------------------------------------------
@@ -620,6 +645,41 @@ mod tests {
                 "the derived wire form changed — clients branch on this string"
             );
         }
+    }
+
+    /// T7's revision rejections: each is fixed by a different call (read
+    /// the note again, pick another heading or content, use the note's own
+    /// commands), so each is a tool result carrying what to do next.
+    #[test]
+    fn the_revision_rejections_are_the_callers_to_fix() {
+        let payload = classify(&DomainError::NoteNotRevisable {
+            path: "projects/foo.md".into(),
+            reason: "built-in".into(),
+        })
+        .expect("a non-revisable note is caller-actionable");
+        assert_eq!(payload["code"], "note_not_revisable");
+        assert_eq!(payload["details"]["path"], "projects/foo.md");
+
+        let payload = classify(&DomainError::StaleRevision {
+            path: "concepts/x.md".into(),
+            expected: "aaa".into(),
+            actual: "bbb".into(),
+        })
+        .expect("a stale hash is caller-actionable: read again");
+        assert_eq!(payload["code"], "stale_revision");
+        assert_eq!(payload["details"]["actual"], "bbb");
+
+        let payload = classify(&DomainError::RevisionInvalid {
+            reason: "section heading 'A | B' contains '|'".into(),
+        })
+        .expect("a malformed revision is caller-actionable");
+        assert_eq!(payload["code"], "revision_invalid");
+        assert!(
+            payload["details"]["reason"]
+                .as_str()
+                .expect("reason")
+                .contains('|')
+        );
     }
 
     #[test]

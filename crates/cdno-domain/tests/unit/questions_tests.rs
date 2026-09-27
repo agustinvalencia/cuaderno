@@ -116,6 +116,101 @@ fn create_question_errors_on_empty_text() {
 }
 
 #[test]
+fn question_creation_logs_one_line() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_question(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            "Does caching help?",
+        )
+        .expect("create_question");
+
+    let daily = store
+        .read_file(&vp(&daily_note_relpath(
+            NaiveDate::from_ymd_opt(2026, 1, 10).unwrap(),
+        )))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: question created [[questions/research/does-caching-help]] \u{2014} Does caching help?"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+/// A `Life`-domain question logs the `questions/life/<slug>` path,
+/// not the `research/` one — the domain folder must be reflected in
+/// the creation line.
+#[test]
+fn life_question_creation_logs_the_life_path() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_question(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Life,
+            "Where do I want to be?",
+        )
+        .expect("create_question");
+
+    let daily = store
+        .read_file(&vp(&daily_note_relpath(
+            NaiveDate::from_ymd_opt(2026, 1, 10).unwrap(),
+        )))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: question created [[questions/life/where-do-i-want-to-be]] \u{2014} Where do I want to be?"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+/// A question text with an embedded newline collapses to a single
+/// log line via `flatten_for_log`.
+#[test]
+fn question_creation_line_flattens_a_multiline_title() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_question(
+            dt(2026, 1, 10, 9, 0),
+            QuestionDomain::Research,
+            "Does caching\nhelp?",
+        )
+        .expect("create_question");
+
+    let daily = store
+        .read_file(&vp(&daily_note_relpath(
+            NaiveDate::from_ymd_opt(2026, 1, 10).unwrap(),
+        )))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: question created [[questions/research/does-caching-help]] \u{2014} Does caching help?"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+#[test]
 fn create_question_suffixes_a_duplicate_slug_in_the_same_domain() {
     // #225: a second same-title question no longer errors — it gets a `-2`
     // stem so both keep resolvable backlinks.

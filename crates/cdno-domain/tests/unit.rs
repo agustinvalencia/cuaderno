@@ -22,6 +22,7 @@ mod unit {
     mod projects_tests;
     mod questions_tests;
     mod recurrence_tests;
+    mod revise_tests;
     mod search_tests;
     mod set_frontmatter_tests;
     mod slug_tests;

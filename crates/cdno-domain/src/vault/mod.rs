@@ -51,6 +51,7 @@ mod portfolios;
 mod projects;
 mod questions;
 mod reconcile;
+mod revise;
 mod search;
 mod set_frontmatter;
 pub(crate) mod slug;
@@ -114,6 +115,7 @@ pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
 pub use questions::QuestionSummary;
+pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
 pub use templating::{

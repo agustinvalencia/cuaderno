@@ -1,5 +1,5 @@
 use cdno_core::error::{ManipulationError, ParseError};
-use cdno_core::markdown::MarkdownDocument;
+use cdno_core::markdown::{MarkdownDocument, headings};
 
 const SIMPLE_DOC: &str = "\
 ---
@@ -545,8 +545,7 @@ fn headings_reports_level_and_stripped_text_for_atx_and_setext() {
 # Title
 
 Setext one
-==========
-
+===
 Setext two
 ----------
 
@@ -591,4 +590,16 @@ fn heading_texts_agrees_with_headings() {
         .collect();
     assert_eq!(texts, vec!["A", "B", "C"]);
     assert_eq!(cdno_core::markdown::heading_texts(body), texts);
+}
+#[test]
+fn headings_reports_levels_and_ignores_fenced_code_in_a_mixed_body() {
+    let body = "# Top\n\ntext\n\n```\n## not a heading\n```\n\n### Deep\n\nSetext\n------\n";
+    assert_eq!(
+        headings(body),
+        vec![
+            (1, "Top".to_owned()),
+            (3, "Deep".to_owned()),
+            (2, "Setext".to_owned()),
+        ]
+    );
 }

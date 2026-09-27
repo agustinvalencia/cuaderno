@@ -8,6 +8,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`Vault::revise_note`, the logged, hash-guarded in-place edit for mutable custom notes (T7,
+  #620, #645).** A concept note is refined in place (RFC 0002 §5.3), and every revision leaves one
+  `revised [[path]] — reason` or `revised [[path#Section]] — reason` line in today's daily log, in
+  the same transaction as the note write and its index row. The caller passes the `content_hash` it
+  got from `read_note`; it is compared against the bytes on disk under the vault write lock, before
+  anything else reads them, so a concurrent edit is refused as `stale_revision` rather than
+  overwritten. An identical revision writes and logs nothing.
+
+  A section revision is an **upsert**: an existing section is replaced (sub-sections included,
+  since a section runs to the next heading of equal or higher level), and a missing one is appended
+  as a new `## <heading>` section. Refused, writing nothing: built-in and `append_only` custom types
+  (`note_not_revisable`), unknown types, an empty reason, a heading that matches more than once
+  (`ambiguous_section`), a heading that cannot be a wikilink anchor (empty, multi-line, containing
+  `[`, `]`, `|` or `#`, or starting with `^`), and section content holding a heading at the
+  section's own level or higher (both `revision_invalid`). The three new rejections are classified
+  as caller-actionable in `cdno-mcp`'s rejection table. Until #646, a revision does not refresh the
+  note's links and tags facets, so `read_note` backlinks can lag it.
+
+- `cdno init` now declares a `concept` custom type (folder `concepts/`) as an ordinary, deletable
+  declaration, and creating a note of any custom type now fills a required `title`, `slug`,
+  `created` or `date` from the engine when the caller omits it (#626).
+- **Built-in project, question, portfolio and stewardship creation now log themselves (#618).**
+  Each stages a `<type> created [[…]] — <title>` line to today's daily log inside its own
+  transaction, so creation and log entry commit or roll back together. The line uses the note's
+  path form: `[[projects/<slug>]]`, `[[questions/<domain>/<slug>]]`, `[[portfolios/<slug>]]` and
+  `[[stewardships/<slug>]]` — the last two are the folder form, which the resolver maps to
+  `_index.md`. A project created directly into `_parked/` (cap already reached) still logs the
+  canonical `projects/<slug>` path, not `projects/_parked/<slug>`, so it stays a mention of itself
+  across park/unpark. The existing commitment line keeps its bare `[[<slug>]]` form and `(due …)`
+  suffix.
 - **Creation log line for custom-type notes (T4, #617).** Creating a note of a config-defined
   custom type now stages `<type> created [[<path>]] — <title>` to today's daily log in the same
   transaction as the note itself, through a helper shared with the one creation line the vault

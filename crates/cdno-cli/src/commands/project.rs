@@ -320,13 +320,7 @@ fn create(
         }
     }
     let path = vault
-        .create_project_with_vars(
-            at.date(),
-            &title,
-            context,
-            question.as_deref(),
-            &template_vars,
-        )
+        .create_project_with_vars(at, &title, context, question.as_deref(), &template_vars)
         .context("creating project")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))?;
     Ok(())
