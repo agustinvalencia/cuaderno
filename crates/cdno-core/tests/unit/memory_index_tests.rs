@@ -307,6 +307,37 @@ fn replace_links_and_traverse_graph() {
 }
 
 #[test]
+fn find_backlinks_deduplicates_multiple_links_from_same_source() {
+    let idx = MemoryIndex::new();
+    idx.upsert_note(&sample_note("projects/a.md", "project"))
+        .unwrap();
+    idx.upsert_note(&sample_note("projects/z.md", "project"))
+        .unwrap();
+
+    // a.md links to z.md twice (e.g. once in the body, once in
+    // frontmatter) — the backlink should still appear once.
+    idx.replace_links(
+        &vp("projects/a.md"),
+        &[
+            LinkEntry {
+                target_raw: "z".to_owned(),
+                resolved_path: Some(vp("projects/z.md")),
+                label: None,
+            },
+            LinkEntry {
+                target_raw: "z again".to_owned(),
+                resolved_path: Some(vp("projects/z.md")),
+                label: Some("see also".to_owned()),
+            },
+        ],
+    )
+    .unwrap();
+
+    let backlinks = idx.find_backlinks(&vp("projects/z.md")).unwrap();
+    assert_eq!(backlinks, vec![vp("projects/a.md")]);
+}
+
+#[test]
 fn replace_tags_overwrites_prior_set() {
     let idx = MemoryIndex::new();
     let n = sample_note("journal/daily/2026-04-19.md", "daily");
