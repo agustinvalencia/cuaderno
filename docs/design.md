@@ -583,7 +583,7 @@ type: action
 status: active
 project: surrogate-model
 energy: deep
-milestone: "[[projects/surrogate-model#full-geometry-evaluation]]"
+milestone: "[[projects/surrogate-model#Full geometry evaluation]]"
 due: null
 created: 2026-04-15
 completed: null
@@ -617,7 +617,7 @@ tags: [kan, ppo, sample-efficiency]
 | `status`    | yes      | `active`, `completed`, `blocked`, or `dropped`                                                 |
 | `project`   | yes      | Slug of the parent project. Every action belongs to a project.                                 |
 | `energy`    | yes      | `deep`, `medium`, or `light`. Same vocabulary as bullet actions.                               |
-| `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits.             |
+| `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits. The anchor after `#` is the milestone's text, a label rather than a heading a reader can jump to; it is opaque to link resolution, and the link resolves to the project note. |
 | `due`       | optional | ISO date. Used only when the action has a self-imposed deadline not tied to a milestone.       |
 | `created`   | yes      | Date the note was created.                                                                     |
 | `completed` | optional | Date set on completion.                                                                        |

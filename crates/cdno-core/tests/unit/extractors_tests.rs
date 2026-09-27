@@ -273,6 +273,143 @@ fn resolve_picks_exact_path_match() {
 }
 
 #[test]
+fn resolve_strips_heading_anchor() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo#Some Heading".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+    assert_eq!(got[0].target_raw, "projects/foo#Some Heading");
+}
+
+#[test]
+fn resolve_strips_empty_anchor() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo#".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+}
+
+#[test]
+fn resolve_strips_block_anchor() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo#^abc123".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+}
+
+#[test]
+fn resolve_anchor_on_folder_target_hits_index_note() {
+    let vault = paths(&["portfolios/topology/_index.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "portfolios/topology#Summary".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("portfolios/topology/_index.md"))
+    );
+}
+
+#[test]
+fn resolve_same_note_anchor_is_none() {
+    let vault = paths(&["notes/Heading.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "#Heading".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert!(got[0].resolved_path.is_none(), "got: {:?}", got[0]);
+}
+
+#[test]
+fn resolve_anchor_does_not_break_last_segment_fallback() {
+    let vault = paths(&["actions/_done/2026/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "actions/foo#Manifest".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("actions/_done/2026/foo.md"))
+    );
+}
+
+#[test]
+fn resolve_exact_path_with_hash_in_filename_wins_over_anchor_split() {
+    let vault = paths(&["notes/c#-notes.md", "notes/c.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "notes/c#-notes".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("notes/c#-notes.md"))
+    );
+}
+
+#[test]
+fn resolve_anchor_with_label_keeps_label() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo#Some Heading".to_string(),
+            label: Some("Label".to_string()),
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+    assert_eq!(got[0].label, Some("Label".to_string()));
+}
+
+#[test]
+fn resolve_trims_space_before_anchor() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo #Heading".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+}
+
+#[test]
 fn resolve_picks_unique_basename_when_no_exact_match() {
     let vault = paths(&["notes/foo.md", "other/bar.md"]);
     let got = resolve_wikilinks(
