@@ -102,6 +102,56 @@ fn create_portfolio_wraps_optional_project_in_wikilink() {
 }
 
 #[test]
+fn portfolio_creation_logs_one_line() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense OOD", None)
+        .expect("create succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-02-01.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: portfolio created [[portfolios/sparse-vs-dense-ood]] \u{2014} Sparse vs dense OOD"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+/// A question with an embedded newline collapses to a single log
+/// line via `flatten_for_log`.
+#[test]
+fn portfolio_creation_line_flattens_a_multiline_title() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_portfolio(dt(2026, 2, 1, 9, 0), "Sparse vs dense\nOOD", None)
+        .expect("create succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-02-01.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: portfolio created [[portfolios/sparse-vs-dense-ood]] \u{2014} Sparse vs dense OOD"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+#[test]
 fn create_portfolio_rejects_empty_question() {
     let (vault, _store) = vault_with_seeded_store(&[]);
 

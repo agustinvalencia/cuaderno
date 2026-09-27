@@ -93,7 +93,7 @@ fn concurrent_add_action_keeps_every_bullet() {
 
     // One project to hammer.
     build_fs_vault(root)
-        .create_project(at.date(), "Concurrency", Context::Work, None)
+        .create_project(at, "Concurrency", Context::Work, None)
         .expect("create project");
 
     let vaults: Vec<Vault> = (0..WRITERS).map(|_| build_fs_vault(root)).collect();

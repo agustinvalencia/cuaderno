@@ -692,7 +692,7 @@ async fn get_project_context_returns_frontmatter_body_and_empty_collections() {
     let server = server_with(|vault| {
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 None,
@@ -743,7 +743,7 @@ async fn get_project_context_resolves_core_question_when_set() {
             .unwrap();
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 Some("questions/research/surrogate-cost"),
@@ -1176,10 +1176,16 @@ async fn search_notes_passes_the_date_window_through() {
             )
             .unwrap();
     });
+    // Scoped to `question` (#618): question creation now also logs a
+    // `question created […] — sparse attention in …` line to its daily
+    // note, so an unscoped "sparse" query would additionally match the
+    // June daily note within the same date window — a correct new
+    // search result, but a distraction from what this test checks
+    // (that `from` reaches the domain filter, not from/to transposed).
     let result = server
         .search_notes(Parameters(SearchNotesInput {
             query: "sparse".to_owned(),
-            note_type: None,
+            note_type: Some("question".to_owned()),
             from: Some(NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()),
             to: None,
             portfolio: None,
@@ -1281,14 +1287,9 @@ async fn search_notes_blank_query_returns_no_results() {
 #[tokio::test]
 async fn list_projects_splits_active_and_parked_with_slots() {
     let server = server_with(|v| {
-        v.create_project(
-            moment(2026, 5, 1, 9, 0).date(),
-            "Alpha",
-            Context::Work,
-            None,
-        )
-        .unwrap();
-        v.create_project(moment(2026, 5, 1, 9, 0).date(), "Beta", Context::Work, None)
+        v.create_project(moment(2026, 5, 1, 9, 0), "Alpha", Context::Work, None)
+            .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Beta", Context::Work, None)
             .unwrap();
         v.park_project(moment(2026, 5, 2, 9, 0), "beta").unwrap();
     });

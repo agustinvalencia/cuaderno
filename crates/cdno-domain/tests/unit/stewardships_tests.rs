@@ -71,6 +71,78 @@ fn create_flat_writes_single_file_at_root() {
 }
 
 #[test]
+fn stewardship_creation_logs_one_line() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_stewardship_flat(dt(2026, 1, 10, 9, 0), "Finances", Context::Household)
+        .expect("create_stewardship_flat");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-01-10.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec!["- **09:00**: stewardship created [[stewardships/finances]] \u{2014} Finances"],
+        "daily note:\n{daily}"
+    );
+}
+
+/// The expanded (folder) variant logs the same `stewardships/<slug>`
+/// form as the flat variant — the resolver maps it to `_index.md`, so
+/// the log line reads identically regardless of layout.
+#[test]
+fn expanded_stewardship_creation_logs_the_folder_slug_form() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
+        .expect("create_stewardship_expanded");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-01-10.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("stewardship created [[stewardships/health]] \u{2014} Health"),
+        "daily note:\n{daily}"
+    );
+}
+
+/// A title with an embedded newline collapses to a single log line
+/// via `flatten_for_log`.
+#[test]
+fn stewardship_creation_line_flattens_a_multiline_title() {
+    let (vault, store) = vault_with_seeded_store(&[]);
+
+    vault
+        .create_stewardship_flat(
+            dt(2026, 1, 10, 9, 0),
+            "Finances\nand budget",
+            Context::Household,
+        )
+        .expect("create_stewardship_flat");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-01-10.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: stewardship created [[stewardships/finances-and-budget]] \u{2014} Finances and budget"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+#[test]
 fn create_flat_errors_on_empty_name() {
     let (vault, _store) = vault_with_seeded_store(&[]);
     let err = vault
