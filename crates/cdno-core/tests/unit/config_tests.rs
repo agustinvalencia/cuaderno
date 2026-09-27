@@ -66,6 +66,7 @@ experiment_id = "Experiment identifier?"
 
     // Real TOML with no `[note_types]` deserialises to an empty map (back-compat).
     assert!(config.note_types.is_empty());
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_ok());
 
     assert_eq!(config.resolve_variable("author"), Some("A. Researcher"));
@@ -177,6 +178,7 @@ fn absent_note_types_table_is_empty_and_valid() {
     let mut config = VaultConfig::default();
     assert!(config.note_types.is_empty());
     assert!(config.custom_type("person").is_none());
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_ok());
 }
 
@@ -206,6 +208,7 @@ date_field = "created"
     assert!(!person.append_only);
     assert_eq!(person.title_field.as_deref(), Some("name"));
     assert_eq!(person.date_field.as_deref(), Some("created"));
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_ok());
 }
 
@@ -243,6 +246,7 @@ folder = ""
 "#,
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -255,6 +259,7 @@ fn validate_rejects_vault_escaping_folder() {
             &format!("[note_types.person]\nfolder = \"{folder}\"\n"),
         );
         let mut config = VaultConfig::load(dir.path()).unwrap();
+        config.normalise_note_type_folders();
         assert!(
             config.validate_note_types().is_err(),
             "folder `{folder}` should be rejected"
@@ -276,6 +281,7 @@ folder = "people"
 "#,
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -291,6 +297,7 @@ template = "sub/person.md"
 "#,
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -299,6 +306,7 @@ fn validate_rejects_folder_with_surrounding_whitespace() {
     let dir = TempDir::new().unwrap();
     write_config(dir.path(), "[note_types.person]\nfolder = \" people \"\n");
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -310,6 +318,7 @@ fn validate_rejects_backslash_folder() {
         "[note_types.person]\nfolder = \"people\\\\..\\\\..\\\\etc\"\n",
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -324,6 +333,7 @@ fn validate_rejects_folder_colliding_with_a_builtin() {
             &format!("[note_types.custom]\nfolder = \"{folder}\"\n"),
         );
         let mut config = VaultConfig::load(dir.path()).unwrap();
+        config.normalise_note_type_folders();
         assert!(
             config.validate_note_types().is_err(),
             "folder `{folder}` should collide with a built-in"
@@ -343,9 +353,87 @@ fn validate_rejects_a_dot_slash_prefixed_reserved_folder() {
         "[note_types.custom]\nfolder = \"./journal/2026/daily\"\n",
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(
         config.validate_note_types().is_err(),
         "`./journal/2026/daily` should be caught by the reserved-folder check"
+    );
+}
+
+#[test]
+fn validate_rejects_dot_segments_that_reach_a_reserved_folder() {
+    // `././journal/2026/daily` must be caught by the reserved-folder check
+    // exactly like `journal/2026/daily` — a `.` segment anywhere in the
+    // folder, not only a single leading `./`, must not let it slip past,
+    // or a custom note could collide with, and be overwritten by, the
+    // daily scaffold.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.custom]\nfolder = \"././journal/2026/daily\"\n",
+    );
+    let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
+    assert_eq!(
+        config.custom_type("custom").unwrap().folder,
+        "journal/2026/daily",
+        "`././journal/2026/daily` should normalise to `journal/2026/daily`"
+    );
+    assert!(
+        config.validate_note_types().is_err(),
+        "`././journal/2026/daily` should be caught by the reserved-folder check"
+    );
+}
+
+#[test]
+fn validate_rejects_dot_only_folders() {
+    for folder in [".", "./", "./."] {
+        let dir = TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            &format!("[note_types.custom]\nfolder = \"{folder}\"\n"),
+        );
+        let mut config = VaultConfig::load(dir.path()).unwrap();
+        config.normalise_note_type_folders();
+        assert!(
+            config.validate_note_types().is_err(),
+            "dot-only folder `{folder}` should be rejected"
+        );
+    }
+}
+
+#[test]
+fn validate_detects_duplicate_after_dot_segment_normalisation() {
+    // `x/y` and `x/./y` normalise to the same folder, so they must collide
+    // exactly like two types both declaring `folder = "x/y"` outright.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[note_types.one]\nfolder = \"x/y\"\n\n[note_types.two]\nfolder = \"x/./y\"\n",
+    );
+    let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
+    assert_eq!(config.custom_type("two").unwrap().folder, "x/y");
+    assert!(
+        config.validate_note_types().is_err(),
+        "`x/y` and `x/./y` should collide once normalised"
+    );
+}
+
+#[test]
+fn normalise_then_validate_is_the_documented_order() {
+    // `validate_note_types` documents that it assumes normalised input.
+    // Calling it directly, without `normalise_note_type_folders` first, on
+    // a folder that still carries a `./` must not panic — pinned here to
+    // consistently reject, since the `.` segment is indistinguishable,
+    // without normalising first, from input this method cannot trust.
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[note_types.custom]\nfolder = \"./people\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(
+        config.validate_note_types().is_err(),
+        "un-normalised `./people` is consistently rejected, not accepted, when \
+         `validate_note_types` is called out of the documented order"
     );
 }
 
@@ -358,6 +446,7 @@ fn validate_normalises_a_trailing_and_a_leading_dot_slash_to_the_same_folder() {
             &format!("[note_types.person]\nfolder = \"{folder}\"\n"),
         );
         let mut config = VaultConfig::load(dir.path()).unwrap();
+        config.normalise_note_type_folders();
         assert!(
             config.validate_note_types().is_ok(),
             "{label}: `{folder}` should validate"
@@ -375,6 +464,7 @@ fn validate_normalises_repeated_slashes() {
     let dir = TempDir::new().unwrap();
     write_config(dir.path(), "[note_types.custom]\nfolder = \"a//b\"\n");
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_ok());
     assert_eq!(config.custom_type("custom").unwrap().folder, "a/b");
 }
@@ -387,6 +477,7 @@ fn validate_rejects_title_or_date_field_not_declared() {
         "[note_types.person]\nfolder = \"people\"\nrequired = [\"name\"]\ntitle_field = \"naem\"\n",
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_err());
 }
 
@@ -398,6 +489,7 @@ fn validate_accepts_title_and_date_fields_that_are_declared() {
         "[note_types.person]\nfolder = \"people\"\nrequired = [\"name\"]\noptional = [\"met_on\"]\ntitle_field = \"name\"\ndate_field = \"met_on\"\n",
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.validate_note_types().is_ok());
 }
 
@@ -410,6 +502,7 @@ fn validate_accepts_append_only_true() {
         "[note_types.log]\nfolder = \"logs\"\nappend_only = true\n",
     );
     let mut config = VaultConfig::load(dir.path()).unwrap();
+    config.normalise_note_type_folders();
     assert!(config.custom_type("log").unwrap().append_only);
     assert!(config.validate_note_types().is_ok());
 }

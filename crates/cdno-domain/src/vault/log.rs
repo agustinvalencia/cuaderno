@@ -129,8 +129,10 @@ impl Vault {
     }
 
     /// Stage a "created" log line for a freshly-written note onto `tx`,
-    /// shared by every create path that logs its creation (RFC 0002 §6.2,
-    /// ruling 3): custom-type notes and commitments today.
+    /// used by every custom-type create path that logs its creation
+    /// (RFC 0002 §6.2, ruling 3). Commitments log their creation line too,
+    /// but call [`build_created_line`] directly instead of going through
+    /// this method — see that function's doc comment for why.
     ///
     /// Builds `<type_name> created [[<path-without-.md>]] — <flattened
     /// title>[ <suffix>]` and stages it via [`Vault::stage_daily_log`].

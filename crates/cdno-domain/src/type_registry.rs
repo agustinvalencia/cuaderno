@@ -205,6 +205,7 @@ impl<'a> TypeRegistry<'a> {
     /// [`Vault::new`](crate::vault::Vault::new) so a bad declaration fails at
     /// vault-open rather than mid-operation.
     pub fn validate(config: &mut VaultConfig) -> Result<(), DomainError> {
+        config.normalise_note_type_folders();
         config.validate_note_types()?;
         config.validate_schemas()?;
         config.validate_tracking()?;
