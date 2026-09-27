@@ -52,8 +52,6 @@ pub struct VaultConfig {
 }
 
 /// The `[vault]` section — basic vault metadata.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct VaultMeta {
@@ -92,8 +90,6 @@ impl Default for VaultMeta {
 /// How a Current State update that exceeds [`VaultMeta::max_state_chars`]
 /// is handled. Serialised as a lowercase string in `config.toml`
 /// (`state_overflow = "reject"`).
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StateOverflow {
@@ -118,8 +114,6 @@ pub enum StateOverflow {
 /// An unknown `type = "…"` is a hard deserialize error (serde rejects any value
 /// outside these variants) — so a future `datetime` fails loudly on an older
 /// `cdno` rather than being silently misparsed.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldType {
@@ -152,8 +146,6 @@ impl FieldType {
 /// `deny_unknown_fields` turns a mistyped key (`defualt = …`) into a hard
 /// parse error rather than a silently-ignored no-op — a schema typo is a
 /// footgun worth failing on.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FieldSpec {
@@ -166,7 +158,6 @@ pub struct FieldSpec {
     // `toml::Value` has no ts-rs impl, so name the wire shape by hand: a
     // scalar default serialises as a string / number / boolean, and an
     // absent one as `null` (the `Option` None arm).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "string | number | boolean | null"))]
     #[serde(default)]
     pub default: Option<toml::Value>,
     /// Whether the field must be present. Only an *explicit* `required = true`
@@ -299,8 +290,6 @@ impl FieldSpec {
 /// There is no `Count`. It would reduce record *presence* rather than a
 /// field's values, unlike every other arm, and the occurrence activity it
 /// would serve declares no metrics at all.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Aggregate {
@@ -332,8 +321,6 @@ pub enum Aggregate {
 /// — it is deserialised from config — but it is the one type in this crate
 /// that the crate neither parses for itself nor interprets; it flows through
 /// to the DTO. A deliberate exception to core's no-domain-knowledge contract.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PlotKind {
@@ -647,8 +634,6 @@ pub struct TrackingSpec {
 /// Adds vault-specific required fields on top of the built-in ones — either as
 /// a bare name list (`extra_required`, lint-only) or as typed field specs
 /// (`[schemas.<type>.fields.<name>]`, `#301`).
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SchemaExtension {
     /// Bare extra-required field names. Retained for backward compatibility:
@@ -697,8 +682,6 @@ impl SchemaExtension {
 /// This struct holds only what `cdno-core` can validate *structurally* (no
 /// knowledge of the built-in type names lives here); the reserved-name check
 /// against the built-in `NoteType` set is `cdno-domain`'s job.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CustomNoteType {
     /// Vault-relative folder its notes live in, e.g. `"people"`.

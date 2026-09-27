@@ -32,8 +32,6 @@ use super::slug::slugify;
 /// portfolio metadata that's expensive to recompute by hand: the
 /// number of evidence notes filed into the folder, the most recent
 /// `created` date among them, and a derived staleness in days.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PortfolioSummary {
     pub slug: String,
@@ -52,7 +50,6 @@ pub struct PortfolioSummary {
     /// latent while callers only compared and stringified it — the first
     /// arithmetic on a `bigint`-typed value that is really a number throws
     /// `TypeError: Cannot mix BigInt` (#440).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "number | null"))]
     pub staleness_days: Option<i64>,
 }
 

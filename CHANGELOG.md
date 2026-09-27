@@ -6,6 +6,149 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-09-26
+
+### Removed
+
+- **The Tauri desktop app (#597, #601).** `crates/cdno-tauri` and `ui/` are deleted, with their
+  build, CI and release wiring: the workspace member, the `tauri*` / `arc-swap` / `ts-rs` / `base64`
+  workspace dependencies, the `ts-bindings` feature and its ~36 `ts_rs::TS` derive sites, the
+  `gen-bindings` and `app-dev` recipes, the `ui` CI job and the Tauri system-dependency steps, and
+  the two desktop pages in the user guide. `toml_edit`, `notify` and `notify-debouncer-mini` are
+  deliberately kept — `cdno config` and `cdno watch` depend on them.
+
+  **Nothing is lost.** The epic sequenced this port-first, delete-last precisely so capability never
+  dipped: vault config editing became `cdno config` (#598), templates became
+  `cdno templates list/show/save/new` (#599), and the file watcher became `cdno watch` (#600). The
+  differential probe that guards it compares the CLI verb tree and the MCP `tools/list` against a
+  baseline captured from `main` before any of this work started — no verb and no tool that existed
+  then has disappeared, and the catalogue is still 55 tools.
+
+  The `pre-desktop-removal` tag marks `84db8ca`, the last commit containing the app, so retaking it is a
+  `git revert` rather than an archaeology exercise. Revisiting the desktop is possible but
+  unscheduled (#597); nothing should be planned around it returning.
+
+  Two consequences worth recording rather than discovering later. `into_mcp_error` flattens every
+  `DomainError` to `INTERNAL_ERROR`, and **Tauri was the only surface that branched on the variant**
+  — so structured `AmbiguousAction` candidates now reach an agent as a debug-formatted string, and
+  anything needing to act on them will have to rebuild that. And several `pub` domain items are now
+  without a caller, left in place deliberately (a `pub` item in a library crate raises no dead-code
+  warning): `resolve_wikilink` and `vault/links.rs`, `question_backlinks`, `read_note`,
+  `read_asset_bytes`, `write_note_raw`, `daily_dates_in_month`, `stuck_project_days`, and
+  `add_action_with_note`.
+
+### Added
+
+- **`cdno watch` — reconcile the index on external edits (#600).** Every other verb
+  reconciles once at vault open and exits, so a note edited in another editor is invisible
+  to `search`, `lint` and backlinks until some later command happens to run. `cdno watch`
+  stays in the foreground and reconciles on debounced change, saving
+  `cdno-core/src/watcher.rs`, whose only consumer was the desktop's watcher thread (#597).
+  `Vault::reconcile` is the new domain seam it runs.
+
+  The self-echo hazard turned out not to be where it looked. Reconciliation writes the
+  index, so the obvious risk is reacting to `.cuaderno/index.db` and re-triggering — but
+  filtering that alone still spun 18 passes in 6 seconds on an idle, freshly initialised
+  vault. The real source is the reconcile WALK: it reads every directory in the vault, and
+  inotify reports those reads as changes, so each pass provoked the next. Relevance is
+  therefore decided on the files that can change a row — a path under `.cuaderno/` is
+  ignored, and everything else must be `.md`, which excludes the walk's own directory
+  footprints by the same rule. An idle vault now provokes no passes at all.
+
+  This is also why the desktop's write journal did not need porting: it exists because the
+  app writes *notes* and must not hear itself, while this process writes nothing but the
+  index — but it does need to not hear its own *reads*, which that journal never covered.
+
+  A `config.toml` change is ignored and `watch` says so at startup: honouring new `ignore`
+  globs means rebuilding the vault rather than reconciling it, which is the path #459
+  describes racing. Bursts are coalesced — 30 notes appearing at once reconcile in one pass,
+  not thirty.
+
+- **`cdno templates list / show / save / new` (#599).** The other half of a story that was
+  split across two applications: ejecting a template to customise it worked from the CLI,
+  but reading one back, listing them or saving one lived only in the desktop app's
+  Templates view, which is being retired (#597). `list` reports every note type with the
+  template source in effect and the path its override lives (or would live) at; `show`
+  prints the effective content verbatim; `save` writes it, taking the new content from a
+  file, from stdin with `--file -`, or — interactively — from your editor seeded with the
+  template as it stands; `new` scaffolds a starter for a config-defined custom type.
+
+  `save` on a built-in creates the custom override transparently, so it needs no prior
+  `eject` — the same direct edit-and-save model the desktop had. Off a terminal an absent
+  `--file` is an error rather than an empty string, so a scripted `save` cannot silently
+  truncate a template to zero bytes. `new` refuses a built-in type in terms of templates
+  rather than surfacing the domain's own message, which is about creating a *note* and
+  would send the reader to `cdno project create`.
+
+- **`cdno config` — vault config editing on the CLI (#598).** `.cuaderno/config.toml` was
+  reachable only from the desktop app's Config view, which is being retired (#597). The
+  whole surface moves across: `show` (verbatim, `--json` adds the content hash),
+  `validate` (the exact check `Vault::new` runs, `--file` for a candidate, non-zero exit on
+  a bad config), `edit` (an `$EDITOR` round trip), and one subcommand per `config_edit`
+  function — `note-type set/remove`, `field set/remove`, `plot set`, `var set/remove`,
+  `prompt set/remove`.
+
+  These verbs deliberately do **not** open the vault. `Vault::new` validates the config
+  before handing one back, so a broken config means no vault — and a broken config is
+  exactly when you need to read, check and fix one. An earlier draft opened it, and
+  `cdno config validate` on a genuinely broken file answered `loading config.toml` with no
+  line, column or reason: useless on the one input it exists for. The save gate is
+  therefore lifted from `Vault` to the store (`read_config_from` / `save_config_to` taking
+  `&dyn VaultStore`), with the `Vault` methods delegating, so there is one implementation
+  reachable without an index or a config that parses.
+
+  `edit` round-trips a scratch copy rather than opening the file: handing an editor
+  `config.toml` itself routes the write around all three steps of the gate, and a typo
+  would brick the vault. A rejected buffer is kept and its path printed. A detached editor
+  is refused rather than tolerated — there is no moment at which the buffer is known
+  written, so reading it back could save a half-typed config.
+
+  The structured setters **merge** rather than replace. `set_note_type` and
+  `set_schema_field` write every key their model carries and remove every key it does not,
+  which is right for a pre-populated form but not for a flag set: passing the flags
+  straight through would mean `note-type set --name people --folder people` silently
+  dropped an existing type's `required` list, template and date field. Each verb now reads
+  the current value and applies only the flags given; an empty value (`--template ''`)
+  clears, and `--no-append-only` / `--no-settable` clear a boolean. Every setter routes
+  through the same gate as `edit`, so a structured change that would leave an unopenable
+  config is refused identically and nothing is written.
+
+### Removed
+
+- **Releases no longer ship a macOS `.dmg` (#597).** The `app-dmg` job is gone from
+  `release.yml`, as the desktop-retirement epic recorded it should be. The Homebrew cask
+  `agustinvalencia/tap/cuaderno-app` keeps resolving to the last DMG published before this
+  change: it goes on working and silently stops updating, which the epic records as a
+  deliberate choice rather than an oversight. Installed users get no deprecation signal;
+  deprecating the cask is a two-line change in the tap repo if that is reconsidered. The
+  release notes no longer carry the DMG install instructions, because there is no longer a
+  DMG for them to describe.
+
+### Changed
+
+- **CI coverage is scoped off the desktop app.** `cargo tarpaulin` ran `--workspace`, which
+  took 14 minutes and, since the jobs run in parallel, single-handedly set the whole CI wall
+  clock at ~17 minutes per merge. The cost was the Tauri dependency tree: `-Clink-dead-code`
+  plus full debug info over webkit/objc/GTK also filled the runner's disk, which is why the
+  job reclaimed ~25 GB of preinstalled toolchains and installed the Tauri system libraries
+  before it could run at all. Both steps are now gone with it. Measured, not assumed: the UI
+  job that looked like the expensive one is 63 seconds and finishes three minutes before the
+  test job, so it is untouched — it also keeps `ui/` compiling while #598-#600 still port
+  from the desktop as a working reference.
+
+- **Help text and status no longer point at the removed app (#608).** `cdno --help` described `config`
+  as saving "through the same validate-first, compare-and-swap gate the desktop app used" and
+  `templates` as though `vars` were still its whole surface — written before #599 added `list`,
+  `show`, `save` and `new`. Both now describe what the verbs do rather than where they came
+  from. The `upsert_monthly_section` tool description mattered more: tool descriptions are the
+  only instruction surface an agent sees, and it justified the absence of a Metrics section by
+  saying quantitative metrics "live behind the desktop 'show metrics' toggle" — an agent was
+  being pointed at a UI that no longer exists. The design law is unchanged and the reason is
+  now stated without the referent: metrics are not note content. `STATUS.md`'s "What works
+  today" also gained the verbs it never listed — `config`, `templates` and `watch` from this
+  cycle, plus `review`/`weekly`/`monthly`/`open`/`triage`, `note`, `frontmatter`, `reindex` and
+  `normalise`, which had been missing for longer.
+
 ## [0.38.0] - 2026-09-21
 
 ### Fixed

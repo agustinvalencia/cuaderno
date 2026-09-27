@@ -47,8 +47,6 @@ pub(in crate::vault) const PERIODIC_COMMITMENTS_SECTION: &str = "Periodic Commit
 // `lowercase` so CLI `--json` matches the MCP DTO's `flat`/`expanded`
 // (dto.rs `stewardship_variant_str`); the two JSON surfaces serialise
 // from different layers, so casing is kept in sync by hand.
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StewardshipVariant {
@@ -65,8 +63,6 @@ pub enum StewardshipVariant {
 /// and the most recent tracking date (the staleness proxy that
 /// stands in for a hard "status" field — design §5.6 keeps the
 /// dashboard's status as prose in the body).
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct StewardshipSummary {
     pub slug: String,
@@ -91,7 +87,6 @@ pub struct StewardshipSummary {
     /// latent while callers only compared and stringified it — the first
     /// arithmetic on a `bigint`-typed value that is really a number throws
     /// `TypeError: Cannot mix BigInt` (#440).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "number | null"))]
     pub staleness_days: Option<i64>,
 }
 

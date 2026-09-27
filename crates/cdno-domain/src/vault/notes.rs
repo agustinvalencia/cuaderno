@@ -17,12 +17,9 @@ use super::Vault;
 /// One vault note, split for display: typed metadata from the index,
 /// frontmatter as JSON, and the markdown body ready for rendering.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub struct NoteView {
     /// Serialised as a plain string over the wire (VaultPath's Display
     /// form).
-    #[cfg_attr(feature = "ts-bindings", ts(type = "string"))]
     pub path: VaultPath,
     /// The index row's note type (e.g. `"project"`, `"tracking"`), or
     /// `None` when the file isn't indexed — attachments, ignored
@@ -33,7 +30,6 @@ pub struct NoteView {
     /// Full frontmatter as JSON. `null` when the file has no parseable
     /// frontmatter block. Typed as `unknown` on the wire — the renderer
     /// narrows per note type.
-    #[cfg_attr(feature = "ts-bindings", ts(type = "unknown"))]
     pub frontmatter: serde_json::Value,
     /// Markdown body after the closing `---` (or the whole file when
     /// there is no frontmatter block).

@@ -36,8 +36,6 @@ use super::project::EnergyLevel;
 /// `Completed` carries a `completed` date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export))]
 pub enum ActionStatus {
     Active,
     Completed,

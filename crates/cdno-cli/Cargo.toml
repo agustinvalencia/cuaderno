@@ -16,6 +16,9 @@ path = "src/main.rs"
 
 [dependencies]
 cdno-core.workspace = true
+# `FieldSpec::default` is a `toml::Value`, so building one for
+# `config_edit::set_schema_field` needs the type itself.
+toml.workspace = true
 cdno-domain.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
@@ -32,6 +35,9 @@ anstyle-query.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+# Runtime, not just tests: `cdno config edit` round-trips the config through
+# a scratch buffer so the editor's write cannot bypass the save gate.
+tempfile.workspace = true
 
 [dev-dependencies]
 # Tests measure display width with the same function the renderer

@@ -5,22 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 Cuaderno is a vault-management tool implementing the **Research Logbook Method** — markdown
-notes on disk are the product. A five-crate Rust workspace plus a React frontend ships three
-binaries and one app:
+notes on disk are the product. A four-crate Rust workspace ships three binaries:
 
 | Binary / target | Source | Purpose |
 |---|---|---|
 | `cdno` | `crates/cdno-cli` | terminal CLI |
 | `cdno-mcp` | `crates/cdno-mcp/src/bin/stdio.rs` | MCP server over stdio (Claude Desktop / Claude Code) |
 | `cdno-mcp-server` | `crates/cdno-mcp/src/bin/server.rs` | MCP over Streamable HTTP, behind an OAuth-terminating proxy |
-| desktop app | `crates/cdno-tauri` + `ui/` | Tauri 2 + React 19 |
 
 Vault resolution differs per binary, and the ordering is deliberate. The **CLI**: `--vault` flag first,
 then upward discovery from the cwd to the nearest `.cuaderno/`, and `CUADERNO_VAULT_PATH` only as the
 last resort — discovery outranks the env var so a stray exported value cannot misroute writes
 (`crates/cdno-cli/src/bootstrap.rs`). The **MCP binaries** do env-or-bare-cwd only — no upward walk.
-The **desktop app** adds its own layer: a persisted `vault.json` + native folder picker
-(`crates/cdno-tauri/src/vault_locator.rs`), with the env var as explicit override. **The repo root is
+**The repo root is
 itself a dev vault** (`.cuaderno/config.toml` is tracked; `index.db` and `.lock` are gitignored), so
 `cdno` run from here works against the repo — and, per the ordering above, does so even when
 `CUADERNO_VAULT_PATH` points elsewhere.
@@ -48,18 +45,6 @@ cargo test -p cdno-cli --test project                                           
 cargo test -p cdno-mcp --test e2e_http                                            # spawns the real binary
 ```
 
-Frontend and desktop app:
-
-```bash
-cd ui && bun install
-bun run test                       # vitest run (whole suite)
-bunx vitest run src/lib/dates.test.ts   # single file
-bun run build                      # tsc -b && vite build
-
-just app-dev                       # tauri dev — MUST run from the repo root, not ui/
-just gen-bindings                  # regenerate ui/src/api/bindings/ from the Rust wire types
-```
-
 Docs site (mdBook, separate from `docs/`):
 
 ```bash
@@ -67,7 +52,7 @@ mdbook serve docs-site             # live preview
 mdbook build docs-site             # warns on broken intra-book links — keep it clean
 ```
 
-CI (`.github/workflows/ci.yml`) runs the jobs check / fmt / clippy / test / ui / coverage
+CI (`.github/workflows/ci.yml`) runs the jobs check / fmt / clippy / test / coverage
 with `RUSTFLAGS: -Dwarnings` (coverage is tarpaulin with xml output). Release is tag-driven (`vX.Y.Z`) and **fails if the tag does not
 match the workspace `version` in the root `Cargo.toml`** — bump both together.
 
@@ -76,7 +61,6 @@ match the workspace `version` in the root `Cargo.toml`** — bump both together.
 ```
 cdno-core → cdno-domain → cdno-cli
                         → cdno-mcp   → cdno-mcp (stdio) / cdno-mcp-server (HTTP)
-                        → cdno-tauri → ui/ (React)
 ```
 
 The layering is load-bearing; each crate has a rule that the code enforces:
@@ -91,7 +75,7 @@ The layering is load-bearing; each crate has a rule that the code enforces:
 - **`cdno-domain`** — all RLM business logic, pure: no file I/O, no networking, dependencies by
   constructor injection. The one named exception is `bootstrap` (`open_vault`), the composition
   root that wires concrete store + index for long-lived consumers.
-- **`cdno-cli` / `cdno-mcp` / `cdno-tauri`** — thin translation layers. They parse arguments, stamp
+- **`cdno-cli` / `cdno-mcp`** — thin translation layers. They parse arguments, stamp
   "today", call a `Vault` method, and format the result. Business rules never live here.
 
 `Vault` (`crates/cdno-domain/src/vault/mod.rs`) is the single domain entry point, holding
@@ -107,7 +91,7 @@ new file there rather than growing `mod.rs`.
   index ops, then `commit()`. File writes are atomic-ish with reverse-order rollback; index updates
   run after all file writes succeed, and an index failure surfaces as `IndexStale` (files are
   correct, next startup reconciles). Not crash-safe by design. **Known exceptions that bypass the
-  transaction AND the write lock**: `write_note_raw` (the desktop free-edit save), template
+  transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save, and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
@@ -140,18 +124,6 @@ keep `schemars` out of the domain crate. Every handler routes its synchronous do
 print to it; log with `tracing` to stderr (`RUST_LOG=cdno_mcp=debug`). Tool descriptions are the only
 instruction surface an agent sees, so they must state the vault's conventions themselves.
 
-**Tauri + UI.** Commands are thin wrappers over `cdno-domain`. Domain types serialise over IPC
-directly where they can, but there IS an established wire-struct pattern: `crates/cdno-tauri/src/commands/`
-defines crate-local `Serialize + ts_rs::TS` view structs (e.g. `MilestoneView`, `BacklinksView`)
-converting core/domain types that cannot carry ts-rs derives — add new command payloads as wire
-structs there, never by adding ts-rs to `cdno-core`. The TypeScript types are generated: after
-changing any type a Tauri command returns, run `just gen-bindings` (three passes — `cdno-tauri`,
-`cdno-domain`, `cdno-core` — because ts-rs cannot follow every container transitively). On the
-frontend, `ui/src/api/commands.ts` is the single `invoke()` seam that tests mock; components do not
-call `invoke` directly (one legacy exception: `ui/src/shell/useDeepLinkNavigation.ts`).
-`ui/src/api/events.ts` maps backend `vault:changed` / `clock:day-changed` / `watcher:status` events
-onto react-query invalidations, fed by the watcher thread in `crates/cdno-tauri/src/watcher.rs`.
-
 ## Testing
 
 Almost nothing is an inline `#[cfg(test)]` module. Each crate has integration test targets under
@@ -159,15 +131,13 @@ Almost nothing is an inline `#[cfg(test)]` module. Each crate has integration te
 foo_tests; … }` and the actual tests live in `tests/unit/foo_tests.rs`. **A new test file must be
 registered in `tests/unit.rs` or it silently never runs.**
 
-Profiles per crate (`docs/implementation-plan.md` §7 sketches these, but is stale for the
-`cdno-tauri` and `ui/` rows — this list is the accurate one):
+Profiles per crate (`docs/implementation-plan.md` §7 sketches these; this list is the
+accurate one):
 
 - `cdno-core` — real files in `tempfile` temp dirs; OS behaviour is the point.
 - `cdno-domain` — `MemoryVaultStore` + `MemoryIndex`; the bulk of the suite lives here.
 - `cdno-cli` — `assert_cmd` subprocess runs against a temp vault; wiring only, don't re-test domain logic.
 - `cdno-mcp` — handler tests plus `e2e_*.rs` targets that spawn the real binaries and speak JSON-RPC.
-- `cdno-tauri` — `tauri::test::{mock_builder, get_ipc_response}` for real IPC round-trips.
-- `ui/` — vitest + Testing Library, with `vitest-axe` for accessibility.
 
 ## Domain model quick reference
 
