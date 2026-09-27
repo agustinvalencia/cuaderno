@@ -536,3 +536,59 @@ fn extract_first_table_keeps_interior_empty_cells() {
     let table = extract_first_table(body).unwrap();
     assert_eq!(table.rows[0], vec!["1", "", "3"]);
 }
+
+// ── headings: the canonical (level, stripped text) scan ──
+
+#[test]
+fn headings_reports_level_and_stripped_text_for_atx_and_setext() {
+    let body = "\
+# Title
+
+Setext one
+==========
+
+Setext two
+----------
+
+### **Bold** and `code`
+
+#### *Notes*
+";
+    assert_eq!(
+        cdno_core::markdown::headings(body),
+        vec![
+            (1, "Title".to_string()),
+            (1, "Setext one".to_string()),
+            (2, "Setext two".to_string()),
+            (3, "Bold and code".to_string()),
+            (4, "Notes".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn headings_ignores_hash_lines_inside_fenced_code() {
+    let body = "\
+### Procedure
+
+```bash
+# rebuild the index
+cdno reindex
+```
+";
+    assert_eq!(
+        cdno_core::markdown::headings(body),
+        vec![(3, "Procedure".to_string())]
+    );
+}
+
+#[test]
+fn heading_texts_agrees_with_headings() {
+    let body = "## A\n\nB\n---\n### `C`\n";
+    let texts: Vec<String> = cdno_core::markdown::headings(body)
+        .into_iter()
+        .map(|(_, t)| t)
+        .collect();
+    assert_eq!(texts, vec!["A", "B", "C"]);
+    assert_eq!(cdno_core::markdown::heading_texts(body), texts);
+}

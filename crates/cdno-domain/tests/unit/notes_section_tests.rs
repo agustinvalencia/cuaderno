@@ -10,9 +10,9 @@ use cdno_core::file_meta::FileMeta;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
-use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::Vault;
+use cdno_core::store::{MemoryVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::error::DomainError;
+use cdno_domain::{DailySection, Vault};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
 const DAILY: &str = "journal/2026/daily/2026-09-27.md";
@@ -110,6 +110,27 @@ fn note_to_daily_writes_entry_and_pointer_in_one_commit() {
     let notes = content.find("## Notes").unwrap();
     let logs_at = content.find("## Logs").unwrap();
     assert!(notes < logs_at, "## Notes precedes ## Logs:\n{content}");
+}
+
+#[test]
+fn pointer_line_deduplicates_links_by_target_keeping_the_first_form() {
+    let (vault, _store, _index) = make_vault();
+
+    // Same target `projects/a` three times with different labels, and an
+    // embed of `b` after a plain link to it: only the first rendered form
+    // of each target survives.
+    let outcome = vault
+        .note_to_daily(
+            at(10, 0),
+            "Dedup entry",
+            "[[projects/a|x)y]] then [[projects/a|other]] and [[projects/a]]; [[b]] and ![[b]].",
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.log_line,
+        "noted [[journal/2026/daily/2026-09-27#Dedup entry]] ([[projects/a|x)y]] [[b]])"
+    );
 }
 
 #[test]
@@ -250,11 +271,12 @@ fn creates_the_daily_note_when_absent() {
 
 #[test]
 fn entry_is_atomic_with_its_pointer() {
-    // Fail the second store write after `Vault::new`. `note_to_daily`
-    // writes the daily note once, so it succeeds with both halves
-    // present; were the pointer staged in a separate commit, the first
-    // commit would land the entry and the second write would fail,
-    // leaving an entry with no pointer — the state this test forbids.
+    // Pins that the call writes the daily note exactly **once**.
+    // `Vault::new` on an empty store performs no writes, so the store is
+    // armed to fail the second write: a single-write `note_to_daily`
+    // never reaches it and must succeed with both halves present. Were
+    // the pointer staged as a separate write, that second write would
+    // fail and the call would error — which this test forbids.
     let backing = Arc::new(MemoryVaultStore::new());
     let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
@@ -275,10 +297,11 @@ fn entry_is_atomic_with_its_pointer() {
         has_entry, has_pointer,
         "entry and pointer must land together or not at all:\n{content}"
     );
-    match result {
-        Ok(_) => assert!(has_entry && has_pointer, "{content}"),
-        Err(_) => assert!(content.is_empty(), "nothing may land:\n{content}"),
-    }
+    assert!(
+        result.is_ok(),
+        "one write only, so the armed second write is never reached: {result:?}"
+    );
+    assert!(has_entry && has_pointer, "{content}");
 
     // Failing the very first write: the call errors and nothing lands.
     let backing = Arc::new(MemoryVaultStore::new());
@@ -400,5 +423,286 @@ impl VaultStore for FailingStore {
             return Err(StoreError::PermissionDenied(dest.to_string()));
         }
         self.inner.import_external(src, dest)
+    }
+}
+
+// ── Rulings from the #647 review panel ──
+
+#[test]
+fn heading_with_inline_markup_is_refused() {
+    let (vault, store, _index) = make_vault();
+
+    for raw in ["**Bold**", "`Code`", "*Notes*", "Tom &amp; Jerry", "a\\*b"] {
+        let err = vault.note_to_daily(at(10, 0), raw, "body").unwrap_err();
+        match err {
+            DomainError::HistoryEntryHeadingInvalid {
+                ref heading,
+                ref reason,
+                ..
+            } => {
+                assert_eq!(heading, raw);
+                assert!(reason.contains("inline markup"), "{reason}");
+            }
+            other => panic!("expected HistoryEntryHeadingInvalid, got {other:?}"),
+        }
+    }
+    assert!(!store.exists(&vp(DAILY)).unwrap(), "nothing written");
+}
+
+#[test]
+fn heading_starting_with_caret_is_refused() {
+    let (vault, store, _index) = make_vault();
+
+    let err = vault.note_to_daily(at(10, 0), "^ref", "body").unwrap_err();
+
+    assert_heading_refused(err, "^ref");
+    assert!(!store.exists(&vp(DAILY)).unwrap(), "nothing written");
+}
+
+#[test]
+fn canonical_collision_with_an_earlier_entry_is_refused() {
+    // `Foo` then a `### `Foo`` heading inside a later body: stripped,
+    // both are `Foo`, so the second would make `section("Foo")`
+    // ambiguous and orphan the first entry's pointer.
+    let (vault, store, _index) = make_vault();
+    vault.note_to_daily(at(10, 0), "Foo", "a").unwrap();
+    let before = read(&store);
+
+    let err = vault
+        .note_to_daily(at(11, 0), "Other", "b\n\n### `Foo`\nc")
+        .unwrap_err();
+
+    assert_heading_refused(err, "Foo");
+    assert_eq!(read(&store), before, "file must be byte-identical");
+    MarkdownDocument::parse(before)
+        .unwrap()
+        .section("Foo")
+        .expect("the first entry is still addressable");
+}
+
+#[test]
+fn markup_heading_in_body_naming_a_section_is_refused_as_heading_invalid() {
+    let (vault, store, _index) = make_vault();
+    vault.log_to_daily_note(at(9, 0), "started").unwrap();
+    let before = read(&store);
+
+    for body in [
+        "x\n\n### *Notes*\ny",
+        "x\n\n### *Logs*\ny",
+        "x\n\n### `Standup`\ny",
+    ] {
+        let err = vault.note_to_daily(at(10, 0), "Entry", body).unwrap_err();
+        match err {
+            DomainError::HistoryEntryHeadingInvalid { ref reason, .. } => {
+                assert_eq!(reason, "it is the name of a daily section", "{body}");
+            }
+            other => panic!("expected HistoryEntryHeadingInvalid for {body:?}, got {other:?}"),
+        }
+    }
+    assert_eq!(read(&store), before, "nothing written");
+}
+
+#[test]
+fn setext_heading_in_body_is_refused_as_heading_invalid() {
+    let (vault, store, _index) = make_vault();
+    vault.log_to_daily_note(at(9, 0), "started").unwrap();
+    let before = read(&store);
+
+    let err = vault
+        .note_to_daily(at(10, 0), "Entry", "Logs\n----\nmore")
+        .unwrap_err();
+
+    match err {
+        DomainError::HistoryEntryHeadingInvalid {
+            ref heading,
+            ref reason,
+            ..
+        } => {
+            assert_eq!(heading, "Logs");
+            assert!(reason.contains("level-3"), "{reason}");
+        }
+        other => panic!("expected HistoryEntryHeadingInvalid, got {other:?}"),
+    }
+    assert_eq!(read(&store), before, "nothing written");
+}
+
+#[test]
+fn code_fence_with_hash_comment_is_accepted() {
+    let (vault, store, _index) = make_vault();
+
+    vault
+        .note_to_daily(
+            at(10, 0),
+            "Reindex procedure",
+            "Run it like this:\n\n```bash\n# rebuild the index\ncdno reindex\n```\n",
+        )
+        .expect("a `#` line inside a fence is not a heading");
+
+    let content = read(&store);
+    assert!(content.contains("# rebuild the index"), "{content}");
+    MarkdownDocument::parse(content)
+        .unwrap()
+        .section("Reindex procedure")
+        .expect("the entry is addressable");
+}
+
+#[test]
+fn duplicate_heading_inside_one_body_is_refused() {
+    let (vault, store, _index) = make_vault();
+
+    // Two equal sub-headings in the body.
+    let err = vault
+        .note_to_daily(at(10, 0), "Entry", "a\n\n### Step\nb\n\n### STEP\nc")
+        .unwrap_err();
+    assert_heading_refused(err, "STEP");
+
+    // The entry heading repeated inside its own body.
+    let err = vault
+        .note_to_daily(at(10, 0), "Entry", "text\n\n### Entry\nmore")
+        .unwrap_err();
+    assert_heading_refused(err, "Entry");
+
+    assert!(!store.exists(&vp(DAILY)).unwrap(), "nothing written");
+}
+
+#[test]
+fn heading_uniqueness_folds_non_ascii_case() {
+    let (vault, store, _index) = make_vault();
+    vault.note_to_daily(at(10, 0), "Été", "a").unwrap();
+    let before = read(&store);
+
+    let err = vault.note_to_daily(at(11, 0), "ÉTÉ", "b").unwrap_err();
+
+    assert_heading_refused(err, "ÉTÉ");
+    assert_eq!(read(&store), before, "nothing written");
+}
+
+#[test]
+fn upsert_daily_section_validates_notes_under_the_write_lock() {
+    // `validate_history_entry` reads the daily note to test for
+    // duplicates; that read must come after the transaction's write
+    // lock is taken, or a concurrent writer could slip a duplicate in
+    // between the check and the write.
+    let backing = Arc::new(MemoryVaultStore::new());
+    let recording = Arc::new(RecordingStore::new(backing));
+    let store: Arc<dyn VaultStore> = recording.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    let date = at(10, 0).date();
+    vault
+        .upsert_daily_section(date, DailySection::Notes, "### First\na", true)
+        .unwrap();
+    recording.clear();
+
+    vault
+        .upsert_daily_section(date, DailySection::Notes, "### Second\nb", true)
+        .unwrap();
+
+    let events = recording.events();
+    let lock = events
+        .iter()
+        .position(|e| e == "lock")
+        .expect("the write lock is taken");
+    let first_daily_read = events
+        .iter()
+        .position(|e| e == &format!("read:{DAILY}"))
+        .expect("the daily note is read");
+    assert!(
+        lock < first_daily_read,
+        "the note was read before the lock was taken: {events:?}"
+    );
+}
+
+#[test]
+fn note_to_daily_validates_under_the_write_lock() {
+    let backing = Arc::new(MemoryVaultStore::new());
+    let recording = Arc::new(RecordingStore::new(backing));
+    let store: Arc<dyn VaultStore> = recording.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    vault.note_to_daily(at(10, 0), "First", "a").unwrap();
+    recording.clear();
+
+    vault.note_to_daily(at(11, 0), "Second", "b").unwrap();
+
+    let events = recording.events();
+    let lock = events.iter().position(|e| e == "lock").expect("lock taken");
+    let first_daily_read = events
+        .iter()
+        .position(|e| e == &format!("read:{DAILY}"))
+        .expect("the daily note is read");
+    assert!(lock < first_daily_read, "{events:?}");
+}
+
+/// A [`VaultStore`] that records, in order, each write-lock acquisition
+/// (`lock`) and each `read_file`/`exists` call (`read:<path>`), so a test
+/// can check that a read happens under the lock.
+struct RecordingStore {
+    inner: Arc<MemoryVaultStore>,
+    events: Mutex<Vec<String>>,
+}
+
+impl RecordingStore {
+    fn new(inner: Arc<MemoryVaultStore>) -> Self {
+        Self {
+            inner,
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn record(&self, event: String) {
+        self.events.lock().unwrap().push(event);
+    }
+
+    fn events(&self) -> Vec<String> {
+        self.events.lock().unwrap().clone()
+    }
+
+    fn clear(&self) {
+        self.events.lock().unwrap().clear();
+    }
+}
+
+impl VaultStore for RecordingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.record(format!("read:{path}"));
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.record(format!("read:{path}"));
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.record("lock".to_string());
+        self.inner.acquire_write_lock()
     }
 }

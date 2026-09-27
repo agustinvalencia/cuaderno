@@ -243,7 +243,26 @@ impl MarkdownDocument {
 /// (emphasis, code spans, wikilink brackets) — the canonical form
 /// `MarkdownDocument::section` matches section names against.
 pub fn heading_texts(body: &str) -> Vec<String> {
-    scan_headings(body).into_iter().map(|h| h.text).collect()
+    headings(body).into_iter().map(|(_, text)| text).collect()
+}
+
+/// Every heading in `body` as `(level, text)`, all levels, in document
+/// order — the canonical heading scan, shared with [`heading_texts`]
+/// and with `MarkdownDocument`'s own section lookup.
+///
+/// Parsed with `pulldown-cmark`, so ATX (`### Foo`) and setext
+/// (`Foo` underlined with `===` or `---`) headings are both found, and
+/// `#`-prefixed lines inside fenced or indented code blocks are not
+/// headings. `level` is 1–6 (setext `===` is 1, `---` is 2). `text` has
+/// inline markup stripped (emphasis, code spans, escapes, entities) —
+/// the form `MarkdownDocument::section` matches a section name against,
+/// so a caller that compares heading names with this function agrees
+/// with the lookup about which headings collide.
+pub fn headings(body: &str) -> Vec<(u8, String)> {
+    scan_headings(body)
+        .into_iter()
+        .map(|h| (h.level, h.text))
+        .collect()
 }
 
 /// Walk the markdown body through `pulldown-cmark` and collect one

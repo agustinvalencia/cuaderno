@@ -26,9 +26,11 @@
 //! History sections only *grow* — but growth is still constrained:
 //! [`Vault::validate_history_entry`] rejects a body appended to `##
 //! Notes` unless every heading inside it is level-3-or-deeper and reuses
-//! neither a daily-section name (Standup/Intention/Agenda/Meeting/Notes/
-//! Logs/the template's anchor section) nor a heading already present in
-//! that day's note. Without that check, a `### Standup` entry inside
+//! no daily-section name (Standup/Intention/Agenda/Meeting/Notes/Logs/the
+//! template's anchor section), no heading already present in that day's
+//! note, and no other heading in the same body — headings compared as
+//! `MarkdownDocument` sees them (markup stripped, code fences skipped,
+//! setext included). Without that check, a `### Standup` entry inside
 //! `## Notes` would collide with the level-2 `## Standup` heading that a
 //! later planning upsert looks up by flat text match — silently
 //! replacing (or making ambiguous and unwritable) the wrong section, and
@@ -40,7 +42,7 @@ use std::str::FromStr;
 
 use chrono::{Datelike, NaiveDate};
 
-use cdno_core::markdown::MarkdownDocument;
+use cdno_core::markdown::{MarkdownDocument, headings};
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -205,7 +207,10 @@ impl Vault {
     ///
     /// For a history section, the content is first checked with
     /// [`Vault::validate_history_entry`] — see that method for what an
-    /// entry may and may not contain.
+    /// entry may and may not contain. That check runs **under** the
+    /// transaction's write lock: it reads the note to test for duplicate
+    /// headings, so running it before the lock would be a check-then-act
+    /// race with a concurrent `## Notes` writer.
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
@@ -213,16 +218,20 @@ impl Vault {
         content: &str,
         append: bool,
     ) -> Result<VaultPath, DomainError> {
+        // Reads nothing, so it may refuse before the lock is taken.
         if section.is_history() && !append {
             return Err(DomainError::HistorySectionNotReplaceable {
                 section: section.heading().to_string(),
             });
         }
+
+        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
+        // Validate only once the lock is held: the duplicate-heading
+        // check reads the note, and the read must see what this write
+        // folds into.
         if section.is_history() {
             self.validate_history_entry(date, section, content)?;
         }
-
-        let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let path = daily_note_path(date)?;
         let base = self.read_or_scaffold_daily(date)?;
         let new_content = self.fold_daily_section(base, section, content, append)?;
@@ -265,7 +274,8 @@ impl Vault {
     /// second read the pre-change content back from the store and drop
     /// the first. Performs no validation: the caller runs the
     /// history-section guard and [`Vault::validate_history_entry`]
-    /// first.
+    /// first — the latter with the transaction's write lock already
+    /// held, so the note it checks is the note this folds into.
     pub(in crate::vault) fn fold_daily_section(
         &self,
         base: String,
@@ -292,8 +302,9 @@ impl Vault {
     }
 
     /// Validate a body about to be appended to a **history** section
-    /// (currently only [`DailySection::Notes`]) before anything is read
-    /// or written.
+    /// (currently only [`DailySection::Notes`]) before it is folded into
+    /// the note. Callers run it with the transaction's write lock held,
+    /// since the duplicate check below reads the note.
     ///
     /// A history section only ever grows, one entry at a time, and an
     /// entry is conventionally a `### <title>` heading followed by its
@@ -304,19 +315,33 @@ impl Vault {
     /// the `### Standup` entry instead of the `## Standup` section (or,
     /// once a real `## Standup` section exists, every future `Standup`
     /// upsert would fail as ambiguous), and a `### Logs` entry would make
-    /// `log_to_daily_note` unwritable the same way. So every heading
-    /// found in `content` is rejected when it:
+    /// `log_to_daily_note` unwritable the same way.
     ///
-    /// - is level 1 or 2 — only level-3-or-deeper headings are entries;
-    ///   a level-1/2 heading is section-shaped and would itself be
-    ///   mistaken for one;
-    /// - matches, case-insensitively, a daily-section heading
+    /// Headings are found with [`cdno_core::markdown::headings`], the same
+    /// `pulldown-cmark` scan `MarkdownDocument` uses for section lookup,
+    /// on both the existing note and `content`. So the check and the
+    /// lookup agree on what a heading is and what it is called: ATX and
+    /// setext headings both count, a `#` line inside a fenced code block
+    /// does not, and a heading is compared by its text **with inline
+    /// markup stripped** (`*Notes*` is `Notes`, `` `Foo` `` is `Foo`).
+    /// Names are compared case-insensitively with Unicode lower-casing.
+    /// Every heading in `content` is rejected when it:
+    ///
+    /// - is level 1 or 2 (including a setext heading) — only
+    ///   level-3-or-deeper headings are entries; a level-1/2 heading is
+    ///   section-shaped and would itself be mistaken for one;
+    /// - matches a daily-section heading
     ///   (Standup/Intention/Agenda/Meeting/Notes), `Logs`
     ///   ([`super::DAILY_LOGS_SECTION`]), or the effective template's
-    ///   anchor section ([`Vault::daily_anchor_section`]); or
-    /// - matches, case-insensitively, a heading already present anywhere
-    ///   in that day's note — checked only when the note already exists;
-    ///   a day with no note yet has nothing to collide with.
+    ///   anchor section ([`Vault::daily_anchor_section`]);
+    /// - matches a heading already present anywhere in that day's note —
+    ///   checked only when the note already exists; a day with no note
+    ///   yet has nothing to collide with; or
+    /// - matches an earlier heading in `content` itself, since the entry
+    ///   would otherwise make its own headings ambiguous.
+    ///
+    /// Every refusal is [`DomainError::HistoryEntryHeadingInvalid`],
+    /// naming the offending heading by its stripped text.
     ///
     /// Exposed `pub(crate)` so T2's `note_to_daily` can run the same
     /// check on the content it appends.
@@ -329,15 +354,15 @@ impl Vault {
         let heading = section.heading();
 
         let mut reserved: Vec<String> = vec![
-            DailySection::Standup.heading().to_ascii_lowercase(),
-            DailySection::Intention.heading().to_ascii_lowercase(),
-            DailySection::Agenda.heading().to_ascii_lowercase(),
-            DailySection::Meeting.heading().to_ascii_lowercase(),
-            DailySection::Notes.heading().to_ascii_lowercase(),
-            super::DAILY_LOGS_SECTION.to_ascii_lowercase(),
+            DailySection::Standup.heading().to_lowercase(),
+            DailySection::Intention.heading().to_lowercase(),
+            DailySection::Agenda.heading().to_lowercase(),
+            DailySection::Meeting.heading().to_lowercase(),
+            DailySection::Notes.heading().to_lowercase(),
+            super::DAILY_LOGS_SECTION.to_lowercase(),
         ];
         let anchor = self.daily_anchor_section()?;
-        reserved.push(anchor.to_ascii_lowercase());
+        reserved.push(anchor.to_lowercase());
 
         let mut existing_headings: Vec<String> = Vec::new();
         let path = daily_note_path(date)?;
@@ -347,66 +372,40 @@ impl Vault {
                 Ok((_, body)) => body,
                 Err(_) => note.as_str(),
             };
-            existing_headings = scan_heading_texts(body)
+            existing_headings = headings(body)
                 .into_iter()
-                .map(|(_, text)| text.to_ascii_lowercase())
+                .map(|(_, text)| text.to_lowercase())
                 .collect();
         }
 
-        for (level, text) in scan_heading_texts(content) {
+        let invalid = |text: String, reason: &str| DomainError::HistoryEntryHeadingInvalid {
+            section: heading.to_string(),
+            heading: text,
+            reason: reason.to_string(),
+        };
+        let mut seen: Vec<String> = Vec::new();
+        for (level, text) in headings(content) {
             if level <= 2 {
-                return Err(DomainError::HistoryEntryHeadingInvalid {
-                    section: heading.to_string(),
-                    heading: text,
-                    reason: "only level-3 or deeper headings are allowed inside a history section"
-                        .to_string(),
-                });
+                return Err(invalid(
+                    text,
+                    "only level-3 or deeper headings are allowed inside a history section",
+                ));
             }
-            let lower = text.to_ascii_lowercase();
+            let lower = text.to_lowercase();
             if reserved.contains(&lower) {
-                return Err(DomainError::HistoryEntryHeadingInvalid {
-                    section: heading.to_string(),
-                    heading: text,
-                    reason: "it is the name of a daily section".to_string(),
-                });
+                return Err(invalid(text, "it is the name of a daily section"));
             }
-            if existing_headings.contains(&lower) {
-                return Err(DomainError::HistoryEntryHeadingInvalid {
-                    section: heading.to_string(),
-                    heading: text,
-                    reason: "a heading with that text already exists in the note".to_string(),
-                });
+            if existing_headings.contains(&lower) || seen.contains(&lower) {
+                return Err(invalid(
+                    text,
+                    "a heading with that text already exists in the note",
+                ));
             }
+            seen.push(lower);
         }
 
         Ok(())
     }
-}
-
-/// Scan `text` for markdown ATX headings (`# ` through `###### `),
-/// returning each as `(level, trimmed text)` in document order.
-///
-/// A plain line scan, matching [`Vault::daily_anchor_section`]'s
-/// approach: a `#` inside a fenced code block would be mistaken for a
-/// heading, which is an accepted limitation for the plain, template-like
-/// content this is meant to validate.
-fn scan_heading_texts(text: &str) -> Vec<(u8, String)> {
-    text.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim_start();
-            let hashes = trimmed.chars().take_while(|c| *c == '#').count();
-            if hashes == 0 || hashes > 6 {
-                return None;
-            }
-            let rest = &trimmed[hashes..];
-            // ATX headings require a space (or end of line) after the
-            // `#`s; `#foo` is not a heading.
-            if !rest.is_empty() && !rest.starts_with(' ') && !rest.starts_with('\t') {
-                return None;
-            }
-            Some((hashes as u8, rest.trim().to_string()))
-        })
-        .collect()
 }
 
 /// Render a section body so it sits cleanly under its heading: the
