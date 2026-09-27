@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `cdno init` now declares a `concept` custom type (folder `concepts/`) as an ordinary, deletable
+  declaration, and creating a note of any custom type now fills a required `title`, `slug`,
+  `created` or `date` from the engine when the caller omits it (#626).
 - **Built-in project, question, portfolio and stewardship creation now log themselves (#618).**
   Each stages a `<type> created [[…]] — <title>` line to today's daily log inside its own
   transaction, so creation and log entry commit or roll back together. The line uses the note's
