@@ -6,6 +6,42 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`
+  flattened every `DomainError` to a `-32603` JSON-RPC error, and at least one client renders that
+  as a bare "Tool execution failed" without ever showing `error.message` to the model — so an agent
+  could not tell a validation rejection from a transport failure. That defeated the point of the
+  `reject` overflow policy, whose job is to push a verbose agent to re-condense in its own loop.
+
+  A **caller-actionable** rejection now comes back as a tool result with `isError: true`, carrying
+  `{ code, message, details }`: a stable snake_case `code` to branch on, the domain's own sentence,
+  and the fields needed to recover. `ambiguous_action` and its siblings hand back **`candidates` as
+  an array**, so a client picks from a list instead of parsing names out of prose — which is what
+  #602's railguard needs, and the reason that issue listed this as its blocker.
+
+  The line is **whether a different argument would change the outcome.** A slug matching no note is a
+  rejection (`not_found`) and keeps the list of valid slugs the domain appends to it; a note missing
+  the section a tool writes into is a rejection; a name already taken is a rejection. A disk that
+  would not write, permission denied, a contended lock, an index that would not answer or a
+  rolled-back transaction are mechanical and stay protocol errors, as do malformed calls.
+
+  `main`'s new append-only-history rejections (`history_section_not_replaceable`,
+  `history_entry_heading_invalid`) are classified too — the exhaustive match refused to compile
+  against the newer `cdno-domain`, which is the mechanism working as designed.
+
+  Codes are a `RejectionCode` enum whose wire string is **derived** by `rename_all`, so "every code
+  distinct, every code snake_case" holds by construction — two variants cannot share a name, and no
+  code is hand-written. The classifying match is **exhaustive with no wildcard**, so a new
+  `DomainError` variant fails to compile until somebody decides which side it falls on. Conversion happens at one point in
+  `call_tool` rather than at ~55 handler call sites, so a new handler cannot forget to opt in. That
+  `call_tool` is forked from `rmcp-macros`, so `cdno-mcp/tests/forked_macro_guard.rs` fails if the
+  lockfile leaves rmcp's 1.7.x series, naming the file to re-diff.
+
+  Also: `update_project_state`'s tool description now states the `max_state_chars` cap (default 500)
+  and that over-length text is rejected rather than truncated — most of these rejections are
+  preventable up front, independently of how they are reported.
+
 ## [0.39.0] - 2026-09-26
 
 ### Removed

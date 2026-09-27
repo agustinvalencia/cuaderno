@@ -223,6 +223,50 @@ fn complete_action_points_at_the_drop_verb_for_work_never_performed() {
     );
 }
 
+/// A rejection an agent could have avoided is worse than one it could not:
+/// the cap is knowable up front, and #560 records six blind retries spent
+/// discovering it by binary search over the wire. Pinned because the
+/// description is the only place the cap is stated before the fact.
+#[test]
+fn update_project_state_states_the_length_cap_before_it_bites() {
+    let server = empty_server();
+    let tools = server.advertised_tools();
+    let desc = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "update_project_state")
+        .and_then(|t| t.description.clone())
+        .expect("tool 'update_project_state' not advertised");
+    assert!(
+        desc.contains("max_state_chars"),
+        "the cap must be named so an agent can respect it: {desc}"
+    );
+    assert!(
+        desc.contains("500"),
+        "the default must be stated, not just the setting's name: {desc}"
+    );
+    // "capped" alone would read as truncation, which would make an agent
+    // think a long state is silently shortened rather than refused.
+    assert!(
+        desc.to_lowercase().contains("truncat"),
+        "the description must rule out silent truncation: {desc}"
+    );
+    // Named as the DEFAULT policy, not as an absolute. Rejection needs
+    // `state_overflow = reject` and a state that isn't already over the
+    // cap — `warn` accepts with an advisory, and trimming an inherited
+    // sprawl is accepted even under `reject`
+    // (cdno-domain/src/vault/projects/state.rs). An agent told "always
+    // rejected" would wrongly conclude a vault on `warn` had failed.
+    let lower = desc.to_lowercase();
+    assert!(
+        lower.contains("reject") && lower.contains("default"),
+        "the description must name `reject` as the DEFAULT policy, not an invariant: {desc}"
+    );
+    assert!(
+        lower.contains("warn"),
+        "the other policy must be named, or `warn` behaviour reads as a bug: {desc}"
+    );
+}
+
 /// The tool description is the only instruction surface an agent that has
 /// loaded no cuaderno skill ever sees, so the vault's linking convention has
 /// to live there or the narrative tools produce plain-text lines that need

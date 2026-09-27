@@ -253,7 +253,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire."
+        description = "Rewrite a project's `## Current State` section, auto-logging the previous state to today's daily entry in the same atomic transaction. No-op (returns the path) when `new_state` matches the existing state — silent so logging 'was X, now X' doesn't fire. `new_state` is capped at the vault's `max_state_chars` (default 500), and nothing is ever truncated: under the default `reject` policy new over-length text is refused outright, so write a summary and leave the detail in the daily log — which is where the previous state goes anyway. A vault may set `warn` (over-length accepted, with an advisory) or `off` instead, and trimming a state that is *already* over the cap is always accepted even under `reject`, so an inherited sprawl can be cut down across several edits."
     )]
     pub async fn update_project_state(
         &self,
