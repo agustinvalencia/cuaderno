@@ -66,8 +66,8 @@ struct Cli {
     /// Read verbs (`commitments`, `questions`, `status`, `now`, `orient`,
     /// `search`, `open`, and the `list`/`show` verbs of `project`, `portfolio`,
     /// `stewardship`, plus `action list`) emit their listing/detail;
-    /// write verbs (`log`, `capture`, `file`, `track`, and the
-    /// create/update verbs of `project`, `action`, `portfolio`,
+    /// write verbs (`log`, `capture`, `file`, `track`, `note create`, and
+    /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
     /// result and run non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
@@ -627,7 +627,13 @@ fn main() -> Result<()> {
         }
         Commands::Note { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::note::run(&root, Local::now().naive_local(), subcommand, cli.json)
+            commands::note::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Stewardship { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

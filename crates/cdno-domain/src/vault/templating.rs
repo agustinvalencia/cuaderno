@@ -373,7 +373,7 @@ impl Vault {
                 // type's own declared schema fields — the latter are what let
                 // a custom template reference `{{field}}` without a false
                 // "unknown token" warning in the editor.
-                for name in ["title", "slug", "created", "date"] {
+                for name in crate::type_registry::CUSTOM_SUPPLIED_PLACEHOLDERS {
                     add(&mut out, name, PlaceholderSource::Supplied);
                 }
                 for field in def.required.iter().chain(def.optional.iter()) {
@@ -704,6 +704,24 @@ impl Vault {
         }
     }
 
+    /// Whether the custom template file `template_name` exists and references
+    /// the placeholder `name`. Tokenised exactly as the engine renders
+    /// ([`placeholder_names`](cdno_core::template::placeholder_names)).
+    pub(in crate::vault) fn custom_template_references(
+        &self,
+        template_name: &str,
+        name: &str,
+    ) -> Result<bool, DomainError> {
+        let path = template_path(template_name)?;
+        if !self.store.exists(&path)? {
+            return Ok(false);
+        }
+        let raw = self.store.read_file(&path)?;
+        Ok(cdno_core::template::placeholder_names(&raw)
+            .iter()
+            .any(|n| n == name))
+    }
+
     /// A template engine whose custom-template loader reads
     /// `.cuaderno/templates/` through this vault's store.
     fn template_engine(&self) -> TemplateEngine {
@@ -747,7 +765,7 @@ fn template_path(filename: &str) -> Result<VaultPath, DomainError> {
 /// `template`, or `<name>.md` by default. Matches `scaffold_custom`'s
 /// resolution so the Templates view reads/writes the same file the create
 /// path renders from.
-fn custom_template_filename(name: &str, def: &CustomNoteType) -> String {
+pub(in crate::vault) fn custom_template_filename(name: &str, def: &CustomNoteType) -> String {
     def.template.clone().unwrap_or_else(|| format!("{name}.md"))
 }
 

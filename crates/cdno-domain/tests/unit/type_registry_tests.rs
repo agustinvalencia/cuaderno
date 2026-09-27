@@ -287,7 +287,7 @@ fn supplied_placeholders_for_custom_is_builtins_plus_declared() {
     let desc = reg.resolve("person").unwrap();
     assert_eq!(
         desc.supplied_placeholders(),
-        vec!["title", "slug", "created", "date", "name", "role"]
+        vec!["title", "slug", "created", "date", "body", "name", "role"]
     );
 }
 
@@ -316,7 +316,10 @@ fn supplied_placeholders_dedupes_a_field_colliding_with_a_builtin() {
     );
     let reg = TypeRegistry::new(&config);
     let ph = reg.resolve("event").unwrap().supplied_placeholders();
-    assert_eq!(ph, vec!["title", "slug", "created", "date", "venue"]);
+    assert_eq!(
+        ph,
+        vec!["title", "slug", "created", "date", "body", "venue"]
+    );
 }
 
 #[test]
@@ -328,7 +331,7 @@ fn supplied_placeholders_for_a_fieldless_custom_type_is_just_the_builtins() {
     let reg = TypeRegistry::new(&config);
     assert_eq!(
         reg.resolve("bookmark").unwrap().supplied_placeholders(),
-        vec!["title", "slug", "created", "date"]
+        vec!["title", "slug", "created", "date", "body"]
     );
 }
 

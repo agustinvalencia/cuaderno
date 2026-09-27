@@ -228,7 +228,7 @@ accept.
 
 **What.** `create_custom_note_with_vars` accepts an optional `body: Option<String>` and an
 optional `origin: Option<String>`. With a template, `body` fills a `{{body}}` placeholder if the
-template has one, else is appended after the H1. `origin` is written as a plain frontmatter
+template has one, else is inserted after the H1. `origin` is written as a plain frontmatter
 string. `cdno note create` gains `--body-file` and `--origin`; `create_custom_note` (MCP) gains
 `body` and `origin`.
 

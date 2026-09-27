@@ -11,13 +11,21 @@ use std::collections::HashMap;
 use chrono::NaiveDateTime;
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::split_frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
+use super::templating::custom_template_filename;
 use crate::error::DomainError;
+
+/// The contextual placeholder a custom template uses for the note's body.
+const BODY: &str = "body";
+
+/// The frontmatter field the `origin` parameter is written to.
+const ORIGIN: &str = "origin";
 
 /// The contextual placeholders the create path fills itself, before any
 /// caller-supplied `fields`: `{{title}}`, `{{slug}}`, `{{created}}`,
@@ -41,7 +49,62 @@ impl Vault {
         title: &str,
         fields: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new())
+        self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new(), None, None)
+    }
+
+    /// Whether creating a note of custom type `type_name` with these
+    /// `fields` and prompted-variable values `vars` needs a `body` from the
+    /// caller: `true` only when the type's template references `{{body}}`
+    /// and nothing else resolves it — no `fields["body"]`, no `[variables]`
+    /// `body`, no supplied `vars["body"]`. `false` when the type ships no
+    /// template file (the synthesised note has no placeholder). The CLI asks
+    /// this to decide whether to prompt for (or demand) a body; the create
+    /// path uses the same test to decide when the placeholder renders empty,
+    /// so the two cannot disagree.
+    ///
+    /// Errors as [`create_custom_note_with_vars`](Self::create_custom_note_with_vars)
+    /// does for a type that is unknown or built-in.
+    pub fn custom_note_needs_body(
+        &self,
+        type_name: &str,
+        fields: &HashMap<String, String>,
+        vars: &HashMap<String, String>,
+    ) -> Result<bool, DomainError> {
+        let registry = self.type_registry();
+        let Some(descriptor) = registry.resolve(type_name) else {
+            return Err(DomainError::UnknownNoteType {
+                note_type: type_name.to_owned(),
+            });
+        };
+        let Some(def) = descriptor.as_custom() else {
+            return Err(DomainError::BuiltinTypeNotCustom {
+                note_type: type_name.to_owned(),
+            });
+        };
+        let slot = self.body_slot(&custom_template_filename(type_name, def), fields, vars)?;
+        Ok(slot == BodySlot::Unfilled)
+    }
+
+    /// Whether the template `template_name` has a `{{body}}` placeholder
+    /// and, if so, whether a source other than the `body` parameter fills
+    /// it (see [`custom_note_needs_body`](Self::custom_note_needs_body)).
+    fn body_slot(
+        &self,
+        template_name: &str,
+        fields: &HashMap<String, String>,
+        prompted: &HashMap<String, String>,
+    ) -> Result<BodySlot, DomainError> {
+        if !self.custom_template_references(template_name, BODY)? {
+            return Ok(BodySlot::Absent);
+        }
+        let filled = fields.contains_key(BODY)
+            || self.config().variables.static_vars.contains_key(BODY)
+            || prompted.contains_key(BODY);
+        Ok(if filled {
+            BodySlot::Filled
+        } else {
+            BodySlot::Unfilled
+        })
     }
 
     /// Create a note of a config-defined custom type, with caller-supplied
@@ -57,10 +120,66 @@ impl Vault {
     /// declaring "stamp this", not "make the caller repeat today's date".
     /// For an engine-supplied name, a non-blank caller value still wins over
     /// the engine's own (backdating a `created` is deliberate); a blank one
-    /// is ignored and the engine value is used instead. Passing the check
-    /// does not guarantee the rendered note has a non-empty value: a
-    /// template that omits the placeholder can still produce a note that
-    /// `cdno lint` reports as missing the field.
+    /// is ignored and the engine value is used instead.
+    ///
+    /// **Frontmatter reconciliation.** Whatever the template renders, the
+    /// written frontmatter carries `type: <type_name>` and every non-blank
+    /// caller-supplied field (`fields`, plus `origin`) carrying the supplied
+    /// value: a YAML string equal to it, or a plain scalar (number, boolean,
+    /// null) whose canonical text equals it — `priority: {{priority}}` with
+    /// `5` stays the number `5`, `done: {{done}}` with `true` stays `true`.
+    /// After rendering, the frontmatter is parsed; if it already satisfies
+    /// that, the rendered text is written byte for byte. Otherwise (a missing
+    /// key, a sequence or mapping, a differing string) the mapping is
+    /// repaired — a wrong or missing `type` and each such field are set as
+    /// strings, fields that already carry their value keep it, existing keys keep their
+    /// order, missing ones are appended in declared order — and the
+    /// frontmatter is re-serialised with `serde_yaml` (so `[[a]] [[b]]` is
+    /// quoted), the body after it left untouched. A template that forgets a
+    /// placeholder, or pastes `origin: {{origin}}` unquoted, therefore still
+    /// yields the field as a string, and a template that renders no
+    /// frontmatter at all gets one. A repair re-serialises the whole block,
+    /// which drops the template's YAML comments and quoting style; a block
+    /// that needs none is never rewritten. Engine-supplied values the
+    /// caller did not pass (`created`, …) are not reconciled: a template
+    /// that omits them still produces a note `cdno lint` reports.
+    ///
+    /// A rendered block that does not parse as YAML at all (an unquoted
+    /// `origin: {{origin}}` given two links) cannot be repaired key by key,
+    /// so it is rebuilt from scratch in declared order: `type`, the engine
+    /// values the declared fields name (`title`, `slug`, `created`, `date`),
+    /// and every caller-supplied declared field, serialised with
+    /// `serde_yaml`; the body after the block is kept byte for byte. Any key
+    /// only the template wrote is lost on that path — such a note could not
+    /// be created at all before reconciliation existed.
+    ///
+    /// `body` (RFC 0002 §6.2) is the note's prose, without the title heading
+    /// (the engine writes the H1). It is kept verbatim except that leading
+    /// and trailing blank lines and trailing whitespace are stripped (a
+    /// first-line indent, such as an indented code block, survives), and a
+    /// first line that is an ATX H1 equal to `title` is dropped with the
+    /// blank lines after it. A body that is then blank counts as absent.
+    /// When the type's template references `{{body}}` the body renders
+    /// there; otherwise (a template without the placeholder, or the
+    /// synthesised note) it is inserted after the note's first H1, or
+    /// appended when there is none, so the H1 stays the title.
+    ///
+    /// `{{body}}` precedence: this parameter wins; without it, the engine's
+    /// normal order applies (a declared `body` field in `fields`, then a
+    /// `[variables]` value, then a `[variables.prompt]` value in `prompted`,
+    /// whose unanswered prompt is reported as usual); only when none of those
+    /// resolves `body` does the placeholder render empty rather than
+    /// literally. The body is substituted as raw text, so a `{{body}}` inside
+    /// the template's frontmatter can add or break YAML keys; keep the
+    /// placeholder in the note body.
+    ///
+    /// `origin` (RFC 0002 §5.5) is one string of wikilinks to where the note
+    /// came from — promotion is create-with-`origin`. It is stored trimmed
+    /// as a frontmatter string (guaranteed by the reconciliation above),
+    /// through the same field map as `fields`, so a type that does not
+    /// declare `origin` refuses it with [`DomainError::UnknownField`]. When
+    /// `fields` also carries an `origin` key, this parameter wins. A
+    /// whitespace-only origin counts as absent.
     ///
     /// Errors:
     /// - [`DomainError::UnknownNoteType`] — `type_name` isn't a config type
@@ -70,6 +189,7 @@ impl Vault {
     /// - [`DomainError::MissingRequiredField`] — a declared `required` field is
     ///   absent or empty.
     /// - [`StoreError::AlreadyExists`] — a note with the same slug exists.
+    #[allow(clippy::too_many_arguments)] // signature fixed by RFC 0002 T6: two trailing options
     pub fn create_custom_note_with_vars(
         &self,
         at: NaiveDateTime,
@@ -77,6 +197,8 @@ impl Vault {
         title: &str,
         fields: &HashMap<String, String>,
         prompted: &HashMap<String, String>,
+        body: Option<&str>,
+        origin: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
 
@@ -100,6 +222,19 @@ impl Vault {
                 note_type: type_name.to_owned(),
             });
         };
+
+        // `origin` joins the caller's field map (the parameter winning over a
+        // `fields["origin"]`), so the declared-field check below refuses it
+        // on a type that does not declare it, before anything is written.
+        let mut fields = fields.clone();
+        if let Some(origin) = origin.map(str::trim).filter(|o| !o.is_empty()) {
+            fields.insert(ORIGIN.to_owned(), origin.to_owned());
+        }
+        let fields = &fields;
+        let body = body
+            .and_then(normalise_body)
+            .map(|b| strip_title_h1(b, title))
+            .filter(|b| !b.is_empty());
 
         // Every supplied field must be declared.
         for key in fields.keys() {
@@ -173,14 +308,62 @@ impl Vault {
             ctx.set_prompted(k, v);
         }
 
+        let template_name = custom_template_filename(type_name, def);
+        // A template with a `{{body}}` placeholder takes the body there. The
+        // parameter wins; otherwise the engine's own order (declared field,
+        // `[variables]`, prompted) stands, and only when nothing resolves
+        // `body` — and no prompt is declared for it — does it render empty
+        // (the engine would otherwise leave the placeholder in literally).
+        // The same test `custom_note_needs_body` gives the CLI. A declared
+        // but unanswered `[variables.prompt] body` is left to the engine,
+        // which reports it rather than rendering it empty.
+        let slot = self.body_slot(&template_name, fields, prompted)?;
+        let body_in_template = slot != BodySlot::Absent;
+        match body {
+            Some(b) if body_in_template => ctx.set_contextual(BODY, b),
+            None if slot == BodySlot::Unfilled
+                && !self.config().variables.prompt.contains_key(BODY) =>
+            {
+                ctx.set_contextual(BODY, "");
+            }
+            _ => {}
+        }
+
         let field_order = descriptor
             .custom_frontmatter_order()
             .expect("a custom descriptor always yields an order");
-        let template_name = def
-            .template
-            .clone()
-            .unwrap_or_else(|| format!("{type_name}.md"));
         let content = self.scaffold_custom(type_name, &template_name, &field_order, &mut ctx)?;
+        // Caller-supplied, non-blank declared fields in declared order: the
+        // values the written frontmatter must carry as strings.
+        let supplied: Vec<(&str, &str)> = field_order
+            .iter()
+            .filter(|k| k.as_str() != "type")
+            .filter_map(|k| {
+                fields
+                    .get(k)
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| (k.as_str(), v.as_str()))
+            })
+            .collect();
+        // Every declared field with a value — the caller's, else the
+        // engine's — in declared order: what an unparseable rendered block
+        // is rebuilt from.
+        let declared: Vec<(&str, &str)> = field_order
+            .iter()
+            .filter(|k| k.as_str() != "type")
+            .filter_map(|k| {
+                supplied
+                    .iter()
+                    .find(|(s, _)| *s == k.as_str())
+                    .map(|(_, v)| *v)
+                    .or_else(|| engine_value(k))
+                    .map(|v| (k.as_str(), v))
+            })
+            .collect();
+        let mut content = reconcile_custom_frontmatter(content, type_name, &supplied, &declared);
+        if let Some(body) = body.filter(|_| !body_in_template) {
+            content = insert_body_after_h1(&content, body);
+        }
 
         let entry = build_index_entry_for(&path, &content, type_name)?;
         tx.write_file(path.clone(), content);
@@ -225,4 +408,288 @@ impl Vault {
         paths.sort_by_key(|p| p.to_string());
         Ok(paths)
     }
+}
+
+/// Where a custom template stands on `{{body}}`: no placeholder, a
+/// placeholder another source fills, or one only the `body` parameter can.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodySlot {
+    Absent,
+    Filled,
+    Unfilled,
+}
+
+/// Reconcile the frontmatter of a rendered custom note (see the
+/// "Frontmatter reconciliation" paragraph on
+/// [`create_custom_note_with_vars`](Vault::create_custom_note_with_vars)).
+/// Returns `rendered` unchanged when no repair is needed.
+///
+/// When the rendered frontmatter block does not parse as YAML at all (an
+/// unquoted `origin: [[a]] [[b]]`), it is rebuilt from scratch: `type`,
+/// then `declared` — every declared field with a caller-supplied or engine
+/// value (`title`, `slug`, `created`, `date` when the type declares them),
+/// in declared order — serialised with `serde_yaml`. The body after the
+/// block is kept byte for byte. Any key only the template wrote (a
+/// constant, an undeclared placeholder) is lost on this path; such a note
+/// could not be created at all before the reconciliation existed, since
+/// its index-entry build failed on the parse error.
+fn reconcile_custom_frontmatter(
+    rendered: String,
+    type_name: &str,
+    supplied: &[(&str, &str)],
+    declared: &[(&str, &str)],
+) -> String {
+    let (block, body) = match split_frontmatter(&rendered) {
+        Some((block, body)) => (Some(block), body),
+        None => (None, rendered.as_str()),
+    };
+    if let Some(mapping) = parse_frontmatter_block(block.unwrap_or("")) {
+        if frontmatter_is_reconciled(&mapping, type_name, supplied) {
+            return rendered;
+        }
+        return assemble_note(
+            &repair_frontmatter(mapping, type_name, supplied),
+            block.is_some(),
+            body,
+        );
+    }
+
+    // Unparseable (only a present block can be): rebuild it from the
+    // declared fields, leaving the body alone.
+    let mut mapping = serde_yaml::Mapping::new();
+    mapping.insert("type".into(), type_name.into());
+    for (key, value) in declared {
+        mapping.insert((*key).into(), (*value).into());
+    }
+    assemble_note(&mapping, true, body)
+}
+
+/// Parse a frontmatter YAML block as a mapping; an empty or `null` block is
+/// an empty mapping. `None` when the block is not YAML or not a mapping.
+fn parse_frontmatter_block(block: &str) -> Option<serde_yaml::Mapping> {
+    if block.trim().is_empty() {
+        return Some(serde_yaml::Mapping::new());
+    }
+    match serde_yaml::from_str::<serde_yaml::Value>(block).ok()? {
+        serde_yaml::Value::Mapping(m) => Some(m),
+        serde_yaml::Value::Null => Some(serde_yaml::Mapping::new()),
+        _ => None,
+    }
+}
+
+/// Whether `mapping` holds `key` as exactly the string `value`.
+fn holds_string(mapping: &serde_yaml::Mapping, key: &str, value: &str) -> bool {
+    matches!(mapping.get(key), Some(serde_yaml::Value::String(s)) if s == value)
+}
+
+/// Whether a parsed frontmatter value faithfully carries the supplied
+/// `value`: a string equal to it, or a plain scalar (number, boolean,
+/// null) whose canonical text equals it, so `priority: {{priority}}` with
+/// `5` stays the number `5`. A sequence, a mapping or a differing string
+/// does not.
+fn carries_supplied(value: &serde_yaml::Value, supplied: &str) -> bool {
+    use serde_yaml::Value;
+    match value {
+        Value::String(s) => s == supplied,
+        Value::Number(n) => n.to_string() == supplied,
+        Value::Bool(b) => b.to_string() == supplied,
+        Value::Null => supplied == "null",
+        _ => false,
+    }
+}
+
+fn frontmatter_is_reconciled(
+    mapping: &serde_yaml::Mapping,
+    type_name: &str,
+    supplied: &[(&str, &str)],
+) -> bool {
+    holds_string(mapping, "type", type_name)
+        && supplied.iter().all(|(k, v)| {
+            mapping
+                .get(*k)
+                .is_some_and(|value| carries_supplied(value, v))
+        })
+}
+
+/// Set `type` and every supplied field that does not already carry its
+/// value (see [`carries_supplied`]) as strings: existing keys keep their
+/// position, a missing `type` goes first, and missing supplied fields are
+/// appended in the (declared) order of `supplied`.
+fn repair_frontmatter(
+    mapping: serde_yaml::Mapping,
+    type_name: &str,
+    supplied: &[(&str, &str)],
+) -> serde_yaml::Mapping {
+    use serde_yaml::Value;
+    let mut out = serde_yaml::Mapping::new();
+    if !mapping.contains_key("type") {
+        out.insert("type".into(), type_name.into());
+    }
+    for (key, value) in mapping {
+        let replacement = match key.as_str() {
+            Some("type") => Some(type_name),
+            Some(k) => supplied
+                .iter()
+                .find(|(s, _)| *s == k)
+                .map(|(_, v)| *v)
+                .filter(|v| !carries_supplied(&value, v)),
+            None => None,
+        };
+        let value = replacement.map_or(value, |v| Value::String(v.to_owned()));
+        out.insert(key, value);
+    }
+    for (key, value) in supplied {
+        if !out.contains_key(*key) {
+            out.insert((*key).into(), (*value).into());
+        }
+    }
+    out
+}
+
+/// A note from a re-serialised frontmatter mapping and the untouched body.
+/// When the rendered text had no frontmatter, one blank line separates the
+/// new block from the body.
+fn assemble_note(mapping: &serde_yaml::Mapping, had_block: bool, body: &str) -> String {
+    // Infallible for a mapping of strings and parsed YAML values.
+    let yaml = serde_yaml::to_string(mapping).unwrap_or_default();
+    let sep = if had_block || body.is_empty() || body.starts_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    format!("---\n{yaml}---\n{sep}{body}")
+}
+
+/// Normalise a caller's body: `None` when blank, otherwise the text with
+/// leading blank lines, trailing blank lines and trailing whitespace
+/// stripped. Indentation of the first non-blank line is kept.
+fn normalise_body(raw: &str) -> Option<&str> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let start: usize = raw
+        .split_inclusive('\n')
+        .take_while(|line| line.trim().is_empty())
+        .map(str::len)
+        .sum();
+    Some(raw[start..].trim_end())
+}
+
+/// Drop a first line that is an ATX H1 whose text equals `title`, and the
+/// blank lines after it: the engine writes the title heading itself.
+fn strip_title_h1<'a>(body: &'a str, title: &str) -> &'a str {
+    let first_end = body.find('\n').unwrap_or(body.len());
+    if atx_h1_text(&body[..first_end]) != Some(title) {
+        return body;
+    }
+    let rest = &body[first_end..];
+    let skip: usize = rest
+        .split_inclusive('\n')
+        .take_while(|line| line.trim().is_empty())
+        .map(str::len)
+        .sum();
+    &rest[skip..]
+}
+
+/// The text of an ATX H1 line (`# Title`, indented by at most three spaces,
+/// an optional closing `#` sequence removed), or `None` for any other line.
+fn atx_h1_text(line: &str) -> Option<&str> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = line[indent..].strip_prefix('#')?;
+    if !(rest.is_empty() || rest.starts_with([' ', '\t'])) {
+        return None;
+    }
+    let text = rest.trim();
+    let unclosed = text.trim_end_matches('#');
+    if unclosed.is_empty() || unclosed.ends_with([' ', '\t']) {
+        return Some(unclosed.trim_end());
+    }
+    Some(text)
+}
+
+/// The fence a line opens or closes: its character (`` ` `` or `~`) and
+/// run length, for a line indented by at most three spaces.
+fn fence_run(line: &str) -> Option<(char, usize)> {
+    let line = line.trim_end_matches(['\n', '\r']);
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let ch = rest.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let run = rest.len() - rest.trim_start_matches(ch).len();
+    (run >= 3).then_some((ch, run))
+}
+
+/// Insert `body` after the first H1 line of the rendered note `content`
+/// (outside the frontmatter and fenced code), with one blank line before and
+/// after it; when the note has no H1, append it at the end. The result ends
+/// with exactly one newline.
+///
+/// Both backtick and `~~~` fences are skipped (a fence closes on a run of
+/// the same character at least as long as its opener), and an ATX H1 may be
+/// indented by up to three spaces. A setext H1 (`Title` over `===`) is not
+/// recognised, so with only such a heading the body is appended at the end;
+/// and line endings are not normalised, so a CRLF template gets LF lines
+/// around the inserted body.
+fn insert_body_after_h1(content: &str, body: &str) -> String {
+    let mut offset = 0;
+    let mut in_frontmatter = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut h1_end = None;
+    for (i, line) in content.split_inclusive('\n').enumerate() {
+        let end = offset + line.len();
+        let text = line.trim_end_matches(['\n', '\r']);
+        if i == 0 && text == "---" {
+            in_frontmatter = true;
+        } else if in_frontmatter {
+            if text == "---" {
+                in_frontmatter = false;
+            }
+        } else if let Some((ch, run)) = fence {
+            let closes = fence_run(text).is_some_and(|(c, r)| {
+                c == ch && r >= run && text.trim_start_matches([' ', ch]).trim().is_empty()
+            });
+            if closes {
+                fence = None;
+            }
+        } else if let Some(open) = fence_run(text) {
+            fence = Some(open);
+        } else if atx_h1_text(text).is_some() {
+            h1_end = Some(end);
+            break;
+        }
+        offset = end;
+    }
+
+    let mut out = String::with_capacity(content.len() + body.len() + 4);
+    match h1_end {
+        Some(end) => {
+            out.push_str(content[..end].trim_end_matches(['\n', '\r']));
+            out.push_str("\n\n");
+            out.push_str(body);
+            out.push('\n');
+            let rest = content[end..].trim_start_matches(['\n', '\r']);
+            if !rest.is_empty() {
+                out.push('\n');
+                out.push_str(rest);
+            }
+        }
+        None => {
+            out.push_str(content.trim_end_matches(['\n', '\r']));
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(body);
+            out.push('\n');
+        }
+    }
+    let trimmed_len = out.trim_end_matches(['\n', '\r']).len();
+    out.truncate(trimmed_len);
+    out.push('\n');
+    out
 }

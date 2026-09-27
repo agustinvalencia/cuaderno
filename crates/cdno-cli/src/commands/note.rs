@@ -5,13 +5,14 @@
 //! generic command serves them all.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use clap::Subcommand;
 
 use crate::bootstrap;
+use crate::prompt;
 
 #[derive(Debug, Subcommand)]
 pub enum NoteCommands {
@@ -31,6 +32,21 @@ pub enum NoteCommands {
         /// `name=value`. Repeatable.
         #[arg(long = "var", value_parser = crate::prompt::parse_key_val)]
         var: Vec<(String, String)>,
+        /// A file whose contents become the note's body, without the title
+        /// heading (the engine writes the H1; a leading `# <title>` line is
+        /// dropped). It fills the type template's `{{body}}` placeholder, or
+        /// is inserted after the H1 when the template has none. When the
+        /// template has `{{body}}` and nothing else (`--field body=`,
+        /// `--var body=`, a `[variables] body` in the config) fills it, it is
+        /// prompted in an editor in an interactive session and required
+        /// otherwise.
+        #[arg(long = "body-file", value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        /// Where the note came from: one string of wikilinks, e.g.
+        /// `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion,
+        /// RFC 0002). The type must declare an `origin` field.
+        #[arg(long, value_name = "STRING")]
+        origin: Option<String>,
     },
 
     /// List every note of a config-defined custom type, by path.
@@ -40,19 +56,67 @@ pub enum NoteCommands {
     },
 }
 
-pub fn run(root: &Path, at: NaiveDateTime, command: NoteCommands, json: bool) -> Result<()> {
+pub fn run(
+    root: &Path,
+    at: NaiveDateTime,
+    command: NoteCommands,
+    no_interactive: bool,
+    json: bool,
+) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
+    // `--json` implies non-interactive: prompts/confirms print to stdout,
+    // which would corrupt the JSON result.
+    let interactive = prompt::reports_interactively(no_interactive, json);
     match command {
         NoteCommands::Create {
             note_type,
             title,
             field,
             var,
+            body_file,
+            origin,
         } => {
             let fields: HashMap<String, String> = field.into_iter().collect();
             let vars: HashMap<String, String> = var.into_iter().collect();
-            let path =
-                vault.create_custom_note_with_vars(at, &note_type, &title, &fields, &vars)?;
+            let body_from_file = body_file
+                .map(|p| {
+                    std::fs::read_to_string(&p)
+                        .with_context(|| format!("reading --body-file {}", p.display()))
+                })
+                .transpose()?;
+            let mut prompted = false;
+            // A body is gathered (prompted or demanded) only when the type's
+            // template has a `{{body}}` slot that nothing else (a `body`
+            // field, a `[variables] body`, a `--var body=`) fills; otherwise
+            // it is optional.
+            let body = if vault.custom_note_needs_body(&note_type, &fields, &vars)? {
+                Some(prompt::gather_or_error(
+                    body_from_file,
+                    "body-file",
+                    interactive,
+                    &mut prompted,
+                    || prompt::prompt_editor("Body", ""),
+                )?)
+            } else {
+                body_from_file
+            };
+            if prompted
+                && !prompt::confirm_preview(&format!(
+                    "About to create {note_type} note:\n  title: {title}"
+                ))?
+            {
+                println!("Aborted.");
+                return Ok(());
+            }
+            let path = vault.create_custom_note_with_vars(
+                at,
+                &note_type,
+                &title,
+                &fields,
+                &vars,
+                body.as_deref(),
+                origin.as_deref(),
+            )?;
             crate::output::emit_write_result(json, &path.to_string(), &format!("Created {path}"))
         }
         NoteCommands::List { note_type } => {

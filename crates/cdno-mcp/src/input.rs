@@ -117,6 +117,20 @@ pub struct CreateCustomNoteInput {
     /// as a name -> value map. Mirrors the CLI's repeatable `--var name=value`.
     /// Omitted = none.
     pub vars: Option<HashMap<String, String>>,
+    /// The note's body (markdown), without the title heading: the engine
+    /// writes the `# <title>` H1, and a leading H1 equal to the title is
+    /// dropped. Kept verbatim apart from leading/trailing blank lines and
+    /// trailing whitespace. Fills the type template's `{{body}}` placeholder
+    /// (winning over a `body` field or variable), or is inserted after the H1
+    /// when the template has none. Omitted or blank = no body.
+    pub body: Option<String>,
+    /// Where the note came from: one string of wikilinks, e.g.
+    /// `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion, RFC
+    /// 0002 §5.5). Stored trimmed as a frontmatter string, even when the
+    /// type's template omits or does not quote `{{origin}}`; the type must
+    /// declare an `origin` field. Overrides `fields.origin`. Omitted or blank
+    /// = none.
+    pub origin: Option<String>,
 }
 
 /// Input for `update_project_state`.

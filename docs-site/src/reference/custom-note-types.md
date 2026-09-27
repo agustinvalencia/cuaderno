@@ -56,14 +56,39 @@ The note is written to `<folder>/<slug(title)>.md`. If the type has a template
 (`.cuaderno/templates/person.md`), it is rendered; otherwise Cuaderno **synthesises** a minimal note
 — a frontmatter block of your fields plus a `# <title>` heading — so a type works before you author
 its template. (Field values are always emitted as strings, so a value with a colon, `#`, or newline
-round-trips safely; author a template if you need richer frontmatter shapes.)
+round-trips safely; author a template if you need richer frontmatter shapes for keys you do not pass
+as fields.)
 
-From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars }`).
+Whatever a template renders, the frontmatter that is written carries `type: <type>` and every field
+you passed (including `--origin`) with the value you passed: a string equal to it, or a plain
+number, boolean or null that reads back as the same text (so `priority: {{priority}}` with `5` stays
+the number `5`). If the rendered frontmatter already does, the note is written exactly as rendered. Otherwise Cuaderno repairs it — a missing
+field is appended, an unquoted `origin: {{origin}}` that YAML would read as a list (or reject) is
+rewritten as a quoted string — and re-serialises just the frontmatter block, which drops that
+block's comments and quoting style; the note body is left as rendered. So a template that forgets
+`{{origin}}`, or renders no frontmatter at all, still records every field you supplied.
+
+If the rendered frontmatter is not valid YAML at all (for example an unquoted `origin: {{origin}}`
+given two links), it cannot be repaired key by key, so Cuaderno rebuilds it: `type`, then the
+type's declared fields in declared order, each with the value you passed or, for `title`, `slug`,
+`created` and `date`, the value create computes. The note body is again left exactly as rendered.
+Any key that only the template wrote is lost in that case. The simplest way to avoid it is to
+leave `origin` out of the template and let the repair add it.
+
+The body (`--body-file`, or `body` over MCP) is written without its title heading: the engine
+writes the `# <title>` H1, and a leading `# <title>` line in the body is dropped. It fills the
+template's `{{body}}` placeholder, or is inserted after the H1 when there is none. The body wins
+over any other value of `{{body}}`; without one, a declared `body` field, a `[variables]` value or
+a prompted `body` fills the placeholder as usual, and it renders empty only when nothing does. The
+body is substituted as raw text, so keep `{{body}}` in the note body: in the template's frontmatter
+a multi-line body can add or break YAML keys, and nothing refuses that.
+
+From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars, body, origin }`).
 
 ## Discovering placeholders and searching
 
 - `cdno templates vars person` lists the `{{placeholders}}` a `person` template may reference — its
-  create-path built-ins (`title`, `slug`, `created`, `date`) plus your declared fields.
+  create-path built-ins (`title`, `slug`, `created`, `date`, `body`) plus your declared fields.
 - `cdno templates eject person` does **not** apply — a custom type has no built-in template to
   materialise; author `.cuaderno/templates/person.md` by hand.
 - `cdno search <query> --type person` filters results to that type. `--type` accepts any built-in or
