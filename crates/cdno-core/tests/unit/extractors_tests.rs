@@ -364,6 +364,52 @@ fn resolve_anchor_does_not_break_last_segment_fallback() {
 }
 
 #[test]
+fn resolve_exact_path_with_hash_in_filename_wins_over_anchor_split() {
+    let vault = paths(&["notes/c#-notes.md", "notes/c.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "notes/c#-notes".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(
+        got[0].resolved_path.as_ref(),
+        Some(&vp("notes/c#-notes.md"))
+    );
+}
+
+#[test]
+fn resolve_anchor_with_label_keeps_label() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo#Some Heading".to_string(),
+            label: Some("Label".to_string()),
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+    assert_eq!(got[0].label, Some("Label".to_string()));
+}
+
+#[test]
+fn resolve_trims_space_before_anchor() {
+    let vault = paths(&["projects/foo.md"]);
+    let got = resolve_wikilinks(
+        vec![WikilinkRaw {
+            target: "projects/foo #Heading".to_string(),
+            label: None,
+            is_embed: false,
+        }],
+        &vault,
+    );
+    assert_eq!(got[0].resolved_path.as_ref(), Some(&vp("projects/foo.md")));
+}
+
+#[test]
 fn resolve_picks_unique_basename_when_no_exact_match() {
     let vault = paths(&["notes/foo.md", "other/bar.md"]);
     let got = resolve_wikilinks(

@@ -617,7 +617,7 @@ tags: [kan, ppo, sample-efficiency]
 | `status`    | yes      | `active`, `completed`, `blocked`, or `dropped`                                                 |
 | `project`   | yes      | Slug of the parent project. Every action belongs to a project.                                 |
 | `energy`    | yes      | `deep`, `medium`, or `light`. Same vocabulary as bullet actions.                               |
-| `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits. The anchor after `#` is the milestone's text and is opaque to link resolution; the link resolves to the project note. |
+| `milestone` | optional | Wikilink to a project milestone. The milestone owns the date; the action inherits. The anchor after `#` is the milestone's text, a label rather than a heading a reader can jump to; it is opaque to link resolution, and the link resolves to the project note. |
 | `due`       | optional | ISO date. Used only when the action has a self-imposed deadline not tied to a milestone.       |
 | `created`   | yes      | Date the note was created.                                                                     |
 | `completed` | optional | Date set on completion.                                                                        |

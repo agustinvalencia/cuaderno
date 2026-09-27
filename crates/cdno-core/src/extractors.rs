@@ -248,7 +248,9 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 ///
 /// Resolution policy, in order:
 /// 0. Anchor strip: `[[note#Heading]]` resolves as `[[note]]` — the anchor
-///    is opaque and kept only on `target_raw`. `[[#Heading]]` (no path
+///    is opaque and kept only on `target_raw`. The exact path is tried on
+///    the unsplit target *before* the anchor is stripped, so a filename
+///    that itself contains `#` still resolves. `[[#Heading]]` (no path
 ///    part) is a same-note reference and never resolves.
 /// 1. Exact path match: `[[projects/foo]]` → `projects/foo.md` if
 ///    that path exists in `vault_paths`.
@@ -281,7 +283,18 @@ pub fn resolve_wikilinks(
 }
 
 fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
-    // 0. Strip the anchor. `[[note#Heading]]` (and Obsidian's `#^block`)
+    // 0a. Exact path match on the unsplit target, before the anchor is
+    // stripped. A `#` in a filename is otherwise unsupported — it is only
+    // reachable through an exact-path link — because rule 0b below would
+    // otherwise always treat it as an anchor separator and mis-resolve
+    // `notes/c#-notes` to `notes/c` if that also exists.
+    if let Ok(vp) = VaultPath::new(format!("{target}.md"))
+        && vault_paths.contains(&vp)
+    {
+        return Some(vp);
+    }
+
+    // 0b. Strip the anchor. `[[note#Heading]]` (and Obsidian's `#^block`)
     // addresses a place *inside* a note; the note is the path part before
     // the first `#`. The anchor is opaque here — it stays on
     // `LinkEntry::target_raw` for any later heading check — so a link with
@@ -289,6 +302,7 @@ fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPa
     // anchored link (`milestone:` fields, `## Notes` pointers, `origin:`)
     // silently produced no edge and no backlink (RFC 0002 stage 0).
     let target = target.split_once('#').map_or(target, |(path, _)| path);
+    let target = target.trim_end();
     if target.is_empty() {
         // `[[#Heading]]` names a heading in the linking note itself; that
         // is not a link to another note.
