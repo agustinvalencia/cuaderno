@@ -169,6 +169,16 @@ fn write_concept_template_with_body(dir: &Path) {
     .unwrap();
 }
 
+/// A concept template with no `{{body}}` slot, replacing the one `cdno init`
+/// installs, for the paths that must not demand `--body-file`.
+fn write_concept_template_without_body(dir: &Path) {
+    fs::write(
+        dir.join(".cuaderno/templates/concept.md"),
+        "---\ntype: concept\ncreated: {{created}}\n---\n\n# {{title}}\n",
+    )
+    .unwrap();
+}
+
 #[test]
 fn note_create_writes_body_file_and_origin() {
     let dir = tempdir().unwrap();
@@ -215,6 +225,7 @@ fn note_create_writes_body_file_and_origin() {
 fn note_create_writes_origin_into_frontmatter() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
+    write_concept_template_without_body(dir.path());
     let v = vault_arg(dir.path());
 
     cdno()
@@ -270,6 +281,7 @@ fn note_create_without_body_file_fails_when_the_template_has_a_body_slot() {
 fn note_create_without_body_file_succeeds_when_the_template_has_no_body_slot() {
     let dir = tempdir().unwrap();
     init_person_vault(dir.path());
+    write_concept_template_without_body(dir.path());
     let v = vault_arg(dir.path());
 
     cdno()

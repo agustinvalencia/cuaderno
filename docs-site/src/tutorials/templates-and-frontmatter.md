@@ -25,8 +25,9 @@ So a custom file in `.cuaderno/templates/` always wins over the built-in. No act
 variants ship built-in (tier 3 is empty today) — `tracking` variants are entirely yours to add;
 see [Tracking variants](#tracking-variants) below.
 
-> `cdno init` writes just one starter template — `.cuaderno/templates/daily.md`. Every other type
-> uses its built-in default until you add a file for it. The quickest way to get an editable copy of
+> `cdno init` writes two starter templates — `.cuaderno/templates/daily.md`, and `concept.md` for
+> the `concept` custom type it declares. Every other built-in type uses its built-in default until
+> you add a file for it. The quickest way to get an editable copy of
 > a built-in is [`cdno templates eject <type>`](../reference/cli/templates.md#cdno-templates-eject-type)
 > — e.g. `cdno templates eject project` writes `.cuaderno/templates/project.md` matching the built-in,
 > ready to edit. You can also just create the file yourself, as the next section shows.

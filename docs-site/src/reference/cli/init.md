@@ -1,6 +1,6 @@
 # `cdno init`
 
-Create a new vault: the folder tree, a default `.cuaderno/config.toml`, and a starter `daily.md` template (every other type uses an in-binary default until you [eject](templates.md#cdno-templates-eject-type) one).
+Create a new vault: the folder tree, a default `.cuaderno/config.toml` (which declares the `concept` custom type), and starter `daily.md` and `concept.md` templates (every other built-in type uses an in-binary default until you [eject](templates.md#cdno-templates-eject-type) one).
 
 ```text
 cdno init [OPTIONS] [PATH]
