@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9) |
-| **Tracked by** | epic to be opened; task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
+| **Tracked by** | #612 (epic), #613–#632 (T0–T19); task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
 | **Affects** | `cdno-core` (one resolver fix), `cdno-domain`, `cdno-cli`, `cdno-mcp`, `docs/design.md`, `docs/implementation-plan.md`, `docs-site`, `examples/` |
 | **Related** | RFC 0001 (format precedent); custom note types (`docs-site/src/reference/custom-note-types.md`); #597 (desktop retirement — CLI and MCP surfaces only); `docs/implementation-plan.md` Phase 7 (the "standalone note" this RFC resolves); #604 (superseded draft) |
 
