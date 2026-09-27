@@ -132,6 +132,13 @@ pub enum DomainError {
     #[error("section '## {section}' is append-only and cannot be replaced")]
     HistorySectionNotReplaceable { section: String },
 
+    #[error("heading `{heading}` is not allowed in `## {section}`: {reason}")]
+    HistoryEntryHeadingInvalid {
+        section: String,
+        heading: String,
+        reason: String,
+    },
+
     #[error("frontmatter has no field '{0}' to rewrite")]
     MissingFrontmatterField(String),
 

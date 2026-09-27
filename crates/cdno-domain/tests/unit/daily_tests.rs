@@ -370,6 +370,7 @@ fn daily_section_rejects_logs_and_unknown_sections() {
     assert!(DailySection::from_str("Logs").is_err());
     let err = DailySection::from_str("whatever").unwrap_err();
     assert!(err.contains("standup"), "error names the allowlist: {err}");
+    assert!(err.contains("notes"), "error names the allowlist: {err}");
 }
 
 // --- #232: `## Logs` stays last ---------------------------------------
@@ -459,4 +460,179 @@ fn fresh_daily_note_heading_is_the_full_date() {
         content.contains(&expected),
         "expected heading {expected:?}:\n{content}"
     );
+}
+
+// --- history-entry heading validation (T1 review) ---------------------
+
+#[test]
+fn notes_entry_named_after_a_section_is_refused() {
+    let (vault, store) = make_vault();
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Standup\nbody", true)
+        .expect_err("entry heading collides with a section name");
+    assert!(
+        matches!(
+            err,
+            cdno_domain::error::DomainError::HistoryEntryHeadingInvalid { ref heading, .. }
+                if heading == "Standup"
+        ),
+        "unexpected error variant: {err:?}"
+    );
+    assert!(
+        !store.exists(&date_note_path()).unwrap(),
+        "no file should have been written"
+    );
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### logs\nbody", true)
+        .expect_err("entry heading collides with Logs, case-insensitively");
+    assert!(matches!(
+        err,
+        cdno_domain::error::DomainError::HistoryEntryHeadingInvalid { ref heading, .. }
+            if heading == "logs"
+    ));
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Notes\nbody", true)
+        .expect_err("entry heading collides with the Notes section itself");
+    assert!(matches!(
+        err,
+        cdno_domain::error::DomainError::HistoryEntryHeadingInvalid { ref heading, .. }
+            if heading == "Notes"
+    ));
+
+    assert!(
+        !store.exists(&date_note_path()).unwrap(),
+        "file must remain absent after every refusal"
+    );
+}
+
+#[test]
+fn notes_entry_with_level_two_heading_is_refused() {
+    let (vault, _store) = make_vault();
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "## Anything\nbody", true)
+        .expect_err("level-2 heading is not entry-shaped");
+    assert!(
+        matches!(
+            err,
+            cdno_domain::error::DomainError::HistoryEntryHeadingInvalid { ref reason, .. }
+                if reason.contains("level-3")
+        ),
+        "unexpected error variant: {err:?}"
+    );
+}
+
+#[test]
+fn notes_entry_duplicate_heading_is_refused() {
+    let (vault, store) = make_vault();
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Woodbury\na", true)
+        .expect("first entry is accepted");
+    let before = store.read_file(&path).unwrap();
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### woodbury\nb", true)
+        .expect_err("case-insensitive duplicate heading is refused");
+    assert!(
+        matches!(
+            err,
+            cdno_domain::error::DomainError::HistoryEntryHeadingInvalid { ref reason, .. }
+                if reason.contains("already exists")
+        ),
+        "unexpected error variant: {err:?}"
+    );
+
+    let after = store.read_file(&path).unwrap();
+    assert_eq!(before, after, "first entry must remain intact");
+}
+
+#[test]
+fn notes_entry_valid_heading_is_accepted() {
+    let (vault, store) = make_vault();
+
+    let path = vault
+        .upsert_daily_section(
+            date(),
+            DailySection::Notes,
+            "### Woodbury identity\nbody",
+            true,
+        )
+        .expect("distinct, level-3 heading is accepted");
+
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("## Notes"));
+    assert!(content.contains("### Woodbury identity"));
+    assert!(content.contains("body"));
+}
+
+#[test]
+fn standup_upsert_cannot_clobber_a_notes_entry() {
+    // The end-to-end regression from the review: a Notes entry can no
+    // longer be named after a section, so a later Standup upsert can no
+    // longer land on it by accident.
+    let (vault, store) = make_vault();
+    let path = vault
+        .upsert_daily_section(
+            date(),
+            DailySection::Notes,
+            "### Woodbury identity\nbody",
+            true,
+        )
+        .expect("seed a valid Notes entry");
+
+    let path2 = vault
+        .upsert_daily_section(date(), DailySection::Standup, "Yesterday: shipped", false)
+        .expect("Standup upsert succeeds");
+    assert_eq!(path, path2);
+
+    let content = store.read_file(&path).unwrap();
+    assert!(
+        content.contains("### Woodbury identity"),
+        "Notes entry must survive:\n{content}"
+    );
+    assert!(content.contains("body"));
+    assert!(content.contains("## Standup"));
+    assert!(content.contains("Yesterday: shipped"));
+}
+
+#[test]
+fn daily_section_parses_notes_uppercase() {
+    assert_eq!(
+        DailySection::from_str("NOTES").unwrap(),
+        DailySection::Notes
+    );
+}
+
+#[test]
+fn notes_first_append_on_existing_note_lands_before_logs() {
+    let (vault, store) = make_vault();
+    // Create the note with a Standup section, then a log line, so both
+    // `## Standup` and `## Logs` already exist before Notes is added.
+    vault
+        .upsert_daily_section(date(), DailySection::Standup, "Yesterday: shipped", false)
+        .expect("seed Standup");
+    vault
+        .log_to_daily_note(moment(), "an event")
+        .expect("seed Logs");
+
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Entry\nbody", true)
+        .expect("append Notes to an existing note");
+
+    let content = store.read_file(&path).unwrap();
+    let standup = content.find("## Standup").expect("Standup present");
+    let notes = content.find("## Notes").expect("Notes present");
+    let logs = content.find("## Logs").expect("Logs present");
+    assert!(
+        standup < notes && notes < logs,
+        "expected Standup < Notes < Logs:\n{content}"
+    );
+    assert!(content.contains("an event"), "log line must be intact");
+}
+
+fn date_note_path() -> cdno_core::path::VaultPath {
+    cdno_core::path::VaultPath::new(cdno_core::paths::daily_note_relpath(date())).unwrap()
 }
