@@ -1,6 +1,6 @@
 # RFC 0002 — Implementation plan
 
-Companion to [RFC 0002 — Concept notes](0002-concept-notes.md). Each task below is meant to be
+Companion to [RFC 0002 — Concept notes](0002-concept-notes.md); tracked by #612, with T0–T19 filed as #613–#632 in order. Each task below is meant to be
 one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from
 #597: a green suite is not a probe (a probe asserts the specific new behaviour, and where it
