@@ -46,9 +46,24 @@ pub struct NoteView {
     /// Distinct notes that link to this one (`VaultIndex::find_backlinks`),
     /// sorted ascending by path — answers "is this used" before a
     /// caller edits or deletes it.
+    ///
+    /// This list is only as complete as the index's link resolution: a
+    /// source note written before this note existed keeps its link
+    /// unresolved until that source is re-indexed (T3b of #640 tracks
+    /// reconcile re-resolving such links when their target appears).
+    /// A link carrying a heading anchor (`[[note#Heading]]`) only
+    /// resolves once #635 (T0) is merged.
     pub backlinks: Vec<VaultPath>,
     /// Heading text of every heading in the body, all levels, in
     /// document order.
+    ///
+    /// Each heading's text is returned with inline markup stripped
+    /// (emphasis, code spans, wikilink brackets) — the same form
+    /// `MarkdownDocument::section` matches on, so this is the
+    /// canonical form for section anchors. When the frontmatter fails
+    /// to parse, the whole file is treated as body, so frontmatter
+    /// lines may appear here as headings (`cdno lint` reports such
+    /// notes).
     pub headings: Vec<String>,
 }
 

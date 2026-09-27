@@ -178,6 +178,46 @@ fn read_note_lists_headings() {
 }
 
 #[test]
+fn read_note_headings_empty_when_note_has_none() {
+    const NO_HEADINGS: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\nJust a paragraph, no headings at all.\n";
+    let vault = vault_with(&[("projects/alpha.md", NO_HEADINGS)]);
+
+    let view = vault.read_note(&vp("projects/alpha.md")).unwrap();
+
+    assert_eq!(view.headings, Vec::<String>::new());
+}
+
+#[test]
+fn read_note_headings_ignore_fenced_code_blocks() {
+    const WITH_FENCE: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n## Real\n\n```\n# not a heading\n```\n";
+    let vault = vault_with(&[("projects/alpha.md", WITH_FENCE)]);
+
+    let view = vault.read_note(&vp("projects/alpha.md")).unwrap();
+
+    assert_eq!(view.headings, vec!["Real".to_owned()]);
+}
+
+#[test]
+fn read_note_backlinks_exclude_unresolved_links() {
+    const TARGET: &str =
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Target\n";
+    const DANGLING_LINKING: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Dangling\n\nSee [[projects/ghost]].\n";
+    const REAL_LINKING: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Real\n\nSee [[projects/target]].\n";
+    let vault = vault_with(&[
+        ("projects/target.md", TARGET),
+        ("projects/dangling.md", DANGLING_LINKING),
+        ("projects/real.md", REAL_LINKING),
+    ]);
+
+    let view = vault.read_note(&vp("projects/target.md")).unwrap();
+
+    // The link to `projects/ghost` in `dangling.md` never resolves (no
+    // such note exists), so `find_backlinks` must filter it out —
+    // only the note with a resolved edge to `target.md` shows up.
+    assert_eq!(view.backlinks, vec![vp("projects/real.md")]);
+}
+
+#[test]
 fn write_note_raw_accepts_a_free_edit_the_schema_would_reject() {
     // The point of posture B: free editing writes exactly what it's given,
     // no schema gate. A frontmatter-less "project" that a structured create
