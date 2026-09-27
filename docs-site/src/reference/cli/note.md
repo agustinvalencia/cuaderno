@@ -25,6 +25,8 @@ cdno note create [OPTIONS] <TYPE> --title <TITLE>
 | `--title <TITLE>` | Required. The note's title; its slug becomes the filename. |
 | `--field <NAME=VALUE>` | A frontmatter field, repeatable. Each key must be a declared `required`/`optional` field of the type; every `required` field must be supplied. |
 | `--var <NAME=VALUE>` | A value for the type's template [prompted variable](../../tutorials/templates-and-frontmatter.md#prompted-variables), repeatable. |
+| `--body-file <PATH>` | The note's body, read from a file and written verbatim. It fills the template's `{{body}}` placeholder, or is inserted after the `# <title>` heading when the template has none. When the template has `{{body}}`, it is opened in an editor if omitted interactively, and required under `--no-interactive`. |
+| `--origin <STRING>` | Where the note came from: one string of wikilinks, e.g. `[[journal/2026/daily/2026-09-02#Woodbury identity]]`. Written as the `origin` frontmatter field, so the type must declare `origin` (the `concept` type does); otherwise the command is refused. |
 
 Plus the [global options](overview.md#global-options). With `--json`, emits a `{path, message}`
 result. If the type ships no template (`.cuaderno/templates/<type>.md`), a minimal note is

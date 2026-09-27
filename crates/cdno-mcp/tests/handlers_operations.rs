@@ -1877,6 +1877,8 @@ async fn create_custom_note_creates_a_custom_type_note() {
                 ("role".to_owned(), "advisor".to_owned()),
             ]),
             vars: None,
+            body: None,
+            origin: None,
         }))
         .await
         .expect("create_custom_note");
@@ -1903,6 +1905,8 @@ async fn create_custom_note_rejects_an_unknown_type() {
             title: "Widget".to_owned(),
             fields: std::collections::HashMap::new(),
             vars: None,
+            body: None,
+            origin: None,
         }))
         .await;
     // A domain error maps to an MCP error (Err), not an error-result payload.
@@ -1918,9 +1922,95 @@ async fn create_custom_note_rejects_a_missing_required_field() {
             title: "Nameless".to_owned(),
             fields: std::collections::HashMap::new(),
             vars: None,
+            body: None,
+            origin: None,
         }))
         .await;
     assert!(result.is_err(), "missing required field should error");
+}
+
+/// A `concept` type (RFC 0002 §6.1) declaring `origin` optional.
+fn config_with_person_and_concept() -> VaultConfig {
+    use cdno_core::config::CustomNoteType;
+    let mut config = config_with_person();
+    config.note_types.insert(
+        "concept".to_owned(),
+        CustomNoteType {
+            folder: "concepts".to_owned(),
+            required: vec!["created".to_owned()],
+            optional: vec!["tags".to_owned(), "origin".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+}
+
+#[tokio::test]
+async fn create_custom_note_writes_body_and_origin() {
+    let (server, store) = server_with_config(config_with_person_and_concept(), |_v, s| {
+        seed_today_daily(&s)
+    });
+    let origin = "[[journal/2026/daily/2026-09-02#Woodbury identity]]";
+    let result = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "concept".to_owned(),
+            title: "Woodbury identity".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars: None,
+            body: Some("The inverse of a low-rank update.".to_owned()),
+            origin: Some(origin.to_owned()),
+        }))
+        .await
+        .expect("create_custom_note");
+    let payload = decode_json(&result);
+    assert_eq!(
+        payload["path"].as_str(),
+        Some("concepts/woodbury-identity.md"),
+        "payload: {payload}"
+    );
+
+    let content = store
+        .read_file(&vp("concepts/woodbury-identity.md"))
+        .unwrap();
+    let (fm, body) = cdno_core::frontmatter::Frontmatter::parse(&content).unwrap();
+    assert_eq!(
+        fm.optional_field::<String>("origin").unwrap().as_deref(),
+        Some(origin),
+        "{content}"
+    );
+    assert!(
+        body.ends_with("# Woodbury identity\n\nThe inverse of a low-rank update.\n"),
+        "{content}"
+    );
+}
+
+#[tokio::test]
+async fn create_custom_note_rejects_origin_on_a_type_that_does_not_declare_it() {
+    let (server, store) = server_with_config(config_with_person_and_concept(), |_v, _s| {});
+    let err = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "person".to_owned(),
+            title: "Ada".to_owned(),
+            fields: std::collections::HashMap::from([("name".to_owned(), "Ada".to_owned())]),
+            vars: None,
+            body: None,
+            origin: Some("[[journal/2026/daily/2026-09-02]]".to_owned()),
+        }))
+        .await
+        .expect_err("person does not declare origin");
+    // Marked as a caller-actionable rejection, which `call_tool` turns into
+    // an `isError` tool result (#560).
+    let rejection = err
+        .data
+        .as_ref()
+        .and_then(|d| d.get("cdno_rejection"))
+        .unwrap_or_else(|| panic!("not marked as a rejection: {err:?}"));
+    assert_eq!(rejection["code"], "unknown_field", "{rejection}");
+    assert_eq!(rejection["details"]["field"], "origin", "{rejection}");
+    assert!(!store.exists(&vp("people/ada.md")).unwrap());
 }
 
 // ---------------------------------------------------------------------

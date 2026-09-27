@@ -17,7 +17,14 @@ use cdno_core::template::VariableContext;
 use super::Vault;
 use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
+use super::templating::custom_template_filename;
 use crate::error::DomainError;
+
+/// The contextual placeholder a custom template uses for the note's body.
+const BODY: &str = "body";
+
+/// The frontmatter field the `origin` parameter is written to.
+const ORIGIN: &str = "origin";
 
 /// The contextual placeholders the create path fills itself, before any
 /// caller-supplied `fields`: `{{title}}`, `{{slug}}`, `{{created}}`,
@@ -41,7 +48,30 @@ impl Vault {
         title: &str,
         fields: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new())
+        self.create_custom_note_with_vars(at, type_name, title, fields, &HashMap::new(), None, None)
+    }
+
+    /// Whether the template a custom type renders from references a
+    /// `{{body}}` placeholder. `false` when the type ships no template file
+    /// (the synthesised note has none). The CLI asks this to decide whether a
+    /// body is something to prompt for; the create path asks it to decide
+    /// between filling the placeholder and inserting the body after the H1.
+    ///
+    /// Errors as [`create_custom_note_with_vars`](Self::create_custom_note_with_vars)
+    /// does for a type that is unknown or built-in.
+    pub fn custom_template_has_body(&self, type_name: &str) -> Result<bool, DomainError> {
+        let registry = self.type_registry();
+        let Some(descriptor) = registry.resolve(type_name) else {
+            return Err(DomainError::UnknownNoteType {
+                note_type: type_name.to_owned(),
+            });
+        };
+        let Some(def) = descriptor.as_custom() else {
+            return Err(DomainError::BuiltinTypeNotCustom {
+                note_type: type_name.to_owned(),
+            });
+        };
+        self.custom_template_references(&custom_template_filename(type_name, def), BODY)
     }
 
     /// Create a note of a config-defined custom type, with caller-supplied
@@ -62,6 +92,20 @@ impl Vault {
     /// template that omits the placeholder can still produce a note that
     /// `cdno lint` reports as missing the field.
     ///
+    /// `body` (RFC 0002 §6.2) is the note's prose, written verbatim. When the
+    /// type's template references `{{body}}` it renders there; otherwise (a
+    /// template without the placeholder, or the synthesised note) it is
+    /// inserted after the note's first H1, or appended when there is none, so
+    /// the H1 stays the title. With no body, a `{{body}}` placeholder renders
+    /// empty rather than literally. A whitespace-only body counts as absent.
+    ///
+    /// `origin` (RFC 0002 §5.5) is one string of wikilinks to where the note
+    /// came from — promotion is create-with-`origin`. It is written as a plain
+    /// frontmatter string, exactly as given, through the same field map as
+    /// `fields`, so a type that does not declare `origin` refuses it with
+    /// [`DomainError::UnknownField`]. When `fields` also carries an `origin`
+    /// key, this parameter wins. A whitespace-only origin counts as absent.
+    ///
     /// Errors:
     /// - [`DomainError::UnknownNoteType`] — `type_name` isn't a config type
     ///   (built-in types have their own create paths).
@@ -70,6 +114,7 @@ impl Vault {
     /// - [`DomainError::MissingRequiredField`] — a declared `required` field is
     ///   absent or empty.
     /// - [`StoreError::AlreadyExists`] — a note with the same slug exists.
+    #[allow(clippy::too_many_arguments)] // signature fixed by RFC 0002 T6: two trailing options
     pub fn create_custom_note_with_vars(
         &self,
         at: NaiveDateTime,
@@ -77,6 +122,8 @@ impl Vault {
         title: &str,
         fields: &HashMap<String, String>,
         prompted: &HashMap<String, String>,
+        body: Option<&str>,
+        origin: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
 
@@ -100,6 +147,16 @@ impl Vault {
                 note_type: type_name.to_owned(),
             });
         };
+
+        // `origin` joins the caller's field map (the parameter winning over a
+        // `fields["origin"]`), so the declared-field check below refuses it
+        // on a type that does not declare it, before anything is written.
+        let mut fields = fields.clone();
+        if let Some(origin) = origin.filter(|o| !o.trim().is_empty()) {
+            fields.insert(ORIGIN.to_owned(), origin.to_owned());
+        }
+        let fields = &fields;
+        let body = body.map(str::trim).filter(|b| !b.is_empty());
 
         // Every supplied field must be declared.
         for key in fields.keys() {
@@ -173,14 +230,23 @@ impl Vault {
             ctx.set_prompted(k, v);
         }
 
+        let template_name = custom_template_filename(type_name, def);
+        // A template with a `{{body}}` placeholder takes the body there; with
+        // no body it renders empty (the engine would otherwise leave an
+        // unknown placeholder in literally).
+        let body_in_template = self.custom_template_references(&template_name, BODY)?;
+        if body_in_template {
+            ctx.set_contextual(BODY, body.unwrap_or(""));
+        }
+
         let field_order = descriptor
             .custom_frontmatter_order()
             .expect("a custom descriptor always yields an order");
-        let template_name = def
-            .template
-            .clone()
-            .unwrap_or_else(|| format!("{type_name}.md"));
-        let content = self.scaffold_custom(type_name, &template_name, &field_order, &mut ctx)?;
+        let mut content =
+            self.scaffold_custom(type_name, &template_name, &field_order, &mut ctx)?;
+        if let Some(body) = body.filter(|_| !body_in_template) {
+            content = insert_body_after_h1(&content, body);
+        }
 
         let entry = build_index_entry_for(&path, &content, type_name)?;
         tx.write_file(path.clone(), content);
@@ -225,4 +291,59 @@ impl Vault {
         paths.sort_by_key(|p| p.to_string());
         Ok(paths)
     }
+}
+
+/// Insert `body` after the first H1 line of the rendered note `content`
+/// (outside the frontmatter and fenced code), with one blank line before and
+/// after it; when the note has no H1, append it at the end. The result ends
+/// with exactly one newline.
+fn insert_body_after_h1(content: &str, body: &str) -> String {
+    let mut offset = 0;
+    let mut in_frontmatter = false;
+    let mut in_fence = false;
+    let mut h1_end = None;
+    for (i, line) in content.split_inclusive('\n').enumerate() {
+        let end = offset + line.len();
+        let text = line.trim_end_matches(['\n', '\r']);
+        if i == 0 && text == "---" {
+            in_frontmatter = true;
+        } else if in_frontmatter {
+            if text == "---" {
+                in_frontmatter = false;
+            }
+        } else if text.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if !in_fence && (text.starts_with("# ") || text == "#") {
+            h1_end = Some(end);
+            break;
+        }
+        offset = end;
+    }
+
+    let mut out = String::with_capacity(content.len() + body.len() + 4);
+    match h1_end {
+        Some(end) => {
+            out.push_str(content[..end].trim_end_matches(['\n', '\r']));
+            out.push_str("\n\n");
+            out.push_str(body);
+            out.push('\n');
+            let rest = content[end..].trim_start_matches(['\n', '\r']);
+            if !rest.is_empty() {
+                out.push('\n');
+                out.push_str(rest);
+            }
+        }
+        None => {
+            out.push_str(content.trim_end_matches(['\n', '\r']));
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(body);
+            out.push('\n');
+        }
+    }
+    let trimmed_len = out.trim_end_matches(['\n', '\r']).len();
+    out.truncate(trimmed_len);
+    out.push('\n');
+    out
 }

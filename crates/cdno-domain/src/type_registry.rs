@@ -22,6 +22,12 @@ use cdno_core::config::{CustomNoteType, FieldType, VaultConfig};
 use crate::error::DomainError;
 use crate::note_type::NoteType;
 
+/// The `{{placeholders}}` the generic custom-note create path fills for every
+/// config-defined type, before its declared fields: the note's title, slug and
+/// creation date (`created` and `date` share one value), and its `body`
+/// (RFC 0002 §6.2 — empty when the caller supplies none).
+pub const CUSTOM_SUPPLIED_PLACEHOLDERS: &[&str] = &["title", "slug", "created", "date", "body"];
+
 /// A resolved note type — either one of the built-in [`NoteType`] variants or a
 /// user-defined config type. Borrows from the [`VaultConfig`] it was resolved
 /// against.
@@ -54,7 +60,7 @@ impl<'a> NoteTypeDescriptor<'a> {
     /// The `{{placeholders}}` this type's create path supplies — what a custom
     /// template for it may reference. For a built-in, its static registry list
     /// ([`NoteType::supplied_placeholders`]). For a config type, the create-path
-    /// built-ins (`title`, `slug`, `created`, `date`) plus its declared
+    /// built-ins ([`CUSTOM_SUPPLIED_PLACEHOLDERS`]) plus its declared
     /// `required`/`optional` fields, de-duplicated in a stable order.
     pub fn supplied_placeholders(&self) -> Vec<String> {
         match self {
@@ -64,7 +70,7 @@ impl<'a> NoteTypeDescriptor<'a> {
                 .map(|s| (*s).to_owned())
                 .collect(),
             NoteTypeDescriptor::Custom { def, .. } => {
-                let mut names: Vec<String> = ["title", "slug", "created", "date"]
+                let mut names: Vec<String> = CUSTOM_SUPPLIED_PLACEHOLDERS
                     .iter()
                     .map(|s| (*s).to_owned())
                     .collect();

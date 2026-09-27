@@ -244,7 +244,10 @@ fn templates_vars_lists_a_custom_type_supplied_set() {
 
     let ph = templates::placeholders(dir.path(), "person").expect("placeholders");
     let names: Vec<&str> = ph.iter().map(|p| p.name.as_str()).collect();
-    assert_eq!(names, ["title", "slug", "created", "date", "name", "role"]);
+    assert_eq!(
+        names,
+        ["title", "slug", "created", "date", "body", "name", "role"]
+    );
 }
 
 #[test]

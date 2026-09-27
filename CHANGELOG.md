@@ -8,6 +8,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`body` and `origin` on custom-note creation (T6, #619).** Creating a note of a config-defined
+  type now takes an optional body and an optional origin at every surface: `cdno note create`
+  gains `--body-file <PATH>` and `--origin <STRING>`, the `create_custom_note` MCP tool gains
+  `body` and `origin`, and `Vault::create_custom_note_with_vars` gains two trailing
+  `Option<&str>` parameters. The body is written verbatim: it fills the type template's
+  `{{body}}` placeholder when there is one (which now renders empty rather than literally when
+  no body is given, and is listed by `cdno templates vars` and `list_note_types` as a supplied
+  placeholder of every custom type), and is otherwise inserted after the note's H1. `origin`
+  (RFC 0002 §5.5: promotion is create-with-`origin`) is one string of wikilinks written as a
+  plain frontmatter field; it goes through the declared-field check, so a type that does not
+  declare `origin` (the `concept` type declares it optional) refuses it as `unknown_field` and
+  nothing is written. Blank values count as absent. On the CLI, `--body-file` is prompted in an
+  editor, or demanded under `--no-interactive`, only when the template has a `{{body}}` slot.
+  The creation log line is unchanged.
+
 - **`Vault::revise_note`, the logged, hash-guarded in-place edit for mutable custom notes (T7,
   #620, #645).** A concept note is refined in place (RFC 0002 §5.3), and every revision leaves one
   `revised [[path]] — reason` or `revised [[path#Section]] — reason` line in today's daily log, in

@@ -627,7 +627,13 @@ fn main() -> Result<()> {
         }
         Commands::Note { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::note::run(&root, Local::now().naive_local(), subcommand, cli.json)
+            commands::note::run(
+                &root,
+                Local::now().naive_local(),
+                subcommand,
+                cli.no_interactive,
+                cli.json,
+            )
         }
         Commands::Stewardship { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

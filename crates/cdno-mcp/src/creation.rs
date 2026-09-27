@@ -137,7 +137,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — each key must be a declared `required`/`optional` field. A required `title`, `slug`, `created` or `date` is filled in by the engine when omitted from `fields`, and may be overridden with a non-blank value (for example, to backdate `created`); every other required field must be supplied. The valid types and their fields come from the vault's config, not this schema. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand."
+        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — each key must be a declared `required`/`optional` field. A required `title`, `slug`, `created` or `date` is filled in by the engine when omitted from `fields`, and may be overridden with a non-blank value (for example, to backdate `created`); every other required field must be supplied. The valid types and their fields come from the vault's config, not this schema. `body` is the note's markdown prose: it fills the template's `{{body}}` placeholder, or is appended after the H1 when the template has none. `origin` is one string of wikilinks to where the note came from, e.g. `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion, RFC 0002 §5.5 — promoting a daily `## Notes` entry is creating the note with `origin`); it must be a field the type declares (the `concept` type declares it optional), else the call is refused. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand."
     )]
     pub async fn create_custom_note(
         &self,
@@ -154,6 +154,8 @@ impl CuadernoServer {
                     &input.title,
                     &input.fields,
                     &vars,
+                    input.body.as_deref(),
+                    input.origin.as_deref(),
                 )
             })
             .await?

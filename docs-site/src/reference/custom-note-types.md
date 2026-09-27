@@ -58,12 +58,12 @@ The note is written to `<folder>/<slug(title)>.md`. If the type has a template
 its template. (Field values are always emitted as strings, so a value with a colon, `#`, or newline
 round-trips safely; author a template if you need richer frontmatter shapes.)
 
-From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars }`).
+From an MCP client, the equivalent tool is `create_custom_note` (`{ type_name, title, fields, vars, body, origin }`).
 
 ## Discovering placeholders and searching
 
 - `cdno templates vars person` lists the `{{placeholders}}` a `person` template may reference — its
-  create-path built-ins (`title`, `slug`, `created`, `date`) plus your declared fields.
+  create-path built-ins (`title`, `slug`, `created`, `date`, `body`) plus your declared fields.
 - `cdno templates eject person` does **not** apply — a custom type has no built-in template to
   materialise; author `.cuaderno/templates/person.md` by hand.
 - `cdno search <query> --type person` filters results to that type. `--type` accepts any built-in or

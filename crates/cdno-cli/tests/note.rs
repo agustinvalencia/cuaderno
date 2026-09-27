@@ -154,3 +154,130 @@ fn note_list_reports_when_empty() {
         .success()
         .stdout(predicate::str::contains("No `person` notes."));
 }
+
+// ---------------------------------------------------------------------
+// --body-file and --origin (RFC 0002 T6, #619)
+// ---------------------------------------------------------------------
+
+/// A concept template with a `{{body}}` slot, written where the `concept`
+/// type `cdno init` declares looks for it.
+fn write_concept_template_with_body(dir: &Path) {
+    fs::write(
+        dir.join(".cuaderno/templates/concept.md"),
+        "---\ntype: concept\ncreated: {{created}}\n---\n\n# {{title}}\n\n{{body}}\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn note_create_writes_body_file_and_origin() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    write_concept_template_with_body(dir.path());
+    let v = vault_arg(dir.path());
+    let body_file = dir.path().join("body.md");
+    fs::write(&body_file, "The inverse of a low-rank update.\n").unwrap();
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+            "--body-file",
+            body_file.to_str().unwrap(),
+            "--origin",
+            "[[journal/2026/daily/2026-09-02#Woodbury identity]]",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("concepts/woodbury-identity.md"));
+
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    assert!(
+        content.contains("# Woodbury identity\n\nThe inverse of a low-rank update.\n"),
+        "{content}"
+    );
+    assert!(!content.contains("{{body}}"), "{content}");
+}
+
+#[test]
+fn note_create_writes_origin_into_frontmatter() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+            "--origin",
+            "[[journal/2026/daily/2026-09-02#Woodbury identity]]",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("concepts/woodbury-identity.md")).unwrap();
+    assert!(
+        content.contains("origin: '[[journal/2026/daily/2026-09-02#Woodbury identity]]'"),
+        "{content}"
+    );
+}
+
+#[test]
+fn note_create_without_body_file_fails_when_the_template_has_a_body_slot() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    write_concept_template_with_body(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "missing required flag: --body-file",
+        ));
+    assert!(!dir.path().join("concepts/woodbury-identity.md").exists());
+}
+
+#[test]
+fn note_create_without_body_file_succeeds_when_the_template_has_no_body_slot() {
+    let dir = tempdir().unwrap();
+    init_person_vault(dir.path());
+    let v = vault_arg(dir.path());
+
+    cdno()
+        .args([
+            "--vault",
+            &v,
+            "--no-interactive",
+            "note",
+            "create",
+            "concept",
+            "--title",
+            "Woodbury identity",
+        ])
+        .assert()
+        .success();
+    assert!(dir.path().join("concepts/woodbury-identity.md").exists());
+}
