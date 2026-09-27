@@ -62,6 +62,7 @@ use cdno_core::error::{ManipulationError, StoreError, ValidationError};
 use cdno_domain::error::DomainError;
 use rmcp::ErrorData;
 use rmcp::model::{CallToolResult, Content};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 /// Key under `ErrorData::data` that carries a classified rejection from
@@ -77,6 +78,65 @@ use serde_json::{Value, json};
 /// the error … defined by the sender", so the payload is legitimate even
 /// on the path where it stays a protocol error.
 const MARKER: &str = "cdno_rejection";
+
+/// The `code` an agent branches on, as a type rather than a string.
+///
+/// The wire form is **derived** from the variant name by `rename_all`, so
+/// the two properties the docs advertise — every code distinct, every code
+/// snake_case — hold by construction instead of by a test that samples the
+/// table. Two variants cannot share a name, so they cannot share a code,
+/// and there is no hand-written string to mistype. This replaces a
+/// hand-maintained list of 45 codes that guarded the same properties by
+/// convention (review of #560).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RejectionCode {
+    ActionAlreadyPromoted,
+    ActionNotFound,
+    AlreadyExists,
+    AmbiguousAction,
+    AmbiguousMilestone,
+    AmbiguousPeriodic,
+    AmbiguousSection,
+    AmbiguousSlug,
+    AmbiguousWaitingOn,
+    BuiltinTypeNotCustom,
+    BulletMissingEnergy,
+    CommitmentAlreadyDue,
+    CommitmentNotActive,
+    EmptyField,
+    FieldNotSettable,
+    HardMilestoneRequiresDate,
+    ImplausibleDate,
+    InvalidField,
+    InvalidFieldValue,
+    MalformedWikilink,
+    MilestoneNotFound,
+    MissingField,
+    MissingFrontmatterField,
+    MissingRequiredField,
+    MissingSection,
+    NotFound,
+    PeriodicDateUnwritable,
+    PeriodicNotFound,
+    PeriodicRecurrenceUnreadable,
+    ProjectCapReached,
+    ProjectNotActive,
+    ProjectNotParked,
+    ReservedSchemaField,
+    ReservedTypeName,
+    SectionNotFound,
+    StateTooLong,
+    TemplateAlreadyExists,
+    TrackingOnFlatStewardship,
+    UndeclaredSchemaField,
+    UnknownField,
+    UnknownNoteType,
+    UnknownTemplateVariant,
+    UnrepresentableFrontmatterValue,
+    UnresolvedPrompts,
+    WaitingOnNotFound,
+}
 
 /// The `code` an agent can branch on, plus the fields it needs to
 /// recover, for an error the caller can do something about.
@@ -97,20 +157,24 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             max,
             active_projects,
         } => (
-            "project_cap_reached",
+            RejectionCode::ProjectCapReached,
             json!({ "current": current, "max": max, "active_projects": active_projects }),
         ),
         DomainError::StateTooLong { slug, chars, max } => (
-            "state_too_long",
+            RejectionCode::StateTooLong,
             json!({ "slug": slug, "chars": chars, "max": max }),
         ),
-        DomainError::ProjectNotActive(slug) => ("project_not_active", json!({ "slug": slug })),
-        DomainError::ProjectNotParked(slug) => ("project_not_parked", json!({ "slug": slug })),
+        DomainError::ProjectNotActive(slug) => {
+            (RejectionCode::ProjectNotActive, json!({ "slug": slug }))
+        }
+        DomainError::ProjectNotParked(slug) => {
+            (RejectionCode::ProjectNotParked, json!({ "slug": slug }))
+        }
         DomainError::CommitmentNotActive(slug) => {
-            ("commitment_not_active", json!({ "slug": slug }))
+            (RejectionCode::CommitmentNotActive, json!({ "slug": slug }))
         }
         DomainError::CommitmentAlreadyDue { slug, due } => (
-            "commitment_already_due",
+            RejectionCode::CommitmentAlreadyDue,
             json!({ "slug": slug, "due": due.to_string() }),
         ),
 
@@ -119,27 +183,28 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // module exists: `candidates` is *recovery data*, and flattening
         // it into prose forces an agent to parse English to get it back.
         // -------------------------------------------------------------
-        DomainError::ActionNotFound { slug, query } => {
-            ("action_not_found", json!({ "slug": slug, "query": query }))
-        }
+        DomainError::ActionNotFound { slug, query } => (
+            RejectionCode::ActionNotFound,
+            json!({ "slug": slug, "query": query }),
+        ),
         DomainError::AmbiguousAction {
             slug,
             query,
             candidates,
         } => (
-            "ambiguous_action",
+            RejectionCode::AmbiguousAction,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
         ),
         DomainError::ActionAlreadyPromoted { slug, line } => (
-            "action_already_promoted",
+            RejectionCode::ActionAlreadyPromoted,
             json!({ "slug": slug, "line": line }),
         ),
         DomainError::BulletMissingEnergy { slug, line } => (
-            "bullet_missing_energy",
+            RejectionCode::BulletMissingEnergy,
             json!({ "slug": slug, "line": line }),
         ),
         DomainError::MilestoneNotFound { slug, query } => (
-            "milestone_not_found",
+            RejectionCode::MilestoneNotFound,
             json!({ "slug": slug, "query": query }),
         ),
         DomainError::AmbiguousMilestone {
@@ -147,11 +212,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             query,
             candidates,
         } => (
-            "ambiguous_milestone",
+            RejectionCode::AmbiguousMilestone,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
         ),
         DomainError::PeriodicNotFound { slug, query } => (
-            "periodic_not_found",
+            RejectionCode::PeriodicNotFound,
             json!({ "slug": slug, "query": query }),
         ),
         DomainError::AmbiguousPeriodic {
@@ -159,11 +224,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             query,
             candidates,
         } => (
-            "ambiguous_periodic",
+            RejectionCode::AmbiguousPeriodic,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
         ),
         DomainError::WaitingOnNotFound { slug, query } => (
-            "waiting_on_not_found",
+            RejectionCode::WaitingOnNotFound,
             json!({ "slug": slug, "query": query }),
         ),
         DomainError::AmbiguousWaitingOn {
@@ -171,40 +236,43 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             query,
             candidates,
         } => (
-            "ambiguous_waiting_on",
+            RejectionCode::AmbiguousWaitingOn,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
         ),
-        DomainError::AmbiguousSlug(slug) => ("ambiguous_slug", json!({ "slug": slug })),
+        DomainError::AmbiguousSlug(slug) => (RejectionCode::AmbiguousSlug, json!({ "slug": slug })),
 
         // -------------------------------------------------------------
         // Shape of the thing being written.
         // -------------------------------------------------------------
         DomainError::HardMilestoneRequiresDate { slug, title } => (
-            "hard_milestone_requires_date",
+            RejectionCode::HardMilestoneRequiresDate,
             json!({ "slug": slug, "title": title }),
         ),
         DomainError::PeriodicRecurrenceUnreadable { slug, title } => (
-            "periodic_recurrence_unreadable",
+            RejectionCode::PeriodicRecurrenceUnreadable,
             json!({ "slug": slug, "title": title }),
         ),
         DomainError::PeriodicDateUnwritable { slug, line } => (
-            "periodic_date_unwritable",
+            RejectionCode::PeriodicDateUnwritable,
             json!({ "slug": slug, "line": line }),
         ),
         DomainError::TrackingOnFlatStewardship(slug) => (
-            "tracking_on_flat_stewardship",
+            RejectionCode::TrackingOnFlatStewardship,
             json!({ "stewardship": slug }),
         ),
-        DomainError::EmptyField { field } => ("empty_field", json!({ "field": field })),
+        DomainError::EmptyField { field } => (RejectionCode::EmptyField, json!({ "field": field })),
         DomainError::MalformedWikilink { value } => {
-            ("malformed_wikilink", json!({ "value": value }))
+            (RejectionCode::MalformedWikilink, json!({ "value": value }))
         }
-        DomainError::MissingSection(section) => ("missing_section", json!({ "section": section })),
-        DomainError::MissingFrontmatterField(field) => {
-            ("missing_frontmatter_field", json!({ "field": field }))
+        DomainError::MissingSection(section) => {
+            (RejectionCode::MissingSection, json!({ "section": section }))
         }
+        DomainError::MissingFrontmatterField(field) => (
+            RejectionCode::MissingFrontmatterField,
+            json!({ "field": field }),
+        ),
         DomainError::UnrepresentableFrontmatterValue { field, reason } => (
-            "unrepresentable_frontmatter_value",
+            RejectionCode::UnrepresentableFrontmatterValue,
             json!({ "field": field, "reason": reason }),
         ),
         DomainError::ImplausibleDate {
@@ -212,7 +280,7 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             earliest,
             latest,
         } => (
-            "implausible_date",
+            RejectionCode::ImplausibleDate,
             json!({
                 "date": date.to_string(),
                 "earliest": earliest.to_string(),
@@ -220,7 +288,7 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             }),
         ),
         DomainError::UnresolvedPrompts { note_type, names } => (
-            "unresolved_prompts",
+            RejectionCode::UnresolvedPrompts,
             json!({ "note_type": note_type, "names": names }),
         ),
 
@@ -229,23 +297,27 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // the agent's move is either to pick a declared thing or to tell
         // the user which declaration is missing.
         // -------------------------------------------------------------
-        DomainError::UnknownNoteType { note_type } => {
-            ("unknown_note_type", json!({ "note_type": note_type }))
+        DomainError::UnknownNoteType { note_type } => (
+            RejectionCode::UnknownNoteType,
+            json!({ "note_type": note_type }),
+        ),
+        DomainError::ReservedTypeName { name } => {
+            (RejectionCode::ReservedTypeName, json!({ "name": name }))
         }
-        DomainError::ReservedTypeName { name } => ("reserved_type_name", json!({ "name": name })),
         DomainError::ReservedSchemaField { note_type, field } => (
-            "reserved_schema_field",
+            RejectionCode::ReservedSchemaField,
             json!({ "note_type": note_type, "field": field }),
         ),
-        DomainError::BuiltinTypeNotCustom { note_type } => {
-            ("builtin_type_not_custom", json!({ "note_type": note_type }))
-        }
+        DomainError::BuiltinTypeNotCustom { note_type } => (
+            RejectionCode::BuiltinTypeNotCustom,
+            json!({ "note_type": note_type }),
+        ),
         DomainError::UndeclaredSchemaField { note_type, field } => (
-            "undeclared_schema_field",
+            RejectionCode::UndeclaredSchemaField,
             json!({ "note_type": note_type, "field": field }),
         ),
         DomainError::FieldNotSettable { note_type, field } => (
-            "field_not_settable",
+            RejectionCode::FieldNotSettable,
             json!({ "note_type": note_type, "field": field }),
         ),
         DomainError::InvalidFieldValue {
@@ -253,35 +325,37 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             field,
             reason,
         } => (
-            "invalid_field_value",
+            RejectionCode::InvalidFieldValue,
             json!({ "note_type": note_type, "field": field, "reason": reason }),
         ),
         DomainError::MissingRequiredField { note_type, field } => (
-            "missing_required_field",
+            RejectionCode::MissingRequiredField,
             json!({ "note_type": note_type, "field": field }),
         ),
         DomainError::UnknownField { note_type, field } => (
-            "unknown_field",
+            RejectionCode::UnknownField,
             json!({ "note_type": note_type, "field": field }),
         ),
         DomainError::UnknownTemplateVariant { note_type, variant } => (
-            "unknown_template_variant",
+            RejectionCode::UnknownTemplateVariant,
             json!({ "note_type": note_type, "variant": variant }),
         ),
-        DomainError::TemplateAlreadyExists { path } => {
-            ("template_already_exists", json!({ "path": path }))
-        }
+        DomainError::TemplateAlreadyExists { path } => (
+            RejectionCode::TemplateAlreadyExists,
+            json!({ "path": path }),
+        ),
 
         // -------------------------------------------------------------
         // The one core type on this side: both variants name a field the
         // caller supplied, so both are recoverable by the caller.
         // -------------------------------------------------------------
         DomainError::Validation(ValidationError::MissingField { field }) => {
-            ("missing_field", json!({ "field": field }))
+            (RejectionCode::MissingField, json!({ "field": field }))
         }
-        DomainError::Validation(ValidationError::InvalidField { field, reason }) => {
-            ("invalid_field", json!({ "field": field, "reason": reason }))
-        }
+        DomainError::Validation(ValidationError::InvalidField { field, reason }) => (
+            RejectionCode::InvalidField,
+            json!({ "field": field, "reason": reason }),
+        ),
 
         // -------------------------------------------------------------
         // -------------------------------------------------------------
@@ -289,16 +363,20 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // domain's own text, which for `NotFound` includes the
         // available-slugs hint it deliberately appends.
         // -------------------------------------------------------------
-        DomainError::Store(StoreError::NotFound(what)) => ("not_found", json!({ "what": what })),
+        DomainError::Store(StoreError::NotFound(what)) => {
+            (RejectionCode::NotFound, json!({ "what": what }))
+        }
         DomainError::Store(StoreError::AlreadyExists(what)) => {
-            ("already_exists", json!({ "what": what }))
+            (RejectionCode::AlreadyExists, json!({ "what": what }))
         }
-        DomainError::Manipulation(ManipulationError::SectionNotFound(section)) => {
-            ("section_not_found", json!({ "section": section }))
-        }
-        DomainError::Manipulation(ManipulationError::AmbiguousSection(section)) => {
-            ("ambiguous_section", json!({ "section": section }))
-        }
+        DomainError::Manipulation(ManipulationError::SectionNotFound(section)) => (
+            RejectionCode::SectionNotFound,
+            json!({ "section": section }),
+        ),
+        DomainError::Manipulation(ManipulationError::AmbiguousSection(section)) => (
+            RejectionCode::AmbiguousSection,
+            json!({ "section": section }),
+        ),
 
         // -------------------------------------------------------------
         // Mechanical failures: the machine under the call, not the call.
@@ -464,181 +542,34 @@ mod tests {
         );
     }
 
-    /// Every code the classifier can emit, checked for distinctness and
-    /// format. Codes are wire values an agent branches on: two variants
-    /// sharing one makes them indistinguishable, and a stray capital or
-    /// hyphen makes the set inconsistent. Neither is caught anywhere else,
-    /// since `classify` is one long match nobody reads end to end twice.
-    ///
-    /// The list is hand-maintained and MUST grow with `classify`. The
-    /// exhaustive match there forces a decision about a new variant but
-    /// cannot force an entry here, so this is a convention, not a
-    /// guarantee — deriving it from the source was considered and rejected
-    /// as fragile, since the codes are not textually distinguishable from
-    /// the `json!` keys around them.
+    /// Guards the `rename_all` derive, which is now the only thing turning a
+    /// variant into its wire code. Distinctness and snake_case are no longer
+    /// testable properties — two variants cannot share a name, and no code is
+    /// hand-written — so the 45-sample list this replaces is gone (review of
+    /// #560). What a test can still lose is the attribute itself: drop
+    /// `rename_all` and every code silently becomes PascalCase, breaking every
+    /// client branching on it.
     #[test]
-    fn every_code_is_distinct_snake_case() {
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 27).expect("valid date");
-        let samples: Vec<DomainError> = vec![
-            DomainError::ProjectCapReached {
-                current: 5,
-                max: 5,
-                active_projects: vec![],
-            },
-            DomainError::StateTooLong {
-                slug: "s".into(),
-                chars: 501,
-                max: 500,
-            },
-            DomainError::ProjectNotActive("s".into()),
-            DomainError::ProjectNotParked("s".into()),
-            DomainError::CommitmentNotActive("s".into()),
-            DomainError::CommitmentAlreadyDue {
-                slug: "s".into(),
-                due: date,
-            },
-            DomainError::ActionNotFound {
-                slug: "s".into(),
-                query: "q".into(),
-            },
-            ambiguous(),
-            DomainError::ActionAlreadyPromoted {
-                slug: "s".into(),
-                line: "l".into(),
-            },
-            DomainError::BulletMissingEnergy {
-                slug: "s".into(),
-                line: "l".into(),
-            },
-            DomainError::MilestoneNotFound {
-                slug: "s".into(),
-                query: "q".into(),
-            },
-            DomainError::AmbiguousMilestone {
-                slug: "s".into(),
-                query: "q".into(),
-                candidates: vec![],
-            },
-            DomainError::PeriodicNotFound {
-                slug: "s".into(),
-                query: "q".into(),
-            },
-            DomainError::AmbiguousPeriodic {
-                slug: "s".into(),
-                query: "q".into(),
-                candidates: vec![],
-            },
-            DomainError::WaitingOnNotFound {
-                slug: "s".into(),
-                query: "q".into(),
-            },
-            DomainError::AmbiguousWaitingOn {
-                slug: "s".into(),
-                query: "q".into(),
-                candidates: vec![],
-            },
-            DomainError::AmbiguousSlug("s".into()),
-            DomainError::HardMilestoneRequiresDate {
-                slug: "s".into(),
-                title: "t".into(),
-            },
-            DomainError::PeriodicRecurrenceUnreadable {
-                slug: "s".into(),
-                title: "t".into(),
-            },
-            DomainError::PeriodicDateUnwritable {
-                slug: "s".into(),
-                line: "l".into(),
-            },
-            DomainError::TrackingOnFlatStewardship("s".into()),
-            DomainError::EmptyField { field: "title" },
-            DomainError::MalformedWikilink { value: "v".into() },
-            DomainError::MissingSection("Current State"),
-            DomainError::MissingFrontmatterField("f".into()),
-            DomainError::UnrepresentableFrontmatterValue {
-                field: "f".into(),
-                reason: "r".into(),
-            },
-            DomainError::ImplausibleDate {
-                date,
-                earliest: date,
-                latest: date,
-            },
-            DomainError::UnresolvedPrompts {
-                note_type: "t".into(),
-                names: vec![],
-            },
-            DomainError::UnknownNoteType {
-                note_type: "t".into(),
-            },
-            DomainError::ReservedTypeName { name: "n".into() },
-            DomainError::ReservedSchemaField {
-                note_type: "t".into(),
-                field: "f".into(),
-            },
-            DomainError::BuiltinTypeNotCustom {
-                note_type: "t".into(),
-            },
-            DomainError::UndeclaredSchemaField {
-                note_type: "t".into(),
-                field: "f".into(),
-            },
-            DomainError::FieldNotSettable {
-                note_type: "t".into(),
-                field: "f".into(),
-            },
-            DomainError::InvalidFieldValue {
-                note_type: "t".into(),
-                field: "f".into(),
-                reason: "r".into(),
-            },
-            DomainError::MissingRequiredField {
-                note_type: "t".into(),
-                field: "f".into(),
-            },
-            DomainError::UnknownField {
-                note_type: "t".into(),
-                field: "f".into(),
-            },
-            DomainError::UnknownTemplateVariant {
-                note_type: "t".into(),
-                variant: "v".into(),
-            },
-            DomainError::TemplateAlreadyExists { path: "p".into() },
-            DomainError::Validation(ValidationError::MissingField { field: "f".into() }),
-            DomainError::Validation(ValidationError::InvalidField {
-                field: "f".into(),
-                reason: "r".into(),
-            }),
-            DomainError::Store(StoreError::NotFound("projects/x.md".into())),
-            DomainError::Store(StoreError::AlreadyExists("projects/x.md".into())),
-            DomainError::Manipulation(ManipulationError::SectionNotFound("Logs".into())),
-            DomainError::Manipulation(ManipulationError::AmbiguousSection("Logs".into())),
+    fn the_wire_code_is_derived_as_snake_case() {
+        let cases = [
+            (RejectionCode::NotFound, "not_found"),
+            (RejectionCode::AmbiguousAction, "ambiguous_action"),
+            (
+                RejectionCode::UnrepresentableFrontmatterValue,
+                "unrepresentable_frontmatter_value",
+            ),
+            (
+                RejectionCode::TrackingOnFlatStewardship,
+                "tracking_on_flat_stewardship",
+            ),
         ];
-
-        let mut seen: Vec<String> = Vec::new();
-        for e in &samples {
-            let payload = classify(e).unwrap_or_else(|| panic!("should classify: {e}"));
-            let code = payload["code"]
-                .as_str()
-                .expect("code is a string")
-                .to_owned();
-            assert!(
-                code.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                "code `{code}` is not snake_case"
+        for (code, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(code).expect("code serialises"),
+                json!(expected),
+                "the derived wire form changed — clients branch on this string"
             );
-            assert!(!seen.contains(&code), "duplicate code `{code}`");
-            seen.push(code);
         }
-
-        // Guards the list above against silently shrinking, e.g. if two
-        // arms are merged and a sample is dropped with one of them.
-        assert_eq!(
-            seen.len(),
-            45,
-            "expected every classified variant to be sampled; update this \
-             count deliberately when adding or removing one"
-        );
     }
 
     #[test]

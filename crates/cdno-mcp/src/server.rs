@@ -189,10 +189,12 @@ impl ServerHandler for CuadernoServer {
     /// suites stay green while whatever the new step did is gone.
     ///
     /// **On an rmcp upgrade, re-diff this body against
-    /// `tool_handler.rs`.** Pinning `=1.7` would trade that for a manual
-    /// bump on every patch release; the cheaper guard is knowing the
-    /// coupling exists, which is why it is written down here rather than
-    /// left for the next reader to infer.
+    /// `tool_handler.rs`.** `tests/forked_macro_guard.rs` fails the moment
+    /// the lockfile leaves the 1.7.x series and says so, so this does not
+    /// depend on the next reader noticing a comment. Pinning `=1.7` was
+    /// rejected: the lockfile is committed, so rmcp cannot move on a build
+    /// or in CI, and a pin would charge a manual bump on every patch
+    /// release to guard against a deliberate `cargo update`.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,

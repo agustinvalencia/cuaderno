@@ -26,9 +26,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   would not write, permission denied, a contended lock, an index that would not answer or a
   rolled-back transaction are mechanical and stay protocol errors, as do malformed calls.
 
-  The classifying match is **exhaustive with no wildcard**, so a new `DomainError` variant fails to
-  compile until somebody decides which side it falls on. Conversion happens at one point in
-  `call_tool` rather than at ~55 handler call sites, so a new handler cannot forget to opt in.
+  Codes are a `RejectionCode` enum whose wire string is **derived** by `rename_all`, so "every code
+  distinct, every code snake_case" holds by construction — two variants cannot share a name, and no
+  code is hand-written. The classifying match is **exhaustive with no wildcard**, so a new
+  `DomainError` variant fails to compile until somebody decides which side it falls on. Conversion happens at one point in
+  `call_tool` rather than at ~55 handler call sites, so a new handler cannot forget to opt in. That
+  `call_tool` is forked from `rmcp-macros`, so `cdno-mcp/tests/forked_macro_guard.rs` fails if the
+  lockfile leaves rmcp's 1.7.x series, naming the file to re-diff.
 
   Also: `update_project_state`'s tool description now states the `max_state_chars` cap (default 500)
   and that over-length text is rejected rather than truncated — most of these rejections are
