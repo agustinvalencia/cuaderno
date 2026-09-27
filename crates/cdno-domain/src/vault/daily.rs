@@ -10,14 +10,31 @@
 //!
 //! # Which sections are writable
 //!
-//! The daily note is append-only for its **history**: `## Logs` (and
-//! any `## Notes` captures) only ever grow, via
-//! [`Vault::log_to_daily_note`]. The other sections — Standup,
-//! Intention, Agenda (mutable planning scratch, typically replaced) and
-//! Meeting (live notes, typically appended) — are writable via
-//! `upsert_daily_section`. [`DailySection`] is the type-level allowlist
-//! that keeps it away from the history sections, so neither the
-//! overwrite nor the append path can ever clobber the log.
+//! The daily note is append-only for its **history**: `## Logs` and
+//! `## Notes` only ever grow. `## Logs` grows via
+//! [`Vault::log_to_daily_note`]; `## Notes` (RFC 0002 §5.4) is the
+//! substance section — worked-out material that would otherwise bloat
+//! `## Logs` — and grows through `upsert_daily_section` itself, which
+//! forces `append = true` for it rather than routing it through a
+//! separate writer. The other sections — Standup, Intention, Agenda
+//! (mutable planning scratch, typically replaced) and Meeting (live
+//! notes, typically appended) — are freely writable via
+//! `upsert_daily_section`. [`DailySection`] is the type-level allowlist;
+//! [`DailySection::is_history`] is what keeps the history sections from
+//! being replaced outright.
+//!
+//! History sections only *grow* — but growth is still constrained:
+//! [`Vault::validate_history_entry`] rejects a body appended to `##
+//! Notes` unless every heading inside it is level-3-or-deeper and reuses
+//! neither a daily-section name (Standup/Intention/Agenda/Meeting/Notes/
+//! Logs/the template's anchor section) nor a heading already present in
+//! that day's note. Without that check, a `### Standup` entry inside
+//! `## Notes` would collide with the level-2 `## Standup` heading that a
+//! later planning upsert looks up by flat text match — silently
+//! replacing (or making ambiguous and unwritable) the wrong section, and
+//! a `### Logs` entry would do the same to `log_to_daily_note`. The
+//! overwrite path itself never touches `## Notes`'s heading; this check
+//! is what keeps *entries inside it* from impersonating a section.
 
 use std::str::FromStr;
 
@@ -44,19 +61,21 @@ pub struct DailyNoteView {
     pub markdown: String,
 }
 
-/// The non-history sections of a daily note that
-/// [`Vault::upsert_daily_section`] may write. `Standup`/`Intention`/
-/// `Agenda` are mutable planning scratch (typically replaced); `Meeting`
-/// accrues live meeting notes (typically appended). The append-only
-/// history sections (`## Logs`, `## Notes`) are deliberately absent —
-/// they grow only via [`Vault::log_to_daily_note`] and cannot be reached
-/// here.
+/// The sections of a daily note that [`Vault::upsert_daily_section`]
+/// may write. `Standup`/`Intention`/`Agenda` are mutable planning
+/// scratch (typically replaced); `Meeting` accrues live meeting notes
+/// (typically appended); `Notes` is the append-only substance section
+/// (RFC 0002 §5.4) — see [`DailySection::is_history`]. `## Logs` is
+/// deliberately not a variant here at all: it grows only via
+/// [`Vault::log_to_daily_note`] and cannot be reached through this
+/// allowlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DailySection {
     Standup,
     Intention,
     Agenda,
     Meeting,
+    Notes,
 }
 
 impl DailySection {
@@ -67,7 +86,17 @@ impl DailySection {
             DailySection::Intention => "Intention",
             DailySection::Agenda => "Agenda",
             DailySection::Meeting => "Meeting",
+            DailySection::Notes => "Notes",
         }
+    }
+
+    /// Whether this section is a **history** section: append-only, like
+    /// `## Logs`. Only [`DailySection::Notes`] is — it only ever grows,
+    /// so [`Vault::upsert_daily_section`] forces `append = true` for it
+    /// and refuses a replace outright, the same invariant `## Logs`
+    /// gets by not being reachable through this enum at all.
+    pub fn is_history(self) -> bool {
+        matches!(self, DailySection::Notes)
     }
 }
 
@@ -83,8 +112,9 @@ impl FromStr for DailySection {
             "intention" => Ok(DailySection::Intention),
             "agenda" => Ok(DailySection::Agenda),
             "meeting" => Ok(DailySection::Meeting),
+            "notes" => Ok(DailySection::Notes),
             other => Err(format!(
-                "unknown daily section '{other}' (expected one of: standup, intention, agenda, meeting)"
+                "unknown daily section '{other}' (expected one of: standup, intention, agenda, meeting, notes)"
             )),
         }
     }
@@ -152,17 +182,30 @@ impl Vault {
         Ok(dates)
     }
 
-    /// Write a non-history section of the daily note for `date`,
-    /// returning the note's path.
+    /// Write a section of the daily note for `date`, returning the
+    /// note's path.
     ///
-    /// Creates the daily note (with an empty `## Logs`) if it doesn't
-    /// exist, then `ensure_section` followed by either `replace_section`
+    /// A history section (`section.is_history()` — currently just
+    /// [`DailySection::Notes`]) refuses `append: false` outright,
+    /// before anything is read or written, with
+    /// [`DomainError::HistorySectionNotReplaceable`]. Otherwise: creates
+    /// the daily note (with an empty `## Logs`) if it doesn't exist,
+    /// then `ensure_section` followed by either `replace_section`
     /// (`append: false` — the planning sections, idempotent overwrite)
-    /// or `append_to_section` (`append: true` — live meeting notes that
-    /// accrue). The `## Logs` history content is never clobbered — the
-    /// write targets `section`'s heading alone — and `move_section_to_end`
-    /// then pins `## Logs` back to the bottom so a planning section
-    /// created mid-day can't strand the history above it (#232).
+    /// or `append_to_section` (`append: true` — live meeting notes, or
+    /// `## Notes` entries, that accrue). The `## Logs` history content is
+    /// never clobbered — the write targets `section`'s heading alone —
+    /// and `move_section_to_end` then pins `## Logs` back to the bottom
+    /// so a section created mid-day (planning, or a first `## Notes`
+    /// entry) can't strand the history above it (#232). A brand-new `##
+    /// Notes` section is placed immediately before the note's anchor
+    /// section (`## Logs` by default, or whichever trailing section a
+    /// custom daily template names, per [`Vault::daily_anchor_section`]);
+    /// a planning section created later can land between the two.
+    ///
+    /// For a history section, the content is first checked with
+    /// [`Vault::validate_history_entry`] — see that method for what an
+    /// entry may and may not contain.
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
@@ -170,6 +213,15 @@ impl Vault {
         content: &str,
         append: bool,
     ) -> Result<VaultPath, DomainError> {
+        if section.is_history() && !append {
+            return Err(DomainError::HistorySectionNotReplaceable {
+                section: section.heading().to_string(),
+            });
+        }
+        if section.is_history() {
+            self.validate_history_entry(date, section, content)?;
+        }
+
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let path = daily_note_path(date)?;
         let heading = section.heading();
@@ -203,6 +255,123 @@ impl Vault {
 
         Ok(path)
     }
+
+    /// Validate a body about to be appended to a **history** section
+    /// (currently only [`DailySection::Notes`]) before anything is read
+    /// or written.
+    ///
+    /// A history section only ever grows, one entry at a time, and an
+    /// entry is conventionally a `### <title>` heading followed by its
+    /// content. Heading lookup elsewhere in the vault (`ensure_section`,
+    /// `replace_section`, `## Logs` appends) is flat and level-blind, so
+    /// an entry heading that happens to match a real section name would
+    /// collide with it — a later `Standup` upsert would silently replace
+    /// the `### Standup` entry instead of the `## Standup` section (or,
+    /// once a real `## Standup` section exists, every future `Standup`
+    /// upsert would fail as ambiguous), and a `### Logs` entry would make
+    /// `log_to_daily_note` unwritable the same way. So every heading
+    /// found in `content` is rejected when it:
+    ///
+    /// - is level 1 or 2 — only level-3-or-deeper headings are entries;
+    ///   a level-1/2 heading is section-shaped and would itself be
+    ///   mistaken for one;
+    /// - matches, case-insensitively, a daily-section heading
+    ///   (Standup/Intention/Agenda/Meeting/Notes), `Logs`
+    ///   ([`super::DAILY_LOGS_SECTION`]), or the effective template's
+    ///   anchor section ([`Vault::daily_anchor_section`]); or
+    /// - matches, case-insensitively, a heading already present anywhere
+    ///   in that day's note — checked only when the note already exists;
+    ///   a day with no note yet has nothing to collide with.
+    ///
+    /// Exposed `pub(crate)` so T2's `note_to_daily` can run the same
+    /// check on the content it appends.
+    pub(crate) fn validate_history_entry(
+        &self,
+        date: NaiveDate,
+        section: DailySection,
+        content: &str,
+    ) -> Result<(), DomainError> {
+        let heading = section.heading();
+
+        let mut reserved: Vec<String> = vec![
+            DailySection::Standup.heading().to_ascii_lowercase(),
+            DailySection::Intention.heading().to_ascii_lowercase(),
+            DailySection::Agenda.heading().to_ascii_lowercase(),
+            DailySection::Meeting.heading().to_ascii_lowercase(),
+            DailySection::Notes.heading().to_ascii_lowercase(),
+            super::DAILY_LOGS_SECTION.to_ascii_lowercase(),
+        ];
+        let anchor = self.daily_anchor_section()?;
+        reserved.push(anchor.to_ascii_lowercase());
+
+        let mut existing_headings: Vec<String> = Vec::new();
+        let path = daily_note_path(date)?;
+        if self.store.exists(&path)? {
+            let note = self.store.read_file(&path)?;
+            let body = match cdno_core::frontmatter::Frontmatter::parse(&note) {
+                Ok((_, body)) => body,
+                Err(_) => note.as_str(),
+            };
+            existing_headings = scan_heading_texts(body)
+                .into_iter()
+                .map(|(_, text)| text.to_ascii_lowercase())
+                .collect();
+        }
+
+        for (level, text) in scan_heading_texts(content) {
+            if level <= 2 {
+                return Err(DomainError::HistoryEntryHeadingInvalid {
+                    section: heading.to_string(),
+                    heading: text,
+                    reason: "only level-3 or deeper headings are allowed inside a history section"
+                        .to_string(),
+                });
+            }
+            let lower = text.to_ascii_lowercase();
+            if reserved.contains(&lower) {
+                return Err(DomainError::HistoryEntryHeadingInvalid {
+                    section: heading.to_string(),
+                    heading: text,
+                    reason: "it is the name of a daily section".to_string(),
+                });
+            }
+            if existing_headings.contains(&lower) {
+                return Err(DomainError::HistoryEntryHeadingInvalid {
+                    section: heading.to_string(),
+                    heading: text,
+                    reason: "a heading with that text already exists in the note".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Scan `text` for markdown ATX headings (`# ` through `###### `),
+/// returning each as `(level, trimmed text)` in document order.
+///
+/// A plain line scan, matching [`Vault::daily_anchor_section`]'s
+/// approach: a `#` inside a fenced code block would be mistaken for a
+/// heading, which is an accepted limitation for the plain, template-like
+/// content this is meant to validate.
+fn scan_heading_texts(text: &str) -> Vec<(u8, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+            if hashes == 0 || hashes > 6 {
+                return None;
+            }
+            let rest = &trimmed[hashes..];
+            // ATX headings require a space (or end of line) after the
+            // `#`s; `#foo` is not a heading.
+            if !rest.is_empty() && !rest.starts_with(' ') && !rest.starts_with('\t') {
+                return None;
+            }
+            Some((hashes as u8, rest.trim().to_string()))
+        })
+        .collect()
 }
 
 /// Render a section body so it sits cleanly under its heading: the
