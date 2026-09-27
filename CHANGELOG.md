@@ -26,6 +26,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   would not write, permission denied, a contended lock, an index that would not answer or a
   rolled-back transaction are mechanical and stay protocol errors, as do malformed calls.
 
+  `main`'s new append-only-history rejections (`history_section_not_replaceable`,
+  `history_entry_heading_invalid`) are classified too — the exhaustive match refused to compile
+  against the newer `cdno-domain`, which is the mechanism working as designed.
+
   Codes are a `RejectionCode` enum whose wire string is **derived** by `rename_all`, so "every code
   distinct, every code snake_case" holds by construction — two variants cannot share a name, and no
   code is hand-written. The classifying match is **exhaustive with no wildcard**, so a new

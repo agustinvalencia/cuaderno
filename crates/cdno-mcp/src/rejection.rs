@@ -115,6 +115,8 @@ pub(crate) enum RejectionCode {
     MissingField,
     MissingFrontmatterField,
     MissingRequiredField,
+    HistorySectionNotReplaceable,
+    HistoryEntryHeadingInvalid,
     MissingSection,
     NotFound,
     PeriodicDateUnwritable,
@@ -264,6 +266,22 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::MalformedWikilink { value } => {
             (RejectionCode::MalformedWikilink, json!({ "value": value }))
         }
+        // Append-only sections (#638's `Notes`, the daily log): the call
+        // asked to replace history. Appending instead succeeds, so the
+        // caller can act — and `reason` on the heading variant is exactly
+        // the recovery data an agent needs to pick a legal heading.
+        DomainError::HistorySectionNotReplaceable { section } => (
+            RejectionCode::HistorySectionNotReplaceable,
+            json!({ "section": section }),
+        ),
+        DomainError::HistoryEntryHeadingInvalid {
+            section,
+            heading,
+            reason,
+        } => (
+            RejectionCode::HistoryEntryHeadingInvalid,
+            json!({ "section": section, "heading": heading, "reason": reason }),
+        ),
         DomainError::MissingSection(section) => {
             (RejectionCode::MissingSection, json!({ "section": section }))
         }
@@ -539,6 +557,38 @@ mod tests {
             ))
             .expect("core twin")["code"],
             "section_not_found"
+        );
+    }
+
+    /// The two variants `main` added while this PR was open (#638's
+    /// append-only `Notes` section). They are here because the exhaustive
+    /// match refused to compile against the newer `cdno-domain` — which is
+    /// the mechanism working as intended, caught by CI building the merge
+    /// commit rather than by anybody remembering to look.
+    ///
+    /// Both are caller-actionable: appending instead of replacing succeeds,
+    /// and a legal heading succeeds, so a different call changes the
+    /// outcome. `reason` travels as data because it is what tells an agent
+    /// which heading to pick.
+    #[test]
+    fn the_append_only_history_rejections_carry_what_to_do_instead() {
+        let payload = classify(&DomainError::HistorySectionNotReplaceable {
+            section: "Notes".into(),
+        })
+        .expect("replacing an append-only section is the caller's to fix");
+        assert_eq!(payload["code"], "history_section_not_replaceable");
+        assert_eq!(payload["details"]["section"], "Notes");
+
+        let payload = classify(&DomainError::HistoryEntryHeadingInvalid {
+            section: "Notes".into(),
+            heading: "## Too shallow".into(),
+            reason: "entries use h3".into(),
+        })
+        .expect("an illegal heading is the caller's to fix");
+        assert_eq!(payload["code"], "history_entry_heading_invalid");
+        assert_eq!(
+            payload["details"]["reason"], "entries use h3",
+            "the reason is the recovery data — without it an agent can only guess"
         );
     }
 
