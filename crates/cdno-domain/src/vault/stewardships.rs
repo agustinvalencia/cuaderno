@@ -117,7 +117,7 @@ impl Vault {
     /// caller-supplied prompted-variable values (`[variables.prompt]`, #238).
     pub fn create_stewardship_flat_with_vars(
         &self,
-        _at: NaiveDateTime,
+        at: NaiveDateTime,
         name: &str,
         context: Context,
         prompted: &HashMap<String, String>,
@@ -144,7 +144,7 @@ impl Vault {
         }
 
         let content = self.render_stewardship(name, context, prompted)?;
-        write_stewardship(self, &slug, &flat_path, &content)
+        write_stewardship(self, at, &slug, &flat_path, &content, name)
     }
 
     /// Create an expanded stewardship at
@@ -165,7 +165,7 @@ impl Vault {
     /// with caller-supplied prompted-variable values (`[variables.prompt]`, #238).
     pub fn create_stewardship_expanded_with_vars(
         &self,
-        _at: NaiveDateTime,
+        at: NaiveDateTime,
         name: &str,
         context: Context,
         prompted: &HashMap<String, String>,
@@ -184,7 +184,7 @@ impl Vault {
         }
 
         let content = self.render_stewardship(name, context, prompted)?;
-        write_stewardship(self, &slug, &expanded_path, &content)
+        write_stewardship(self, at, &slug, &expanded_path, &content, name)
     }
 
     /// Render the stewardship template (custom or built-in): `{{name}}`
@@ -469,19 +469,27 @@ fn resolve_paths(name: &str) -> Result<(String, VaultPath, VaultPath), DomainErr
     Ok((slug, flat, expanded))
 }
 
-/// Stage the file write + index upsert for a stewardship and commit
-/// the transaction. Shared between flat and expanded — they differ
-/// only in the path passed in.
+/// Stage the file write + index upsert for a stewardship, plus the
+/// `stewardship created [[…]]` daily-log line (#618), and commit the
+/// transaction. Shared between flat and expanded — they differ only
+/// in the path passed in. The log line always targets the folder/slug
+/// form (`stewardships/<slug>`), which the resolver maps to
+/// `_index.md` for the expanded variant, so the line reads the same
+/// regardless of which layout the stewardship uses.
 fn write_stewardship(
     vault: &Vault,
-    _slug: &str,
+    at: NaiveDateTime,
+    slug: &str,
     path: &VaultPath,
     content: &str,
+    title: &str,
 ) -> Result<VaultPath, DomainError> {
     let entry = build_index_entry_for(path, content, NoteType::Stewardship.as_str())?;
+    let target_path = VaultPath::new(format!("{}/{slug}", cdno_core::paths::STEWARDSHIPS))?;
     let mut tx = vault.transaction()?;
     tx.write_file(path.clone(), content.to_owned());
     tx.upsert_note(entry);
+    vault.stage_created_line(&mut tx, at, "stewardship", &target_path, title, None)?;
     tx.commit()?;
     Ok(path.clone())
 }

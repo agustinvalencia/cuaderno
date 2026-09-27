@@ -26,14 +26,14 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<CreateProjectInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let today = chrono::Local::now().date_naive();
+        let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
                 vault.create_project_with_vars(
-                    today,
+                    at,
                     &input.title,
                     context,
                     input.core_question.as_deref(),

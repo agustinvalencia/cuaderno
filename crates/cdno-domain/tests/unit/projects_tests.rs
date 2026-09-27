@@ -11,6 +11,8 @@ use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 
+use super::support::FailingStore;
+
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
 }
@@ -162,7 +164,7 @@ fn create_project_writes_an_active_project_at_projects_slash_slug() {
     let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     let path = vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .expect("create succeeds");
 
     assert_eq!(path, vp("projects/icml-paper.md"));
@@ -179,7 +181,7 @@ fn create_project_with_core_question_wraps_target_in_wikilink() {
 
     let path = vault
         .create_project(
-            day(2026, 4, 28),
+            dt(2026, 4, 28, 9, 0),
             "Surrogate Model",
             Context::Work,
             Some("questions/research/surrogate-cost"),
@@ -198,7 +200,7 @@ fn create_project_indexes_the_new_note_so_active_projects_picks_it_up() {
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
-        .create_project(day(2026, 4, 28), "First", Context::Personal, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "First", Context::Personal, None)
         .expect("create succeeds");
 
     let active = vault.active_projects().expect("query succeeds");
@@ -213,10 +215,10 @@ fn create_two_same_title_projects_get_distinct_stems() {
     // collision — the last-segment wikilink fallback stays unambiguous.
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
     let first = vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .expect("first create");
     let second = vault
-        .create_project(day(2026, 4, 29), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 29, 9, 0), "ICML paper", Context::Work, None)
         .expect("second create");
     assert_eq!(first, vp("projects/icml-paper.md"));
     assert_eq!(
@@ -238,7 +240,7 @@ fn create_project_walks_past_a_taken_2_suffix_to_the_next_free() {
         VaultConfig::default(),
     );
     let path = vault
-        .create_project(day(2026, 4, 28), "Foo", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Foo", Context::Work, None)
         .expect("third same-title create");
     assert_eq!(path, vp("projects/foo-3.md"));
 }
@@ -255,7 +257,7 @@ fn create_project_seeds_parked_when_active_count_at_cap() {
         vault_with_seeded_store(&[("projects/alpha.md", &a), ("projects/beta.md", &b)], cfg);
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Gamma", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Gamma", Context::Work, None)
         .expect("create succeeds, seeded as parked");
 
     assert_eq!(path, vp("projects/_parked/gamma.md"));
@@ -283,7 +285,7 @@ fn create_project_suffixes_when_slug_collides_with_a_parked_project() {
     );
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Same Title", Context::Work, None)
         .expect("colliding-with-parked create now suffixes");
     assert_eq!(path, vp("projects/same-title-2.md"));
 }
@@ -303,7 +305,7 @@ fn create_project_does_not_count_parked_or_completed_against_cap() {
 
     // Cap is 1 and there are 0 active — should succeed.
     vault
-        .create_project(day(2026, 4, 28), "New", Context::Personal, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "New", Context::Personal, None)
         .expect("create succeeds despite parked/completed already on disk");
 }
 
@@ -314,11 +316,11 @@ fn create_project_suffixes_when_filename_already_exists() {
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
-        .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Same Title", Context::Work, None)
         .expect("first create succeeds");
 
     let path = vault
-        .create_project(day(2026, 4, 29), "Same Title", Context::Personal, None)
+        .create_project(dt(2026, 4, 29, 9, 0), "Same Title", Context::Personal, None)
         .expect("second same-title create now suffixes");
     assert_eq!(path, vp("projects/same-title-2.md"));
 }
@@ -328,13 +330,133 @@ fn create_project_substitutes_kebab_case_for_multi_word_context() {
     let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Side hustle", Context::SideProject, None)
+        .create_project(
+            dt(2026, 4, 28, 9, 0),
+            "Side hustle",
+            Context::SideProject,
+            None,
+        )
         .expect("create succeeds");
 
     let raw = store.read_file(&path).unwrap();
     assert!(
         raw.contains("context: side-project"),
         "expected kebab-case 'side-project' in YAML, got:\n{raw}"
+    );
+}
+
+#[test]
+fn project_creation_logs_one_line() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    vault
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
+        .expect("create succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-28.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec!["- **09:00**: project created [[projects/icml-paper]] \u{2014} ICML paper"],
+        "daily note:\n{daily}"
+    );
+}
+
+/// A project created directly into `_parked/` (cap already reached)
+/// still logs the canonical `projects/<slug>` form, not
+/// `projects/_parked/<slug>`: that is the form `mentions_project`
+/// matches, and the one links keep across park/unpark, so the
+/// project's own creation line must be a mention of it.
+#[test]
+fn parked_project_creation_logs_the_canonical_path() {
+    let cfg = config_with_cap(1);
+    let a = project_body("work", "active", "2026-01-10", "Alpha");
+    let (vault, _store) = vault_with_seeded_store(&[("projects/alpha.md", &a)], cfg);
+
+    vault
+        .create_project(dt(2026, 4, 28, 9, 0), "Beta", Context::Work, None)
+        .expect("create succeeds, seeded as parked");
+
+    let mentions = vault
+        .daily_log_mentions(
+            "beta",
+            chrono::NaiveDate::from_ymd_opt(2026, 4, 28).unwrap(),
+        )
+        .expect("daily_log_mentions succeeds");
+    assert_eq!(
+        mentions.len(),
+        1,
+        "creation line for a parked project should be a mention of it: {mentions:?}"
+    );
+    assert_eq!(
+        mentions[0].text,
+        "project created [[projects/beta]] \u{2014} Beta"
+    );
+}
+
+/// A title with an embedded newline collapses to a single log line
+/// via `flatten_for_log`, rather than breaking the line-oriented
+/// daily-log format.
+#[test]
+fn project_creation_line_flattens_a_multiline_title() {
+    let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    vault
+        .create_project(
+            dt(2026, 4, 28, 9, 0),
+            "ICML paper\nsecond line",
+            Context::Work,
+            None,
+        )
+        .expect("create succeeds");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-28.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines,
+        vec![
+            "- **09:00**: project created [[projects/icml-paper-second-line]] \u{2014} ICML paper second line"
+        ],
+        "daily note:\n{daily}"
+    );
+}
+
+/// The daily-log write and the project file write must commit
+/// together: if the daily-note write fails, the just-written project
+/// file must not linger (mirrors `actions_tests.rs`'s atomicity test
+/// for `add_action_with_note`).
+#[test]
+fn project_creation_is_atomic_with_its_log_line() {
+    let backing = Arc::new(MemoryVaultStore::new());
+    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(Arc::clone(&backing), 2));
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+
+    let err = vault
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::Transaction(_)), "got {err:?}");
+
+    assert!(
+        !backing.exists(&vp("projects/icml-paper.md")).unwrap(),
+        "rolled-back project note must not linger",
+    );
+    assert!(
+        !backing
+            .exists(&vp("journal/2026/daily/2026-04-28.md"))
+            .unwrap(),
+        "the failed daily-note write must leave no file behind either",
     );
 }
 
