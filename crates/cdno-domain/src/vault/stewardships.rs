@@ -485,13 +485,11 @@ fn write_stewardship(
     title: &str,
 ) -> Result<VaultPath, DomainError> {
     let entry = build_index_entry_for(path, content, NoteType::Stewardship.as_str())?;
-    let target = format!("{}/{slug}", cdno_core::paths::STEWARDSHIPS);
-    let title_flat = crate::vault::projects::state::flatten_for_log(title);
-    let log_entry = format!("stewardship created [[{target}]] \u{2014} {title_flat}");
+    let target_path = VaultPath::new(format!("{}/{slug}", cdno_core::paths::STEWARDSHIPS))?;
     let mut tx = vault.transaction()?;
     tx.write_file(path.clone(), content.to_owned());
     tx.upsert_note(entry);
-    vault.stage_daily_log(at, &log_entry, &mut tx)?;
+    vault.stage_created_line(&mut tx, at, "stewardship", &target_path, title, None)?;
     tx.commit()?;
     Ok(path.clone())
 }
