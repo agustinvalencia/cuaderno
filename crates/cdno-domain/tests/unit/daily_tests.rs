@@ -222,6 +222,127 @@ fn upsert_append_accrues_meeting_notes() {
     assert!(content.contains("- next: phase-2 wiring"));
 }
 
+// --- `## Notes` (T1, RFC 0002 §5.4) -----------------------------------
+
+#[test]
+fn notes_section_append_grows_it() {
+    let (vault, store) = make_vault();
+
+    vault
+        .upsert_daily_section(date(), DailySection::Notes, "### First\nfirst body", true)
+        .expect("first append creates the section");
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Second\nsecond body", true)
+        .expect("second append grows it");
+
+    let content = store.read_file(&path).unwrap();
+    assert!(content.contains("## Notes"));
+    let first = content.find("### First").expect("first entry present");
+    let second = content.find("### Second").expect("second entry present");
+    assert!(first < second, "entries accrue in order:\n{content}");
+    assert!(content.contains("first body"));
+    assert!(content.contains("second body"));
+}
+
+#[test]
+fn notes_section_replace_is_refused() {
+    let (vault, store) = make_vault();
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Kept\nkept body", true)
+        .expect("seed a Notes entry");
+    let before = store.read_file(&path).unwrap();
+
+    let err = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Replacement\nnope", false)
+        .expect_err("replace of a history section must be refused");
+    assert!(
+        matches!(
+            err,
+            cdno_domain::error::DomainError::HistorySectionNotReplaceable { ref section } if section == "Notes"
+        ),
+        "unexpected error variant: {err:?}"
+    );
+
+    let after = store.read_file(&path).unwrap();
+    assert_eq!(
+        before, after,
+        "file must be byte-identical after a refused replace"
+    );
+}
+
+#[test]
+fn notes_section_is_created_before_logs() {
+    let (vault, store) = make_vault();
+
+    // First append on a fresh day creates the daily note.
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Entry\nbody", true)
+        .expect("append creates the note");
+
+    let content = store.read_file(&path).unwrap();
+    let notes = content.find("## Notes").expect("Notes present");
+    let logs = content.rfind("## Logs").expect("Logs present");
+    assert!(notes < logs, "## Notes must sit before ## Logs:\n{content}");
+    // Logs is still the last level-2 section.
+    assert_eq!(
+        content.matches("\n## ").count(),
+        2,
+        "expected exactly Notes and Logs as level-2 sections:\n{content}"
+    );
+}
+
+#[test]
+fn notes_section_order_survives_planning_upsert() {
+    let (vault, store) = make_vault();
+    vault
+        .upsert_daily_section(date(), DailySection::Notes, "### Entry\nbody", true)
+        .expect("seed Notes");
+    vault
+        .log_to_daily_note(moment(), "an event")
+        .expect("seed Logs");
+
+    let path = vault
+        .upsert_daily_section(date(), DailySection::Standup, "Yesterday: shipped", false)
+        .expect("planning upsert");
+
+    let content = store.read_file(&path).unwrap();
+    let notes = content.find("## Notes").expect("Notes present");
+    let logs = content.find("## Logs").expect("Logs present");
+    assert!(notes < logs, "order must survive:\n{content}");
+    assert!(content.contains("### Entry"));
+    assert!(content.contains("body"));
+    assert!(content.contains("an event"));
+}
+
+#[test]
+fn daily_section_parses_notes() {
+    assert_eq!(
+        DailySection::from_str("notes").unwrap(),
+        DailySection::Notes
+    );
+    assert_eq!(
+        DailySection::from_str("Notes").unwrap(),
+        DailySection::Notes
+    );
+    assert_eq!(DailySection::Notes.heading(), "Notes");
+
+    let all = [
+        DailySection::Standup,
+        DailySection::Intention,
+        DailySection::Agenda,
+        DailySection::Meeting,
+        DailySection::Notes,
+    ];
+    for section in all {
+        let expected = matches!(section, DailySection::Notes);
+        assert_eq!(
+            section.is_history(),
+            expected,
+            "is_history() mismatch for {section:?}"
+        );
+    }
+}
+
 // --- DailySection allowlist ------------------------------------------
 
 #[test]
@@ -241,11 +362,12 @@ fn daily_section_parses_case_insensitively() {
 }
 
 #[test]
-fn daily_section_rejects_history_and_unknown_sections() {
-    // History sections are append-only and deliberately not on the
-    // allowlist.
+fn daily_section_rejects_logs_and_unknown_sections() {
+    // `## Logs` is append-only and is not a `DailySection` variant at
+    // all — it stays reachable only via `log_to_daily_note`. `Notes` is
+    // also history, but it *does* parse (see `daily_section_parses_notes`);
+    // `upsert_daily_section` is what refuses to replace it.
     assert!(DailySection::from_str("Logs").is_err());
-    assert!(DailySection::from_str("Notes").is_err());
     let err = DailySection::from_str("whatever").unwrap_err();
     assert!(err.contains("standup"), "error names the allowlist: {err}");
 }

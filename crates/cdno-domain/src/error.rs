@@ -129,6 +129,9 @@ pub enum DomainError {
     #[error("missing section '{0}' in note")]
     MissingSection(&'static str),
 
+    #[error("section '## {section}' is append-only and cannot be replaced")]
+    HistorySectionNotReplaceable { section: String },
+
     #[error("frontmatter has no field '{0}' to rewrite")]
     MissingFrontmatterField(String),
 

@@ -10,14 +10,18 @@
 //!
 //! # Which sections are writable
 //!
-//! The daily note is append-only for its **history**: `## Logs` (and
-//! any `## Notes` captures) only ever grow, via
-//! [`Vault::log_to_daily_note`]. The other sections — Standup,
-//! Intention, Agenda (mutable planning scratch, typically replaced) and
-//! Meeting (live notes, typically appended) — are writable via
-//! `upsert_daily_section`. [`DailySection`] is the type-level allowlist
-//! that keeps it away from the history sections, so neither the
-//! overwrite nor the append path can ever clobber the log.
+//! The daily note is append-only for its **history**: `## Logs` and
+//! `## Notes` only ever grow. `## Logs` grows via
+//! [`Vault::log_to_daily_note`]; `## Notes` (RFC 0002 §5.4) is the
+//! substance section — worked-out material that would otherwise bloat
+//! `## Logs` — and grows through `upsert_daily_section` itself, which
+//! forces `append = true` for it rather than routing it through a
+//! separate writer. The other sections — Standup, Intention, Agenda
+//! (mutable planning scratch, typically replaced) and Meeting (live
+//! notes, typically appended) — are freely writable via
+//! `upsert_daily_section`. [`DailySection`] is the type-level allowlist;
+//! [`DailySection::is_history`] is what keeps the history sections from
+//! being replaced, so the overwrite path can never clobber them.
 
 use std::str::FromStr;
 
@@ -44,19 +48,21 @@ pub struct DailyNoteView {
     pub markdown: String,
 }
 
-/// The non-history sections of a daily note that
-/// [`Vault::upsert_daily_section`] may write. `Standup`/`Intention`/
-/// `Agenda` are mutable planning scratch (typically replaced); `Meeting`
-/// accrues live meeting notes (typically appended). The append-only
-/// history sections (`## Logs`, `## Notes`) are deliberately absent —
-/// they grow only via [`Vault::log_to_daily_note`] and cannot be reached
-/// here.
+/// The sections of a daily note that [`Vault::upsert_daily_section`]
+/// may write. `Standup`/`Intention`/`Agenda` are mutable planning
+/// scratch (typically replaced); `Meeting` accrues live meeting notes
+/// (typically appended); `Notes` is the append-only substance section
+/// (RFC 0002 §5.4) — see [`DailySection::is_history`]. `## Logs` is
+/// deliberately not a variant here at all: it grows only via
+/// [`Vault::log_to_daily_note`] and cannot be reached through this
+/// allowlist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DailySection {
     Standup,
     Intention,
     Agenda,
     Meeting,
+    Notes,
 }
 
 impl DailySection {
@@ -67,7 +73,17 @@ impl DailySection {
             DailySection::Intention => "Intention",
             DailySection::Agenda => "Agenda",
             DailySection::Meeting => "Meeting",
+            DailySection::Notes => "Notes",
         }
+    }
+
+    /// Whether this section is a **history** section: append-only, like
+    /// `## Logs`. Only [`DailySection::Notes`] is — it only ever grows,
+    /// so [`Vault::upsert_daily_section`] forces `append = true` for it
+    /// and refuses a replace outright, the same invariant `## Logs`
+    /// gets by not being reachable through this enum at all.
+    pub fn is_history(self) -> bool {
+        matches!(self, DailySection::Notes)
     }
 }
 
@@ -83,8 +99,9 @@ impl FromStr for DailySection {
             "intention" => Ok(DailySection::Intention),
             "agenda" => Ok(DailySection::Agenda),
             "meeting" => Ok(DailySection::Meeting),
+            "notes" => Ok(DailySection::Notes),
             other => Err(format!(
-                "unknown daily section '{other}' (expected one of: standup, intention, agenda, meeting)"
+                "unknown daily section '{other}' (expected one of: standup, intention, agenda, meeting, notes)"
             )),
         }
     }
@@ -152,17 +169,22 @@ impl Vault {
         Ok(dates)
     }
 
-    /// Write a non-history section of the daily note for `date`,
-    /// returning the note's path.
+    /// Write a section of the daily note for `date`, returning the
+    /// note's path.
     ///
-    /// Creates the daily note (with an empty `## Logs`) if it doesn't
-    /// exist, then `ensure_section` followed by either `replace_section`
+    /// A history section (`section.is_history()` — currently just
+    /// [`DailySection::Notes`]) refuses `append: false` outright,
+    /// before anything is read or written, with
+    /// [`DomainError::HistorySectionNotReplaceable`]. Otherwise: creates
+    /// the daily note (with an empty `## Logs`) if it doesn't exist,
+    /// then `ensure_section` followed by either `replace_section`
     /// (`append: false` — the planning sections, idempotent overwrite)
-    /// or `append_to_section` (`append: true` — live meeting notes that
-    /// accrue). The `## Logs` history content is never clobbered — the
-    /// write targets `section`'s heading alone — and `move_section_to_end`
-    /// then pins `## Logs` back to the bottom so a planning section
-    /// created mid-day can't strand the history above it (#232).
+    /// or `append_to_section` (`append: true` — live meeting notes, or
+    /// `## Notes` entries, that accrue). The `## Logs` history content is
+    /// never clobbered — the write targets `section`'s heading alone —
+    /// and `move_section_to_end` then pins `## Logs` back to the bottom
+    /// so a section created mid-day (planning, or a first `## Notes`
+    /// entry) can't strand the history above it (#232).
     pub fn upsert_daily_section(
         &self,
         date: NaiveDate,
@@ -170,6 +192,12 @@ impl Vault {
         content: &str,
         append: bool,
     ) -> Result<VaultPath, DomainError> {
+        if section.is_history() && !append {
+            return Err(DomainError::HistorySectionNotReplaceable {
+                section: section.heading().to_string(),
+            });
+        }
+
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let path = daily_note_path(date)?;
         let heading = section.heading();
