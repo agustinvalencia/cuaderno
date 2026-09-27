@@ -178,6 +178,21 @@ impl ServerHandler for CuadernoServer {
     /// `.map_err(into_mcp_error)?`, and a new handler cannot forget to
     /// opt in. See [`crate::rejection`] for the classification and for
     /// why it travels through `ErrorData::data` to get here.
+    ///
+    /// # Forked from the macro, so it can drift
+    ///
+    /// The two lines before `.or_else` are a verbatim copy of what
+    /// `rmcp-macros` **1.7.0** generates (`src/tool_handler.rs`), and the
+    /// workspace depends on `rmcp = "1.7"` — a caret range. If a later
+    /// 1.x adds a step to the generated `call_tool`, this copy silently
+    /// loses it and nothing fails: dispatch still works, so the e2e
+    /// suites stay green while whatever the new step did is gone.
+    ///
+    /// **On an rmcp upgrade, re-diff this body against
+    /// `tool_handler.rs`.** Pinning `=1.7` would trade that for a manual
+    /// bump on every patch release; the cheaper guard is knowing the
+    /// coupling exists, which is why it is written down here rather than
+    /// left for the next reader to infer.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,

@@ -78,10 +78,14 @@ Three fields, and each has a job:
 `details` is the part that matters for automation. An ambiguous query hands back its **candidates as
 an array**, so a client picks from a list rather than parsing them out of a sentence.
 
-**A mechanical failure stays a JSON-RPC error** (`-32603`): a store that would not write, an index
-that would not answer, a transaction that rolled back. Nothing the caller passed can fix those, so
-there is nothing to branch on. Malformed calls — an unknown tool, unparseable arguments — are
-protocol errors too (`-32602`), per the spec.
+The test is simply **whether a different argument would change the outcome**. A slug that matches no
+note is a rejection (`not_found`), and its message carries the list of slugs that *do* exist. A note
+missing the section a tool writes into is a rejection. So is a name that is already taken.
+
+**A mechanical failure stays a JSON-RPC error** (`-32603`): a disk that would not write, permission
+denied, a contended write lock, an index that would not answer, a transaction that rolled back.
+Nothing the caller passed can fix those, so there is nothing to branch on. Malformed calls — an
+unknown tool, unparseable arguments — are protocol errors too (`-32602`), per the spec.
 
 The practical upshot for a client: **read `isError` on the result, not just the presence of `error`**.
 A rejection is a normal, expected answer to a call that was itself well-formed.

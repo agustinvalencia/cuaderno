@@ -478,3 +478,39 @@ fn an_ambiguous_action_delivers_its_candidates_as_data_not_prose() {
         "candidates should name both bullets verbatim: {texts:?}"
     );
 }
+
+#[test]
+fn a_slug_that_matches_nothing_is_a_rejection_that_lists_the_real_ones() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 30, "method": "tools/call",
+        "params": { "name": "create_project", "arguments": {
+            "title": "Surrogate Model", "context": "university"
+        }}
+    }));
+    let slug = slug_of(&mcp.read_response(30));
+
+    // A typo, which is the commonest mistake an agent makes. The first
+    // review of #560 caught this arriving as a -32603 because the domain
+    // raises it as `StoreError::NotFound` — a core forward — even though
+    // it hand-builds the message WITH the list of valid projects.
+    mcp.send(&json!({
+        "jsonrpc": "2.0", "id": 31, "method": "tools/call",
+        "params": { "name": "update_project_state", "arguments": {
+            "project": "surrogat-model", "new_state": "Anything."
+        }}
+    }));
+    let payload = rejection_payload(&mcp.read_response(31));
+
+    assert_eq!(payload["code"], json!("not_found"));
+    let message = payload["message"].as_str().expect("message field");
+    assert!(
+        message.contains(&slug),
+        "the hint naming the real project must reach the client, or the agent \
+         has nothing to correct towards — got: {message}"
+    );
+}

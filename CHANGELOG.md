@@ -20,9 +20,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   an array**, so a client picks from a list instead of parsing names out of prose — which is what
   #602's railguard needs, and the reason that issue listed this as its blocker.
 
-  The line: a variant `cdno-domain` defines itself is a business-rule rejection; one it forwards from
-  `cdno-core` is a mechanical failure and stays a protocol error, as do malformed calls. Core's
-  `ValidationError` is the one exception, since both its variants name a field the caller supplied.
+  The line is **whether a different argument would change the outcome.** A slug matching no note is a
+  rejection (`not_found`) and keeps the list of valid slugs the domain appends to it; a note missing
+  the section a tool writes into is a rejection; a name already taken is a rejection. A disk that
+  would not write, permission denied, a contended lock, an index that would not answer or a
+  rolled-back transaction are mechanical and stay protocol errors, as do malformed calls.
+
   The classifying match is **exhaustive with no wildcard**, so a new `DomainError` variant fails to
   compile until somebody decides which side it falls on. Conversion happens at one point in
   `call_tool` rather than at ~55 handler call sites, so a new handler cannot forget to opt in.

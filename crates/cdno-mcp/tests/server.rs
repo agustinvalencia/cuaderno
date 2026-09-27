@@ -247,8 +247,23 @@ fn update_project_state_states_the_length_cap_before_it_bites() {
     // "capped" alone would read as truncation, which would make an agent
     // think a long state is silently shortened rather than refused.
     assert!(
-        desc.to_lowercase().contains("reject"),
-        "the description must say over-length text is REJECTED, not truncated: {desc}"
+        desc.to_lowercase().contains("truncat"),
+        "the description must rule out silent truncation: {desc}"
+    );
+    // Named as the DEFAULT policy, not as an absolute. Rejection needs
+    // `state_overflow = reject` and a state that isn't already over the
+    // cap — `warn` accepts with an advisory, and trimming an inherited
+    // sprawl is accepted even under `reject`
+    // (cdno-domain/src/vault/projects/state.rs). An agent told "always
+    // rejected" would wrongly conclude a vault on `warn` had failed.
+    let lower = desc.to_lowercase();
+    assert!(
+        lower.contains("reject") && lower.contains("default"),
+        "the description must name `reject` as the DEFAULT policy, not an invariant: {desc}"
+    );
+    assert!(
+        lower.contains("warn"),
+        "the other policy must be named, or `warn` behaviour reads as a bug: {desc}"
     );
 }
 
