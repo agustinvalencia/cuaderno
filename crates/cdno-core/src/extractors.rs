@@ -247,6 +247,9 @@ pub fn extract_frontmatter_wikilinks(frontmatter: &serde_json::Value) -> Vec<Wik
 /// Resolve a list of [`WikilinkRaw`]s against the vault's known paths.
 ///
 /// Resolution policy, in order:
+/// 0. Anchor strip: `[[note#Heading]]` resolves as `[[note]]` — the anchor
+///    is opaque and kept only on `target_raw`. `[[#Heading]]` (no path
+///    part) is a same-note reference and never resolves.
 /// 1. Exact path match: `[[projects/foo]]` → `projects/foo.md` if
 ///    that path exists in `vault_paths`.
 /// 2. Folder-index match: `[[portfolios/foo]]` → `portfolios/foo/_index.md`
@@ -278,6 +281,20 @@ pub fn resolve_wikilinks(
 }
 
 fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
+    // 0. Strip the anchor. `[[note#Heading]]` (and Obsidian's `#^block`)
+    // addresses a place *inside* a note; the note is the path part before
+    // the first `#`. The anchor is opaque here — it stays on
+    // `LinkEntry::target_raw` for any later heading check — so a link with
+    // one resolves exactly as the bare link would. Without this every
+    // anchored link (`milestone:` fields, `## Notes` pointers, `origin:`)
+    // silently produced no edge and no backlink (RFC 0002 stage 0).
+    let target = target.split_once('#').map_or(target, |(path, _)| path);
+    if target.is_empty() {
+        // `[[#Heading]]` names a heading in the linking note itself; that
+        // is not a link to another note.
+        return None;
+    }
+
     // 1. Exact path match.
     if let Ok(vp) = VaultPath::new(format!("{target}.md"))
         && vault_paths.contains(&vp)
