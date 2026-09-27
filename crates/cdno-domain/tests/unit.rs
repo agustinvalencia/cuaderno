@@ -25,6 +25,7 @@ mod unit {
     mod set_frontmatter_tests;
     mod slug_tests;
     mod stewardships_tests;
+    mod support;
     mod templating_tests;
     mod tracking_tests;
     mod type_registry_tests;

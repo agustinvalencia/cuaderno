@@ -134,6 +134,12 @@ impl Vault {
         let entry = build_index_entry_for(&path, &content, type_name)?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+
+        // Creation is logged for every custom type (RFC 0002 §6.2, ruling
+        // 3), sharing the one creation-line helper the vault already uses
+        // for commitments (`vault/commitments.rs`).
+        self.stage_created_line(&mut tx, at, type_name, &path, title, None)?;
+
         tx.commit()?;
 
         Ok(path)

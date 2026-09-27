@@ -6,6 +6,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Creation log line for custom-type notes (T4, #617).** Creating a note of a config-defined
+  custom type now stages `<type> created [[<path>]] — <title>` to today's daily log in the same
+  transaction as the note itself, through a helper shared with the one creation line the vault
+  already wrote for commitments (`vault/commitments.rs`) — the commitment line keeps its existing
+  bare `[[<slug>]]` target and trailing `(due <date>)` suffix unchanged. Every other built-in
+  create path still writes no line; that is T5. The shared helper flattens a multi-line title to
+  one line before it renders, so a commitment's creation log line now does that too — a small
+  behavioural change for commitments, which previously logged the title verbatim.
+
 ### Changed
 
 - **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`
