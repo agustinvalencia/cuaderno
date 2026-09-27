@@ -6,6 +6,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Creation log line for custom-type notes (T4, #617).** Creating a note of a config-defined
+  custom type now stages `<type> created [[<folder>/<slug>]] — <title>` to today's daily log in
+  the same transaction as the note itself, matching the one creation line the vault already wrote
+  for commitments (`vault/commitments.rs`). Every other built-in create path still writes no
+  line; that is T5.
+
 ## [0.39.0] - 2026-09-26
 
 ### Removed

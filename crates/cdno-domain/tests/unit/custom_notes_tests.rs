@@ -2,9 +2,11 @@
 //! types (`Vault::create_custom_note*`, `list_custom_notes`).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cdno_core::config::{CustomNoteType, VaultConfig};
+use cdno_core::error::StoreError;
+use cdno_core::file_meta::FileMeta;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -345,4 +347,149 @@ fn list_refuses_a_builtin_or_unknown_type() {
         vault.list_custom_notes("gadget"),
         Err(DomainError::UnknownNoteType { .. })
     ));
+}
+
+// ---------------------------------------------------------------------
+// Creation logging (RFC 0002 T4, #617)
+// ---------------------------------------------------------------------
+
+#[test]
+fn custom_note_creation_logs_one_line() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let path = vault
+        .create_custom_note(at(), "person", "Ada Lovelace", &fields(&[("name", "Ada")]))
+        .expect("create");
+    assert_eq!(path, vp("people/ada-lovelace.md"));
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-26.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines.len(),
+        1,
+        "expected exactly one creation line:\n{daily}"
+    );
+    assert_eq!(
+        created_lines[0],
+        "- **09:00**: person created [[people/ada-lovelace]] \u{2014} Ada Lovelace",
+    );
+}
+
+/// The note write and the daily-log line are staged onto the same
+/// `VaultTransaction` and committed together (`create_custom_note_with_vars`
+/// in `crates/cdno-domain/src/vault/custom_notes.rs`), so a mid-commit
+/// failure rolls back whatever file ops already applied, leaving neither
+/// the note nor the log line behind — the same rollback path exercised for
+/// `add_action_with_note` in `actions_tests.rs`.
+///
+/// The commit order is: note file, then daily-log file (`custom_notes.rs`
+/// writes the note before calling `stage_daily_log`). A `FailingStore` set
+/// to fail on the 2nd write trips the daily-log write, so the
+/// already-written note must be rolled back too.
+#[test]
+fn custom_note_creation_is_atomic_with_its_log_line() {
+    let backing = Arc::new(MemoryVaultStore::new());
+    let store: Arc<dyn VaultStore> = Arc::new(FailingStore::new(backing.clone(), 2));
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, config_with_person()).expect("Vault::new");
+
+    let err = vault
+        .create_custom_note(at(), "person", "Ada Lovelace", &fields(&[("name", "Ada")]))
+        .expect_err("2nd write fails");
+    assert!(matches!(err, DomainError::Transaction(_)), "got {err:?}");
+
+    // The note write was rolled back...
+    assert!(
+        !backing.exists(&vp("people/ada-lovelace.md")).unwrap(),
+        "rolled-back note must not linger",
+    );
+    // ...and no daily note was created either.
+    assert!(
+        !backing
+            .exists(&vp("journal/2026/daily/2026-04-26.md"))
+            .unwrap(),
+        "daily log write must not linger",
+    );
+}
+
+/// Wraps a `MemoryVaultStore`, failing the Nth write so the transaction
+/// rollback path can be exercised at the domain level — mirrors the
+/// `FailingStore` in `actions_tests.rs` (kept local: that one is private
+/// to its own module).
+struct FailingStore {
+    inner: Arc<MemoryVaultStore>,
+    fail_on: usize,
+    count: Mutex<usize>,
+}
+
+impl FailingStore {
+    fn new(inner: Arc<MemoryVaultStore>, fail_on: usize) -> Self {
+        Self {
+            inner,
+            fail_on,
+            count: Mutex::new(0),
+        }
+    }
+
+    fn tick(&self) -> bool {
+        let mut c = self.count.lock().unwrap();
+        *c += 1;
+        *c == self.fail_on
+    }
+}
+
+impl VaultStore for FailingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(src.to_string()));
+        }
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(path.to_string()));
+        }
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        if self.tick() {
+            return Err(StoreError::PermissionDenied(dest.to_string()));
+        }
+        self.inner.import_external(src, dest)
+    }
 }

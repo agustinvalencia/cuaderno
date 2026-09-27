@@ -134,6 +134,16 @@ impl Vault {
         let entry = build_index_entry_for(&path, &content, type_name)?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+
+        // Creation is logged for every custom type (RFC 0002 §6.2, ruling
+        // 3), matching the one creation line the vault already wrote for
+        // commitments (`vault/commitments.rs`).
+        let log_entry = format!(
+            "{type_name} created [[{folder}/{slug}]] \u{2014} {title}",
+            folder = def.folder,
+        );
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
+
         tx.commit()?;
 
         Ok(path)
