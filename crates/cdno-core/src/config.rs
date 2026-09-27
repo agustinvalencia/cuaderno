@@ -865,14 +865,25 @@ impl VaultConfig {
     /// mis-shaping notes. Rejects a custom type whose:
     /// - `folder` is empty, has leading/trailing whitespace, or escapes the
     ///   vault (absolute, contains `..`, or uses a `\` separator);
+    /// - `folder`, once normalised (see below), is empty;
     /// - `folder` collides with another custom type's, or with a built-in
     ///   top-level folder ([`crate::paths::RESERVED_TOP_LEVEL_FOLDERS`]);
     /// - `template` filename contains a path separator;
     /// - `title_field`/`date_field` names a field not in `required`/`optional`.
-    pub fn validate_note_types(&self) -> Result<(), ConfigError> {
+    ///
+    /// Before the reserved-folder and duplicate-folder checks, `folder` is
+    /// normalised — a leading `./` stripped, repeated `/` collapsed, a
+    /// trailing `/` stripped — and the normalised value is written back
+    /// into `self.note_types`, so every later consumer (create paths, log
+    /// lines, reconciliation) sees the same canonical form. Without this,
+    /// `folder = "./journal/2026/daily"` would slip past the reserved-folder
+    /// check (its un-normalised top segment is `.`, not `journal`) and a
+    /// custom note could collide with, and be overwritten by, the daily
+    /// scaffold.
+    pub fn validate_note_types(&mut self) -> Result<(), ConfigError> {
         let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidNoteType(msg));
-        let mut folders: HashMap<&str, &str> = HashMap::new();
-        for (name, def) in &self.note_types {
+        let mut folders: HashMap<String, String> = HashMap::new();
+        for (name, def) in self.note_types.iter_mut() {
             let folder = def.folder.as_str();
             if folder.is_empty() {
                 return invalid(format!("note type `{name}` has an empty `folder`"));
@@ -890,14 +901,33 @@ impl VaultConfig {
                     "note type `{name}` has a `folder` that escapes the vault: `{folder}`"
                 ));
             }
-            let top = folder.split('/').next().unwrap_or(folder);
+
+            // Normalise: strip a leading `./`, collapse repeated `/`, strip
+            // a trailing `/`. Splitting on `/` and dropping empty segments
+            // does all three at once (an empty segment arises from `//`,
+            // a leading `/` — already rejected above — or a trailing `/`).
+            let without_dot_prefix = folder.strip_prefix("./").unwrap_or(folder);
+            let normalised = without_dot_prefix
+                .split('/')
+                .filter(|seg| !seg.is_empty())
+                .collect::<Vec<_>>()
+                .join("/");
+            if normalised.is_empty() {
+                return invalid(format!(
+                    "note type `{name}` `folder` `{folder}` normalises to empty"
+                ));
+            }
+            def.folder = normalised.clone();
+            let folder = normalised;
+
+            let top = folder.split('/').next().unwrap_or(folder.as_str());
             if crate::paths::RESERVED_TOP_LEVEL_FOLDERS.contains(&top) {
                 return invalid(format!(
                     "note type `{name}` `folder` `{folder}` collides with the built-in \
                      `{top}` folder — pick a different one"
                 ));
             }
-            if let Some(prev) = folders.insert(folder, name) {
+            if let Some(prev) = folders.insert(folder.clone(), name.clone()) {
                 return invalid(format!(
                     "note types `{prev}` and `{name}` both declare folder `{folder}`"
                 ));

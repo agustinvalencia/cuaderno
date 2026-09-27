@@ -16,6 +16,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::index_entry::build_index_entry_for;
+use super::super::log::flatten_for_log;
 use super::CURRENT_STATE_SECTION;
 
 impl Vault {
@@ -168,8 +169,4 @@ fn format_state_change_log_entry(slug: &str, old_state: &str, new_state: &str) -
         flatten_for_log(old_state),
         flatten_for_log(new_state),
     )
-}
-
-fn flatten_for_log(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

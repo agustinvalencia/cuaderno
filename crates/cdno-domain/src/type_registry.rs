@@ -204,7 +204,7 @@ impl<'a> TypeRegistry<'a> {
     /// may not redeclare an engine-owned key). Run once at
     /// [`Vault::new`](crate::vault::Vault::new) so a bad declaration fails at
     /// vault-open rather than mid-operation.
-    pub fn validate(config: &VaultConfig) -> Result<(), DomainError> {
+    pub fn validate(config: &mut VaultConfig) -> Result<(), DomainError> {
         config.validate_note_types()?;
         config.validate_schemas()?;
         config.validate_tracking()?;

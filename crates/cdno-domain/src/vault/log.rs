@@ -127,6 +127,81 @@ impl Vault {
         doc.move_section_to_end(&self.daily_anchor_section()?)?;
         Ok(doc.render().to_owned())
     }
+
+    /// Stage a "created" log line for a freshly-written note onto `tx`,
+    /// shared by every create path that logs its creation (RFC 0002 §6.2,
+    /// ruling 3): custom-type notes and commitments today.
+    ///
+    /// Builds `<type_name> created [[<path-without-.md>]] — <flattened
+    /// title>[ <suffix>]` and stages it via [`Vault::stage_daily_log`].
+    ///
+    /// The wikilink target is taken from `note_path` — the note's real,
+    /// already-resolved [`VaultPath`] — never assembled from a type's
+    /// declared `folder` string. A `folder` can carry a leading `./` or a
+    /// trailing `/` (core normalises those at config-validation time, but
+    /// nothing here should depend on that); building the link from the
+    /// path side-steps the question and can never produce `[[people//x]]`
+    /// or `[[./people/x]]`.
+    ///
+    /// `title` is passed through [`flatten_for_log`] so a multi-line title
+    /// can't inject extra bullets into the daily log — the whole thing
+    /// renders as exactly one `- **HH:MM**: …` line.
+    ///
+    /// `suffix`, when present, is appended verbatim after the title (used
+    /// by [`Vault::create_commitment`] for its `(due <date>)` annotation)
+    /// — it is the caller's responsibility to keep it single-line.
+    pub(crate) fn stage_created_line(
+        &self,
+        tx: &mut VaultTransaction,
+        at: NaiveDateTime,
+        type_name: &str,
+        note_path: &VaultPath,
+        title: &str,
+        suffix: Option<&str>,
+    ) -> Result<(), DomainError> {
+        let rendered = note_path.to_string();
+        let stem = rendered.strip_suffix(".md").unwrap_or(&rendered);
+        let line = build_created_line(type_name, stem, title, suffix);
+        self.stage_daily_log(at, &line, tx)?;
+        Ok(())
+    }
+}
+
+/// The one place that renders a "created" log line: `<type_name> created
+/// [[<link_target>]] — <flattened title>[ <suffix>]`.
+///
+/// [`Vault::stage_created_line`] is the usual entry point — it derives
+/// `link_target` from a note's real [`VaultPath`]. [`Vault::create_commitment`]
+/// calls this directly instead, with the bare slug it has always linked to
+/// (`commitments/<slug>.md` targets `[[<slug>]]`, not `[[commitments/<slug>]]`)
+/// — the one thing that differs between the two create paths. Either way,
+/// `title` is flattened through [`flatten_for_log`], so this is the single
+/// place a multi-line title gets collapsed to one log line.
+pub(in crate::vault) fn build_created_line(
+    type_name: &str,
+    link_target: &str,
+    title: &str,
+    suffix: Option<&str>,
+) -> String {
+    let mut line = format!(
+        "{type_name} created [[{link_target}]] \u{2014} {}",
+        flatten_for_log(title)
+    );
+    if let Some(suffix) = suffix {
+        line.push(' ');
+        line.push_str(suffix);
+    }
+    line
+}
+
+/// Collapse all whitespace in `text` — including newlines — to single
+/// spaces, so a value that may contain them (a project's `Current State`
+/// body, a custom note's or commitment's title) always renders as one
+/// log line. Without this, a multi-line title/body could inject its own
+/// `- **HH:MM**: …`-shaped lines into the `## Logs` section, forging a
+/// second bullet.
+pub(crate) fn flatten_for_log(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Vault-relative path for a daily note of the given date —

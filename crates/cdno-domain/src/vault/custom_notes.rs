@@ -136,13 +136,9 @@ impl Vault {
         tx.upsert_note(entry);
 
         // Creation is logged for every custom type (RFC 0002 §6.2, ruling
-        // 3), matching the one creation line the vault already wrote for
-        // commitments (`vault/commitments.rs`).
-        let log_entry = format!(
-            "{type_name} created [[{folder}/{slug}]] \u{2014} {title}",
-            folder = def.folder,
-        );
-        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        // 3), sharing the one creation-line helper the vault already uses
+        // for commitments (`vault/commitments.rs`).
+        self.stage_created_line(&mut tx, at, type_name, &path, title, None)?;
 
         tx.commit()?;
 

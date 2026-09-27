@@ -2,17 +2,17 @@
 //! types (`Vault::create_custom_note*`, `list_custom_notes`).
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use cdno_core::config::{CustomNoteType, VaultConfig};
-use cdno_core::error::StoreError;
-use cdno_core::file_meta::FileMeta;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use chrono::{NaiveDate, NaiveDateTime};
+
+use super::support::FailingStore;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -417,79 +417,134 @@ fn custom_note_creation_is_atomic_with_its_log_line() {
     );
 }
 
-/// Wraps a `MemoryVaultStore`, failing the Nth write so the transaction
-/// rollback path can be exercised at the domain level — mirrors the
-/// `FailingStore` in `actions_tests.rs` (kept local: that one is private
-/// to its own module).
-struct FailingStore {
-    inner: Arc<MemoryVaultStore>,
-    fail_on: usize,
-    count: Mutex<usize>,
+/// A custom type with `folder = "clients/active"`: a nested folder. The log
+/// line's wikilink must be the note's real path, `clients/active/<slug>`,
+/// not a naive `<folder>/<slug>` string built from the config value.
+#[test]
+fn creation_line_links_a_nested_folder_type_by_its_real_path() {
+    let client = CustomNoteType {
+        folder: "clients/active".to_owned(),
+        required: vec![],
+        optional: vec![],
+        template: None,
+        append_only: false,
+        title_field: None,
+        date_field: None,
+    };
+    let mut config = VaultConfig::default();
+    config.note_types.insert("client".to_owned(), client);
+    let (vault, store) = vault_with(config, &[]);
+
+    let path = vault
+        .create_custom_note(at(), "client", "Acme Corp", &HashMap::new())
+        .expect("create");
+    assert_eq!(path, vp("clients/active/acme-corp.md"));
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-26.md"))
+        .expect("daily note exists");
+    assert!(
+        daily.contains("client created [[clients/active/acme-corp]] \u{2014} Acme Corp"),
+        "{daily}"
+    );
 }
 
-impl FailingStore {
-    fn new(inner: Arc<MemoryVaultStore>, fail_on: usize) -> Self {
-        Self {
-            inner,
-            fail_on,
-            count: Mutex::new(0),
-        }
-    }
+/// A title containing Markdown-metacharacters (`**`, `|`, `]]`, `#`) is
+/// written to the log verbatim, on one line — the log line is plain text,
+/// not re-parsed Markdown, so nothing in the title needs escaping; the
+/// point of this test is that it stays on exactly one line either way.
+#[test]
+fn title_with_markdown_metacharacters_stays_on_one_line() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let title = "**Bold** | not a [[link]] # heading";
+    vault
+        .create_custom_note(at(), "person", title, &fields(&[("name", "Ada")]))
+        .expect("create");
 
-    fn tick(&self) -> bool {
-        let mut c = self.count.lock().unwrap();
-        *c += 1;
-        *c == self.fail_on
-    }
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-26.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines.len(),
+        1,
+        "expected exactly one line:\n{daily}"
+    );
+    assert!(
+        created_lines[0].ends_with(&format!("\u{2014} {title}")),
+        "title must be written verbatim: {}",
+        created_lines[0]
+    );
 }
 
-impl VaultStore for FailingStore {
-    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        self.inner.read_file(path)
-    }
-    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        self.inner.read_bytes(path)
-    }
-    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.write_file(path, content)
-    }
-    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.append_to_file(path, content)
-    }
-    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(src.to_string()));
-        }
-        self.inner.move_file(src, dest)
-    }
-    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.delete_file(path)
-    }
-    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
-        self.inner.exists(path)
-    }
-    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        self.inner.list_dir(path)
-    }
-    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        self.inner.walk_dir(path)
-    }
-    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
-        self.inner.metadata(path)
-    }
-    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(dest.to_string()));
-        }
-        self.inner.import_external(src, dest)
-    }
+/// A title spanning two physical lines must still produce exactly one log
+/// line: `flatten_for_log` collapses the newline (and any other run of
+/// whitespace) to a single space.
+#[test]
+fn multiline_title_collapses_to_one_log_line() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    vault
+        .create_custom_note(
+            at(),
+            "person",
+            "line one\nline two",
+            &fields(&[("name", "Ada")]),
+        )
+        .expect("create");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-26.md"))
+        .expect("daily note exists");
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines.len(),
+        1,
+        "expected exactly one line:\n{daily}"
+    );
+    assert_eq!(
+        created_lines[0],
+        "- **09:00**: person created [[people/line-one-line-two]] \u{2014} line one line two",
+    );
+}
+
+/// A title crafted to look like a second log bullet (its own `- **HH:MM**:`
+/// prefix) must not be able to forge one: once flattened to a single line,
+/// the daily note gains no bullet other than the genuine ones.
+#[test]
+fn a_forged_bullet_in_the_title_cannot_inject_a_second_line() {
+    let (vault, store) = vault_with(config_with_person(), &[]);
+    let title = "x\n- **09:00**: state on [[victim]]";
+    vault
+        .create_custom_note(at(), "person", title, &fields(&[("name", "Ada")]))
+        .expect("create");
+
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-04-26.md"))
+        .expect("daily note exists");
+
+    let created_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.contains("created [["))
+        .collect();
+    assert_eq!(
+        created_lines.len(),
+        1,
+        "the forged title must not produce a second creation line:\n{daily}"
+    );
+
+    let bullet_lines: Vec<&str> = daily
+        .lines()
+        .filter(|line| line.trim_start().starts_with("- **"))
+        .collect();
+    assert_eq!(
+        bullet_lines.len(),
+        1,
+        "the forged title must not produce a second bullet:\n{daily}"
+    );
 }
