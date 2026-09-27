@@ -13,27 +13,59 @@ never runs.
 
 ## Dependency graph
 
-```
-T0  anchor-aware links ─────────┐
-T1  DailySection::Notes ──┐     │
-T2  note_to_daily ◄───────┴─────┤
-T3  read_note (domain) ─────────┤
-T4  creation line, custom ──┐   │
-T5  creation line, built-ins│   │
-T6  body + origin on create ◄┘  │
-T7  revise_note ◄── T3          │
-T8  MCP read_note ◄── T3        │
-T9  MCP revise_note ◄── T7      │
-T10 MCP note_to_daily ◄── T2    │
-T11 CLI note revise ◄── T7      │
-T12 CLI log note ◄── T2         │
-T13 init writes the type        │
-T14 example type + template ◄── T6
-T15 method text (MCP) ◄── T8, T9, T10, T13
-T16 design docs ◄── T0, T15
-T17 docs-site ◄── T13, T14
-T18 trial ◄── everything above
-T19 decision ◄── T18
+```mermaid
+flowchart LR
+    subgraph S0["Stage 0"]
+        T0["T0 anchor-aware links"]
+    end
+    subgraph S1["Stage 1 — generic tooling"]
+        T1["T1 DailySection::Notes"]
+        T2["T2 note_to_daily"]
+        T3["T3 read_note (domain)"]
+        T4["T4 creation line, custom types"]
+        T5["T5 creation line, built-ins"]
+        T6["T6 body + origin on create"]
+        T7["T7 revise_note"]
+        T8["T8 MCP read_note"]
+        T9["T9 MCP revise_note"]
+        T10["T10 MCP note_to_daily"]
+        T11["T11 CLI note revise"]
+        T12["T12 CLI log note"]
+    end
+    subgraph S2["Stage 2 — method text and the type"]
+        T13["T13 init writes the type"]
+        T14["T14 example type + template"]
+        T15["T15 method text (MCP)"]
+        T16["T16 design docs"]
+        T17["T17 docs-site"]
+    end
+    subgraph S3["Stage 3 and 4"]
+        T18["T18 trial"]
+        T19["T19 decision"]
+    end
+
+    T0 --> T2
+    T0 --> T6
+    T1 --> T2
+    T3 --> T7
+    T3 --> T8
+    T4 --> T6
+    T2 --> T10
+    T2 --> T12
+    T7 --> T9
+    T7 --> T11
+    T6 --> T14
+    T8 --> T15
+    T9 --> T15
+    T10 --> T15
+    T13 --> T15
+    T13 --> T17
+    T14 --> T17
+    T0 --> T16
+    T15 --> T16
+    S1 --> T18
+    S2 --> T18
+    T18 --> T19
 ```
 
 Stage 0 is T0. Stage 1 is T1 to T12. Stage 2 is T13 to T17. Stage 3 is T18, stage 4 is T19.
