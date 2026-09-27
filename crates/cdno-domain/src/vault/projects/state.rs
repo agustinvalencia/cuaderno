@@ -170,6 +170,8 @@ fn format_state_change_log_entry(slug: &str, old_state: &str, new_state: &str) -
     )
 }
 
-fn flatten_for_log(text: &str) -> String {
+/// Collapse every whitespace run (newlines included) to a single space,
+/// so free text fits on one daily-log line. Shared with `revise_note`.
+pub(in crate::vault) fn flatten_for_log(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }

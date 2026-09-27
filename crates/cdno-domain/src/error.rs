@@ -212,6 +212,19 @@ pub enum DomainError {
     )]
     UnknownField { note_type: String, field: String },
 
+    #[error("note '{path}' cannot be revised: {reason}")]
+    NoteNotRevisable { path: String, reason: String },
+
+    #[error(
+        "note '{path}' changed since it was read (expected hash {expected}, found {actual}) \u{2014} \
+         read it again and reapply the revision"
+    )]
+    StaleRevision {
+        path: String,
+        expected: String,
+        actual: String,
+    },
+
     #[error("no built-in template for variant '{variant}' of '{note_type}'")]
     UnknownTemplateVariant { note_type: String, variant: String },
 
