@@ -13,6 +13,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
+use super::log::flatten_for_log;
 use super::slug::slugify;
 
 /// One uncategorised capture under `inbox/` awaiting triage.
@@ -113,7 +114,7 @@ impl Vault {
         // whitespace so a multi-line capture stays a single log line.
         let raw = self.store.read_file(&path)?;
         let (_fm, body) = Frontmatter::parse(&raw)?;
-        let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let text = flatten_for_log(body);
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         tx.delete_file(path.clone());

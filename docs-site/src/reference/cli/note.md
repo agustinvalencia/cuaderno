@@ -30,6 +30,9 @@ Plus the [global options](overview.md#global-options). With `--json`, emits a `{
 result. If the type ships no template (`.cuaderno/templates/<type>.md`), a minimal note is
 synthesised from the declared fields plus a `# <title>` heading.
 
+Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again
+by hand.
+
 ## `cdno note list <type>`
 
 List every note of custom type `<type>`, by path.

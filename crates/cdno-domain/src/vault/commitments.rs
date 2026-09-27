@@ -179,9 +179,16 @@ impl Vault {
         let content = self.scaffold("commitment", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Commitment.as_str())?;
 
-        let log_entry = format!(
-            "commitment created [[{slug}]] \u{2014} {title} (due {due})",
-            due = due.format("%Y-%m-%d")
+        // Built through the shared line-flattening helper (RFC 0002 §6.2
+        // ruling 3 / T4 review), keeping the bare `[[<slug>]]` target and
+        // trailing `(due …)` suffix exactly as before — a commitment links
+        // by its slug, not by `commitments/<slug>`.
+        let due_suffix = format!("(due {})", due.format("%Y-%m-%d"));
+        let log_entry = super::log::build_created_line(
+            NoteType::Commitment.as_str(),
+            &slug,
+            title,
+            Some(&due_suffix),
         );
 
         tx.write_file(path.clone(), content);
