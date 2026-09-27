@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
@@ -80,16 +80,17 @@ impl Vault {
     /// `[[…]]` for the frontmatter. Pass `None` to write
     /// `core_question: null`.
     ///
-    /// `today` is taken as a parameter so tests can pin the `created`
-    /// date; production callers pass `chrono::Local::now().date_naive()`.
+    /// `at` is taken as a parameter (matching `create_commitment`) so
+    /// tests can pin the `created` date and the creation-log line's
+    /// time-of-day; production callers pass `chrono::Local::now()`.
     pub fn create_project(
         &self,
-        today: NaiveDate,
+        at: NaiveDateTime,
         title: &str,
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_project_with_vars(today, title, context, core_question, &HashMap::new())
+        self.create_project_with_vars(at, title, context, core_question, &HashMap::new())
     }
 
     /// As [`create_project`](Self::create_project), but with caller-supplied
@@ -98,12 +99,13 @@ impl Vault {
     /// no-vars wrapper above.
     pub fn create_project_with_vars(
         &self,
-        today: NaiveDate,
+        at: NaiveDateTime,
         title: &str,
         context: Context,
         core_question: Option<&str>,
         prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
+        let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active = self.active_projects()?;
         let cap = self.config.vault.max_active_projects as usize;
@@ -155,15 +157,6 @@ impl Vault {
         let content = self.scaffold("project", None, &mut ctx)?;
         let entry_meta = build_index_entry_for(&path, &content, NoteType::Project.as_str())?;
 
-        // The creation line needs a time-of-day, but `create_project`
-        // only takes a `NaiveDate` (`today`) — every caller already
-        // discards the wall-clock time it may hold before reaching
-        // here (see `cdno-cli/src/commands/project.rs::create`, which
-        // has a full `at: NaiveDateTime` and passes `at.date()`).
-        // Rather than widen the signature, stamp the creation line at
-        // midnight on `today`, matching the `--at`-as-bare-date
-        // convention already used for `cdno track` (#618 note in
-        // `stage_daily_log`'s call sites).
         let target = path.to_string();
         let target = target.strip_suffix(".md").unwrap_or(&target);
         let log_entry = format!(
@@ -173,7 +166,7 @@ impl Vault {
 
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
-        self.stage_daily_log(today.and_time(chrono::NaiveTime::MIN), &log_entry, &mut tx)?;
+        self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(path)

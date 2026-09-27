@@ -76,7 +76,12 @@ fn create_uses_a_custom_type_template_override_from_the_store() {
     let (vault, store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -139,7 +144,12 @@ fn create_falls_back_to_the_builtin_template_when_no_custom_exists() {
     let (vault, store) = vault_with(&[]);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -162,7 +172,12 @@ fn created_notes_have_no_unsubstituted_placeholders() {
     let at = today().and_hms_opt(9, 0, 0).unwrap();
 
     let project = vault
-        .create_project(today(), "Proj", Context::Work, Some("questions/q"))
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            Some("questions/q"),
+        )
         .expect("project");
     let action = vault
         .add_action_with_note(at, "proj", "Do the thing", EnergyLevel::Deep)
@@ -389,7 +404,12 @@ fn custom_template_renders_a_static_config_variable() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -410,7 +430,12 @@ fn contextual_variable_beats_a_config_variable_of_the_same_name() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -433,10 +458,20 @@ fn config_variables_do_not_leak_into_templates_that_do_not_use_them() {
     );
 
     let p1 = plain
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
     let p2 = withcfg
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
 
     assert_eq!(
@@ -464,7 +499,7 @@ fn create_with_vars_renders_a_prompted_variable() {
 
     let path = vault
         .create_project_with_vars(
-            today(),
+            today().and_hms_opt(9, 0, 0).unwrap(),
             "My Proj",
             Context::Work,
             None,
@@ -493,7 +528,12 @@ fn create_without_a_prompted_value_errors_with_unresolved_prompts() {
     );
 
     let err = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect_err("should error on the unresolved prompt");
     match err {
         DomainError::UnresolvedPrompts { note_type, names } => {
@@ -519,7 +559,12 @@ fn a_static_default_satisfies_a_prompted_variable_without_a_value() {
     );
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("static default should resolve the prompt");
     let content = store.read_file(&path).unwrap();
     assert!(content.contains("ticket: DEFAULT-0"), "{content}");
@@ -718,7 +763,12 @@ fn promote_action_with_vars_renders_a_prompted_variable() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/action.md", custom)], config);
     let at = today().and_hms_opt(9, 0, 0).unwrap();
     vault
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .expect("project");
     vault
         .add_action(at, "proj", "Profile the assembly", EnergyLevel::Deep)
@@ -744,7 +794,12 @@ fn add_action_with_note_and_vars_renders_a_prompted_variable() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/action.md", custom)], config);
     let at = today().and_hms_opt(9, 0, 0).unwrap();
     vault
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .expect("project");
 
     let path = vault
@@ -1141,7 +1196,12 @@ fn every_supplied_placeholder_is_filled_by_the_create_path() {
     // prerequisite panics loudly rather than silently skipping a type.
     let paths = vec![
         vault
-            .create_project(today(), "Proj", Context::Work, Some("questions/q"))
+            .create_project(
+                today().and_hms_opt(9, 0, 0).unwrap(),
+                "Proj",
+                Context::Work,
+                Some("questions/q"),
+            )
             .expect("project"),
         vault
             .add_action_with_note(at, "proj", "Do the thing", EnergyLevel::Deep)
@@ -1578,7 +1638,12 @@ fn declared_string_default_populates_at_create() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -1704,7 +1769,12 @@ fn a_static_variable_wins_over_a_declared_schema_default_of_the_same_name() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -1734,7 +1804,12 @@ fn an_extra_required_desugared_field_renders_null_at_create() {
     let (vault, store) = vault_with_config(&[(".cuaderno/templates/project.md", custom)], config);
 
     let path = vault
-        .create_project(today(), "My Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "My Proj",
+            Context::Work,
+            None,
+        )
         .expect("create project");
     let content = store.read_file(&path).unwrap();
 
@@ -1754,10 +1829,20 @@ fn a_vault_without_schema_fields_is_unaffected_by_the_defaults_load() {
     let (also, also_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
 
     let p1 = plain
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
     let p2 = also
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
     assert_eq!(
         plain_store.read_file(&p1).unwrap(),
@@ -1815,10 +1900,20 @@ fn a_declared_default_is_inert_when_the_template_does_not_reference_it() {
     let (plain, plain_store) = vault_with(&[(".cuaderno/templates/project.md", custom)]);
 
     let p1 = with_field
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
     let p2 = plain
-        .create_project(today(), "Proj", Context::Work, None)
+        .create_project(
+            today().and_hms_opt(9, 0, 0).unwrap(),
+            "Proj",
+            Context::Work,
+            None,
+        )
         .unwrap();
 
     let content = wf_store.read_file(&p1).unwrap();

@@ -163,7 +163,7 @@ fn create_project_writes_an_active_project_at_projects_slash_slug() {
     let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     let path = vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .expect("create succeeds");
 
     assert_eq!(path, vp("projects/icml-paper.md"));
@@ -180,7 +180,7 @@ fn create_project_with_core_question_wraps_target_in_wikilink() {
 
     let path = vault
         .create_project(
-            day(2026, 4, 28),
+            dt(2026, 4, 28, 9, 0),
             "Surrogate Model",
             Context::Work,
             Some("questions/research/surrogate-cost"),
@@ -199,7 +199,7 @@ fn create_project_indexes_the_new_note_so_active_projects_picks_it_up() {
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
-        .create_project(day(2026, 4, 28), "First", Context::Personal, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "First", Context::Personal, None)
         .expect("create succeeds");
 
     let active = vault.active_projects().expect("query succeeds");
@@ -214,10 +214,10 @@ fn create_two_same_title_projects_get_distinct_stems() {
     // collision — the last-segment wikilink fallback stays unambiguous.
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
     let first = vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .expect("first create");
     let second = vault
-        .create_project(day(2026, 4, 29), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 29, 9, 0), "ICML paper", Context::Work, None)
         .expect("second create");
     assert_eq!(first, vp("projects/icml-paper.md"));
     assert_eq!(
@@ -239,7 +239,7 @@ fn create_project_walks_past_a_taken_2_suffix_to_the_next_free() {
         VaultConfig::default(),
     );
     let path = vault
-        .create_project(day(2026, 4, 28), "Foo", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Foo", Context::Work, None)
         .expect("third same-title create");
     assert_eq!(path, vp("projects/foo-3.md"));
 }
@@ -256,7 +256,7 @@ fn create_project_seeds_parked_when_active_count_at_cap() {
         vault_with_seeded_store(&[("projects/alpha.md", &a), ("projects/beta.md", &b)], cfg);
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Gamma", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Gamma", Context::Work, None)
         .expect("create succeeds, seeded as parked");
 
     assert_eq!(path, vp("projects/_parked/gamma.md"));
@@ -284,7 +284,7 @@ fn create_project_suffixes_when_slug_collides_with_a_parked_project() {
     );
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Same Title", Context::Work, None)
         .expect("colliding-with-parked create now suffixes");
     assert_eq!(path, vp("projects/same-title-2.md"));
 }
@@ -304,7 +304,7 @@ fn create_project_does_not_count_parked_or_completed_against_cap() {
 
     // Cap is 1 and there are 0 active — should succeed.
     vault
-        .create_project(day(2026, 4, 28), "New", Context::Personal, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "New", Context::Personal, None)
         .expect("create succeeds despite parked/completed already on disk");
 }
 
@@ -315,11 +315,11 @@ fn create_project_suffixes_when_filename_already_exists() {
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
-        .create_project(day(2026, 4, 28), "Same Title", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Same Title", Context::Work, None)
         .expect("first create succeeds");
 
     let path = vault
-        .create_project(day(2026, 4, 29), "Same Title", Context::Personal, None)
+        .create_project(dt(2026, 4, 29, 9, 0), "Same Title", Context::Personal, None)
         .expect("second same-title create now suffixes");
     assert_eq!(path, vp("projects/same-title-2.md"));
 }
@@ -329,7 +329,12 @@ fn create_project_substitutes_kebab_case_for_multi_word_context() {
     let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     let path = vault
-        .create_project(day(2026, 4, 28), "Side hustle", Context::SideProject, None)
+        .create_project(
+            dt(2026, 4, 28, 9, 0),
+            "Side hustle",
+            Context::SideProject,
+            None,
+        )
         .expect("create succeeds");
 
     let raw = store.read_file(&path).unwrap();
@@ -344,7 +349,7 @@ fn project_creation_logs_one_line() {
     let (vault, store) = vault_with_seeded_store(&[], VaultConfig::default());
 
     vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .expect("create succeeds");
 
     let daily = store
@@ -356,7 +361,7 @@ fn project_creation_logs_one_line() {
         .collect();
     assert_eq!(
         created_lines,
-        vec!["- **00:00**: project created [[projects/icml-paper]] \u{2014} ICML paper"],
+        vec!["- **09:00**: project created [[projects/icml-paper]] \u{2014} ICML paper"],
         "daily note:\n{daily}"
     );
 }
@@ -370,7 +375,7 @@ fn parked_project_creation_logs_the_parked_path() {
     let (vault, store) = vault_with_seeded_store(&[("projects/alpha.md", &a)], cfg);
 
     vault
-        .create_project(day(2026, 4, 28), "Beta", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "Beta", Context::Work, None)
         .expect("create succeeds, seeded as parked");
 
     let daily = store
@@ -395,7 +400,7 @@ fn project_creation_is_atomic_with_its_log_line() {
         Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
 
     let err = vault
-        .create_project(day(2026, 4, 28), "ICML paper", Context::Work, None)
+        .create_project(dt(2026, 4, 28, 9, 0), "ICML paper", Context::Work, None)
         .unwrap_err();
     assert!(matches!(err, DomainError::Transaction(_)), "got {err:?}");
 
