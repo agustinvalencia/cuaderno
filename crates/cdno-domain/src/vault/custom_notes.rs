@@ -19,6 +19,17 @@ use super::index_entry::build_index_entry_for;
 use super::slug::slugify;
 use crate::error::DomainError;
 
+/// The contextual placeholders the create path fills itself, before any
+/// caller-supplied `fields`: `{{title}}`, `{{slug}}`, `{{created}}`,
+/// `{{date}}` (`created` and `date` share one value — the creation date).
+/// A declared `required` field whose name is in this set is satisfied by
+/// that engine value even when the caller supplies nothing for it — the
+/// engine, not the caller, is the one who "supplies" it, so demanding it
+/// in `fields` too would ask the caller to repeat what create already
+/// knows. A `required` field outside this set is unaffected: it must
+/// still come from the caller.
+const ENGINE_SUPPLIED_FIELDS: &[&str] = &["title", "slug", "created", "date"];
+
 impl Vault {
     /// Create a note of a config-defined custom type `type_name`. Convenience
     /// wrapper over [`create_custom_note_with_vars`](Self::create_custom_note_with_vars)
@@ -39,7 +50,11 @@ impl Vault {
     /// The note is written to `<folder>/<slug(title)>.md`, its frontmatter shaped
     /// by the type's declared fields. `fields` maps frontmatter field → value;
     /// every key must be a declared `required`/`optional` field, and every
-    /// `required` field must be present and non-empty.
+    /// `required` field must end up with a non-empty value — either supplied
+    /// by the caller, or, for a name in [`ENGINE_SUPPLIED_FIELDS`] (`title`,
+    /// `slug`, `created`, `date`), filled from the value the create path
+    /// itself computes. A vault declaring `required = ["created"]` is
+    /// declaring "stamp this", not "make the caller repeat today's date".
     ///
     /// Errors:
     /// - [`DomainError::UnknownNoteType`] — `type_name` isn't a config type
@@ -80,8 +95,7 @@ impl Vault {
             });
         };
 
-        // Every supplied field must be declared; every required field must be
-        // present and non-empty.
+        // Every supplied field must be declared.
         for key in fields.keys() {
             if !def.required.contains(key) && !def.optional.contains(key) {
                 return Err(DomainError::UnknownField {
@@ -90,9 +104,35 @@ impl Vault {
                 });
             }
         }
+
+        // Computed ahead of the required-field check (rather than after, as
+        // in the original ordering) so an engine-supplied name can be
+        // resolved against its real value below.
+        let date = at.date().format("%Y-%m-%d").to_string();
+        // Globally-unique stem (#225) so backlinks stay resolvable.
+        let slug = self.unique_slug(&slugify(title))?;
+
+        // Every `required` field must end up with a non-empty value: the
+        // caller's, or, for a name in `ENGINE_SUPPLIED_FIELDS`, the value
+        // computed above.
+        let engine_value = |name: &str| -> Option<&str> {
+            match name {
+                "title" => Some(title),
+                "slug" => Some(slug.as_str()),
+                "created" | "date" => Some(date.as_str()),
+                _ => None,
+            }
+        };
+        debug_assert!(
+            ENGINE_SUPPLIED_FIELDS
+                .iter()
+                .all(|name| engine_value(name).is_some()),
+            "ENGINE_SUPPLIED_FIELDS and engine_value must stay in lock-step"
+        );
         for req in &def.required {
-            let present = fields.get(req).is_some_and(|v| !v.trim().is_empty());
-            if !present {
+            let caller_supplied = fields.get(req).is_some_and(|v| !v.trim().is_empty());
+            let engine_supplied = engine_value(req).is_some();
+            if !caller_supplied && !engine_supplied {
                 return Err(DomainError::MissingRequiredField {
                     note_type: type_name.to_owned(),
                     field: req.clone(),
@@ -100,8 +140,6 @@ impl Vault {
             }
         }
 
-        // Globally-unique stem (#225) so backlinks stay resolvable.
-        let slug = self.unique_slug(&slugify(title))?;
         let path = VaultPath::new(format!("{}/{slug}.md", def.folder))?;
         if self.store.exists(&path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -109,7 +147,6 @@ impl Vault {
             )));
         }
 
-        let date = at.date().format("%Y-%m-%d").to_string();
         let mut ctx = VariableContext::new();
         ctx.set_contextual("title", title);
         ctx.set_contextual("slug", &slug);
