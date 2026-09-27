@@ -115,6 +115,7 @@ impl Vault {
 
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+        self.stage_created_line(&mut tx, at, "question", &path, text, None)?;
         tx.commit()?;
 
         Ok(path)

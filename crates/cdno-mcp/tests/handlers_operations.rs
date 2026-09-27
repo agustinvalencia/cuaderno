@@ -336,7 +336,7 @@ async fn update_project_state_rewrites_section_and_logs() {
         seed_today_daily(&store);
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 None,
@@ -371,7 +371,7 @@ async fn update_project_state_reject_mode_surfaces_an_error_over_the_limit() {
         seed_today_daily(&store);
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 None,
@@ -417,7 +417,7 @@ async fn update_project_state_warn_mode_folds_the_advisory_into_the_message() {
         seed_today_daily(&store);
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 None,
@@ -453,7 +453,7 @@ async fn update_project_state_warn_mode_folds_the_advisory_into_the_message() {
 fn seed_active_project(vault: &Vault) {
     vault
         .create_project(
-            moment(2026, 5, 1, 9, 0).date(),
+            moment(2026, 5, 1, 9, 0),
             "Surrogate model",
             Context::Work,
             None,
@@ -1124,7 +1124,7 @@ async fn create_project_at_the_cap_is_seeded_parked() {
     // rejected — it's created parked, since the cap is enforced on
     // activation, not creation.
     let (server, store) = server_with(|vault, _s| {
-        let today = moment(2026, 1, 1, 9, 0).date();
+        let today = moment(2026, 1, 1, 9, 0);
         for i in 1..=5 {
             vault
                 .create_project(today, &format!("Project {i}"), Context::Work, None)
@@ -1312,12 +1312,7 @@ async fn create_stewardship_honours_the_expanded_flag() {
 async fn park_project_moves_it_to_parked() {
     let (server, store) = server_with(|vault, _s| {
         vault
-            .create_project(
-                moment(2026, 1, 1, 9, 0).date(),
-                "Widget",
-                Context::Work,
-                None,
-            )
+            .create_project(moment(2026, 1, 1, 9, 0), "Widget", Context::Work, None)
             .unwrap();
     });
 
@@ -1340,7 +1335,7 @@ async fn park_project_moves_it_to_parked() {
 #[tokio::test]
 async fn activate_project_brings_it_back() {
     let (server, store) = server_with(|vault, _s| {
-        let today = moment(2026, 1, 1, 9, 0).date();
+        let today = moment(2026, 1, 1, 9, 0);
         vault
             .create_project(today, "Widget", Context::Work, None)
             .unwrap();
@@ -1369,7 +1364,7 @@ async fn activate_project_brings_it_back() {
 async fn activate_project_at_the_cap_errors() {
     // 5 active (the cap) + 1 auto-parked; activating the parked one fails.
     let (server, _store) = server_with(|vault, _s| {
-        let today = moment(2026, 1, 1, 9, 0).date();
+        let today = moment(2026, 1, 1, 9, 0);
         for i in 1..=5 {
             vault
                 .create_project(today, &format!("P{i}"), Context::Work, None)
@@ -1512,7 +1507,7 @@ fn server_with_project() -> (CuadernoServer, Arc<dyn VaultStore>) {
     server_with(|vault, _s| {
         vault
             .create_project(
-                moment(2026, 5, 1, 9, 0).date(),
+                moment(2026, 5, 1, 9, 0),
                 "Surrogate model",
                 Context::Work,
                 None,

@@ -8,6 +8,19 @@ use cdno_core::paths;
 /// compile time so the binary needs no companion files at runtime.
 const DEFAULT_CONFIG_TOML: &str = include_str!("../../templates/default_config.toml");
 
+/// The `[note_types.concept]` declaration `cdno init` appends to a new
+/// vault's config (RFC 0002 §6.1). Kept in one place so `examples/note-types/
+/// concept/config.toml` (T14) can be tested against it byte-for-byte rather
+/// than drifting from a second hand-copied block.
+pub const CONCEPT_TYPE_BLOCK: &str = r#"# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
+[note_types.concept]
+folder = "concepts"
+required = ["created"]
+optional = ["tags", "origin"]
+template = "concept.md"
+"#;
+
 /// Default note templates dumped into `.cuaderno/templates/` at init.
 ///
 /// Each entry is `(filename, content)`. The user can edit or delete
@@ -49,8 +62,15 @@ pub fn run(target: &Path) -> Result<()> {
             .with_context(|| format!("creating directory {}", dir.display()))?;
     }
 
+    // The concept type (RFC 0002 §6.1) is not a built-in, so its folder
+    // isn't in `paths::init_dirs` — create it separately, alongside them.
+    let concepts_dir = target.join("concepts");
+    fs::create_dir_all(&concepts_dir)
+        .with_context(|| format!("creating directory {}", concepts_dir.display()))?;
+
     let config_path = target.join(paths::CONFIG_FILE);
-    fs::write(&config_path, DEFAULT_CONFIG_TOML)
+    let config_contents = format!("{DEFAULT_CONFIG_TOML}{CONCEPT_TYPE_BLOCK}");
+    fs::write(&config_path, config_contents)
         .with_context(|| format!("writing default config to {}", config_path.display()))?;
 
     let templates_dir = target.join(paths::TEMPLATES_DIR);

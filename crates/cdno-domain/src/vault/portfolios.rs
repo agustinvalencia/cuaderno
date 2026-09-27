@@ -184,6 +184,12 @@ impl Vault {
         let entry = build_index_entry_for(&path, &content, NoteType::Portfolio.as_str())?;
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry);
+        // Folder/slug form (`portfolios/<slug>`, not `.../_index.md`) is
+        // the log-line convention: the resolver's rule 1b maps it to
+        // `_index.md`, matching the pointer the daily-log writer and
+        // `file_to_portfolio` already emit.
+        let target_path = VaultPath::new(format!("{}/{slug}", cdno_core::paths::PORTFOLIOS))?;
+        self.stage_created_line(&mut tx, at, "portfolio", &target_path, question, None)?;
         tx.commit()?;
 
         Ok(path)

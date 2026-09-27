@@ -26,14 +26,14 @@ impl CuadernoServer {
         &self,
         Parameters(input): Parameters<CreateProjectInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let today = chrono::Local::now().date_naive();
+        let at = chrono::Local::now().naive_local();
         let context = Context::from_str(&input.context)
             .map_err(|e| invalid_argument("context", &e.to_string()))?;
         let path = self
             .with_vault(move |vault| {
                 let vars = input.vars.unwrap_or_default();
                 vault.create_project_with_vars(
-                    today,
+                    at,
                     &input.title,
                     context,
                     input.core_question.as_deref(),
@@ -137,7 +137,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — every `required` field must be present, and each key must be a declared `required`/`optional` field. The valid types and their fields come from the vault's config, not this schema. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand."
+        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — each key must be a declared `required`/`optional` field. A required `title`, `slug`, `created` or `date` is filled in by the engine when omitted from `fields`, and may be overridden with a non-blank value (for example, to backdate `created`); every other required field must be supplied. The valid types and their fields come from the vault's config, not this schema. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand."
     )]
     pub async fn create_custom_note(
         &self,

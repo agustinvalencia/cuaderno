@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
@@ -80,16 +80,17 @@ impl Vault {
     /// `[[…]]` for the frontmatter. Pass `None` to write
     /// `core_question: null`.
     ///
-    /// `today` is taken as a parameter so tests can pin the `created`
-    /// date; production callers pass `chrono::Local::now().date_naive()`.
+    /// `at` is taken as a parameter (matching `create_commitment`) so
+    /// tests can pin the `created` date and the creation-log line's
+    /// time-of-day; production callers pass `chrono::Local::now()`.
     pub fn create_project(
         &self,
-        today: NaiveDate,
+        at: NaiveDateTime,
         title: &str,
         context: Context,
         core_question: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
-        self.create_project_with_vars(today, title, context, core_question, &HashMap::new())
+        self.create_project_with_vars(at, title, context, core_question, &HashMap::new())
     }
 
     /// As [`create_project`](Self::create_project), but with caller-supplied
@@ -98,12 +99,13 @@ impl Vault {
     /// no-vars wrapper above.
     pub fn create_project_with_vars(
         &self,
-        today: NaiveDate,
+        at: NaiveDateTime,
         title: &str,
         context: Context,
         core_question: Option<&str>,
         prompted: &HashMap<String, String>,
     ) -> Result<VaultPath, DomainError> {
+        let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let active = self.active_projects()?;
         let cap = self.config.vault.max_active_projects as usize;
@@ -137,7 +139,7 @@ impl Vault {
         }
 
         let path = if status == ProjectStatus::Active {
-            active_path
+            active_path.clone()
         } else {
             parked_path
         };
@@ -157,6 +159,15 @@ impl Vault {
 
         tx.write_file(path.clone(), content);
         tx.upsert_note(entry_meta);
+        // Always log the canonical `projects/<slug>` form, never the
+        // parked path a capped-out create lands in: `mentions_project`
+        // only matches the bare or `projects/<slug>` shapes, and a
+        // project's own creation line should be a mention of it. The
+        // link also keeps resolving across park/unpark (the resolver's
+        // last-segment rule finds the file wherever it sits), so the
+        // parked path buys nothing and would break the very mention it
+        // is meant to record.
+        self.stage_created_line(&mut tx, at, "project", &active_path, title, None)?;
         tx.commit()?;
 
         Ok(path)

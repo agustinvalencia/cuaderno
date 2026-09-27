@@ -7,6 +7,7 @@
 use std::fs;
 
 use cdno_cli::commands::init;
+use cdno_cli::commands::init::CONCEPT_TYPE_BLOCK;
 use chrono::{Datelike, Local};
 use tempfile::tempdir;
 
@@ -85,6 +86,44 @@ fn run_refuses_when_cuaderno_dir_already_exists() {
     let err = init::run(dir.path()).expect_err("re-init must fail");
     let msg = format!("{err}");
     assert!(msg.contains("already exists"), "unexpected error: {msg}");
+}
+
+#[test]
+fn init_writes_concept_type_and_folder() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init succeeds on fresh dir");
+
+    let config =
+        fs::read_to_string(dir.path().join(".cuaderno/config.toml")).expect("config.toml present");
+    assert!(config.contains("[note_types.concept]"));
+    assert!(config.contains(r#"folder = "concepts""#));
+    assert!(dir.path().join("concepts").is_dir());
+
+    // A vault with the block still opens (proves it parses and validates).
+    let (vault, _report) =
+        cdno_cli::bootstrap::open_vault(dir.path()).expect("vault opens with concept declared");
+
+    // The empty type lists with no error.
+    let notes = vault
+        .list_custom_notes("concept")
+        .expect("listing the empty concept type succeeds");
+    assert!(notes.is_empty());
+}
+
+#[test]
+fn init_concept_block_is_deletable() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init succeeds on fresh dir");
+
+    let config_path = dir.path().join(".cuaderno/config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    let without_block = config.replace(CONCEPT_TYPE_BLOCK, "");
+    assert_ne!(without_block, config, "precondition: block was present");
+    fs::write(&config_path, without_block).unwrap();
+
+    // The vault still opens with the block gone — it was an ordinary,
+    // deletable custom type, nothing else depends on it.
+    cdno_cli::bootstrap::open_vault(dir.path()).expect("vault opens with concept block removed");
 }
 
 #[test]

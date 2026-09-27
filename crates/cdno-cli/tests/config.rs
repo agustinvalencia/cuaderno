@@ -335,8 +335,11 @@ fn an_empty_value_clears_an_optional_key() {
         .success();
 
     let content = fs::read_to_string(config_path(dir.path())).unwrap();
+    // Scoped to `people.md`, not a bare `template = ` search: `cdno init`
+    // also seeds `[note_types.concept]` (RFC 0002 §6.1), whose own
+    // `template = "concept.md"` line would otherwise false-positive here.
     assert!(
-        !content.contains("template = "),
+        !content.contains("template = \"people.md\""),
         "an empty value clears the key:\n{content}"
     );
 }

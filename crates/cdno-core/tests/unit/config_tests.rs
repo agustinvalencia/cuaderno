@@ -507,6 +507,35 @@ fn validate_accepts_append_only_true() {
     assert!(config.validate_note_types().is_ok());
 }
 
+#[test]
+fn concept_declaration_parses() {
+    // The exact block `cdno init` writes (RFC 0002 §6.1); T14 unifies this
+    // with `examples/note-types/concept/config.toml`, but until then this is
+    // the block's one independent check.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
+[note_types.concept]
+folder = "concepts"
+required = ["created"]
+optional = ["tags", "origin"]
+template = "concept.md"
+"#,
+    );
+
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let concept = config.custom_type("concept").expect("concept type");
+    assert_eq!(concept.folder, "concepts");
+    assert_eq!(concept.required, vec!["created"]);
+    assert_eq!(concept.optional, vec!["tags", "origin"]);
+    assert_eq!(concept.template.as_deref(), Some("concept.md"));
+    assert!(concept.title_field.is_none());
+    assert!(config.validate_note_types().is_ok());
+}
+
 // ---------------------------------------------------------------------
 // [schemas.<type>.fields] typed frontmatter fields (#301)
 // ---------------------------------------------------------------------
