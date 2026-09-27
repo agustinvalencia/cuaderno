@@ -15,6 +15,8 @@ use cdno_domain::error::DomainError;
 use cdno_domain::vault::Revision;
 use chrono::{NaiveDate, NaiveDateTime};
 
+use super::support::FailingStore;
+
 const CONCEPT_PATH: &str = "concepts/woodbury-identity.md";
 const DAILY_PATH: &str = "journal/2026/daily/2026-09-27.md";
 
@@ -769,81 +771,5 @@ impl VaultStore for EditorRaceStore {
             self.inner.write_file(&path, &content)?;
         }
         self.inner.acquire_write_lock()
-    }
-}
-
-/// Wraps a `MemoryVaultStore`, failing the Nth write/append/move/delete.
-/// Copied from `actions_tests.rs` (no shared test support module exists
-/// on `main`). Reads, `exists` and walks never fail or count.
-struct FailingStore {
-    inner: Arc<MemoryVaultStore>,
-    fail_on: usize,
-    count: Mutex<usize>,
-}
-
-impl FailingStore {
-    fn new(inner: Arc<MemoryVaultStore>, fail_on: usize) -> Self {
-        Self {
-            inner,
-            fail_on,
-            count: Mutex::new(0),
-        }
-    }
-
-    fn tick(&self) -> bool {
-        let mut c = self.count.lock().unwrap();
-        *c += 1;
-        *c == self.fail_on
-    }
-}
-
-impl VaultStore for FailingStore {
-    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
-        self.inner.read_file(path)
-    }
-    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
-        self.inner.read_bytes(path)
-    }
-    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.write_file(path, content)
-    }
-    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.append_to_file(path, content)
-    }
-    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(src.to_string()));
-        }
-        self.inner.move_file(src, dest)
-    }
-    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(path.to_string()));
-        }
-        self.inner.delete_file(path)
-    }
-    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
-        self.inner.exists(path)
-    }
-    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        self.inner.list_dir(path)
-    }
-    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
-        self.inner.walk_dir(path)
-    }
-    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
-        self.inner.metadata(path)
-    }
-    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
-        if self.tick() {
-            return Err(StoreError::PermissionDenied(dest.to_string()));
-        }
-        self.inner.import_external(src, dest)
     }
 }

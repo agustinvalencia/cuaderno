@@ -110,8 +110,8 @@ fn all_names_lists_builtins_then_custom() {
 
 #[test]
 fn validate_accepts_a_sound_custom_type() {
-    let config = config_with_person();
-    assert!(TypeRegistry::validate(&config).is_ok());
+    let mut config = config_with_person();
+    assert!(TypeRegistry::validate(&mut config).is_ok());
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn validate_rejects_a_type_shadowing_a_builtin() {
     config
         .note_types
         .insert("project".to_owned(), custom("my-projects", &[], &[]));
-    let err = TypeRegistry::validate(&config).expect_err("should reject reserved name");
+    let err = TypeRegistry::validate(&mut config).expect_err("should reject reserved name");
     assert!(
         format!("{err}").contains("project"),
         "error should name the offending type: {err}"
@@ -139,7 +139,7 @@ fn every_builtin_name_is_reserved() {
             .note_types
             .insert(nt.as_str().to_owned(), custom("some-folder", &[], &[]));
         assert!(
-            TypeRegistry::validate(&config).is_err(),
+            TypeRegistry::validate(&mut config).is_err(),
             "built-in `{}` must be reserved against custom redefinition",
             nt.as_str()
         );
@@ -153,7 +153,7 @@ fn validate_propagates_structural_errors() {
     config
         .note_types
         .insert("person".to_owned(), custom("", &[], &[]));
-    assert!(TypeRegistry::validate(&config).is_err());
+    assert!(TypeRegistry::validate(&mut config).is_err());
 }
 
 #[test]
@@ -210,8 +210,8 @@ fn required_fields_reads_custom_declaration_and_builtin_schema() {
 fn validate_rejects_a_schema_field_named_type() {
     // `type` is engine-written for every note — a declared field may not shadow
     // it, on any built-in type.
-    let config = config_with_schema_field("project", "type");
-    let err = TypeRegistry::validate(&config).expect_err("should reject `type`");
+    let mut config = config_with_schema_field("project", "type");
+    let err = TypeRegistry::validate(&mut config).expect_err("should reject `type`");
     assert!(format!("{err}").contains("type"), "{err}");
 }
 
@@ -221,9 +221,9 @@ fn validate_rejects_a_schema_field_named_after_the_date_period_key() {
     // weekly→week, monthly→month. Each is derived from `frontmatter_order`, so
     // the block is hard, not a hardcoded name list.
     for (note_type, key) in [("daily", "date"), ("weekly", "week"), ("monthly", "month")] {
-        let config = config_with_schema_field(note_type, key);
+        let mut config = config_with_schema_field(note_type, key);
         assert!(
-            TypeRegistry::validate(&config).is_err(),
+            TypeRegistry::validate(&mut config).is_err(),
             "`{key}` must be reserved on `{note_type}`"
         );
     }
@@ -233,9 +233,9 @@ fn validate_rejects_a_schema_field_named_after_the_date_period_key() {
 fn validate_allows_a_schema_field_colliding_with_a_non_identity_supplied_key() {
     // A field colliding with a non-identity supplied placeholder (daily
     // supplies `weekday`) only WARNS — it must not block vault-open.
-    let config = config_with_schema_field("daily", "weekday");
+    let mut config = config_with_schema_field("daily", "weekday");
     assert!(
-        TypeRegistry::validate(&config).is_ok(),
+        TypeRegistry::validate(&mut config).is_ok(),
         "a non-identity supplied-key collision warns, never blocks"
     );
 }
@@ -243,8 +243,8 @@ fn validate_allows_a_schema_field_colliding_with_a_non_identity_supplied_key() {
 #[test]
 fn validate_allows_a_novel_schema_field_on_a_builtin() {
     // The common case: a genuinely new field (daily `meds`) is fine.
-    let config = config_with_schema_field("daily", "meds");
-    assert!(TypeRegistry::validate(&config).is_ok());
+    let mut config = config_with_schema_field("daily", "meds");
+    assert!(TypeRegistry::validate(&mut config).is_ok());
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn validate_rejects_a_case_variant_of_a_builtin() {
     config
         .note_types
         .insert("Project".to_owned(), custom("my-projects", &[], &[]));
-    assert!(TypeRegistry::validate(&config).is_err());
+    assert!(TypeRegistry::validate(&mut config).is_err());
 }
 
 #[test]

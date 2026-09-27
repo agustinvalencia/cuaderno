@@ -31,8 +31,7 @@ use crate::type_registry::NoteTypeDescriptor;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-// NB: #642 moves `flatten_for_log` to `log.rs`; this import follows it.
-use super::projects::state::flatten_for_log;
+use super::log::flatten_for_log;
 
 /// What a [`Vault::revise_note`] call changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
