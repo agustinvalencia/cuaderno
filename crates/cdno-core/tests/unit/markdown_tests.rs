@@ -1,5 +1,5 @@
 use cdno_core::error::{ManipulationError, ParseError};
-use cdno_core::markdown::MarkdownDocument;
+use cdno_core::markdown::{MarkdownDocument, heading_outline};
 
 const SIMPLE_DOC: &str = "\
 ---
@@ -535,4 +535,17 @@ fn extract_first_table_keeps_interior_empty_cells() {
     let body = "| A | B | C |\n|---|---|---|\n| 1 |   | 3 |\n";
     let table = extract_first_table(body).unwrap();
     assert_eq!(table.rows[0], vec!["1", "", "3"]);
+}
+
+#[test]
+fn heading_outline_reports_levels_and_ignores_fenced_code() {
+    let body = "# Top\n\ntext\n\n```\n## not a heading\n```\n\n### Deep\n\nSetext\n------\n";
+    assert_eq!(
+        heading_outline(body),
+        vec![
+            (1, "Top".to_owned()),
+            (3, "Deep".to_owned()),
+            (2, "Setext".to_owned()),
+        ]
+    );
 }

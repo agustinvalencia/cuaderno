@@ -6,6 +6,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **`Vault::revise_note`, the logged, hash-guarded in-place edit for mutable custom notes (T7,
+  #620, #645).** A concept note is refined in place (RFC 0002 §5.3), and every revision leaves one
+  `revised [[path]] — reason` or `revised [[path#Section]] — reason` line in today's daily log, in
+  the same transaction as the note write and its index row. The caller passes the `content_hash` it
+  got from `read_note`; it is compared against the bytes on disk under the vault write lock, before
+  anything else reads them, so a concurrent edit is refused as `stale_revision` rather than
+  overwritten. An identical revision writes and logs nothing.
+
+  A section revision is an **upsert**: an existing section is replaced (sub-sections included,
+  since a section runs to the next heading of equal or higher level), and a missing one is appended
+  as a new `## <heading>` section. Refused, writing nothing: built-in and `append_only` custom types
+  (`note_not_revisable`), unknown types, an empty reason, a heading that matches more than once
+  (`ambiguous_section`), a heading that cannot be a wikilink anchor (empty, multi-line, containing
+  `[`, `]`, `|` or `#`, or starting with `^`), and section content holding a heading at the
+  section's own level or higher (both `revision_invalid`). The three new rejections are classified
+  as caller-actionable in `cdno-mcp`'s rejection table. Until #646, a revision does not refresh the
+  note's links and tags facets, so `read_note` backlinks can lag it.
+
 ### Changed
 
 - **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`

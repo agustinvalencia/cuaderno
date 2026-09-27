@@ -20,9 +20,10 @@
 
 use chrono::NaiveDateTime;
 
+use cdno_core::error::ManipulationError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::hash::content_hash;
-use cdno_core::markdown::MarkdownDocument;
+use cdno_core::markdown::{MarkdownDocument, heading_outline};
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
@@ -39,13 +40,32 @@ pub enum Revision {
     /// Replace the whole body after the frontmatter. The frontmatter
     /// block is preserved byte-for-byte and the body is written exactly
     /// as given, so a body taken from [`Vault::read_note`] round-trips
-    /// unchanged.
+    /// unchanged. "Verbatim" includes a body that itself starts with
+    /// `---`: it is not parsed as frontmatter, so it lands in the body
+    /// looking like a second frontmatter block.
     Body(String),
-    /// Replace the content of the section under `heading` (heading text
-    /// as [`Vault::read_note`]'s `headings` lists it, without the `#`
-    /// markers). The content is trimmed and re-framed with the section's
-    /// existing leading and trailing blank lines, so the note's layout
-    /// around the section is kept.
+    /// Upsert the section under `heading` (heading text as
+    /// [`Vault::read_note`]'s `headings` lists it, without the `#`
+    /// markers).
+    ///
+    /// When the heading exists, its content is replaced. A section
+    /// spans from its heading to the next heading of **equal or higher
+    /// level**, so any sub-sections under it are part of its content and
+    /// are replaced with it. The content is trimmed and re-framed with
+    /// the section's existing leading and trailing blank lines, so the
+    /// note's layout around the section is kept; a blank section gets one
+    /// blank line after its heading.
+    ///
+    /// When no heading matches, a level-2 `## <heading>` section holding
+    /// the content is appended at the end of the body. A heading that
+    /// matches more than once is refused.
+    ///
+    /// `heading` becomes a wikilink anchor in the log line, so it must be
+    /// non-empty, on one line, free of `[`, `]`, `|` and `#`, and must not
+    /// start with `^`. `content` may hold headings only deeper than the
+    /// target section's own level (level 2 for a new section): a heading
+    /// at that level or higher would split the section and restructure
+    /// the note. Headings inside fenced code are not headings.
     Section { heading: String, content: String },
 }
 
@@ -79,8 +99,12 @@ impl Vault {
     /// - `expected_hash` is `Some` and differs from the hash of the bytes
     ///   on disk, read under the vault write lock →
     ///   [`DomainError::StaleRevision`]. `None` skips the check;
-    /// - a [`Revision::Section`] whose heading is missing or ambiguous →
-    ///   the manipulation error from `MarkdownDocument`.
+    /// - a [`Revision::Section`] whose heading is not a valid wikilink
+    ///   anchor, or whose content holds a heading at the target section's
+    ///   level or higher → [`DomainError::RevisionInvalid`];
+    /// - a [`Revision::Section`] whose heading matches more than one
+    ///   heading → the `AmbiguousSection` manipulation error. A heading
+    ///   that matches none is not refused: the section is appended.
     ///
     /// The note's type is read from the `type:` field of the bytes just
     /// read (the source of truth), not from the index row.
@@ -91,6 +115,10 @@ impl Vault {
     /// `revised [[<path without .md>]] — <reason>` (with `#<heading>`
     /// appended inside the link for a section revision; the reason
     /// flattened to one line) commit together.
+    ///
+    /// The note's `links` and tag facets are refreshed only by reconcile
+    /// until #646 lands, so [`Vault::read_note`]'s `backlinks` can lag a
+    /// wikilink added by a revision.
     ///
     /// `at` is a parameter so tests can pin the log timestamp and the
     /// daily-note date; production callers pass
@@ -106,6 +134,9 @@ impl Vault {
         if reason.trim().is_empty() {
             return Err(DomainError::EmptyField { field: "reason" });
         }
+        if let Revision::Section { heading, .. } = &revision {
+            validate_anchor(heading)?;
+        }
 
         // Lock first: the read, the hash and the compare below must all
         // happen under the vault write lock, or an edit landing between
@@ -117,10 +148,9 @@ impl Vault {
         let raw = self.store.read_file(path)?;
         let actual_hash = content_hash(&raw);
 
-        let (fm, body) = Frontmatter::parse(&raw)?;
-        let note_type = fm.require_field::<String>("type")?;
-        self.ensure_revisable(path, &note_type)?;
-
+        // Compare before anything else looks at the bytes: a concurrent
+        // edit that broke the frontmatter or changed `type:` must surface
+        // as `StaleRevision` ("read it again"), not as a parse error.
         if let Some(expected) = expected_hash
             && expected != actual_hash
         {
@@ -130,6 +160,10 @@ impl Vault {
                 actual: actual_hash,
             });
         }
+
+        let (fm, body) = Frontmatter::parse(&raw)?;
+        let note_type = fm.require_field::<String>("type")?;
+        self.ensure_revisable(path, &note_type)?;
 
         let link_target = path
             .to_string()
@@ -143,7 +177,29 @@ impl Vault {
             }
             Revision::Section { heading, content } => {
                 let mut doc = MarkdownDocument::parse(raw.clone())?;
-                let framed = frame_section_content(doc.section(heading)?, content);
+                // Upsert: a heading that matches nothing gets a new
+                // level-2 section at the end of the body. Ambiguity is
+                // still an error.
+                let target_level = match doc.section(heading) {
+                    Ok(_) => heading_outline(body)
+                        .into_iter()
+                        .find(|(_, text)| text == heading)
+                        .map_or(2, |(level, _)| level),
+                    Err(ManipulationError::SectionNotFound(_)) => {
+                        doc.ensure_section(heading)?;
+                        2
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+                ensure_no_restructuring_heading(content, target_level)?;
+
+                let current = doc.section(heading)?;
+                // Whether the heading line ends in a newline: false only
+                // for a heading on the last line of a file with no final
+                // newline, where the framing must supply it.
+                let start = current.as_ptr() as usize - doc.render().as_ptr() as usize;
+                let terminated = doc.render()[..start].ends_with('\n');
+                let framed = frame_section_content(current, content, terminated);
                 doc.replace_section(heading, &framed)?;
                 let mut rendered = doc.render().to_owned();
                 // A blank section framed with a trailing blank line may
@@ -211,21 +267,77 @@ impl Vault {
     }
 }
 
+/// Refuse a section heading that cannot be a wikilink anchor in the
+/// `revised [[path#Heading]]` log line: `[`/`]` nest or close the link,
+/// `|` starts an alias, `#` starts another anchor, a leading `^` makes
+/// it a block reference, and a newline breaks the line.
+fn validate_anchor(heading: &str) -> Result<(), DomainError> {
+    let invalid = |why: String| DomainError::RevisionInvalid {
+        reason: format!("section heading '{heading}' {why}"),
+    };
+    if heading.trim().is_empty() {
+        return Err(DomainError::RevisionInvalid {
+            reason: "section heading is empty".to_owned(),
+        });
+    }
+    if heading.contains(['\n', '\r']) {
+        return Err(invalid("spans more than one line".to_owned()));
+    }
+    if let Some(c) = heading.chars().find(|c| matches!(c, '[' | ']' | '|' | '#')) {
+        return Err(invalid(format!(
+            "contains '{c}', which cannot appear in a wikilink anchor"
+        )));
+    }
+    if heading.starts_with('^') {
+        return Err(invalid(
+            "starts with '^', which would make the anchor a block reference".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse section content holding a heading at `target_level` or higher
+/// (a smaller number): it would end the section early and add sections
+/// to the note behind the revision's back.
+fn ensure_no_restructuring_heading(content: &str, target_level: u8) -> Result<(), DomainError> {
+    match heading_outline(content)
+        .into_iter()
+        .find(|(level, _)| *level <= target_level)
+    {
+        Some((level, text)) => Err(DomainError::RevisionInvalid {
+            reason: format!(
+                "content contains the level-{level} heading '{text}'; a section's content may \
+                 only hold headings deeper than its own level ({target_level})"
+            ),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Frame caller-supplied section content with the section's existing
 /// leading and trailing whitespace, so replacing a section keeps the
 /// blank lines around it (and never glues the content onto the next
-/// heading). A blank section gets one blank line either side.
-fn frame_section_content(current: &str, content: &str) -> String {
+/// heading). A blank section gets one blank line either side; cleared
+/// content leaves exactly one blank line before whatever follows.
+/// `terminated` says whether the heading line already ends in a newline.
+fn frame_section_content(current: &str, content: &str, terminated: bool) -> String {
     let content = content.trim();
-    let (lead, trail) = if current.trim().is_empty() {
-        ("\n", "\n\n")
+    let blank = current.trim().is_empty();
+    if content.is_empty() {
+        // Clearing an already-blank section keeps it byte-identical, so
+        // it is a no-op rather than a whitespace-only rewrite.
+        return if blank {
+            current.to_owned()
+        } else {
+            "\n".to_owned()
+        };
+    }
+    let (lead, trail) = if blank {
+        (if terminated { "\n" } else { "\n\n" }, "\n\n")
     } else {
         let lead = &current[..current.len() - current.trim_start().len()];
         let trail = &current[current.trim_end().len()..];
         (lead, trail)
     };
-    if content.is_empty() {
-        return trail.to_owned();
-    }
     format!("{lead}{content}{trail}")
 }

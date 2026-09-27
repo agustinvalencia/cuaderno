@@ -246,6 +246,17 @@ pub fn heading_texts(body: &str) -> Vec<String> {
     scan_headings(body).into_iter().map(|h| h.text).collect()
 }
 
+/// Level and text of every heading in `body`, in document order, as
+/// `(level, text)` with `level` in `1..=6`. The same `pulldown-cmark`
+/// scan as [`heading_texts`], so `#` lines inside fenced code are not
+/// headings, and setext headings are.
+pub fn heading_outline(body: &str) -> Vec<(u8, String)> {
+    scan_headings(body)
+        .into_iter()
+        .map(|h| (h.level, h.text))
+        .collect()
+}
+
 /// Walk the markdown body through `pulldown-cmark` and collect one
 /// [`HeadingSpan`] per heading, including its content range.
 ///
