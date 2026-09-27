@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The `read_note` MCP tool (T8, #621).** Reads any vault note whole and returns `path`,
+  `note_type`, `frontmatter`, `body`, `content_hash`, `backlinks` and `headings`, built from the
+  domain's `NoteView` (`ReadNoteResponse` in `dto.rs`). `note` takes the references `cdno open`
+  takes (a vault path, a bare slug, `type:slug`, a journal date), plus a path without its `.md`,
+  the way a wikilink spells it. The body is uncapped; `content_hash` is the hash of the bytes just
+  read, the value to pass as `expected_hash` when revising; `backlinks` is a flat list of paths
+  from the index, so it lags a link written since the last reconcile. A reference matching
+  nothing is a `not_found` rejection (an `isError` tool result, as for a wrong project slug), a
+  slug several notes share is an `ambiguous_slug` rejection carrying the candidates, and a path
+  outside the vault is `INVALID_PARAMS`. It is on the context router, so the read-only HTTP
+  server serves it too; the catalogue grows from 55 to 56 tools.
 - **Example `concept` type and template, installed by `cdno init` (T14, #627).** `cdno init` now
   also writes `.cuaderno/templates/concept.md` (never overwriting an existing file), so a new
   vault gets both the `[note_types.concept]` declaration and its template; before, the block named

@@ -64,7 +64,7 @@ fn advertised_catalogue_matches_expected_surface() {
     // the two daily-note tools (GH #158), the two weekly-note tools, and
     // the two monthly-note tools (GH #228).
     let mut expected = vec![
-        // Context (17)
+        // Context (18)
         "get_orientation",
         // What is open right now (#568) — read-only, so it belongs to
         // the context router and the read-only surface with it.
@@ -78,6 +78,8 @@ fn advertised_catalogue_matches_expected_surface() {
         "read_daily_note",
         "read_weekly_note",
         "read_monthly_note",
+        // Any note, whole (RFC 0002 T8, #621).
+        "read_note",
         "search_notes",
         "list_projects",
         "list_note_types",
@@ -128,7 +130,30 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 55);
+    assert_eq!(tools.len(), 56);
+}
+
+/// `read_note` is a read, so it rides the context router onto the
+/// read-only server (RFC 0002 T8) — a concept an agent can find through
+/// `search_notes` there but not open would be worthless.
+#[test]
+fn read_only_server_advertises_read_note() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
+    let server = CuadernoServer::read_only(Arc::new(vault));
+    let names: Vec<String> = server
+        .advertised_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(names.iter().any(|n| n == "read_note"), "{names:?}");
+    assert!(names.iter().any(|n| n == "search_notes"), "{names:?}");
+    assert_eq!(
+        names.len(),
+        18,
+        "the read-only surface is the context router: {names:?}"
+    );
 }
 
 #[test]

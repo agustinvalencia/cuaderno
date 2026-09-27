@@ -175,7 +175,7 @@ async fn full_catalogue_and_tool_call_over_http() {
     // to look plausible.
     assert_eq!(
         names.len(),
-        55,
+        56,
         "HTTP catalogue diverged from the stdio pin: {names:?}"
     );
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
@@ -203,9 +203,10 @@ async fn read_only_mode_hides_every_mutating_tool() {
     let client = reqwest::Client::new();
 
     let names = list_tool_names(&client, server.port).await;
-    // The read-only surface is exactly the 17 context-router tools.
-    assert_eq!(names.len(), 17, "read-only catalogue drifted: {names:?}");
+    // The read-only surface is exactly the 18 context-router tools.
+    assert_eq!(names.len(), 18, "read-only catalogue drifted: {names:?}");
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
+    assert!(names.iter().any(|n| n == "read_note"), "{names:?}");
     assert!(names.iter().any(|n| n == "search_notes"), "{names:?}");
     for mutating in [
         "append_to_log",

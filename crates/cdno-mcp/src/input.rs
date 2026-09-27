@@ -331,6 +331,16 @@ pub struct ReadDailyNoteInput {
     pub date: Option<chrono::NaiveDate>,
 }
 
+/// Input for `read_note` (RFC 0002 T8, #621).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadNoteInput {
+    /// Which note to read, in any form `cdno open` accepts: a vault path
+    /// (`concepts/woodbury-identity.md`, or without the `.md`), a bare slug
+    /// (`woodbury-identity`), a typed slug (`concept:woodbury-identity`), or a
+    /// journal date (`2026-09-27`, `2026-W39`, `2026-09`, `today`).
+    pub note: String,
+}
+
 /// Input for `upsert_daily_section` (GH #158, #170). `section` is one of
 /// the writable daily sections; `content` defaults to empty; `date`
 /// defaults to today; `append` defaults to replace.

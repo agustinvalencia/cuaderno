@@ -451,6 +451,19 @@ pub(crate) fn envelope(e: &DomainError) -> Option<Value> {
     classify(e).map(|r| json!({ MARKER: r }))
 }
 
+/// A rejection raised by a handler itself rather than by the domain.
+///
+/// Some caller-actionable outcomes never become a [`DomainError`]: note
+/// reference resolution returns `RefResolution::NotFound` and
+/// `RefResolution::Ambiguous` as `Ok` values, by design, so the interface
+/// decides what to say. This marks such an outcome exactly as
+/// [`crate::util::into_mcp_error`] marks a classified domain error, so it
+/// reaches the client through the same [`decode`] step, in the same shape.
+pub(crate) fn reject(code: RejectionCode, message: String, details: Value) -> ErrorData {
+    let payload = json!({ "code": code, "message": message, "details": details });
+    ErrorData::internal_error(message, Some(json!({ MARKER: payload })))
+}
+
 /// The single point where a marked protocol error becomes a tool result.
 ///
 /// `Ok(result)` for a classified rejection — `isError: true`, with the
