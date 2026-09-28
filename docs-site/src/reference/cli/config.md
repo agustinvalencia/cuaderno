@@ -86,6 +86,9 @@ folder       created concepts/
 Re-running is safe. When there is nothing left to write, the report ends with
 `concept: already installed, nothing to do` and the command exits 0.
 
+A config the vault would not open (check it with `cdno config validate`) is refused before anything
+is written, even when the type is already declared.
+
 Two refusals are phrased in plain words, and in both nothing is left behind:
 
 - a config that declares `note_types` as an inline table cannot take an appended block; add it with

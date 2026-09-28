@@ -7,6 +7,11 @@
 | **Affects** | `cdno-cli` (`init`, `config note-type`), `cdno-mcp` (one description), `examples/note-types/`, `docs-site` |
 | **Related** | RFC 0002 (the `concept` type this exists to install); `cdno config` (#598) and `cdno templates` (#599), whose gates and verbs this reuses; `examples/note-types/README.md` (the two-file recipe this replaces) |
 
+> **Amended during implementation (#663).** Review of the implementation changed §4.1 (a fifth
+> `--list` state), §4.2.2 (the folder of the declaration in force), §4.2.3 (validation before any
+> write, an empty or absent config, the inline-table refusal, how `template` is compared) and
+> §4.2.4 (the `--json` convention and its values). The text below is the amended version.
+
 > **Authorship.** Drafted by Claude (Anthropic) from a question the maintainer raised after
 > RFC 0002 shipped: how does an existing vault get the concept type, and should `cdno init`
 > grow an option for it. A three-seat review round (CLI surface; method and user; safety, tests
@@ -100,7 +105,8 @@ cdno config note-type install --name <NAME> --dry-run
 - `--list` conflicts with `--name`. It prints, per bundled type: name, one-line purpose, folder,
   required and optional fields, template filename and the template's section headings, and the
   vault's state: `not installed`, `installed (matches)`, `installed (declaration differs)`,
-  `installed (template customised)`. It does not print template bodies.
+  `installed (template customised)`, `installed (template missing)`. It does not print template
+  bodies.
 - `--dry-run` prints the exact block and template that would be written and changes nothing.
 
 Bundled types are the note types `init` knows, nothing more; the RFC uses "bundled" throughout
@@ -123,7 +129,8 @@ whether it is identical to the bundled one.
 
 #### 4.2.2 Folder
 
-Create the type's folder if absent (`concepts/`). Empty folders are not indexed, so this is
+Create the folder of the declaration in force if absent (`concepts/` for the bundled
+declaration). Empty folders are not indexed, so this is
 cosmetic, but it makes the install visible and keeps `init` and `install` identical.
 
 #### 4.2.3 Declaration
@@ -132,16 +139,22 @@ Read the config with `read_config_from` and parse it with the same `read_model` 
 verbs use; refuse with their message if it does not parse. Decide "declared" from
 `model.note_types.contains_key(name)`, never from a text search (a commented
 `# [note_types.concept]` must not count, and a dotted `note_types.concept.folder = …` key must).
+Before any write, validate the config with `validate_config_str` and refuse with the config verbs'
+message if it would not open: on the present path the gate never runs, so an existing declaration
+that parses but does not validate (a folder escaping the vault) would otherwise drive the folder
+step.
 
 - **Absent:** the candidate is the original text, then a newline if it does not already end in
   one, then a blank line if it does not already end in one, then the bundled block verbatim.
-  Submit it through `finish_edit` and report its errors unchanged. `DEFAULT_CONFIG_TOML` ends in
+  An empty or absent config takes the block with no separator. Submit it through `finish_edit` and report its errors unchanged. `DEFAULT_CONFIG_TOML` ends in
   `\n\n`, so this adds nothing on a fresh vault and T0's byte-identical probe holds. A config
   that declares `note_types` as an inline table cannot take an appended header; the gate refuses
-  with a duplicate-key error, and the verb translates it: "`note_types` is declared inline; add
+  (TOML reports that the header would extend an inline table, or a duplicate key), and the verb
+  translates it: "`note_types` is declared inline; add
   the block with `cdno config edit`".
 - **Present:** never modified and never merged. The command compares it field by field, as a
-  parsed `CustomNoteType` rather than as text, with the bundled declaration and reports
+  parsed `CustomNoteType` rather than as text (`template` compared as the filename it resolves
+  to), with the bundled declaration and reports
   `kept (matches bundled)` or `kept (differs: <key>: bundled […], yours […])`, with the
   `note-type set` invocation that would adopt the bundled value. It then carries on with the
   other steps.
@@ -160,7 +173,7 @@ template     written .cuaderno/templates/concept.md | kept (matches bundled) | k
 folder       created concepts/ | present concepts/
 ```
 
-`--json` follows the `config` verbs' convention (the shared `emit` helper, with `changed`):
+`--json` carries `changed` as the `config` verbs do, in a report shape of its own:
 
 ```json
 {"changed": true, "note_type": "concept",
@@ -169,7 +182,8 @@ folder       created concepts/ | present concepts/
  "folder": {"path": "concepts", "action": "created"}}
 ```
 
-with the same enum values as the text report, and `--list --json` as
+with snake_case forms of the text report's values (`written`, `kept_matches`, `kept_differs`,
+`kept_customised`, `not_installed`, `created`, `present`), and `--list --json` as
 `{"bundled": [{"name": "concept", "state": "not_installed", …}]}`.
 
 ### 4.3 Bundled types

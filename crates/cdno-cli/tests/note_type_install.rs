@@ -301,6 +301,48 @@ fn a_folder_collision_refuses_and_leaves_nothing_behind() {
 }
 
 #[test]
+fn an_existing_declaration_the_vault_would_not_open_is_refused_before_any_write() {
+    // `read_model` only proves the TOML parses. A declaration whose folder
+    // escapes the vault parses fine, and on the "already declared" path the
+    // gate never runs, so without validating first the folder step created
+    // `../escaped` beside the vault and exited 0.
+    let parent = tempdir().unwrap();
+    let root = parent.path().join("vault");
+    init::run(&root).unwrap();
+    fs::remove_file(template_path(&root)).unwrap();
+    let config = read_config(&root).replace(r#"folder = "concepts""#, r#"folder = "../escaped""#);
+    fs::write(config_path(&root), &config).unwrap();
+    let before = snapshot(&root);
+    let parent_before = snapshot(parent.path());
+
+    let (ok, _stdout, stderr) = install(&root, &[]);
+    assert!(!ok, "an invalid existing declaration must fail");
+    assert!(stderr.contains("escapes the vault"), "{stderr}");
+    assert!(!parent.path().join("escaped").exists());
+    assert_eq!(snapshot(&root), before, "nothing written in the vault");
+    assert_eq!(
+        snapshot(parent.path()),
+        parent_before,
+        "nothing written beside it"
+    );
+}
+
+#[test]
+fn a_missing_config_takes_the_block_with_no_separator() {
+    // An empty or absent config has nothing to separate the block from, so
+    // the file written is the block alone, and it validates.
+    let dir = tempdir().unwrap();
+    older_vault(dir.path());
+    fs::remove_file(config_path(dir.path())).unwrap();
+
+    let (ok, stdout, stderr) = install(dir.path(), &[]);
+    assert!(ok, "{stderr}");
+    assert!(stdout.starts_with("declaration  written\n"), "{stdout}");
+    assert_eq!(read_config(dir.path()), CONCEPT_TYPE_BLOCK);
+    validates(dir.path());
+}
+
+#[test]
 fn a_missing_templates_directory_is_created() {
     let dir = tempdir().unwrap();
     older_vault(dir.path());

@@ -196,7 +196,7 @@ impl InstallReport {
 /// Install the bundled type `name` into the vault at `root`.
 ///
 /// See the module docs for the three steps and their order. Errors when the
-/// name is not bundled, when the config cannot be read or parsed, when the
+/// name is not bundled, when the config cannot be read, parsed or validated, when the
 /// gate refuses the appended declaration (with what the earlier steps
 /// created removed again), or when a write fails.
 pub fn install_bundled(root: &Path, name: &str) -> Result<InstallReport> {
@@ -228,6 +228,14 @@ pub fn install(root: &Path, bundled: &BundledType, dry_run: bool) -> Result<Inst
     let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
     let model = crate::commands::config::read_model(&original.content)?;
     let existing = model.note_types.get(name);
+
+    // `read_model` only proves the TOML parses. When the name is already
+    // declared the declaration step never reaches the gate, so without this
+    // an existing declaration that parses but does not validate (a folder
+    // escaping the vault, say) would drive the folder step as it stands.
+    // Refuse any config the vault would not open, before any write.
+    cdno_domain::validate_config_str(&original.content)
+        .map_err(|e| crate::commands::config::describe(ConfigSaveError::Validation(e)))?;
 
     // The declaration that will be in force once this install is done.
     let in_force = existing.unwrap_or(&bundled_decl);
