@@ -107,8 +107,12 @@ new file there rather than growing `mod.rs`.
 ### Layer-specific conventions
 
 **CLI — flags-and-prompts** (`docs/cli-ergonomics.md`, non-negotiable for mutating verbs). Every
-promptable argument is a clap `Option<T>` flag, never a positional or a required flag (read verbs
-like `cdno open` and `project show` are the documented exception and may take a positional).
+promptable argument is a clap `Option<T>` flag, never a positional or a required flag. The
+documented exceptions take one trailing optional positional: read verbs like `cdno open` and
+`project show`, and a verb acting on one existing note, mutating or not, such as `note revise` (the
+positional selects the note; every value it writes stays a flag). `cdno log` keeps its positional
+message beside a `note` subcommand (a message equal to a subcommand name goes after `--`), and
+`log note` itself is flags-and-prompts.
 Handlers fold each one through the shared `gather_or_error` helper: present → use it; absent +
 interactive → prompt and set `prompted`; absent + non-interactive → `missing_flag("…")`. Confirm
 only when something was prompted. `is_interactive` = `!--no-interactive && stdin AND stdout are
@@ -150,14 +154,20 @@ notes), `stewardship` + `tracking` (flat `.md` or expanded folder with `_index.m
 `question` (`questions/research|life/`), `commitment` (`commitments/`, `_done/` when fulfilled),
 `inbox`. The append-only set is exactly `daily`/`weekly`/`evidence`/`tracking`
 (`NoteType::is_append_only`); action, question, portfolio, stewardship dashboards and monthly are
-all legitimately mutable in place.
+all legitimately mutable in place. `concept` (`concepts/`, mutable, refined in place) is not a
+built-in: it is a custom type that `cdno init` declares in a new vault's config (RFC 0002).
 
 **History preservation**: because the project map is mutable, every `## Current State` update appends
 an entry to today's daily log in the form `state on [[<slug>]]` followed by indented `was:` / `now:`
 lines (`crates/cdno-domain/src/vault/projects/state.rs` — the context reader parses exactly the
-`state on [[` prefix), and completed actions log likewise. Tracing a project's evolution is a search
-over the daily log — so never replace a mutable section without emitting its log entry, and never
-hand-write that entry in any other shape.
+`state on [[` prefix), and completed actions log likewise. RFC 0002 adds three fixed prefixes to
+the family: `noted [[journal/<year>/daily/<date>#<Heading>]]` points at a daily `## Notes` entry
+(`vault/notes_section.rs`); `revised [[<path>]] — <reason>` (`[[<path>#<Heading>]]` for one
+section) records a custom-note revision with no `was:`/`now:` block, since the log keeps when and
+why and version control keeps what (`vault/revise.rs`); and `<type> created [[<path>]] — <title>`
+records a creation (`build_created_line` in `vault/log.rs`; a commitment links its bare slug).
+Tracing a project's evolution is a search over the daily log — so never replace a mutable section
+without emitting its log entry, and never hand-write that entry in any other shape.
 
 Notes link with wikilinks and the linking rules are enforced; `cdno lint` reports frontmatter and
 link problems with an error/warning split (`Error` = downstream code can trip over it, e.g. an edited

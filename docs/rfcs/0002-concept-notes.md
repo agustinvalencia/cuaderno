@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9) |
+| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9). Stages 0 and 1 shipped, with T13 to T15 of stage 2: #635 (T0), #638 (T1), #647 (T2), #639 (T3), #642 (T4), #643 (T5), #648 (T6), #645 (T7), #650 (T8), #651 (T9), #652 (T10), #653 (T11), #654 (T12), #644 (T13), #649 (T14), #655 (T15). T16 aligns the design documents; T17 (docs-site) is open. Open follow-ups: #640 (T3b), #646 (T7b) |
 | **Tracked by** | #612 (epic), #613–#632 (T0–T19); task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
 | **Affects** | `cdno-core` (one resolver fix), `cdno-domain`, `cdno-cli`, `cdno-mcp`, `docs/design.md`, `docs/implementation-plan.md`, `docs-site`, `examples/` |
 | **Related** | RFC 0001 (format precedent); custom note types (`docs-site/src/reference/custom-note-types.md`); #597 (desktop retirement — CLI and MCP surfaces only); `docs/implementation-plan.md` Phase 7 (the "standalone note" this RFC resolves); #604 (superseded draft) |
@@ -144,7 +144,6 @@ This is what lets a concept note be refined freely.
 ```markdown
 ---
 type: concept
-title: Woodbury identity
 created: 2026-09-25
 tags: [linear-algebra, optimisation]
 origin: "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]"
@@ -163,12 +162,18 @@ origin: "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/dail
 - [[concepts/low-rank-updates]]
 ```
 
-- **Required:** `type`, `title`, `created`.
+- **Required:** `type`, `created`. The title is the body H1, as for every note (§6.1); there is
+  no `title` field.
 - **Optional:** `tags` (the subject vocabulary: open, indexed, no config); `origin` (one string
   holding one or more qualified wikilinks to the `## Notes` entries it came from; the frontmatter
-  extractor indexes each as a separate edge).
-- **One link form.** Wikilinks are qualified everywhere:
-  `[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`.
+  extractor indexes each as a separate edge). The shipped template carries only `type`, `created`
+  and `tags: []`; `origin` is written, as a quoted YAML string, only when it is supplied at
+  creation.
+- **One link form.** Concept notes and their `origin` links use qualified wikilinks:
+  `[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`. The text an agent writes to the
+  daily note through `append_to_log`, `upsert_daily_section` and `note_to_daily` bodies keeps the
+  bare `[[slug]]` form of the pre-RFC convention (as in `state on [[slug]]`); the `noted`,
+  `revised` and `created` lines the tool writes carry the qualified path.
 - **Links:** none is required. A concept with no links in or out is not a lint finding. Links to
   projects, questions, stewardships and other concepts go in the body like any other wikilink.
 - **Unit:** one concept per note. If a note needs two headings that could each be cited on their
@@ -264,6 +269,10 @@ promote it the second time it comes up; `origin:` records the entries it came fr
 - The agent offers promotion when `#concept` entries on the same subject appear in daily notes on
   two or more dates, and searches before creating so it extends an existing concept rather than
   minting a duplicate. Both instructions live in tool descriptions (§6.4).
+- The promotion search is full-text: it matches the word `concept` (and its stem) in daily notes,
+  not the `#concept` tag, so it also finds days that merely created or linked a concept, and the
+  agent reads each hit for entries ending in `#concept`. That holds until a tag query reaches the
+  MCP surface (the deferred tag filter, §8).
 - Creation itself is logged (§6.2), so the log shows `concept created [[concepts/<slug>]] —
   <title>` and `origin:` shows where it came from. No `promoted to` line is needed.
 
@@ -301,12 +310,13 @@ concept costs nothing and is left alone.
 ### 6.1 The type
 
 `cdno init` writes the declaration into a new vault's config with a comment header saying it is
-an ordinary custom type and may be deleted; `examples/note-types/concept/` carries the same snippet
-and the template for existing vaults.
+an ordinary custom type and may be deleted, and installs the template as
+`.cuaderno/templates/concept.md`. `examples/note-types/concept/` carries the same snippet and
+template for existing vaults.
 
 ```toml
-# A declared custom type: the concept library (RFC 0002). Delete this block if you
-# do not want one; nothing else depends on it.
+# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
 [note_types.concept]
 folder = "concepts"
 required = ["created"]
@@ -336,8 +346,8 @@ One file per operation under `src/vault/`, each through `VaultTransaction`:
   `{{body}}` placeholder, else it is inserted after the H1) and an optional **`origin`** string.
   **Every custom-note creation stages a log line** in its transaction:
   `<type> created [[<folder>/<slug>]] — <title>`, matching the commitment line that exists today.
-- **`revise_note(path, expected_hash, revision, reason)`** for custom types, where `revision` is
-  a whole body or a `(section, content)` upsert. `expected_hash` is `Option<String>` in the domain,
+- **`revise_note(path, expected_hash, revision, reason, at)`** for custom types, where `revision` is
+  a whole body or a `(section, content)` upsert. `expected_hash` is `Option<&str>` in the domain,
   compared inside the transaction lock. It refuses built-in types (their sections are owned by
   behaviour) and append-only types, refuses a hash mismatch (lost-update guard), logs
   `revised [[…]] — <reason>` with a section anchor when one section changed, and writes nothing
@@ -360,8 +370,11 @@ cdno note revise <slug>  [--body-file F | --section H --content-file F] [--reaso
 cdno note list concept
 cdno search <query> --type concept
 cdno open concept:<slug>
-cdno log note            [--heading H] [--body-file F]          # writes ## Notes + pointer line
+cdno log note            [--heading H] [--body-file F] [--date YYYY-MM-DD]  # ## Notes + pointer line
 ```
+
+`log note --date` writes to that day's note, stamped at the current time, mirroring the
+`note_to_daily` tool's `date`.
 
 `note revise` follows the convention: in an interactive run with `--body-file` absent, it prompts
 for the body through `prompt_editor` pre-seeded with the current text, then for `--reason`, and
@@ -374,10 +387,13 @@ Net **+3 tools** against the #597 baseline (55 → 58): `read_note`, `revise_not
 `note_to_daily`. `create_custom_note` gains `body` and `origin`; nothing is removed or renamed.
 
 - **`read_note`** (new, in `context_router` so the read-only server has it): path or slug;
-  returns frontmatter, body, `content_hash`, backlinks, headings.
+  returns frontmatter, body, `content_hash`, backlinks, headings. A reference that matches no note
+  is refused with code `not_found`; a slug shared by several notes with `ambiguous_slug`.
 - **`revise_note`** (new): as §6.2. At MCP, `expected_hash` is required when `body` is given and
   ignored for `section`. The description states the reason requirement and that the agent drafts
-  the reason.
+  the reason. A changed note is refused with code `stale_revision`, a malformed section heading or
+  a restructuring heading in `content` with `revision_invalid`, and a built-in or append-only
+  type with `note_not_revisable`.
 - **`note_to_daily`** (new): as §6.2. Its description says substance goes here and the pointer
   line is written for it, that entry headings must not reuse section names, and to end a reusable
   entry with `#concept`.

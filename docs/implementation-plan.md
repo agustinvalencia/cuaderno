@@ -963,7 +963,7 @@ Implement the `Vault` struct with constructor injection. Implement `append_to_da
 
 ### Phase 7: Migration (estimated: 1-2 weeks)
 
-**Migration tool.** `cdno migrate --from-mdv <vault_path>`. Reads the old vault, maps note types (project → project map, task → inline action or work-item, zettel → evidence or standalone note), and writes the new structure. Interactive: for each ambiguous note, asks the user where it should go. Designed to be run incrementally — you can migrate a few notes at a time during monthly reviews.
+**Migration tool.** `cdno migrate --from-mdv <vault_path>`. Reads the old vault, maps note types (project → project map, task → inline action or work-item, zettel → evidence or concept; `concept` is the custom type RFC 0002 declares, in `concepts/`), and writes the new structure. Interactive: for each ambiguous note, asks the user where it should go. Designed to be run incrementally — you can migrate a few notes at a time during monthly reviews.
 
 -----
 

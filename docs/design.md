@@ -38,9 +38,9 @@ The tool has four consumers:
 
 |Type         |Description                                                  |Mutable?                          |Lives in                                  |
 |-------------|-------------------------------------------------------------|----------------------------------|------------------------------------------|
-|`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/daily/`                          |
-|`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/weekly/`                         |
-|`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/monthly/`                        |
+|`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/<year>/daily/`                   |
+|`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/<iso-year>/weekly/`              |
+|`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/<year>/monthly/`                 |
 |`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/`                               |
 |`action`     |Manifest note for an action-as-investigation (heavier form)  |Yes while attached, append-only after completion |`actions/` (archived to `actions/_done/<year>/`) |
 |`portfolio`  |Index note for an evidence folder                            |Rarely (summary)                  |`portfolios/*/`                           |
@@ -50,6 +50,9 @@ The tool has four consumers:
 |`question`   |An important research or life question                       |Occasionally                      |`questions/research/` or `questions/life/`|
 |`commitment` |A standalone promise with a hard deadline                    |No (moves to `_done/`)            |`commitments/`                            |
 |`inbox`      |Uncategorised capture awaiting triage                        |Temporary                         |`inbox/`                                  |
+|`concept`    |Reusable understanding tied to no deliverable (custom type, §5.12) |Yes (refined in place, each revision logged) |`concepts/`                   |
+
+`concept` is not a built-in: it is a custom type (`[note_types.concept]`) that `cdno init` declares in a new vault's config, and it can be deleted like any other declaration (§5.12).
 
 ### Note lifecycle patterns
 
@@ -58,6 +61,8 @@ The tool has four consumers:
 **Mutable dashboard**: project. The current state section is rewritten regularly. Previous states are auto-logged to the daily entry before being overwritten, preserving full history in the chronological log.
 
 **Stable reference**: portfolio (index), stewardship, question. Updated occasionally during reviews, not during daily work.
+
+**Refined in place**: concept. The note is always the current best account; each revision made through the tool writes one `revised [[…]]` line to the daily log (§7). No lifecycle, no staleness, no cap.
 
 **Transient**: commitment (moves to `_done/` on completion), inbox (triaged to its proper home).
 
@@ -71,16 +76,17 @@ The tool has four consumers:
 vault/
 │
 ├── journal/
-│   ├── daily/
-│   │   ├── 2026-04-04.md
-│   │   ├── 2026-04-05.md
-│   │   └── 2026-04-06.md
-│   ├── weekly/
-│   │   ├── 2026-W13.md
-│   │   └── 2026-W14.md
-│   └── monthly/
-│       ├── 2026-03.md
-│       └── 2026-04.md
+│   └── 2026/                    ← calendar year (weekly notes use the ISO week year)
+│       ├── daily/
+│       │   ├── 2026-04-04.md
+│       │   ├── 2026-04-05.md
+│       │   └── 2026-04-06.md
+│       ├── weekly/
+│       │   ├── 2026-W13.md
+│       │   └── 2026-W14.md
+│       └── monthly/
+│           ├── 2026-03.md
+│           └── 2026-04.md
 │
 ├── projects/
 │   ├── surrogate-model.md
@@ -144,6 +150,10 @@ vault/
 │       ├── sustainable-fitness.md
 │       └── savings-structure.md
 │
+├── concepts/                    ← type: concept (custom type, §5.12)
+│   ├── woodbury-identity.md
+│   └── linear-algebra.md        ← a hub note: mostly links
+│
 ├── inbox/
 │   └── ...
 │
@@ -180,38 +190,38 @@ vault/
 ---
 type: daily
 date: 2026-04-06
-tags: [surrogate-model, apartment, health]
 ---
 
 # Sunday, 6 April 2026
 
-## Morning
-- Started focusing on the surrogate model ablation.
-- Ran the 20-seed variant of feature set B. Variance dropped
-  significantly — CI now [0.82, 0.87]. This confirms the
-  improvement is real, not a lucky seed.
-- Filed the result to the sparse-vs-dense-ood portfolio.
+## Notes
 
-## Afternoon
-- Read Müller et al. 2026 on spectral attention for PDE
-  surrogates. Filed annotation to inductive-bias portfolio.
-- Apartment: called the electrician. Available next Thursday.
-  Updated project map.
+### Woodbury identity
+(A + UCV)^-1 = A^-1 - A^-1 U (C^-1 + V A^-1 U)^-1 V A^-1 — cheap when A^-1 is known and the
+update is low-rank; today's use was the k=3 refit on [[projects/surrogate-model]]. #concept
 
-## Evening
-- Gym: upper body A, 45 min. Bench still at 70kg.
-- Dental check-up overdue. Added to commitments.
-
-## Index
-surrogate-model, ablation, confidence-intervals,
-spectral-attention, apartment, electrician, gym
+## Logs
+- **09:12**: started [[surrogate-model]] — Run 20-seed ablation of feature set B
+- **11:40**: state on [[surrogate-model]]
+  was: Ablation on feature set B showed 12% improvement, variance too high to be conclusive
+  now: 20-seed ablation confirmed. CI [0.82, 0.87]. Ready to test on full geometry.
+- **14:32**: noted [[journal/2026/daily/2026-04-06#Woodbury identity]] ([[projects/surrogate-model]])
+- **15:05**: concept created [[concepts/sherman-morrison]] — Sherman–Morrison formula
+- **16:20**: revised [[concepts/low-rank-updates#Why it matters]] — added the cost comparison
+- **18:10**: Gym: upper body A, 45 min. Bench still at 70kg.
+- **18:30**: commitment created [[dental-check-up]] — Dental check-up (due 2026-04-20)
 ```
 
-**Frontmatter**: `type`, `date`, `tags` (auto-populated from index keywords).
+The daily note lives at `journal/<year>/daily/<YYYY-MM-DD>.md`. Its two history sections split the day into a **sequence** and its **substance**, and both are append-only:
 
-**Content**: free-form chronological prose grouped by time of day. Includes reasoning, observations, and cross-references. Short entries for stewardship activities (gym, errands) with details in their respective tracking notes.
+- **`## Logs` is the sequence.** One line per event in the form `- **HH:MM**: <text>`, pointers rather than prose. `cdno log "..."` and the MCP `append_to_log` write here, and so does every domain operation that records a change (§7). `## Logs` is pinned to the bottom of the note after every section write.
+- **`## Notes` is the substance.** Worked-out material that belongs to no project or question yet (a derivation, a procedure, a page of reasoning), one `### <heading>` entry per write so each entry can be addressed as `[[journal/<year>/daily/<date>#<heading>]]`. `note_to_daily` (MCP) and `cdno log note` append the entry and, in the same write, the `## Logs` pointer line `noted [[journal/<year>/daily/<date>#<heading>]]`, followed by the body's wikilinks in parentheses when it has any. The section is created immediately before `## Logs` on first use. An entry heading must be unique within the day and must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), because heading lookup is by flat text; it may not contain `[`, `]`, `|`, `#` or inline markup, nor start with `^`, since it becomes a link anchor. An entry worth reusing ends with the body tag `#concept`, the candidate marker for promotion (§5.12). Meetings stay in `## Meeting`, and project reasoning stays on the project map.
 
-**Created by**: auto-scaffolded by the tool on first interaction of the day. Appended to throughout the day via CLI (`cdno log "..."`), Claude, or direct editing.
+The other daily sections are planning scratch and live notes, written through `upsert_daily_section`: `## Standup`, `## Intention` and `## Agenda` (typically replaced) and `## Meeting` (typically appended). `## Notes` can be reached the same way, with `append: true` only (`append: false` is refused), for a caller that wants no pointer line. The project, weekly and monthly contexts read `## Logs` only: a `## Notes` entry reaches a project through the pointer line's links and through backlinks from the entry's own wikilinks, not through its text.
+
+**Frontmatter**: `type`, `date`.
+
+**Created by**: auto-scaffolded by the tool (frontmatter, the date heading and an empty `## Logs`) on the first write of the day. Appended to throughout the day via CLI (`cdno log "..."`, `cdno log note`), Claude, or direct editing.
 
 ### 5.2 Weekly Review
 
@@ -381,7 +391,7 @@ PDE families. Gap widens on turbulent flows specifically.
 
 **Design**: minimal frontmatter, free-form prose content. The `portfolio` field is redundant with the file path (it lives inside the portfolio folder) but useful for orphan detection if a note gets moved accidentally. The `source` field can be a citation, an experiment reference, a conversation, or "personal observation."
 
-**The `origin:` field is required from Phase 3 onward.** It points to whatever produced the evidence — a project, an action note, a stewardship, etc. The forward-link gives provenance ("which work produced this?") and the backlink falls out of the index for free, which means actions and projects can list their evidence without duplicating any structural data. Baking it in from day one of Phase 3 avoids a migration if the action layer (§5.11) wants to lean on it.
+**The `origin:` field is required from Phase 3 onward.** It points to whatever produced the evidence — a project, an action note, a stewardship, etc. The forward-link gives provenance ("which work produced this?") and the backlink falls out of the index for free, which means actions and projects can list their evidence without duplicating any structural data. Baking it in from day one of Phase 3 avoids a migration if the action layer (§5.11) wants to lean on it. A concept note (§5.12) is never an evidence note's `origin:`: evidence records what was done inline and may link a concept only as *see also*, so refining the concept never changes what the evidence meant.
 
 **Created by**: CLI (`cdno file "sparse-vs-dense-ood" --source "Chen et al. 2025"`), Claude (via read-paper or file-to-portfolio skill), or directly in Obsidian.
 
@@ -641,6 +651,62 @@ tags: [kan, ppo, sample-efficiency]
 - The `milestones` index table (see §5.3) gives action notes their date when they reference a milestone, without duplicating the date in the action's frontmatter.
 - Commitments aggregation (§6) gains action `due:` (when standalone) as a fourth source.
 
+### 5.12 Concept Note
+
+A *concept* is a unit of understanding worth keeping and reusing, tied to no project, question, stewardship or portfolio: a theorem and the intuition behind it, a definition, a technique and when it applies, a procedure you will run again. Concept notes form a flat library in `concepts/`, organised by tags and links rather than by folders. The rationale and the trial that decides the type's future are in [RFC 0002](rfcs/0002-concept-notes.md).
+
+**A custom type, not a built-in.** `cdno init` writes this declaration into a new vault's `.cuaderno/config.toml` and installs the template as `.cuaderno/templates/concept.md`; an existing vault copies both from `examples/note-types/concept/`. Deleting the block removes the type and nothing else depends on it.
+
+```toml
+# A declared custom type: the concept library (RFC 0002). Delete this block (and
+# any notes under concepts/) if you do not want one; nothing else depends on it.
+[note_types.concept]
+folder = "concepts"
+required = ["created"]
+optional = ["tags", "origin"]
+template = "concept.md"
+```
+
+```markdown
+---
+type: concept
+created: 2026-09-25
+tags: [linear-algebra, optimisation]
+origin: "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]"
+---
+
+# Woodbury identity
+
+## Statement
+…
+
+## Why it matters
+…
+
+## See also
+- [[concepts/sherman-morrison]]
+```
+
+The title is the body H1. The shipped template carries only `type`, `created` and `tags: []`; `origin` is written, as a quoted string, only when it is supplied at creation. It holds one or more wikilinks to the daily `## Notes` entries the concept came from, and each is indexed as its own link. Concept notes and their `origin` links use qualified paths (`[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`). The text an agent writes to the daily note through `append_to_log`, `upsert_daily_section` and `note_to_daily` bodies keeps the bare `[[slug]]` form of the pre-RFC convention (as in `state on [[slug]]`); the `noted`, `revised` and `created` lines the tool writes carry the qualified path. The body is free-form: *Statement / Why it matters / See also* is the default, and a procedure or a definition uses its own headings. One concept per note — if a note needs two headings that could each be cited on their own, it is usually two notes. A **hub note** is an ordinary concept note that is mostly links, written by hand when a cluster is real; by convention its slug is the tag it maps. At most one coarse subfolder level (`concepts/maths/`) is tolerated for browsing on disk; the tool is blind to it.
+
+**The filing test.** Ask of the thing you want to keep: *what is it?*
+
+1. **A dated observation, result or source that bears on an open question** → **evidence** in a portfolio (§5.5).
+2. **The answer to a question you weighed evidence for** → the **question note** (§5.8), with `status: answered`. Its `## Current Thinking` may be promoted into a concept the question links to; the question keeps the record of *how* it was answered.
+3. **A prescribed practice belonging to one stewardship** (a workout plan, a care routine) → a **stewardship routine** (§5.7).
+4. **Understanding you will reuse, independent of any deliverable** → a **concept note**.
+5. **Not yet settled** → an entry in the daily note's `## Notes` (§5.1), until promoted.
+
+A benchmark result is evidence; what the benchmark taught you about the technique is a concept; the command that ran it belongs in the evidence note, and may also become a concept if you will run it again.
+
+**The provenance rule.** Evidence never depends on the *current* text of a concept note. An evidence note records what was done and observed inline (the exact invocation, the version, the parameters) and may link to a concept only as *see also*; a concept is never the `origin:` of an evidence note. Concepts describe understanding **now**, evidence records what happened **then**, which is what lets a concept be refined freely.
+
+**Refinement.** A concept is mutable in place: a better explanation replaces the worse one, a correction replaces the error. `revise_note` (MCP) and `cdno note revise` replace the whole body (guarded by the `content_hash` from `read_note`, so a concurrent edit is refused rather than overwritten) or upsert one section, and each revision that changes the text writes one `revised [[…]] — <reason>` line to the daily log (§7). There is no append operation, no verified date and no staleness signal: concept notes never appear in orientation or the weekly and monthly contexts.
+
+**Promotion.** Write a concept when you already know you will reuse it; when unsure, note it in the day and promote it the second time it comes up. Promotion is creation with `origin` — no separate operation and no `promoted to` line, since the creation itself logs `concept created [[concepts/<slug>]] — <title>`. The agent searches for an existing concept before creating one, and offers promotion when entries on the same subject tagged `#concept` appear on two or more dates.
+
+**Created by**: CLI (`cdno note create concept --title "…" [--body-file F] [--origin "[[…]]"]`), Claude (`create_custom_note` with `body` and `origin`), or directly in an editor — an editor write is legitimate but leaves no log line.
+
 -----
 
 ## 6. Commitments Register (Computed View)
@@ -687,7 +753,7 @@ Commitments (next 6 weeks)
 
 ## 7. History Preservation
 
-The project map is the only mutable note. To prevent loss of historical context:
+The project map is the primary mutable note. To prevent loss of historical context:
 
 **On every Current State update**, the tool:
 
@@ -695,26 +761,41 @@ The project map is the only mutable note. To prevent loss of historical context:
 2. Appends it to today’s daily log with timestamp and project reference
 3. Writes the new Current State text
 
-**Log entry format**:
+**Log entry format** (`vault/projects/state.rs`; each side is flattened to one line):
 
 ```markdown
-- [project:surrogate-model] State updated:
-  was: "Ablation on feature set B showed 12% improvement,
-  variance too high to be conclusive"
-  now: "20-seed ablation confirmed. CI [0.82, 0.87].
-  Ready to test on full geometry."
+- **11:40**: state on [[surrogate-model]]
+  was: Ablation on feature set B showed 12% improvement, variance too high to be conclusive
+  now: 20-seed ablation confirmed. CI [0.82, 0.87]. Ready to test on full geometry.
 ```
 
-**To trace a project’s full evolution**: search the daily log for `[project:surrogate-model] State updated` — returns the complete chronological sequence of state changes.
+**To trace a project’s full evolution**: search the daily log for `state on [[surrogate-model]]` — returns the complete chronological sequence of state changes.
 
-**Next actions** are also logged on deletion:
+**Next actions** are also logged on completion:
 
 ```markdown
-- [project:surrogate-model] Completed action:
-  "Run 20-seed ablation of feature set B"
+- **16:05**: action done on [[surrogate-model]] — Run 20-seed ablation of feature set B (deep)
 ```
 
 This ensures no information is lost while keeping the project map clean and focused on the present.
+
+**Exceptions to the `was:`/`now:` shape.** Two further line families record changes without copying the old text:
+
+- **Revisions of mutable custom notes** such as concepts (§5.12). `revise_note` and `cdno note revise` write, in the same transaction as the note, `revised [[<path>]] — <reason>` for a whole-body revision or `revised [[<path>#<Heading>]] — <reason>` for a one-section upsert; the path has no `.md`, the anchor is the raw heading text, and the reason is required and flattened to one line. A revision that leaves the text unchanged writes and logs nothing.
+
+  ```markdown
+  - **14:32**: revised [[concepts/woodbury-identity#Why it matters]] — added the cost comparison
+  ```
+
+- **Creations.** Every custom-type creation, and project, question, portfolio, stewardship and commitment creation, writes `<type> created [[<path>]] — <title>` (built by `build_created_line`, `vault/log.rs`); a commitment links its bare slug and appends its due date, `commitment created [[<slug>]] — <title> (due <YYYY-MM-DD>)`.
+
+  ```markdown
+  - **15:05**: concept created [[concepts/sherman-morrison]] — Sherman–Morrison formula
+  ```
+
+**The trade-off.** A project's Current State is a small snapshot, so copying the old text into the log is cheap and makes the log self-contained. A concept's body can be pages long and is revised often, so copying it would bury the daily sequence under prose. Mutable custom notes therefore keep their history through the daily log line, which records *when* and *why*, not through a diff of *what*: the old text is left to version control, when the vault is kept under it, rather than copied into the log. Edits made outside cuaderno, in an editor, are legitimate because markdown is the source of truth, but they leave no log line; that is a limit of the invariant, not something lint enforces.
+
+The same prefix family includes `noted [[journal/<year>/daily/<date>#<Heading>]]`, the pointer to a daily `## Notes` entry (§5.1). Where a line links to a section it uses the heading-text anchor form `[[path#Heading text]]` — the raw heading text, never a slugified anchor — which link resolution splits at the first `#` and resolves by the path part, as for the `milestone:` links of §5.11.
 
 -----
 
