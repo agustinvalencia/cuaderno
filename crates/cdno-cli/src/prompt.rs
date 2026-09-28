@@ -108,7 +108,7 @@ pub fn missing_flag(flag: &str) -> anyhow::Error {
 }
 
 /// The same, for a verb whose argument is a positional rather than a
-/// flag (see the read-verb exception in `docs/cli-ergonomics.md`).
+/// flag (see the positional exception in `docs/cli-ergonomics.md`).
 ///
 /// Separate from [`missing_flag`] because that one hardcodes the `--`
 /// prefix, and telling someone to pass `--slug` to a command that has no

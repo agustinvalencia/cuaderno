@@ -670,15 +670,16 @@ fn note_revise_section_and_content_file_require_each_other_and_exclude_body_file
         .stderr(predicate::str::contains("cannot be used with"));
 }
 
-/// The lost-update guard, end to end. `--body-file` is a FIFO, which the
-/// command opens only after it has read the note and kept its hash, so the
-/// test's open for writing returns exactly then: the edit below lands
-/// deterministically between the command's read and its commit, while the
-/// command is blocked reading the body. The commit must be refused with the
-/// domain's `StaleRevision` message and the concurrent edit must survive.
+/// The lost-update guard, end to end. The body or section file is a FIFO,
+/// which the command opens only after it has read the note and kept its
+/// hash, so the test's open for writing returns exactly then: the edit below
+/// lands deterministically between the command's read and its commit, while
+/// the command is blocked reading the file. The commit must be refused with
+/// the domain's `StaleRevision` message and the concurrent edit must survive.
+///
+/// `source_args` builds the revision flags around the FIFO's path.
 #[cfg(unix)]
-#[test]
-fn note_revise_refuses_a_note_changed_after_it_was_read() {
+fn assert_a_raced_revision_is_refused(source_args: impl Fn(&str) -> Vec<String>) {
     use std::io::Write;
 
     let dir = tempdir().unwrap();
@@ -700,11 +701,10 @@ fn note_revise_refuses_a_note_changed_after_it_was_read() {
             "note",
             "revise",
             "woodbury-identity",
-            "--body-file",
-            fifo.to_str().unwrap(),
             "--reason",
             "raced",
         ])
+        .args(source_args(fifo.to_str().unwrap()))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -732,6 +732,66 @@ fn note_revise_refuses_a_note_changed_after_it_was_read() {
     assert!(stderr.contains("changed since it was read"), "{stderr}");
     assert_eq!(read_concept(dir.path()), expected);
     assert!(!read_today_daily(dir.path()).contains("revised [["));
+}
+
+#[cfg(unix)]
+#[test]
+fn note_revise_refuses_a_note_changed_after_it_was_read() {
+    assert_a_raced_revision_is_refused(|fifo| vec!["--body-file".into(), fifo.into()]);
+}
+
+/// The section form passes the hash too, so the same race is refused there.
+#[cfg(unix)]
+#[test]
+fn note_revise_refuses_a_section_revision_of_a_note_changed_after_it_was_read() {
+    assert_a_raced_revision_is_refused(|fifo| {
+        vec![
+            "--section".into(),
+            "Proof".into(),
+            "--content-file".into(),
+            fifo.into(),
+        ]
+    });
+}
+
+/// A body file that cannot be read (missing, or a directory) is named in
+/// the error, and nothing is written or logged.
+#[test]
+fn note_revise_reports_an_unreadable_body_file_and_writes_nothing() {
+    let dir = tempdir().unwrap();
+    init_concept_vault(dir.path());
+    let v = vault_arg(dir.path());
+    let before = read_concept(dir.path());
+    let missing = dir.path().join("does-not-exist.md");
+    let directory = dir.path().join("a-directory");
+    fs::create_dir(&directory).unwrap();
+
+    for unreadable in [&missing, &directory] {
+        let shown = unreadable.to_str().unwrap();
+        cdno()
+            .args([
+                "--vault",
+                &v,
+                "--no-interactive",
+                "note",
+                "revise",
+                "woodbury-identity",
+                "--body-file",
+                shown,
+                "--reason",
+                "r",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "reading --body-file {shown}"
+            )));
+        assert_eq!(read_concept(dir.path()), before, "{shown}");
+        assert!(
+            !read_today_daily(dir.path()).contains("revised [["),
+            "{shown}"
+        );
+    }
 }
 
 #[test]

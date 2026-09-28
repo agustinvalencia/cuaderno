@@ -12,7 +12,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   [NOTE] [--body-file PATH | --section STRING --content-file PATH] [--reason STRING]` refines a
   mutable custom note in place and logs `revised [[path]] — reason` (with `#Section` for a
   section upsert) to today's daily note. `NOTE` is resolved as `cdno open` resolves a reference,
-  with the same miss and ambiguity messages. The note is read first and its `content_hash` passed
+  with the same miss and ambiguity messages. It is a positional under an amended exception in
+  `docs/cli-ergonomics.md`: a verb acting on one existing note may take that note's reference as
+  its trailing optional positional, mutating or not, while every value it writes stays a flag. A
+  note chosen in a picker (an omitted, ambiguous or unmatched reference) counts as prompted, so
+  the write confirms first; `open::resolve_reporting` reports that, and `cdno open` is unchanged.
+  The note is read first and its `content_hash` passed
   as `expected_hash` for both forms, so an edit saved between that read and the commit is refused
   with the domain's stale-revision message. Interactively, a missing body opens the current body
   in the editor and a missing reason is prompted, followed by a confirm; under `--no-interactive`

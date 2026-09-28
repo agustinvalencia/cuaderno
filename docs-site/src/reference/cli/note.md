@@ -71,12 +71,15 @@ cdno note revise [OPTIONS] [NOTE]
 
 Plus the [global options](overview.md#global-options). With neither `--body-file` nor `--section`,
 an interactive session opens the note's current body in your editor, then asks for the reason and
-confirms before writing; under `--no-interactive` both are required. The note is read before
+confirms before writing; under `--no-interactive` both are required. A note chosen in a picker
+(an omitted, ambiguous or unmatched reference) also brings the confirm, even when every flag was
+given. The note is read before
 anything is gathered, and a note that changed on disk after that read (an edit saved while the
 editor was open, say) is refused rather than overwritten: read it again and redo the revision.
 
 Text identical to the note's current content writes and logs nothing and prints
-`No change to <path>`. With `--json`, emits `{path, message, changed, new_hash, log_line,
+`No change to <path>`. That includes closing the editor without changing anything: the reason and
+confirm are still asked for, and the result is `No change to <path>`. With `--json`, emits `{path, message, changed, new_hash, log_line,
 section_target}`.
 
 ## Examples

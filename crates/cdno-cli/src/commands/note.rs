@@ -216,16 +216,31 @@ fn revise(
     json: bool,
 ) -> Result<()> {
     let mut prompted = false;
+    // A note chosen in a picker is a prompted value like any other (rule 3),
+    // so the write confirms first: otherwise a mistyped slug would open the
+    // all-notes picker and one keystroke would overwrite whatever was chosen.
+    // `resolve_reporting` sets `prompted` when an ambiguity or a miss was
+    // settled by the picker.
     let path = match args.note {
         Some(reference) => {
             let reference = crate::commands::open::strip_vault_root(&reference, root);
-            crate::commands::open::resolve(vault, &reference, at.date(), interactive)?
+            crate::commands::open::resolve_reporting(
+                vault,
+                &reference,
+                at.date(),
+                interactive,
+                &mut prompted,
+            )?
         }
         None if interactive => {
             prompted = true;
             crate::commands::open::pick_from_all(vault, None)?
         }
-        None => return Err(prompt::missing_positional("note")),
+        None => {
+            return Err(prompt::missing_positional("note").context(
+                "no note to revise — pass a reference (`cdno open --list` shows every note)",
+            ));
+        }
     };
     let view = vault.read_note(&path)?;
 

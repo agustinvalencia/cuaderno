@@ -321,7 +321,7 @@ enum Commands {
 
     /// Create, list and revise notes of config-defined custom types
     /// (declared under `[note_types.<type>]`). `note create <type> --title …
-    /// --field k=v`, `note list <type>` and `note revise <note> --reason …`.
+    /// --field k=v`, `note list <type>` and `note revise [note] --reason …`.
     Note {
         #[command(subcommand)]
         subcommand: cdno_cli::commands::note::NoteCommands,

@@ -140,7 +140,7 @@ prompt::drill_down(
 - **The detail shown is the `show` verb's own renderer**, never a
   bespoke rendering, so the two surfaces cannot drift.
 
-### Exception: a read verb may take one trailing optional positional
+### Exception: a verb may take its target as one trailing optional positional
 
 Rule 1 exists to keep *mutating* verbs unambiguous, where several promptable
 fields would otherwise compete for position. A read verb whose only
@@ -159,6 +159,15 @@ identifier as a trailing optional positional, because `cdno project show
 alpha` is what people type. Missing and non-interactive, it errors with
 `missing_positional`, not `missing_flag` — naming a `--slug` that does not
 exist sends the reader to `--help` for nothing.
+
+**The same holds for a verb that acts on one existing note, mutating or
+not.** It may take that note's reference as the trailing optional
+positional, because the reference selects the target rather than supplying
+a value; every value the verb writes stays a flag, so nothing competes for
+position. `cdno note revise` is the model: the reference resolves as `cdno
+open`'s does, and the body, section and reason are flags. A picker that
+chooses the note, for an omitted reference or an ambiguous or unmatched
+one, counts as a prompt under rule 3, so the write confirms first.
 
 `portfolio show` and `stewardship show` currently take `--portfolio` /
 `--slug` flags and are **grandfathered**. Adding a trailing positional to
@@ -265,6 +274,7 @@ are worth migrating.
 | `cdno commit create / done` | #114 |
 | `cdno orient` (`--energy` already optional) | covered ad-hoc |
 | `cdno project show` (slug now an optional positional) | rule 5 exception |
+| `cdno note revise` (note reference is a trailing optional positional; a picker sets `prompted`) | rule 5 exception |
 
 **Drill-down (rule 5) applied**: `project list`, `portfolio list`,
 `stewardship list`, `orient`, `status`, and `search` — the last via
