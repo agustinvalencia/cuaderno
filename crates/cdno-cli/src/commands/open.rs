@@ -153,7 +153,10 @@ fn warn_if_frozen(vault: &Vault, path: &cdno_core::path::VaultPath) {
 }
 
 /// Offer every note in a picker, most-recently-edited first.
-fn pick_from_all(vault: &Vault, seed: Option<&str>) -> Result<cdno_core::path::VaultPath> {
+///
+/// Shared with `cdno note revise`, whose missing reference is picked the
+/// same way.
+pub fn pick_from_all(vault: &Vault, seed: Option<&str>) -> Result<cdno_core::path::VaultPath> {
     // Unlike `drill_down`, which can silently decline on a narrow terminal
     // because its listing is already on screen, the picker *is* this command.
     // Declining would leave nothing at all, so say what to do instead.

@@ -1,6 +1,6 @@
 # `cdno note`
 
-Create and list notes of a [config-defined custom type](../custom-note-types.md) (declared under
+Create, list and revise notes of a [config-defined custom type](../custom-note-types.md) (declared under
 `[note_types.<name>]` in `.cuaderno/config.toml`). Built-in types have their own verbs
 (`cdno project create`, `cdno question create`, …); this is the generic surface for custom types.
 
@@ -43,11 +43,49 @@ List every note of custom type `<type>`, by path.
 cdno note list <TYPE>
 ```
 
+## `cdno note revise [note]`
+
+Refine a mutable custom note (such as a concept) in place. The revision is logged to today's daily
+note as `revised [[<path>]] — <reason>`, or `revised [[<path>#<Section>]] — <reason>` for a
+section, in the same write; do not log it again by hand. Built-in note types (project, action,
+daily, …) and custom types declared `append_only = true` are refused.
+
+```text
+cdno note revise [OPTIONS] [NOTE]
+```
+
+### Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `[NOTE]` | The note to revise, resolved as `cdno open` resolves a reference: a vault path with or without `.md`, a slug, or `type:slug`. An unknown or ambiguous reference is reported as `cdno open` reports it. Omitted in an interactive session, a picker offers every note. |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--body-file <PATH>` | Replace the whole body (everything after the frontmatter, which is kept as it is) with the file's contents, written verbatim. Cannot be combined with `--section`. |
+| `--section <STRING>` | The heading text of a section to upsert, without the `#` markers. Requires `--content-file`. An existing section is replaced together with its sub-sections; a missing one is appended as `## <section>`. |
+| `--content-file <PATH>` | The section's new text, without its heading. Requires `--section`. |
+| `--reason <STRING>` | Why the note was revised, in a short clause; it becomes the daily-log line. |
+
+Plus the [global options](overview.md#global-options). With neither `--body-file` nor `--section`,
+an interactive session opens the note's current body in your editor, then asks for the reason and
+confirms before writing; under `--no-interactive` both are required. The note is read before
+anything is gathered, and a note that changed on disk after that read (an edit saved while the
+editor was open, say) is refused rather than overwritten: read it again and redo the revision.
+
+Text identical to the note's current content writes and logs nothing and prints
+`No change to <path>`. With `--json`, emits `{path, message, changed, new_hash, log_line,
+section_target}`.
+
 ## Examples
 
 ```bash
 cdno note create person --title "Ada Lovelace" --field name=Ada --field role=advisor
 cdno note list person
+cdno note revise concept:woodbury-identity --section Proof --content-file proof.md \
+  --reason "shorter proof via push-through"
 ```
 
 ## Related

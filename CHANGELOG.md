@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno note revise` (T11, #624).** The CLI half of `Vault::revise_note`: `cdno note revise
+  [NOTE] [--body-file PATH | --section STRING --content-file PATH] [--reason STRING]` refines a
+  mutable custom note in place and logs `revised [[path]] — reason` (with `#Section` for a
+  section upsert) to today's daily note. `NOTE` is resolved as `cdno open` resolves a reference,
+  with the same miss and ambiguity messages. The note is read first and its `content_hash` passed
+  as `expected_hash` for both forms, so an edit saved between that read and the commit is refused
+  with the domain's stale-revision message. Interactively, a missing body opens the current body
+  in the editor and a missing reason is prompted, followed by a confirm; under `--no-interactive`
+  each is a missing-flag error. `--section` and `--content-file` require each other and conflict
+  with `--body-file`. The human line is `Revised <path>` or `No change to <path>`; `--json` emits
+  `path`, `message`, `changed`, `new_hash`, `log_line` and `section_target`.
 - **The `note_to_daily` MCP tool (T10, #623).** Writes worked-out substance to a daily note
   through `Vault::note_to_daily`: one `### <heading>` entry under `## Notes` and the pointer line
   `noted [[journal/…#<heading>]] (<links>)` under `## Logs`, in one transaction. `NoteToDailyInput`
