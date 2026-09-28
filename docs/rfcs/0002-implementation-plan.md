@@ -254,9 +254,11 @@ input fields.
 
 ### T7 — `revise_note`
 
-**What.** New domain operation `Vault::revise_note(path, expected_hash: Option<String>,
-revision: Revision, reason: String)` in `crates/cdno-domain/src/vault/revise.rs`, where
-`Revision` is `Body(String)` or `Section { heading, content }`. Refuses built-in types and
+**What.** New domain operation `Vault::revise_note(&self, path: &VaultPath, expected_hash:
+Option<&str>, revision: Revision, reason: &str, at: NaiveDateTime) -> Result<ReviseOutcome,
+DomainError>` in `crates/cdno-domain/src/vault/revise.rs`, where `Revision` is `Body(String)` or
+`Section { heading, content }` (an upsert: an existing section is replaced, a missing one is
+appended as `## <heading>`), and `at` stamps the log line and picks the daily note. Refuses built-in types and
 append-only custom types; refuses a hash mismatch inside the transaction lock; writes nothing
 when the resulting text is identical; otherwise writes through the transaction and logs
 `- **HH:MM**: revised [[<path>]] — <reason>` or `revised [[<path>#<heading>]] — <reason>`.
@@ -267,8 +269,9 @@ notes, with a lost-update guard and the logged-revision invariant.
 
 **How.** Resolve the type through `type_registry`; reject on `NoteTypeDescriptor::Builtin` or
 `append_only()`. Read raw bytes, hash, compare with `expected_hash` if `Some` **after**
-`self.transaction()?` so the compare is under the lock. Apply the revision with
-`MarkdownDocument::replace_section` / whole-body replace, preserving frontmatter. Compare
+`self.transaction()?` so the compare is under the lock. Apply the revision as a
+section upsert (`MarkdownDocument::ensure_section` for a missing heading, then
+`replace_section`) or a whole-body write, preserving frontmatter. Compare
 resulting bytes with the original; return early on equality. Flatten the reason to one line.
 
 **Probes.**
@@ -372,8 +375,9 @@ check.
 
 ### T12 — CLI `cdno log note`
 
-**What.** `cdno log note [--heading H] [--body-file F]`, mapping to T2. Interactive: prompt for
-the heading, then the body through `prompt_editor`.
+**What.** `cdno log note [--heading H] [--body-file F] [--date YYYY-MM-DD]`, mapping to T2.
+Interactive: prompt for the heading, then the body through `prompt_editor`. `--date` is stamped at
+the current time, mirroring the MCP tool's `date`.
 
 **Why.** RFC §6.3: the CLI half of `## Notes`.
 

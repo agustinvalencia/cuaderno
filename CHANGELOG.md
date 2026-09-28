@@ -181,6 +181,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **Design documents aligned with the shipped concept-notes method (T16, #629).** `docs/design.md`
+  gains the `concept` row in §3, a new §5.12 (the custom type, the filing test, the provenance rule,
+  refinement and promotion), a daily note of `## Notes` plus `## Logs` in §5.1, and in §7 the real
+  `state on [[…]]` / `action done on [[…]]` shapes with the `revised [[…]]` and `<type> created
+  [[…]]` exceptions and their trade-off; `docs/implementation-plan.md` Phase 7 maps
+  `zettel → evidence or concept`; `CLAUDE.md` names `concept` and the `noted [[`, `revised [[` and
+  `created [[` prefixes and the widened positional exception; RFC 0002 and its plan point at the
+  shipped PRs and record the #629 corrections. Docs only.
 - **The concept method on the MCP surface (T15, #628).** The server instructions gain one
   conditional CONCEPTS bullet, "if the vault declares a `concept` type", carrying the filing test
   (evidence, the question note, a stewardship routine, a concept note, or the daily `## Notes` via
