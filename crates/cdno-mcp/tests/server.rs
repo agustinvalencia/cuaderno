@@ -465,3 +465,103 @@ fn create_custom_note_says_body_excludes_the_title_heading() {
     assert!(desc.contains("inserted after the H1"), "{desc}");
     assert!(!desc.contains("appended after the H1"), "{desc}");
 }
+
+fn description_of(name: &str) -> String {
+    empty_server()
+        .advertised_tools()
+        .iter()
+        .find(|t| t.name.as_ref() == name)
+        .and_then(|t| t.description.as_deref().map(str::to_owned))
+        .unwrap_or_else(|| panic!("tool '{name}' not advertised"))
+}
+
+/// RFC 0002 T15 (#628): the concept method exists for an agent only if the
+/// server instructions state it. The bullet is conditional because the
+/// instructions are static text and the `concept` type is declared per vault;
+/// it carries the filing test, the provenance rule and the refinement rule.
+#[test]
+fn instructions_carry_the_conditional_concept_filing_test() {
+    let info = empty_server().get_info();
+    let instructions = info.instructions.as_deref().unwrap_or_default();
+    for phrase in [
+        "concept type",
+        "CONCEPTS, if the vault declares a `concept` type",
+        "list_note_types",
+        "is evidence",
+        "is a routine",
+        "is a concept note",
+        "`## Notes` with note_to_daily until promoted",
+        "Evidence never depends on a concept's current text",
+        "link a concept only as see-also",
+        "never make a concept the `origin` of evidence",
+        "Evidence records what happened then; a concept describes understanding now",
+        "refined in place with revise_note, never appended to",
+    ] {
+        assert!(
+            instructions.contains(phrase),
+            "instructions must state {phrase:?}: {instructions}"
+        );
+    }
+}
+
+/// The descriptions T15 extends must keep the method clauses and stay one
+/// paragraph (a newline would render as a break in some clients' listings).
+#[test]
+fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
+    let read_note = description_of("read_note");
+    assert!(read_note.contains("expected_hash"), "{read_note}");
+    assert!(read_note.contains("A concept's `origin`"), "{read_note}");
+    assert!(
+        read_note.contains("passing the part before the `#`"),
+        "{read_note}"
+    );
+
+    let create = description_of("create_custom_note");
+    assert!(create.contains("`origin`"), "{create}");
+    assert!(create.contains("search before you create"), "{create}");
+    assert!(create.contains("one concept per note"), "{create}");
+    assert!(create.contains("terms are ANDed"), "{create}");
+    assert!(
+        create.contains("rather than merging them yourself"),
+        "{create}"
+    );
+    assert!(!create.contains("merged into the first"), "{create}");
+    assert!(create.contains("`ambiguous_section`"), "{create}");
+    assert!(create.contains("needs no separate log line"), "{create}");
+
+    let search = description_of("search_notes");
+    assert!(search.contains("#concept"), "{search}");
+    assert!(search.contains("matches the word, not the tag"), "{search}");
+    assert!(
+        search.contains("Read each hit with `read_note`"),
+        "{search}"
+    );
+    assert!(!search.contains("search `#concept`"), "{search}");
+    assert!(search.contains("`note_type: concept`"), "{search}");
+    assert!(search.contains("two or more dates"), "{search}");
+
+    let note_to_daily = description_of("note_to_daily");
+    assert!(
+        note_to_daily.contains("two or more dates") && note_to_daily.contains("`origin`"),
+        "{note_to_daily}"
+    );
+
+    let revise = description_of("revise_note");
+    assert!(revise.contains("current best account"), "{revise}");
+    assert!(revise.contains("when it was last run"), "{revise}");
+
+    for name in [
+        "read_note",
+        "create_custom_note",
+        "search_notes",
+        "note_to_daily",
+        "upsert_daily_section",
+        "revise_note",
+    ] {
+        let desc = description_of(name);
+        assert!(
+            !desc.contains('\n'),
+            "tool '{name}' description must stay one paragraph: {desc}"
+        );
+    }
+}

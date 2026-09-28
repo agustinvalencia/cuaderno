@@ -181,6 +181,23 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The concept method on the MCP surface (T15, #628).** The server instructions gain one
+  conditional CONCEPTS bullet, "if the vault declares a `concept` type", carrying the filing test
+  (evidence, the question note, a stewardship routine, a concept note, or the daily `## Notes` via
+  `note_to_daily`), the provenance rule (evidence never depends on a concept's current text: it
+  records the command, version and parameters itself, links a concept only as see-also, and never
+  takes one as its `origin`) and the refinement rule (refined in place with `revise_note`, never
+  appended to). `create_custom_note` now says to search before creating a concept with one or two
+  distinctive words, to refine an existing note rather than create a second, to tell the person
+  rather than merge two it finds, that the server does not refuse a duplicate (it is created as
+  `<slug>-2`), one concept per note, that the default template supplies its own trailing
+  headings, and that a promotion needs no separate log line; `search_notes` says to search the
+  concept type first and how to find promotion candidates (search the word `concept` with
+  `note_type: daily`, which also matches days that merely created or linked a concept, then read
+  each hit for entries ending in `#concept` on two or more dates); `read_note` says a concept's
+  `origin` links are read by the part before the `#`; `note_to_daily` carries the promotion offer;
+  `revise_note` carries the no-staleness rule, leaving a procedure free to note when it was last
+  run. No tool is added; the catalogue stays at 58.
 - **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`
   flattened every `DomainError` to a `-32603` JSON-RPC error, and at least one client renders that
   as a bare "Tool execution failed" without ever showing `error.message` to the model — so an agent
