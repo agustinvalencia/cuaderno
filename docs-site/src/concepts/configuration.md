@@ -12,6 +12,10 @@ configurable and why; the [Configuration reference](../reference/configuration.m
   matched against vault-relative paths, and **never delete anything on disk** — they only scope what
   the index considers.
 - **Templates.** Override any built-in note template by adding a file under `.cuaderno/templates/`.
+- **Custom note types.** Declare your own types under `[note_types.<name>]`. `cdno init` declares the
+  bundled `concept` type for you; a vault created before it existed gets it with
+  `cdno config note-type install --name concept` (see
+  [Custom note types](../reference/custom-note-types.md#bundled-types)).
 - **Schema extensions.** Add vault-specific required frontmatter fields per note type (e.g. require
   `collaborators` on every project), enforced by `cdno lint`.
 

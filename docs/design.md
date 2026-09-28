@@ -655,7 +655,7 @@ tags: [kan, ppo, sample-efficiency]
 
 A *concept* is a unit of understanding worth keeping and reusing, tied to no project, question, stewardship or portfolio: a theorem and the intuition behind it, a definition, a technique and when it applies, a procedure you will run again. Concept notes form a flat library in `concepts/`, organised by tags and links rather than by folders. The rationale and the trial that decides the type's future are in [RFC 0002](rfcs/0002-concept-notes.md).
 
-**A custom type, not a built-in.** `cdno init` writes this declaration into a new vault's `.cuaderno/config.toml` and installs the template as `.cuaderno/templates/concept.md`; an existing vault copies both from `examples/note-types/concept/`. Deleting the block removes the type and nothing else depends on it.
+**A custom type, not a built-in.** `cdno init` writes this declaration into a new vault's `.cuaderno/config.toml` and installs the template as `.cuaderno/templates/concept.md`; an existing vault gets both, and the folder, with `cdno config note-type install --name concept`, which writes only what is absent and never modifies an existing declaration ([RFC 0003](rfcs/0003-install-bundled-note-types.md)). Deleting the block removes the type and nothing else depends on it.
 
 ```toml
 # A declared custom type: the concept library (RFC 0002). Delete this block (and

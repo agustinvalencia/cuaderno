@@ -209,6 +209,21 @@ pub fn prompt_project(vault: &Vault) -> Result<String> {
         .to_owned())
 }
 
+/// Pick a bundled note type from `(name, purpose)` pairs, for `cdno config
+/// note-type install`. Returns the name. Uses `raw_prompt`, so the chosen
+/// row is the index picked rather than a label searched for.
+pub fn prompt_bundled_note_type(options: &[(&str, &str)]) -> Result<String> {
+    if options.is_empty() {
+        return Err(anyhow!("this build of cdno ships no bundled note types"));
+    }
+    let labels: Vec<String> = options
+        .iter()
+        .map(|(name, purpose)| format!("{name} — {purpose}"))
+        .collect();
+    let pick = Select::new("Bundled note type", labels).raw_prompt()?;
+    Ok(options[pick.index].0.to_owned())
+}
+
 /// Plain text input with `prompt` as the displayed label.
 pub fn prompt_text(prompt: &str) -> Result<String> {
     Ok(Text::new(prompt).prompt()?)

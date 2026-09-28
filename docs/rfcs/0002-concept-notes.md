@@ -312,7 +312,9 @@ concept costs nothing and is left alone.
 `cdno init` writes the declaration into a new vault's config with a comment header saying it is
 an ordinary custom type and may be deleted, and installs the template as
 `.cuaderno/templates/concept.md`. `examples/note-types/concept/` carries the same snippet and
-template for existing vaults.
+template, which the binary `include_str!`s. An existing vault installs the type with
+`cdno config note-type install --name concept` (RFC 0003), which writes the declaration, the
+template and the folder, each only when absent, rather than copying them by hand.
 
 ```toml
 # A declared custom type: the concept library (RFC 0002). Delete this block (and

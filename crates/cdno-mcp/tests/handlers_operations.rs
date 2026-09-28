@@ -1910,7 +1910,43 @@ async fn create_custom_note_rejects_an_unknown_type() {
         }))
         .await;
     // A domain error maps to an MCP error (Err), not an error-result payload.
-    assert!(result.is_err(), "unknown type should error");
+    let err = result.expect_err("unknown type should error");
+    // Not bundled, so no install command is offered.
+    assert!(
+        !err.message.contains("note-type install"),
+        "{}",
+        err.message
+    );
+}
+
+#[tokio::test]
+async fn create_custom_note_names_the_install_command_for_a_bundled_type() {
+    // RFC 0003 §4.5: `concept` ships with cdno, so a vault without it gets
+    // told the command that installs it rather than a bare "unknown type".
+    let (server, _store) = server_with_config(config_with_person(), |_v, _s| {});
+    let err = server
+        .create_custom_note(Parameters(CreateCustomNoteInput {
+            type_name: "concept".to_owned(),
+            title: "Woodbury identity".to_owned(),
+            fields: std::collections::HashMap::new(),
+            vars: None,
+            body: None,
+            origin: None,
+        }))
+        .await
+        .expect_err("an undeclared type is refused");
+    assert!(
+        err.message
+            .contains("run `cdno config note-type install --name concept`"),
+        "{}",
+        err.message
+    );
+    let payload = &err.data.as_ref().expect("a classified rejection")["cdno_rejection"];
+    assert_eq!(payload["code"], "unknown_note_type", "{payload}");
+    assert_eq!(
+        payload["details"]["install_command"],
+        "cdno config note-type install --name concept"
+    );
 }
 
 #[tokio::test]

@@ -179,6 +179,28 @@ pub enum NoteTypeCommands {
         #[arg(long)]
         name: Option<String>,
     },
+
+    /// Install a note type the binary ships with (a bundled type, such as
+    /// `concept`) into this vault: its template, its folder and its
+    /// declaration, writing only what is absent.
+    ///
+    /// An existing declaration is never modified: it is compared with the
+    /// bundled one and reported, and the template and folder steps still
+    /// run. A template file already present is never overwritten. Safe to
+    /// re-run; exits 0 unless a write fails or is refused.
+    Install {
+        /// Name of the bundled type to install. Prompted with a picker when
+        /// omitted in a terminal.
+        #[arg(long, conflicts_with = "list")]
+        name: Option<String>,
+        /// List the bundled types and whether this vault has each one.
+        #[arg(long)]
+        list: bool,
+        /// Print the exact block and template that would be written, and
+        /// write nothing.
+        #[arg(long, conflicts_with = "list")]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -604,7 +626,7 @@ pub fn finish_edit(
 /// either drop the user's keys or invent them. The structured verbs refuse
 /// on it and name the two verbs that do work on a broken config, both of
 /// which deliberately avoid the model for exactly this reason.
-fn read_model(content: &str) -> Result<VaultConfig> {
+pub(crate) fn read_model(content: &str) -> Result<VaultConfig> {
     toml::from_str(content).map_err(|err| {
         anyhow::anyhow!(
             "this config cannot be read, so a field cannot be changed in place:\n  {err}\n\n\
@@ -619,7 +641,7 @@ fn read_model(content: &str) -> Result<VaultConfig> {
 /// Unlike `edit`, there is no editor buffer to preserve: the input was
 /// flags, so re-running is the whole recovery. What matters is saying
 /// plainly that nothing was written.
-fn describe(err: ConfigSaveError) -> anyhow::Error {
+pub(crate) fn describe(err: ConfigSaveError) -> anyhow::Error {
     match err {
         ConfigSaveError::Validation(e) => anyhow::anyhow!(
             "that change would leave a config the vault cannot open, so nothing was \
@@ -867,7 +889,267 @@ fn note_type(root: &Path, command: NoteTypeCommands, json: bool, interactive: bo
             // re-run is a success, which is what makes this scriptable.
             emit(json, &outcome, &format!("Note type '{name}' removed."))
         }
+
+        NoteTypeCommands::Install {
+            name,
+            list,
+            dry_run,
+        } => {
+            if list {
+                return list_bundled(root, json);
+            }
+            install_verb(root, name, dry_run, json, interactive)
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// `note-type install` (RFC 0003)
+// ---------------------------------------------------------------------------
+//
+// The verb is a thin shell over `crate::bundled::install`, the same function
+// `cdno init` calls, so a new vault and an upgraded one cannot differ. Its
+// declaration step goes through `finish_edit` like every structured verb
+// here; unlike them it appends the bundled block as TEXT rather than
+// rebuilding a table with `config_edit`, so the block's comment survives.
+
+fn install_verb(
+    root: &Path,
+    name: Option<String>,
+    dry_run: bool,
+    json: bool,
+    interactive: bool,
+) -> Result<()> {
+    use crate::bundled;
+
+    let mut prompted = false;
+    let name = gather_or_error(name, "name", interactive, &mut prompted, || {
+        let options: Vec<(&str, &str)> = bundled::BUNDLED
+            .iter()
+            .map(|t| (t.name, t.purpose))
+            .collect();
+        crate::prompt::prompt_bundled_note_type(&options)
+    })?;
+    let ty = bundled::find(&name).ok_or_else(|| bundled::unknown_bundled(&name))?;
+
+    if !dry_run
+        && !confirm_if_prompted(
+            prompted,
+            &format!(
+                "Install the bundled note type '{name}': its template, its folder and its \
+                 declaration, writing only what is absent."
+            ),
+        )?
+    {
+        println!("Cancelled — nothing was written.");
+        return Ok(());
+    }
+
+    let report = bundled::install(root, ty, dry_run)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&install_json(&report, ty))?
+        );
+    } else {
+        print!("{}", render_install(&report, ty));
+    }
+    Ok(())
+}
+
+/// The text report (RFC 0003 §4.2.4): one line per step, then, when nothing
+/// was written, the "already installed" line.
+pub fn render_install(
+    report: &crate::bundled::InstallReport,
+    ty: &crate::bundled::BundledType,
+) -> String {
+    use crate::bundled::{DeclarationOutcome, FolderAction, TemplateAction};
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    if report.dry_run {
+        out.push_str("Dry run — nothing was written. An install would do this:\n");
+    }
+    match &report.declaration {
+        DeclarationOutcome::Written => out.push_str("declaration  written\n"),
+        DeclarationOutcome::KeptMatches => out.push_str("declaration  kept (matches bundled)\n"),
+        DeclarationOutcome::KeptDiffers(differences) => {
+            let summary: Vec<String> = differences
+                .iter()
+                .map(|d| format!("{}: bundled {}, yours {}", d.key, d.bundled, d.yours))
+                .collect();
+            let _ = writeln!(out, "declaration  kept (differs: {})", summary.join("; "));
+            for d in differences {
+                let _ = writeln!(
+                    out,
+                    "             to adopt the bundled {}: {}",
+                    d.key, d.adopt
+                );
+            }
+        }
+    }
+    let template_path = format!(
+        "{}/{}",
+        cdno_core::paths::TEMPLATES_DIR,
+        report.template_file
+    );
+    match &report.template {
+        TemplateAction::Written => {
+            let _ = writeln!(out, "template     written {template_path}");
+        }
+        TemplateAction::KeptMatches => out.push_str("template     kept (matches bundled)\n"),
+        TemplateAction::KeptCustomised => out.push_str("template     kept (customised)\n"),
+        TemplateAction::NotInstalled { declared } => {
+            let _ = writeln!(
+                out,
+                "template     not installed (declaration names {declared})"
+            );
+        }
+    }
+    match report.folder {
+        FolderAction::Created => {
+            let _ = writeln!(out, "folder       created {}/", report.folder_path);
+        }
+        FolderAction::Present => {
+            let _ = writeln!(out, "folder       present {}/", report.folder_path);
+        }
+    }
+
+    if report.dry_run {
+        if let Some(block) = &report.appended_block {
+            let _ = write!(
+                out,
+                "\nAppended to {}:\n{block}",
+                cdno_core::paths::CONFIG_FILE
+            );
+        }
+        if report.template == TemplateAction::Written {
+            let _ = write!(out, "\nWritten to {template_path}:\n{}", ty.template);
+        }
+    } else if !report.changed() {
+        let _ = writeln!(out, "{}: already installed, nothing to do", report.name);
+    }
+    out
+}
+
+/// The `--json` report: `changed`, as the other config verbs carry it, then
+/// one value per step with the same outcomes as the text report.
+pub fn install_json(
+    report: &crate::bundled::InstallReport,
+    ty: &crate::bundled::BundledType,
+) -> serde_json::Value {
+    use crate::bundled::{DeclarationOutcome, FolderAction, TemplateAction};
+
+    let declaration = match &report.declaration {
+        DeclarationOutcome::Written => "written",
+        DeclarationOutcome::KeptMatches => "kept_matches",
+        DeclarationOutcome::KeptDiffers(_) => "kept_differs",
+    };
+    let mut template = serde_json::json!({
+        "path": format!("templates/{}", report.template_file),
+        "action": match &report.template {
+            TemplateAction::Written => "written",
+            TemplateAction::KeptMatches => "kept_matches",
+            TemplateAction::KeptCustomised => "kept_customised",
+            TemplateAction::NotInstalled { .. } => "not_installed",
+        },
+    });
+    if let TemplateAction::NotInstalled { declared } = &report.template {
+        template["declared"] = serde_json::json!(declared);
+    }
+    let mut value = serde_json::json!({
+        // A dry run changes nothing, whatever it would do.
+        "changed": !report.dry_run && report.changed(),
+        "note_type": report.name,
+        "declaration": declaration,
+        "template": template,
+        "folder": {
+            "path": report.folder_path,
+            "action": match report.folder {
+                FolderAction::Created => "created",
+                FolderAction::Present => "present",
+            },
+        },
+    });
+    if let DeclarationOutcome::KeptDiffers(differences) = &report.declaration {
+        value["differences"] = differences
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "key": d.key,
+                    "bundled": d.bundled,
+                    "yours": d.yours,
+                    "adopt": d.adopt,
+                })
+            })
+            .collect();
+    }
+    if report.dry_run {
+        value["dry_run"] = serde_json::json!(true);
+        value["would_change"] = serde_json::json!(report.changed());
+        if let Some(block) = &report.appended_block {
+            value["block"] = serde_json::json!(block);
+        }
+        if report.template == TemplateAction::Written {
+            value["template_content"] = serde_json::json!(ty.template);
+        }
+    }
+    value
+}
+
+/// `install --list`: every bundled type, what it declares, and where this
+/// vault stands with it. No template bodies, only their section headings.
+fn list_bundled(root: &Path, json: bool) -> Result<()> {
+    use crate::bundled::{BUNDLED, installed_state};
+    use std::fmt::Write;
+
+    let mut rows = Vec::new();
+    let mut text = String::new();
+    for ty in BUNDLED {
+        let declaration = ty.declaration()?;
+        let state = installed_state(root, ty)?;
+        let sections = ty.section_headings();
+        if json {
+            rows.push(serde_json::json!({
+                "name": ty.name,
+                "state": state.key(),
+                "purpose": ty.purpose,
+                "folder": declaration.folder,
+                "required": declaration.required,
+                "optional": declaration.optional,
+                "template": ty.template_filename,
+                "sections": sections,
+            }));
+        } else {
+            let none = |list: &[String]| {
+                if list.is_empty() {
+                    "(none)".to_owned()
+                } else {
+                    list.join(", ")
+                }
+            };
+            let _ = writeln!(text, "{}: {}", ty.name, state.label());
+            let _ = writeln!(text, "  purpose   {}", ty.purpose);
+            let _ = writeln!(text, "  folder    {}/", declaration.folder);
+            let _ = writeln!(text, "  required  {}", none(&declaration.required));
+            let _ = writeln!(text, "  optional  {}", none(&declaration.optional));
+            let _ = writeln!(
+                text,
+                "  template  {} (sections: {})",
+                ty.template_filename,
+                sections.join(", ")
+            );
+        }
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "bundled": rows }))?
+        );
+    } else {
+        print!("{text}");
+    }
+    Ok(())
 }
 
 fn field(root: &Path, command: FieldCommands, json: bool, interactive: bool) -> Result<()> {
