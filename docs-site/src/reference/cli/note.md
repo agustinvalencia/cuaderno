@@ -94,3 +94,6 @@ cdno note revise concept:woodbury-identity --section Proof --content-file proof.
 ## Related
 
 - [Custom note types](../custom-note-types.md) — declaring a type and the full feature.
+- [The concept library](../../concepts/concept-library.md) and
+  [Building a concept library](../../tutorials/concept-library.md) — `note create --origin` and
+  `note revise` in use.

@@ -85,9 +85,12 @@ Cite the entry elsewhere as `[[<target>]]`.
 
 ## Related MCP tool
 
-[`append_to_log`](../mcp/writes.md) — the same operation for AI clients; `note_to_daily` is the
-counterpart of `cdno log note`.
+[`append_to_log`](../mcp/writes.md#logging-capture-triage) — the same operation for AI clients;
+[`note_to_daily`](../mcp/writes.md#daily-weekly-and-monthly-sections) is the counterpart of
+`cdno log note`.
 
 ## See also
 
 - [The daily loop](../../tutorials/daily-loop.md).
+- [The concept library](../../concepts/concept-library.md) — why substance goes in `## Notes`, and
+  how an entry is promoted to a concept note.

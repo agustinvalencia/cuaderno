@@ -83,4 +83,8 @@ cdno search "preconditioner" --portfolio sparse-vs-dense-attention-ood
 `portfolio list` flags **staleness** — dossiers you haven't fed in a while — which is a useful prompt
 during your monthly scan. Periodically synthesise the findings into the portfolio's `_index.md`.
 
-Next: [Actions](actions.md).
+Not everything worth keeping is evidence. What a result taught you about a technique — understanding
+you will reuse, independent of any question — is a **concept**, and it lives in its own library;
+see [The concept library](../concepts/concept-library.md) for the filing test.
+
+Next: [Building a concept library](concept-library.md).

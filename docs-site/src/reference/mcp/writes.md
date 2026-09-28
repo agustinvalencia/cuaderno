@@ -27,7 +27,7 @@ tool re-reads its target before answering, and the result carries the evidence:
 | `verified` | `content` — the file was re-read; or `removed`, for `discard_inbox_item`, where the check is that the file is gone |
 | `bytes_written` | Size of the file on disk after the write. `0` for a removal |
 | `content_hash` | The note's content hash (below) — `null` for a removal |
-| `appended_tail` | For append-shaped writes (`append_to_log`, `start_action`), the tail of the *section* the text went into — see [below](#the-appended-tail). `null` elsewhere |
+| `appended_tail` | For append-shaped writes (`append_to_log`, `start_action`, `note_to_daily`), the tail of the *section* the text went into — see [below](#the-appended-tail). `null` elsewhere |
 
 **If the target cannot be read back, the tool returns an error rather than a success.** The wording
 says the write is *unverified*, not failed: it may still have landed, so the right response is to
@@ -37,6 +37,9 @@ re-read the note, not to blindly repeat the write.
 
 `appended_tail` is scoped to the section the write targeted, not to the last bytes of the file.
 `append_to_log` and `start_action` both write into `## Logs`, so that is the section you get back.
+`note_to_daily` writes into both `## Notes` and `## Logs`; its tail is the last 512 bytes of
+`## Notes`, which end with the entry just written (the pointer line is already in the result's
+`log_line`).
 (`start_unplanned_action` also logs, but it rewrites the project map in the same commit and so
 verifies as a whole-file rewrite — its `appended_tail` is `null`.)
 
@@ -110,7 +113,38 @@ the content.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `revise_note` | `note`, `reason`, and either `body` + `expected_hash` or `section` + `content` | Refine a mutable custom note (a concept, say) in place; built-in and append-only types are refused (`note_not_revisable`). `note` takes the references [`read_note`](reads.md) takes. A whole-body rewrite needs the `content_hash` from `read_note` as `expected_hash`, and is refused as `stale_revision` if the note changed since that read. A section revision upserts one section (an existing one is replaced with its sub-sections, a missing one is appended as `## <section>`) and needs no hash. `reason` is required and becomes the daily-log line `revised [[path#Section]] — reason`. Identical text writes and logs nothing (`changed: false`). The result adds `changed`, `new_hash` (pass it as the next `expected_hash`), `log_line` and, for a section, `section_target`; `verification` is `null` when nothing changed. |
+| `revise_note` | `note`, `reason`, and either `body` + `expected_hash` or `section` + `content` | Refine a mutable custom note (a concept, say) in place, logging the revision to today's daily note in the same write. ([`cdno note revise`](../cli/note.md#cdno-note-revise-note)) |
+
+`revise_note` takes exactly one of two forms:
+
+| Input | Meaning |
+|-------|---------|
+| `note` | Which note: any reference [`read_note`](reads.md) takes — a vault path with or without `.md`, a bare slug, or `type:slug`. |
+| `body` | **Whole-body form.** The note's new body, everything after the frontmatter (which is kept as it is), written verbatim. |
+| `expected_hash` | Required with `body`: the `content_hash` `read_note` returned. A blank value counts as missing. Ignored with `section`. |
+| `section` | **Section form.** Heading text of the section to upsert, as `read_note`'s `headings` lists it, without the `#` markers. An existing section is replaced together with its sub-sections; a missing one is appended as `## <section>`. No hash is needed. |
+| `content` | The section's new text, without its heading. Only with `section`. |
+| `reason` | Required. Why the note was revised, in a short clause; the assistant drafts it from what it changed. It becomes the daily-log line `revised [[<path>#<section>]] — <reason>`, or `revised [[<path>]] — <reason>` for a whole body. |
+
+Text identical to the note's current text writes and logs nothing and returns `changed: false`.
+The result extends the usual write result with `changed`, `new_hash` (the note's hash after the
+call: pass it as `expected_hash` on a follow-up revision rather than reading again), `log_line`
+(the line written, without its timestamp, or `null`) and `section_target` (the anchored link the
+log line points at, for a section revision); `verification` is `null` when nothing changed.
+
+Refusals (a [rejection](overview.md) with these codes; nothing is written):
+
+| Code | When |
+|------|------|
+| `note_not_revisable` | The note is of a built-in type (its sections belong to its own tools) or of a custom type declared `append_only = true`. |
+| `stale_revision` | A whole-body revision whose `expected_hash` no longer matches the bytes on disk: the note changed since it was read. `details.actual` is the current hash; read the note again and redo the edit on the fresh text. |
+| `revision_invalid` | The `section` heading is empty, spans lines, contains `[`, `]`, `\|` or `#`, or starts with `^`; or `content` holds a heading at the section's own level or above, which would restructure the note. |
+| `ambiguous_section` | The `section` heading matches more than one heading in the note. |
+| `not_found` / `ambiguous_slug` | The `note` reference matches no note, or several (with their paths in `details.candidates`), as for `read_note`. |
+
+A blank `reason`, `body` together with `section`, `section` without `content`, `content` without
+`section`, or `body` without `expected_hash` is refused as an invalid argument (`-32602`) naming
+the field.
 
 ## Frontmatter
 
@@ -122,10 +156,36 @@ the content.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `note_to_daily` | `heading`, `body`, `date?` | Write worked-out substance to the daily note as one `### <heading>` entry under `## Notes`, and the pointer line `noted [[journal/<year>/daily/<date>#<heading>]]` (followed by the body's wikilinks in parentheses) to `## Logs`, in one write; do not log the entry again. The heading must be unique within the day, must not reuse a daily section name, and must not contain `[`, `]`, `\|`, `#` or inline markup nor start with `^` (refused as `history_entry_heading_invalid`); deeper headings inside the body are fine. End an entry worth reusing with the tag `#concept` so the review can find it. The result adds `target`, the entry's anchored link to cite (for example from a concept's `origin`), and `log_line`. |
+| `note_to_daily` | `heading`, `body`, `date?` | Write worked-out substance to a daily note as one `### <heading>` entry under `## Notes`, with its pointer line in `## Logs`, in one write. See [below](#note_to_daily). ([`cdno log note`](../cli/log.md#cdno-log-note)) |
 | `upsert_daily_section` | `section` (`Standup`\|`Intention`\|`Agenda`\|`Meeting`\|`Notes`), `content?`, `date?`, `append?` | Write or append a daily-note section. `Notes` is append-only: it takes `append: true` only, and `append: false` is refused; for one entry with its `## Logs` pointer, use `note_to_daily`. |
 | `upsert_weekly_section` | `section` (`Wins`\|`Challenges`\|`One Improvement`\|`This Week's Goal`), `content?`, `date?`, `append?` | Write or append a weekly-note section. |
 | `upsert_monthly_section` | `section` (`Wins`\|`Themes`\|`Next Month's Focus`), `content?`, `date?`, `append?` | Write or append a monthly-note section. |
+
+### `note_to_daily`
+
+| Input | Meaning |
+|-------|---------|
+| `heading` | The entry's heading, written as `### <heading>` under `## Notes` and used verbatim as the pointer's anchor. |
+| `body` | The entry's substance. Leading blank lines and trailing whitespace are dropped. Its wikilinks are copied onto the pointer line. |
+| `date` | ISO `YYYY-MM-DD` of the daily note to write to, stamped at the current time. Omitted = today. |
+
+The entry is appended under the day's `## Notes`, which is created immediately above `## Logs` if
+the day has none (the daily note itself is created if absent). The pointer line
+`noted [[journal/<year>/daily/<date>#<heading>]]`, followed by the body's wikilinks in parentheses
+when it has any, is appended to `## Logs` in the same write, so the entry is not logged again with
+`append_to_log`. End an entry worth reusing with the tag `#concept` on its last line, so a later
+review can find it as a candidate for promotion to a concept note.
+
+The result adds `target` — the entry's anchored link, `journal/<year>/daily/<date>#<heading>`, to
+cite as `[[<target>]]` (for example from a concept's `origin`) — and `log_line`, the pointer line
+without its timestamp.
+
+Refused with code `history_entry_heading_invalid` (nothing is written) when the heading reuses a
+daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), matches a heading
+already in that day's note, contains `[`, `]`, `|`, `#` or inline markup (bold, italics, code),
+or starts with `^`. Headings inside the body must be level 3 or deeper and are held to the same
+uniqueness rule, so a pasted derivation with its own `## Proof` must be demoted first. A blank
+`heading` or `body` is refused as an invalid argument (`-32602`).
 
 ## Notes
 

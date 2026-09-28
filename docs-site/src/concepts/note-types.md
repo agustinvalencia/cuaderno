@@ -22,7 +22,8 @@ Plus the **inbox**: raw, untyped captures in `inbox/` awaiting [triage](../tutor
 ## The journal: `daily`, `weekly`, and `monthly`
 
 The chronological backbone. Daily notes collect timestamped log lines plus structured sections
-(Intention, Agenda, Standup, Meeting). Weekly notes hold the review (Wins, Challenges, One
+(Intention, Agenda, Standup, Meeting), and a `## Notes` section for worked-out substance
+that the log points at (see [The concept library](concept-library.md#substance-in-the-day-pointers-in-the-log)). Weekly notes hold the review (Wins, Challenges, One
 Improvement) and the week's single goal. Monthly notes hold the higher-altitude review (Wins,
 Themes, Next Month's Focus) and a `## Weeks` block that **links** the month's weekly notes rather
 than copying them, so the weeks stay the source of truth. All three are **append-only** — the
@@ -77,5 +78,10 @@ books, clients), you can declare a **schema-only** [custom note type](../referen
 in `config.toml` — a folder, field rules, and a template, with no recompile (see the worked
 [Tracking people](../tutorials/tracking-people.md) recipe).
 
+One custom type comes declared for you: `cdno init` writes a **`concept`** type (`concepts/`,
+mutable, refined in place) into a new vault's config, for understanding you will reuse — a theorem,
+a technique, a procedure. It is an ordinary custom type you may delete. See
+[The concept library](concept-library.md).
+
 For the exact frontmatter fields of each type, see [Frontmatter fields](../reference/frontmatter.md).
-Next: [Vault structure](vault-structure.md).
+Next: [The concept library](concept-library.md).

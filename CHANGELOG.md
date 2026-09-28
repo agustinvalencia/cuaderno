@@ -181,6 +181,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The user guide teaches the concept library (T17, #630).** New pages
+  `docs-site/src/concepts/concept-library.md` (the filing test and provenance rule, `## Notes` and
+  the `noted [[…#Heading]]` pointer, promotion as creation with `origin`, refinement with its
+  logged reason and hash guard, no staleness, hub notes, and the word-not-tag search limit) and
+  `docs-site/src/tutorials/concept-library.md` (one promotion end to end with real command
+  output), both in `SUMMARY.md`; `reference/custom-note-types.md` replaces the wrong "`[schemas.<custom>]`
+  has no effect" with what the code does (typed fields lint-checked and settable; `extra_required`
+  and defaults not applied to a custom type) and documents the template lookup and creation line;
+  the MCP reference gains parameter and refusal-code tables for `revise_note` and `note_to_daily`
+  and the heading-link note on `read_note`; note-types, vault-structure and the CLI `log`/`note`
+  pages link the new material.
 - **Design documents aligned with the shipped concept-notes method (T16, #629).** `docs/design.md`
   gains the `concept` row in §3, a new §5.12 (the custom type, the filing test, the provenance rule,
   refinement and promotion), a daily note of `## Notes` plus `## Logs` in §5.1, and in §7 the real

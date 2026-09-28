@@ -13,6 +13,7 @@
 
 - [The Research Logbook Method](concepts/rlm.md)
 - [Note types](concepts/note-types.md)
+- [The concept library](concepts/concept-library.md)
 - [Vault structure](concepts/vault-structure.md)
 - [Business rules](concepts/business-rules.md)
 - [Contexts and energy](concepts/contexts-and-energy.md)
@@ -23,6 +24,7 @@
 - [The daily loop](tutorials/daily-loop.md)
 - [Managing projects](tutorials/projects.md)
 - [Research and evidence](tutorials/research-and-evidence.md)
+- [Building a concept library](tutorials/concept-library.md)
 - [Actions](tutorials/actions.md)
 - [Commitments and deadlines](tutorials/commitments.md)
 - [Stewardships and tracking](tutorials/stewardships-and-tracking.md)
