@@ -69,6 +69,14 @@ pub const RESERVED_TOP_LEVEL_FOLDERS: &[&str] = &[
     CUADERNO_DIR,
 ];
 
+/// Names of the note types the `cdno` binary ships with and can install into
+/// an existing vault (`cdno config note-type install`, RFC 0003). The
+/// registry itself (declaration blocks and templates) lives in `cdno-cli`;
+/// only the names are here, so `cdno-mcp` can name the install command in a
+/// refusal without depending on the CLI crate. A `cdno-cli` test pins the two
+/// lists equal.
+pub const BUNDLED_NOTE_TYPE_NAMES: &[&str] = &["concept"];
+
 // `.cuaderno/` meta directory and its contents.
 pub const CUADERNO_DIR: &str = ".cuaderno";
 pub const CONFIG_FILE: &str = ".cuaderno/config.toml";

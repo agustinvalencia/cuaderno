@@ -8,22 +8,16 @@ use cdno_core::paths;
 /// compile time so the binary needs no companion files at runtime.
 const DEFAULT_CONFIG_TOML: &str = include_str!("../../templates/default_config.toml");
 
-/// The `[note_types.concept]` declaration `cdno init` appends to a new
-/// vault's config (RFC 0002 §6.1). Kept in one place so `examples/note-types/
-/// concept/config.toml` (T14) can be tested against it byte-for-byte rather
-/// than drifting from a second hand-copied block.
-pub const CONCEPT_TYPE_BLOCK: &str = r#"# A declared custom type: the concept library (RFC 0002). Delete this block (and
-# any notes under concepts/) if you do not want one; nothing else depends on it.
-[note_types.concept]
-folder = "concepts"
-required = ["created"]
-optional = ["tags", "origin"]
-template = "concept.md"
-"#;
+/// The `[note_types.concept]` declaration `cdno init` installs into a new
+/// vault's config (RFC 0002 §6.1). `include_str!`ed from
+/// `examples/note-types/concept/config.toml`, as the bundled registry's copy
+/// is, so the example and the binary are one file.
+pub const CONCEPT_TYPE_BLOCK: &str =
+    include_str!("../../../../examples/note-types/concept/config.toml");
 
 /// The concept template `cdno init` writes to `.cuaderno/templates/concept.md`
-/// (RFC 0002 §5.2, §6.1), the file `CONCEPT_TYPE_BLOCK` names. Byte-identical
-/// to `examples/note-types/concept/concept.md` (T14), which a test pins.
+/// (RFC 0002 §5.2, §6.1), the file `CONCEPT_TYPE_BLOCK` names; likewise
+/// `include_str!`ed from `examples/note-types/concept/concept.md`.
 ///
 /// The frontmatter deliberately carries no `title` and no `origin`. The title
 /// is the body H1 (§6.1), and a `title: {{title}}` line would break the YAML
@@ -31,22 +25,8 @@ template = "concept.md"
 /// order, by creation's frontmatter reconciliation only when one is supplied;
 /// an `origin: "{{origin}}"` line would leave the placeholder as literal text
 /// in every note created without one.
-pub const CONCEPT_TEMPLATE: &str = r#"---
-type: concept
-created: {{created}}
-tags: []
----
-
-# {{title}}
-
-{{body}}
-
-## Statement
-
-## Why it matters
-
-## See also
-"#;
+pub const CONCEPT_TEMPLATE: &str =
+    include_str!("../../../../examples/note-types/concept/concept.md");
 
 /// Default note templates dumped into `.cuaderno/templates/` at init.
 ///
@@ -63,6 +43,12 @@ const DEFAULT_TEMPLATES: &[(&str, &str)] =
 /// Initialise a Cuaderno vault rooted at `target`. The directory
 /// itself is created if needed; refuses if `.cuaderno/` already
 /// exists, since re-init is destructive.
+///
+/// Creates the layout, writes the default config and `daily.md`, then
+/// installs every bundled note type through
+/// [`crate::bundled::install_bundled`]. The config is therefore written
+/// twice, once verbatim and once through the config gate's append; the
+/// result is byte-identical to writing the default and the block together.
 ///
 /// CWD-as-default lives in `main.rs`: this function takes whatever
 /// path the caller resolved, so it never touches process-global
@@ -89,15 +75,8 @@ pub fn run(target: &Path) -> Result<()> {
             .with_context(|| format!("creating directory {}", dir.display()))?;
     }
 
-    // The concept type (RFC 0002 §6.1) is not a built-in, so its folder
-    // isn't in `paths::init_dirs` — create it separately, alongside them.
-    let concepts_dir = target.join("concepts");
-    fs::create_dir_all(&concepts_dir)
-        .with_context(|| format!("creating directory {}", concepts_dir.display()))?;
-
     let config_path = target.join(paths::CONFIG_FILE);
-    let config_contents = format!("{DEFAULT_CONFIG_TOML}{CONCEPT_TYPE_BLOCK}");
-    fs::write(&config_path, config_contents)
+    fs::write(&config_path, DEFAULT_CONFIG_TOML)
         .with_context(|| format!("writing default config to {}", config_path.display()))?;
 
     let templates_dir = target.join(paths::TEMPLATES_DIR);
@@ -107,13 +86,16 @@ pub fn run(target: &Path) -> Result<()> {
             .with_context(|| format!("writing default template {}", dest.display()))?;
     }
 
-    // The concept template goes with the concept declaration above: without
-    // it, `template = "concept.md"` finds nothing and a new concept gets none
-    // of the §5.2 fallback sections. Never overwrite a file already there.
-    let concept_template = templates_dir.join("concept.md");
-    if !concept_template.exists() {
-        fs::write(&concept_template, CONCEPT_TEMPLATE)
-            .with_context(|| format!("writing concept template {}", concept_template.display()))?;
+    // The bundled types (RFC 0002's `concept`) go in through the same
+    // function `cdno config note-type install` uses (RFC 0003 §4.4), so a new
+    // vault and an upgraded one are identical by construction. The config is
+    // therefore written twice: the default above through `fs::write`, then
+    // the appended declaration through the validate-first config gate. That
+    // is harmless. The default ends in a blank line, so the append adds no
+    // separator and the bytes are exactly the default followed by the block.
+    for bundled in crate::bundled::BUNDLED {
+        crate::bundled::install_bundled(target, bundled.name)
+            .with_context(|| format!("installing the bundled `{}` note type", bundled.name))?;
     }
 
     // Canonicalise for clarity in the success message; fall back to

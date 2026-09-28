@@ -10,6 +10,7 @@
 //! vault bootstrap — sits here.
 
 pub mod bootstrap;
+pub mod bundled;
 pub mod commands;
 pub mod completions;
 pub mod editor;

@@ -185,33 +185,87 @@ fn create_concept(
     fs::read_to_string(vault.join(format!("concepts/{slug}.md"))).unwrap()
 }
 
+/// Every entry under `root`, relative, with its content (`None` for a
+/// directory), sorted. The whole-vault snapshot the init/install parity
+/// tests compare.
+fn snapshot(root: &std::path::Path) -> Vec<(String, Option<Vec<u8>>)> {
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        out: &mut Vec<(String, Option<Vec<u8>>)>,
+    ) {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            if path.is_dir() {
+                out.push((rel, None));
+                walk(root, &path, out);
+            } else {
+                out.push((rel, Some(fs::read(&path).unwrap())));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
+/// Turn a freshly initialised vault into one made by a binary that predates
+/// the concept type (#644): no block, no template, no folder.
+fn strip_concept(root: &std::path::Path) {
+    let config_path = root.join(".cuaderno/config.toml");
+    let config = fs::read_to_string(&config_path).unwrap();
+    let stripped = config.replace(CONCEPT_TYPE_BLOCK, "");
+    assert_ne!(stripped, config, "precondition: the block was present");
+    fs::write(&config_path, stripped).unwrap();
+    fs::remove_file(root.join(".cuaderno/templates/concept.md")).unwrap();
+    fs::remove_dir(root.join("concepts")).unwrap();
+}
+
 #[test]
 fn example_matches_init() {
-    // The example files are what an existing vault copies; `cdno init` writes
-    // `CONCEPT_TYPE_BLOCK` and `CONCEPT_TEMPLATE` for a new one. They must not
-    // drift.
-    let example = concept_example("config.toml");
-    assert_eq!(
-        example, CONCEPT_TYPE_BLOCK,
-        "examples/note-types/concept/config.toml must be byte-identical to CONCEPT_TYPE_BLOCK"
-    );
-    let example_template = concept_example("concept.md");
-    assert_eq!(
-        example_template, CONCEPT_TEMPLATE,
-        "examples/note-types/concept/concept.md must be byte-identical to CONCEPT_TEMPLATE"
-    );
+    // The bundled registry `include_str!`s the example files, so there is one
+    // copy on disk. What is left to assert is what the install produces: a
+    // config `cdno config validate` accepts, and the same files whether the
+    // type came from `cdno init` or from installing it into an older vault.
+    let fresh = tempdir().unwrap();
+    init::run(fresh.path()).unwrap();
+    cdno_in(fresh.path())
+        .args(["config", "validate"])
+        .assert()
+        .success();
 
-    // And those are exactly the texts `cdno init` writes.
-    let dir = tempdir().unwrap();
-    init::run(dir.path()).unwrap();
-    let config = fs::read_to_string(dir.path().join(".cuaderno/config.toml")).unwrap();
+    // The installed files are the example files, byte for byte.
+    let config = fs::read_to_string(fresh.path().join(".cuaderno/config.toml")).unwrap();
     assert!(
-        config.ends_with(&example),
+        config.ends_with(&concept_example("config.toml")),
         "the config init writes must end with the example block:\n{config}"
     );
-    let installed = fs::read_to_string(dir.path().join(".cuaderno/templates/concept.md"))
+    let installed = fs::read_to_string(fresh.path().join(".cuaderno/templates/concept.md"))
         .expect("init installs concept.md");
-    assert_eq!(installed, example_template);
+    assert_eq!(installed, concept_example("concept.md"));
+    assert_eq!(CONCEPT_TYPE_BLOCK, concept_example("config.toml"));
+    assert_eq!(CONCEPT_TEMPLATE, concept_example("concept.md"));
+
+    // An older vault, upgraded by the install function, ends up identical.
+    let older = tempdir().unwrap();
+    init::run(older.path()).unwrap();
+    strip_concept(older.path());
+    cdno_cli::bundled::install_bundled(older.path(), "concept").expect("install into older vault");
+    cdno_in(older.path())
+        .args(["config", "validate"])
+        .assert()
+        .success();
+    assert_eq!(
+        snapshot(older.path()),
+        snapshot(fresh.path()),
+        "init and install must produce the same files"
+    );
 }
 
 #[test]

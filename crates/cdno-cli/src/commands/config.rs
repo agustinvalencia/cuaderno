@@ -604,7 +604,7 @@ pub fn finish_edit(
 /// either drop the user's keys or invent them. The structured verbs refuse
 /// on it and name the two verbs that do work on a broken config, both of
 /// which deliberately avoid the model for exactly this reason.
-fn read_model(content: &str) -> Result<VaultConfig> {
+pub(crate) fn read_model(content: &str) -> Result<VaultConfig> {
     toml::from_str(content).map_err(|err| {
         anyhow::anyhow!(
             "this config cannot be read, so a field cannot be changed in place:\n  {err}\n\n\
@@ -619,7 +619,7 @@ fn read_model(content: &str) -> Result<VaultConfig> {
 /// Unlike `edit`, there is no editor buffer to preserve: the input was
 /// flags, so re-running is the whole recovery. What matters is saying
 /// plainly that nothing was written.
-fn describe(err: ConfigSaveError) -> anyhow::Error {
+pub(crate) fn describe(err: ConfigSaveError) -> anyhow::Error {
     match err {
         ConfigSaveError::Validation(e) => anyhow::anyhow!(
             "that change would leave a config the vault cannot open, so nothing was \

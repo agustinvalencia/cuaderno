@@ -10,7 +10,9 @@ optional template.
 Answers questions like *"what was my last interaction with X?"* and *"what did X ask me to do?"*
 without a bespoke CRM.
 
-1. Merge [`person/config.toml`](person/config.toml) into your vault's `.cuaderno/config.toml`.
+1. Merge the table in [`person/config.toml`](person/config.toml) into your vault's
+   `.cuaderno/config.toml` to track the people you work and think with: paste the block at the end
+   of the file, comment included, and check it with `cdno config validate`.
 2. Optionally copy [`person/person.md`](person/person.md) to `.cuaderno/templates/person.md` for a
    richer note shape (without it, Cuaderno synthesises a minimal note).
 3. Create people and log interactions:
