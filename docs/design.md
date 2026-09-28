@@ -38,9 +38,9 @@ The tool has four consumers:
 
 |Type         |Description                                                  |Mutable?                          |Lives in                                  |
 |-------------|-------------------------------------------------------------|----------------------------------|------------------------------------------|
-|`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/daily/`                          |
-|`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/weekly/`                         |
-|`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/monthly/`                        |
+|`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/<year>/daily/`                   |
+|`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/<iso-year>/weekly/`              |
+|`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/<year>/monthly/`                 |
 |`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/`                               |
 |`action`     |Manifest note for an action-as-investigation (heavier form)  |Yes while attached, append-only after completion |`actions/` (archived to `actions/_done/<year>/`) |
 |`portfolio`  |Index note for an evidence folder                            |Rarely (summary)                  |`portfolios/*/`                           |
@@ -76,16 +76,17 @@ The tool has four consumers:
 vault/
 │
 ├── journal/
-│   ├── daily/
-│   │   ├── 2026-04-04.md
-│   │   ├── 2026-04-05.md
-│   │   └── 2026-04-06.md
-│   ├── weekly/
-│   │   ├── 2026-W13.md
-│   │   └── 2026-W14.md
-│   └── monthly/
-│       ├── 2026-03.md
-│       └── 2026-04.md
+│   └── 2026/                    ← calendar year (weekly notes use the ISO week year)
+│       ├── daily/
+│       │   ├── 2026-04-04.md
+│       │   ├── 2026-04-05.md
+│       │   └── 2026-04-06.md
+│       ├── weekly/
+│       │   ├── 2026-W13.md
+│       │   └── 2026-W14.md
+│       └── monthly/
+│           ├── 2026-03.md
+│           └── 2026-04.md
 │
 ├── projects/
 │   ├── surrogate-model.md
@@ -216,7 +217,7 @@ The daily note lives at `journal/<year>/daily/<YYYY-MM-DD>.md`. Its two history 
 - **`## Logs` is the sequence.** One line per event in the form `- **HH:MM**: <text>`, pointers rather than prose. `cdno log "..."` and the MCP `append_to_log` write here, and so does every domain operation that records a change (§7). `## Logs` is pinned to the bottom of the note after every section write.
 - **`## Notes` is the substance.** Worked-out material that belongs to no project or question yet (a derivation, a procedure, a page of reasoning), one `### <heading>` entry per write so each entry can be addressed as `[[journal/<year>/daily/<date>#<heading>]]`. `note_to_daily` (MCP) and `cdno log note` append the entry and, in the same write, the `## Logs` pointer line `noted [[journal/<year>/daily/<date>#<heading>]]`, followed by the body's wikilinks in parentheses when it has any. The section is created immediately before `## Logs` on first use. An entry heading must be unique within the day and must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), because heading lookup is by flat text; it may not contain `[`, `]`, `|`, `#` or inline markup, nor start with `^`, since it becomes a link anchor. An entry worth reusing ends with the body tag `#concept`, the candidate marker for promotion (§5.12). Meetings stay in `## Meeting`, and project reasoning stays on the project map.
 
-The other daily sections are planning scratch and live notes, written through `upsert_daily_section`: `## Standup`, `## Intention` and `## Agenda` (typically replaced) and `## Meeting` (typically appended). `## Notes` can be reached the same way, with append forced, for a caller that wants no pointer line. The project, weekly and monthly contexts read `## Logs` only: a `## Notes` entry reaches a project through the pointer line's links and through backlinks from the entry's own wikilinks, not through its text.
+The other daily sections are planning scratch and live notes, written through `upsert_daily_section`: `## Standup`, `## Intention` and `## Agenda` (typically replaced) and `## Meeting` (typically appended). `## Notes` can be reached the same way, with `append: true` only (`append: false` is refused), for a caller that wants no pointer line. The project, weekly and monthly contexts read `## Logs` only: a `## Notes` entry reaches a project through the pointer line's links and through backlinks from the entry's own wikilinks, not through its text.
 
 **Frontmatter**: `type`, `date`.
 
@@ -686,7 +687,7 @@ origin: "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/dail
 - [[concepts/sherman-morrison]]
 ```
 
-The title is the body H1. The shipped template carries only `type`, `created` and `tags: []`; `origin` is written, as a quoted string, only when it is supplied at creation. It holds one or more wikilinks to the daily `## Notes` entries the concept came from, and each is indexed as its own link. The body is free-form: *Statement / Why it matters / See also* is the default, and a procedure or a definition uses its own headings. One concept per note — if a note needs two headings that could each be cited on their own, it is usually two notes. A **hub note** is an ordinary concept note that is mostly links, written by hand when a cluster is real; by convention its slug is the tag it maps. At most one coarse subfolder level (`concepts/maths/`) is tolerated for browsing on disk; the tool is blind to it.
+The title is the body H1. The shipped template carries only `type`, `created` and `tags: []`; `origin` is written, as a quoted string, only when it is supplied at creation. It holds one or more wikilinks to the daily `## Notes` entries the concept came from, and each is indexed as its own link. Concept notes and their `origin` links use qualified paths (`[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`). The text an agent writes to the daily note through `append_to_log`, `upsert_daily_section` and `note_to_daily` bodies keeps the bare `[[slug]]` form of the pre-RFC convention (as in `state on [[slug]]`); the `noted`, `revised` and `created` lines the tool writes carry the qualified path. The body is free-form: *Statement / Why it matters / See also* is the default, and a procedure or a definition uses its own headings. One concept per note — if a note needs two headings that could each be cited on their own, it is usually two notes. A **hub note** is an ordinary concept note that is mostly links, written by hand when a cluster is real; by convention its slug is the tag it maps. At most one coarse subfolder level (`concepts/maths/`) is tolerated for browsing on disk; the tool is blind to it.
 
 **The filing test.** Ask of the thing you want to keep: *what is it?*
 

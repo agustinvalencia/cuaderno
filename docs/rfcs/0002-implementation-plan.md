@@ -258,10 +258,10 @@ input fields.
 Option<&str>, revision: Revision, reason: &str, at: NaiveDateTime) -> Result<ReviseOutcome,
 DomainError>` in `crates/cdno-domain/src/vault/revise.rs`, where `Revision` is `Body(String)` or
 `Section { heading, content }` (an upsert: an existing section is replaced, a missing one is
-appended as `## <heading>`), and `at` stamps the log line and picks the daily note. Refuses built-in types and
-append-only custom types; refuses a hash mismatch inside the transaction lock; writes nothing
-when the resulting text is identical; otherwise writes through the transaction and logs
-`- **HH:MM**: revised [[<path>]] — <reason>` or `revised [[<path>#<heading>]] — <reason>`.
+appended as `## <heading>`), and `at` stamps the log line and picks the daily note. Refuses
+built-in types and append-only custom types; refuses a hash mismatch inside the transaction lock;
+writes nothing when the resulting text is identical; otherwise writes through the transaction and
+logs `- **HH:MM**: revised [[<path>]] — <reason>` or `revised [[<path>#<heading>]] — <reason>`.
 Empty `reason` is rejected.
 
 **Why.** RFC §5.3 and §6.2: the transactional successor of `write_note_raw` for mutable custom

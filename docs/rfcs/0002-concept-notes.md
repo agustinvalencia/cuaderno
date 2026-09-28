@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9). Stages 0 to 2 shipped: #642 (T4), #643 (T5), #644 (T13), #645 (T7), #647 (T2), #648 (T6), #649 (T14), #650 (T8), #651 (T9), #652 (T10), #653 (T11), #654 (T12), #655 (T15), with the design documents aligned under T16. Open follow-ups: #640 (T3b), #646 (T7b) |
+| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9). Stages 0 and 1 shipped, with T13 to T15 of stage 2: #635 (T0), #638 (T1), #647 (T2), #639 (T3), #642 (T4), #643 (T5), #648 (T6), #645 (T7), #650 (T8), #651 (T9), #652 (T10), #653 (T11), #654 (T12), #644 (T13), #649 (T14), #655 (T15). T16 aligns the design documents; T17 (docs-site) is open. Open follow-ups: #640 (T3b), #646 (T7b) |
 | **Tracked by** | #612 (epic), #613–#632 (T0–T19); task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
 | **Affects** | `cdno-core` (one resolver fix), `cdno-domain`, `cdno-cli`, `cdno-mcp`, `docs/design.md`, `docs/implementation-plan.md`, `docs-site`, `examples/` |
 | **Related** | RFC 0001 (format precedent); custom note types (`docs-site/src/reference/custom-note-types.md`); #597 (desktop retirement — CLI and MCP surfaces only); `docs/implementation-plan.md` Phase 7 (the "standalone note" this RFC resolves); #604 (superseded draft) |
@@ -170,8 +170,10 @@ origin: "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/dail
   and `tags: []`; `origin` is written, as a quoted YAML string, only when it is supplied at
   creation.
 - **One link form.** Concept notes and their `origin` links use qualified wikilinks:
-  `[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`. The daily-log lines other tools
-  describe keep the bare `[[slug]]` form of the pre-RFC convention (`state on [[slug]]`).
+  `[[journal/2026/daily/<date>#Heading]]`, `[[concepts/<slug>]]`. The text an agent writes to the
+  daily note through `append_to_log`, `upsert_daily_section` and `note_to_daily` bodies keeps the
+  bare `[[slug]]` form of the pre-RFC convention (as in `state on [[slug]]`); the `noted`,
+  `revised` and `created` lines the tool writes carry the qualified path.
 - **Links:** none is required. A concept with no links in or out is not a lint finding. Links to
   projects, questions, stewardships and other concepts go in the body like any other wikilink.
 - **Unit:** one concept per note. If a note needs two headings that could each be cited on their

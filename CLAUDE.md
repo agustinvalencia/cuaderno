@@ -165,9 +165,9 @@ the family: `noted [[journal/<year>/daily/<date>#<Heading>]]` points at a daily 
 (`vault/notes_section.rs`); `revised [[<path>]] — <reason>` (`[[<path>#<Heading>]]` for one
 section) records a custom-note revision with no `was:`/`now:` block, since the log keeps when and
 why and version control keeps what (`vault/revise.rs`); and `<type> created [[<path>]] — <title>`
-records a creation (`build_created_line` in `vault/log.rs`; a commitment links its bare slug). Tracing a project's evolution is a
-search over the daily log — so never replace a mutable section without emitting its log entry, and
-never hand-write that entry in any other shape.
+records a creation (`build_created_line` in `vault/log.rs`; a commitment links its bare slug).
+Tracing a project's evolution is a search over the daily log — so never replace a mutable section
+without emitting its log entry, and never hand-write that entry in any other shape.
 
 Notes link with wikilinks and the linking rules are enforced; `cdno lint` reports frontmatter and
 link problems with an error/warning split (`Error` = downstream code can trip over it, e.g. an edited
