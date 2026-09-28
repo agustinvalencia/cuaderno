@@ -427,26 +427,37 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
     Some(first.clone())
 }
 
-/// The name a note answers to under [`resolve_wikilinks`]'s name-based
-/// rules: its file stem, or for a folder note (`<dir>/_index.md`) the
-/// folder's name. Every rule that can resolve a target to `path` compares
-/// the target's last segment with one of these (see [`target_may_name`]).
-pub fn note_link_name(path: &VaultPath) -> Option<&str> {
+/// The names a note answers to under [`resolve_wikilinks`]'s rules: its
+/// file stem always (the exact rule, e.g. `[[portfolios/<slug>/_index]]`,
+/// and the stem rule), and for a folder note (`<dir>/_index.md`) also the
+/// folder's name, when it has one (the folder-index rule, e.g.
+/// `[[portfolios/<slug>]]`). Every rule that can resolve a target to
+/// `path` compares the target's last segment with one of these (see
+/// [`target_may_name`]).
+pub fn note_link_names(path: &VaultPath) -> Vec<&str> {
     let p = path.as_path();
-    let stem = p.file_stem()?.to_str()?;
-    if stem == "_index" {
-        p.parent()?.file_name()?.to_str()
-    } else {
-        Some(stem)
+    let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+        return Vec::new();
+    };
+    let mut names = vec![stem];
+    if stem == "_index"
+        && let Some(folder) = p
+            .parent()
+            .and_then(|d| d.file_name())
+            .and_then(|f| f.to_str())
+    {
+        names.push(folder);
     }
+    names
 }
 
 /// Whether the wikilink `target` could resolve to, or be disambiguated by,
-/// a note whose [`note_link_name`] is in `names`. A cheap pre-filter for
+/// a note with one of [`note_link_names`] in `names`. A cheap pre-filter for
 /// re-resolution: it never rejects a target that some rule of
 /// [`resolve_wikilinks`] could match to such a note. The exact rule (with
-/// or without the anchor) and the stem rule all end on the note's stem,
-/// the folder-index rule on its folder's name, and a stem ambiguity is
+/// or without the anchor) and the stem rule all end on the note's stem
+/// (`_index` for an explicit `[[<dir>/_index]]`), the folder-index rule on
+/// its folder's name, and a stem ambiguity is
 /// only cleared by removing a note with the same stem. Both the unsplit
 /// target (rule 0a, for a `#` in a file name) and the anchor-stripped one
 /// are checked.

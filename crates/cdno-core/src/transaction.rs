@@ -427,7 +427,7 @@ impl VaultTransaction {
             let names: HashSet<&str> = added_paths
                 .iter()
                 .chain(removed_paths.iter())
-                .filter_map(crate::extractors::note_link_name)
+                .flat_map(crate::extractors::note_link_names)
                 .collect();
             let healed = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
                 .and_then(|targets| {

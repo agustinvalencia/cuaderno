@@ -837,12 +837,13 @@ fn commit_reresolution_filter_admits_every_rule_that_can_match() {
         &index,
         src,
         "---\ntype: concept\n---\n\nSee [[concepts/b]], [[concepts/b#Why]], \
-         [[portfolios/p]], [[actions/x]] and [[dup]].\n",
+         [[portfolios/p]], [[portfolios/p/_index]], [[actions/x]] and [[dup]].\n",
     );
     for target in [
         "concepts/b",
         "concepts/b#Why",
         "portfolios/p",
+        "portfolios/p/_index",
         "actions/x",
         "dup",
     ] {
@@ -862,6 +863,12 @@ fn commit_reresolution_filter_admits_every_rule_that_can_match() {
     commit_note(&store, &index, "portfolios/p/_index.md", LINKED_NOTE);
     assert_eq!(
         resolution_of(&index, src, "portfolios/p"),
+        Some(vp("portfolios/p/_index.md"))
+    );
+    // The canonical explicit form `link_portfolio_to_*` writes: resolved by
+    // the exact rule, so its name is the file stem `_index`, not the folder.
+    assert_eq!(
+        resolution_of(&index, src, "portfolios/p/_index"),
         Some(vp("portfolios/p/_index.md"))
     );
 
