@@ -14,6 +14,9 @@
 //!    Reindex if the hash differs or no row exists.
 //! 3. Any index row whose path isn't in the walk is an orphan — remove
 //!    it. Cascading FKs drop its deadlines, links, and tags.
+//! 4. If the pass added or removed a note, re-resolve the `links` rows
+//!    that are unresolved or point at a vanished path, so a note written
+//!    before its link target existed gains the backlink (#640).
 //!
 //! Per-note transactions keep one corrupted note from blocking the
 //! others: a parse error is recorded in the report and reconciliation
@@ -69,6 +72,12 @@ pub struct ReconciliationReport {
     pub fts_built: usize,
     /// FTS rows with no surviving note that were dropped this pass.
     pub fts_removed: usize,
+    /// `links` rows whose resolution changed without their source note
+    /// being reindexed (#640): a dangling `[[B]]` that resolves now that
+    /// `B` exists, or a row pointing at a note that moved or vanished.
+    /// Only computed on a pass that added or removed a note — the only
+    /// passes that change the path set resolution runs against.
+    pub links_reresolved: usize,
     /// Per-file failures — typically parse errors on a corrupted note.
     /// Reconciliation continues past these; the offending file stays
     /// unindexed until fixed.
@@ -208,6 +217,25 @@ pub fn reconcile(
         }
     }
 
+    // Phase 2b: re-resolve stale links (#640). Phase 1 resolves a note's
+    // wikilinks only when that note is reindexed, so a note written
+    // before its target existed keeps `resolved_path = NULL` — and the
+    // target's backlinks omit it — until the linking note itself is edited;
+    // likewise a row resolved to a note that has since moved keeps
+    // pointing at the old path. Resolution depends only on the target text
+    // and the path set, so a pass that neither added nor removed a note
+    // cannot change any answer, and the work is bounded to passes that did
+    // (a move is one of each).
+    if report.added > 0 || report.removed > 0 {
+        // Index-only writes with no transaction to carry them, so take the
+        // vault write lock explicitly, as every other reconcile write does
+        // through its `VaultTransaction`.
+        let _lock = store.acquire_write_lock().map_err(|e| {
+            IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
+        })?;
+        report.links_reresolved = reresolve_stale_links(&**index, &fs_set)?;
+    }
+
     // Phase 3: heal the FTS index by path-set diff against `notes`.
     //
     // Phase 1 only reindexes notes whose content changed; an unchanged
@@ -256,6 +284,34 @@ pub fn reconcile(
     }
 
     Ok(report)
+}
+
+/// Re-resolve every `links` row whose resolution is stale against
+/// `vault_paths`: unresolved (`NULL`), or resolved to a path that is no
+/// longer in the set. Rows already resolved to a present note are left
+/// alone, so this never overrides what the source note's own reindex
+/// decided. Each target is resolved with the same policy as
+/// [`crate::extractors::resolve_wikilinks`] (reconcile and the transaction
+/// commit seam both use it), so the answer is the one a reindex of the
+/// linking note would give. Returns the number of rows changed.
+///
+/// Shared by reconciliation (Phase 2b) and `VaultTransaction::commit`,
+/// which runs it when a commit creates, moves or deletes a note (#640).
+pub(crate) fn reresolve_stale_links(
+    index: &dyn VaultIndex,
+    vault_paths: &HashSet<VaultPath>,
+) -> Result<usize, IndexError> {
+    let mut changed = 0;
+    for (target_raw, current) in index.link_resolutions()? {
+        if current.as_ref().is_some_and(|p| vault_paths.contains(p)) {
+            continue;
+        }
+        let fresh = crate::extractors::resolve_one(&target_raw, vault_paths);
+        if fresh != current {
+            changed += index.set_link_resolution(&target_raw, current.as_ref(), fresh.as_ref())?;
+        }
+    }
+    Ok(changed)
 }
 
 /// Backfill the FTS row for a single note from its file on disk. Used by

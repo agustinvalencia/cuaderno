@@ -344,7 +344,7 @@ pub fn resolve_wikilinks(
         .collect()
 }
 
-fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
+pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Option<VaultPath> {
     // 0a. Exact path match on the unsplit target, before the anchor is
     // stripped. A `#` in a filename is otherwise unsupported — it is only
     // reachable through an exact-path link — because rule 0b below would

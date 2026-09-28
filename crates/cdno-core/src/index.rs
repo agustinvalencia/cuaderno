@@ -7,7 +7,7 @@
 //! This module owns connection setup, migrations, the [`VaultIndex`] trait,
 //! and a concrete [`SqliteIndex`] implementation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -454,6 +454,24 @@ pub trait VaultIndex: Send + Sync {
     fn replace_links(&self, path: &VaultPath, links: &[LinkEntry]) -> Result<(), IndexError>;
     fn find_backlinks(&self, path: &VaultPath) -> Result<Vec<VaultPath>, IndexError>;
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError>;
+    /// Every distinct `(target_raw, resolved_path)` pair across all
+    /// `links` rows, in no particular order. Resolution is a function of
+    /// the target text and the vault's path set alone, so this is the
+    /// whole input the stale-link re-resolution pass needs (#640): it
+    /// re-resolves the pairs that are unresolved or point at a path that
+    /// no longer exists, without re-reading any source note.
+    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError>;
+    /// Set `resolved_path` to `to` on every `links` row whose
+    /// `target_raw` is `target_raw` and whose `resolved_path` currently
+    /// equals `from` (`None` matching an unresolved row). Returns the
+    /// number of rows changed. The `from` guard keeps a row resolved by a
+    /// concurrent reindex from being overwritten with a stale answer.
+    fn set_link_resolution(
+        &self,
+        target_raw: &str,
+        from: Option<&VaultPath>,
+        to: Option<&VaultPath>,
+    ) -> Result<usize, IndexError>;
 
     // tags ------------------------------------------------------------
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError>;
@@ -894,6 +912,45 @@ impl VaultIndex for SqliteIndex {
             });
         }
         Ok(out)
+    }
+
+    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+        let conn = self.lock_conn();
+        let mut stmt = conn.prepare("SELECT DISTINCT target_raw, resolved_path FROM links")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (target_raw, resolved_str) = row?;
+            let resolved_path = match resolved_str {
+                Some(s) => Some(VaultPath::new(s).map_err(|e| {
+                    IndexError::Query(format!("invalid stored resolved_path: {e}"))
+                })?),
+                None => None,
+            };
+            out.push((target_raw, resolved_path));
+        }
+        Ok(out)
+    }
+
+    fn set_link_resolution(
+        &self,
+        target_raw: &str,
+        from: Option<&VaultPath>,
+        to: Option<&VaultPath>,
+    ) -> Result<usize, IndexError> {
+        let conn = self.lock_conn();
+        // `IS` rather than `=` so a `None` guard matches NULL rows.
+        let changed = conn.execute(
+            "UPDATE links SET resolved_path = ?3 WHERE target_raw = ?1 AND resolved_path IS ?2",
+            params![
+                target_raw,
+                from.map(|p| p.to_string()),
+                to.map(|p| p.to_string()),
+            ],
+        )?;
+        Ok(changed)
     }
 
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
@@ -1418,6 +1475,34 @@ impl VaultIndex for MemoryIndex {
         // Insertion order preserved, matching SqliteIndex's `ORDER BY id`
         // (rowids are monotonic with insertion).
         Ok(state.links.get(path).cloned().unwrap_or_default())
+    }
+
+    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+        let state = self.lock_state();
+        let pairs: HashSet<(String, Option<VaultPath>)> = state
+            .links
+            .values()
+            .flatten()
+            .map(|l| (l.target_raw.clone(), l.resolved_path.clone()))
+            .collect();
+        Ok(pairs.into_iter().collect())
+    }
+
+    fn set_link_resolution(
+        &self,
+        target_raw: &str,
+        from: Option<&VaultPath>,
+        to: Option<&VaultPath>,
+    ) -> Result<usize, IndexError> {
+        let mut state = self.lock_state();
+        let mut changed = 0;
+        for link in state.links.values_mut().flatten() {
+            if link.target_raw == target_raw && link.resolved_path.as_ref() == from {
+                link.resolved_path = to.cloned();
+                changed += 1;
+            }
+        }
+        Ok(changed)
     }
 
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {

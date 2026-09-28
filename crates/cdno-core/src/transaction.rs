@@ -268,6 +268,20 @@ impl VaultTransaction {
             }
         }
 
+        // Whether this commit changed the set of notes wikilinks resolve
+        // against — it created, moved or deleted a markdown file. Only then
+        // can a link held by some *other* note change its answer, so only
+        // then does the re-resolution below run (#640).
+        let is_md = |p: &VaultPath| p.as_path().extension() == Some(std::ffi::OsStr::new("md"));
+        let path_set_changed = applied.iter().any(|undo| match undo {
+            Undo::DeleteCreated { path } => is_md(path),
+            Undo::MoveBack { src, dest } => is_md(src) || is_md(dest),
+            Undo::Restore { .. } => false,
+        }) || self
+            .file_ops
+            .iter()
+            .any(|op| matches!(op, FileOp::Delete { path } if is_md(path)));
+
         // The files are now on disk, so each note write's real mtime is
         // knowable. The domain stamps `NoteEntry::mtime_ns` with the
         // entry-build instant (`build_index_entry_for` uses `now()`), which
@@ -294,6 +308,9 @@ impl VaultTransaction {
         // below. Built lazily, once per commit, and only when some upsert
         // has a paired write.
         let mut link_targets: Option<HashSet<VaultPath>> = None;
+        // Set when that path query fails, so the re-resolution below does
+        // not repeat it and report the same failure twice.
+        let mut link_targets_failed = false;
         for op in &self.index_ops {
             let op_ok = match apply_index_op(&*self.index, op) {
                 Ok(()) => true,
@@ -350,7 +367,10 @@ impl VaultTransaction {
                 // does too, and is reported as `IndexStale`.
                 if let Some((fm, body)) = &parsed {
                     match link_targets_for(&mut link_targets, &*self.index, &self.file_ops) {
-                        Err(e) => index_errors.push(e),
+                        Err(e) => {
+                            link_targets_failed = true;
+                            index_errors.push(e);
+                        }
                         Ok(targets) => {
                             let facets = crate::extractors::extract_note_facets(
                                 fm,
@@ -370,6 +390,20 @@ impl VaultTransaction {
                         }
                     }
                 }
+            }
+        }
+
+        // A note created (or moved) here may be the target an earlier note
+        // linked to before it existed; that note's row is not rewritten by
+        // this commit, and reconcile's fast path would skip it too. Heal the
+        // stale rows now, with the reconcile helper and the same path set
+        // the facet seam above resolved against, so the new note's
+        // backlinks are complete from the moment it is written (#640).
+        if path_set_changed && !link_targets_failed {
+            let healed = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
+                .and_then(|targets| crate::reconcile::reresolve_stale_links(&*self.index, targets));
+            if let Err(e) = healed {
+                index_errors.push(e);
             }
         }
 

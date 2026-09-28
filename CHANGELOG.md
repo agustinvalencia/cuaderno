@@ -253,6 +253,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Fixed
 
+- **A dangling link resolves once its target appears (T3b, #640).** A note that linked `[[b]]`
+  before `b` existed kept an unresolved `links` row until the linking note itself was edited,
+  because reconcile resolves a note's wikilinks only when it reindexes that note and the fast path
+  skips unchanged ones; `b`'s backlinks omitted it indefinitely. Reconcile now ends any pass that
+  added or removed a note by re-resolving, with the same `resolve_wikilinks` policy, every `links`
+  row that is unresolved or points at a path no longer in the vault (`links_reresolved` in the
+  report). The transaction commit seam runs the same helper when a commit creates, moves or deletes
+  a note, so a note created through `cdno` has its earlier backlinks at once. A row whose target
+  was renamed away (a new stem) now reads as dangling, which lint reports, instead of pointing at
+  the vanished path; a note moved within its tree keeps its backlinks. `VaultIndex` gains
+  `link_resolutions` and `set_link_resolution`; no schema change.
 - **Every domain write indexes the note's links and tags (T7b, #646).** `VaultTransaction::commit`
   already derived a written note's search row from its paired file write; the same seam now stages
   its `links` and `tags` facets, so a wikilink or tag added through `revise_note`,

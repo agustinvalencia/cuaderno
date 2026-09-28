@@ -599,6 +599,20 @@ impl VaultIndex for FailingIndex {
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
         self.inner.find_outgoing_links(path)
     }
+    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+        self.inner.link_resolutions()
+    }
+    fn set_link_resolution(
+        &self,
+        target_raw: &str,
+        from: Option<&VaultPath>,
+        to: Option<&VaultPath>,
+    ) -> Result<usize, IndexError> {
+        if self.should_fail(false) {
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.set_link_resolution(target_raw, from, to)
+    }
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
         if self.should_fail(false) {
             return Err(IndexError::Update("forced test failure".to_owned()));
@@ -754,4 +768,36 @@ fn import_external_rolls_back_when_a_later_op_fails() {
             .unwrap()
     );
     assert!(!inner.exists(&vp("portfolios/p/2026-06-13-d.md")).unwrap());
+}
+
+#[test]
+fn creating_a_note_resolves_earlier_dangling_links_to_it() {
+    // #640 at the commit seam: a note that linked to `concepts/b` before
+    // `b` existed gains the edge the moment a later commit creates `b`,
+    // without its own row being rewritten.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let a = vp("concepts/a.md");
+    let b = vp("concepts/b.md");
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(a.clone(), LINKING_NOTE);
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.commit().unwrap();
+    assert!(index.find_backlinks(&b).unwrap().is_empty());
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(b.clone(), LINKED_NOTE);
+    tx.upsert_note(sample_note("concepts/b.md", "concept"));
+    tx.commit().unwrap();
+
+    assert_eq!(index.find_backlinks(&b).unwrap(), vec![a.clone()]);
+    // `[[missing]]` still has no target and stays unresolved.
+    let missing = index
+        .find_outgoing_links(&a)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.target_raw == "missing")
+        .unwrap();
+    assert_eq!(missing.resolved_path, None);
 }
