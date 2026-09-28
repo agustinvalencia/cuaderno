@@ -40,7 +40,11 @@ anything. Inputs marked optional may be omitted.
   the value to hand back as `expected_hash` when revising the note, so a change made in between is
   detected rather than overwritten. `backlinks` comes from the index, which reconciliation
   refreshes, so a link written moments ago may not appear yet. A slug several notes share is
-  refused with code `ambiguous_slug` and the candidates' paths; a reference matching nothing is
-  refused with code `not_found`.
+  refused with code `ambiguous_slug` and the candidates' paths in `details.candidates`; a
+  reference matching nothing is refused with code `not_found`. `headings` lists every heading in
+  the body with inline markup stripped, the form `revise_note`'s `section` takes. To follow a
+  heading link such as a concept's `origin` (`[[journal/2026/daily/2026-09-02#Woodbury
+  identity]]`), pass the part before the `#` and find the entry under that heading: the whole link,
+  anchor included, is refused as `not_found`.
 - These pair naturally with the [write tools](writes.md): read context, propose an action, then
   write it.

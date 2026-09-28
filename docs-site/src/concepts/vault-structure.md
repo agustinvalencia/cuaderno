@@ -49,6 +49,10 @@ vault/
 │   └── life/
 │       └── apartment-as-home.md  # type: question (domain: life)
 │
+├── concepts/                     # the concept library (a custom type `cdno init` declares)
+│   ├── woodbury-identity.md      # type: concept (mutable, refined in place)
+│   └── linear-algebra.md         # a hub note: mostly links
+│
 ├── inbox/                        # raw captures awaiting triage
 │
 └── .cuaderno/
@@ -66,6 +70,8 @@ vault/
   the `stewardship` note inside an expanded stewardship folder.
 - **`tracking/`** inside a stewardship holds time-series entries; **`routines/`** holds prescriptive
   reference documents (a workout plan, a checklist) — those are *not* logs.
+- **`concepts/`** is flat by design: tags and links, including hand-written hub notes, give it
+  structure. See [The concept library](concept-library.md).
 - **Stewardships have two shapes:** a flat `stewardships/<slug>.md`, or an expanded
   `stewardships/<slug>/` folder. Only expanded ones can hold tracking entries.
 
