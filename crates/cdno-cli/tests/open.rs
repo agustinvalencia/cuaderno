@@ -467,3 +467,80 @@ fn an_absolute_path_under_a_symlinked_root_still_becomes_relative() {
         "projects/surrogate-model.md"
     );
 }
+
+// ---------------------------------------------------------------------
+// Reporting a picker, for mutating callers such as `cdno note revise`.
+//
+// The real picker needs a terminal on both ends, which no test here has,
+// so resolution is driven with a canned picker instead.
+// ---------------------------------------------------------------------
+
+fn resolve_picking(
+    root: &Path,
+    reference: &str,
+    answer: impl Fn(&[cdno_core::index::NoteCandidate]) -> usize,
+) -> (String, bool, Vec<Option<String>>) {
+    let (vault, _report) = bootstrap::open_vault(root).unwrap();
+    let mut seeds = Vec::new();
+    let (path, prompted) = open::resolve_with_picker_for_test(
+        &vault,
+        reference,
+        date(2026, 8, 21),
+        &mut |items, seed| {
+            seeds.push(seed.map(str::to_owned));
+            Ok(Some(answer(items)))
+        },
+    )
+    .unwrap();
+    (
+        path.as_path().to_string_lossy().into_owned(),
+        prompted,
+        seeds,
+    )
+}
+
+#[test]
+fn a_reference_that_resolves_outright_reports_no_picker() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let (path, prompted, seeds) =
+        resolve_picking(dir.path(), "surrogate-model", |_| panic!("no picker"));
+    assert_eq!(path, "projects/surrogate-model.md");
+    assert!(!prompted, "nothing was asked, so nothing needs confirming");
+    assert!(seeds.is_empty());
+}
+
+#[test]
+fn an_ambiguity_settled_in_the_picker_reports_it() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    seed_colliding_slugs(dir.path());
+    let (path, prompted, seeds) = resolve_picking(dir.path(), "gym", |items| {
+        assert_eq!(items.len(), 2, "only the colliding notes are offered");
+        items
+            .iter()
+            .position(|c| c.path.as_path().starts_with("portfolios"))
+            .unwrap()
+    });
+    assert_eq!(path, "portfolios/gym/_index.md");
+    assert!(prompted, "a picked note must be confirmed before a write");
+    assert_eq!(seeds, vec![None]);
+}
+
+#[test]
+fn a_miss_settled_in_the_all_notes_picker_reports_it() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let (path, prompted, seeds) = resolve_picking(dir.path(), "surro", |items| {
+        items
+            .iter()
+            .position(|c| c.path.as_path().ends_with("surrogate-model.md"))
+            .unwrap()
+    });
+    assert_eq!(path, "projects/surrogate-model.md");
+    assert!(
+        prompted,
+        "a mistyped slug must not become a one-keystroke write"
+    );
+    assert_eq!(seeds, vec![Some("surro".to_owned())]);
+}

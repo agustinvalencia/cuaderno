@@ -69,7 +69,8 @@ struct Cli {
     /// write verbs (`log`, `capture`, `file`, `track`, `note create`, and
     /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
-    /// result and run non-interactively. Ignored by maintenance/
+    /// result (`note revise` adds its outcome fields) and run
+    /// non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
     ///
@@ -318,9 +319,9 @@ enum Commands {
         subcommand: FrontmatterCommands,
     },
 
-    /// Create and list notes of config-defined custom types (declared under
-    /// `[note_types.<type>]`). `note create <type> --title … --field k=v` and
-    /// `note list <type>`.
+    /// Create, list and revise notes of config-defined custom types
+    /// (declared under `[note_types.<type>]`). `note create <type> --title …
+    /// --field k=v`, `note list <type>` and `note revise [note] --reason …`.
     Note {
         #[command(subcommand)]
         subcommand: cdno_cli::commands::note::NoteCommands,
