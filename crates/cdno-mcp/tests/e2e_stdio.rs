@@ -224,7 +224,7 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        56,
+        57,
         "expected the full catalogue advertised over stdio; tests/server.rs pins the names, got {}",
         tools.len()
     );
@@ -513,4 +513,77 @@ fn a_slug_that_matches_nothing_is_a_rejection_that_lists_the_real_ones() {
         "the hint naming the real project must reach the client, or the agent \
          has nothing to correct towards — got: {message}"
     );
+}
+
+// ---------------------------------------------------------------------
+// Read, then revise (RFC 0002 T9, #622)
+// ---------------------------------------------------------------------
+
+/// The parsed JSON payload of a successful `tools/call`.
+fn call_payload(response: &Value) -> Value {
+    assert_ne!(
+        response["result"]["isError"],
+        json!(true),
+        "tool returned an error result: {response}"
+    );
+    let text = response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("text payload: {response}"));
+    serde_json::from_str(text).expect("JSON payload")
+}
+
+/// `read_note` over the wire, returning its payload.
+fn read_concept(mcp: &mut McpSubprocess, id: u64) -> Value {
+    mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "tools/call",
+        "params": {
+            "name": "read_note",
+            "arguments": { "note": "concept:woodbury-identity" }
+        }
+    }));
+    call_payload(&mcp.read_response(id))
+}
+
+#[test]
+fn read_note_then_revise_note_round_trips_through_the_content_hash() {
+    let dir = TempDir::new().unwrap();
+    // `cdno init` declares the `concept` type, so a concept is revisable.
+    make_vault(dir.path());
+    std::fs::create_dir_all(dir.path().join("concepts")).unwrap();
+    std::fs::write(
+        dir.path().join("concepts/woodbury-identity.md"),
+        "---\ntype: concept\ncreated: 2026-09-01\n---\n\n# Woodbury identity\n\nFirst account.\n",
+    )
+    .unwrap();
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let before = read_concept(&mut mcp, 10);
+    let hash = before["content_hash"].as_str().expect("content_hash");
+
+    let new_body = "\n# Woodbury identity\n\nSecond, sharper account.\n";
+    mcp.send(&json!({
+        "jsonrpc": "2.0",
+        "id": 11,
+        "method": "tools/call",
+        "params": {
+            "name": "revise_note",
+            "arguments": {
+                "note": "concepts/woodbury-identity",
+                "expected_hash": hash,
+                "body": new_body,
+                "reason": "sharpened the account"
+            }
+        }
+    }));
+    let revised = call_payload(&mcp.read_response(11));
+    assert_eq!(revised["changed"], json!(true), "{revised}");
+    assert_eq!(revised["path"], "concepts/woodbury-identity.md");
+
+    let after = read_concept(&mut mcp, 12);
+    assert_eq!(after["body"], new_body, "{after}");
+    assert_ne!(after["content_hash"], before["content_hash"]);
+    assert_eq!(after["content_hash"], revised["new_hash"], "{revised}");
 }

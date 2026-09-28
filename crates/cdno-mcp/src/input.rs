@@ -341,6 +341,33 @@ pub struct ReadNoteInput {
     pub note: String,
 }
 
+/// Input for `revise_note` (RFC 0002 T9, #622). Exactly one of `body` or
+/// `section` (with `content`) is given; the handler refuses any other
+/// combination as `INVALID_PARAMS`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReviseNoteInput {
+    /// Which note to revise, in any form `read_note` accepts: a vault path
+    /// (with or without `.md`), a bare slug, or a typed slug
+    /// (`concept:woodbury-identity`).
+    pub note: String,
+    /// The `content_hash` `read_note` returned. Required with `body`, and
+    /// the revision is refused as stale when the note changed since that
+    /// read; a blank value counts as missing. Ignored with `section`.
+    pub expected_hash: Option<String>,
+    /// The note's whole new body (everything after the frontmatter, which
+    /// is kept as it is). Written verbatim.
+    pub body: Option<String>,
+    /// Heading text of the section to upsert, as `read_note`'s `headings`
+    /// lists it, without the `#` markers; surrounding whitespace is
+    /// ignored. Requires `content`.
+    pub section: Option<String>,
+    /// The section's new content, without its heading. Only with `section`.
+    pub content: Option<String>,
+    /// Why the note was revised, drafted from what changed. Becomes the
+    /// daily-log line `revised [[path#Section]] — reason`. Required.
+    pub reason: String,
+}
+
 /// Input for `upsert_daily_section` (GH #158, #170). `section` is one of
 /// the writable daily sections; `content` defaults to empty; `date`
 /// defaults to today; `append` defaults to replace.

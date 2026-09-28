@@ -8,12 +8,16 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
+use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel};
+use cdno_domain::vault::Revision;
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
+use crate::context::{refuse_reference_outside_the_vault, resolve_note_reference};
+use crate::dto::ReviseNoteResponse;
 use crate::input::*;
 
-use crate::util::{into_mcp_error, invalid_argument};
+use crate::util::{into_mcp_error, invalid_argument, json_result};
 
 use crate::server::CuadernoServer;
 use crate::verify::WriteShape;
@@ -280,6 +284,129 @@ impl CuadernoServer {
         }
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
+    }
+
+    /// Revise a mutable custom note in place (RFC 0002 §6.4, T9).
+    ///
+    /// The MCP surface is stricter than [`Vault::revise_note`]: a
+    /// whole-body revision must carry `expected_hash`, because an agent's
+    /// read and its write are separated by a model turn and the lost-update
+    /// window is widest here. Argument-shape mistakes are `INVALID_PARAMS`
+    /// with the field named; domain refusals (`stale_revision`,
+    /// `note_not_revisable`, `revision_invalid`, `ambiguous_section`) and
+    /// resolver misses (`not_found`, `ambiguous_slug`) reach the client as
+    /// rejections unchanged.
+    ///
+    /// When the revision changed the note, the result goes through
+    /// [`verified_write_with`](CuadernoServer::verified_write_with) with
+    /// [`WriteShape::Rewritten`]. When it did not (identical text), nothing
+    /// was written or logged, so there is nothing on disk to verify: the
+    /// handler returns a plain success saying so, with `verification` null.
+    ///
+    /// [`Vault::revise_note`]: cdno_domain::Vault::revise_note
+    #[tool(
+        description = "Refine a mutable custom note (such as a concept) in place, logging the revision to today's daily note in the same transaction; built-in note types (project, action, daily, ...) and custom types declared append-only are refused with code `note_not_revisable`. `note` takes the references `read_note` takes. Give exactly one of two forms. Whole body: pass `body` (everything after the frontmatter, which is kept as it is) together with `expected_hash`, the `content_hash` `read_note` returned -- required, and the revision is refused with code `stale_revision` when the note changed since that read, in which case read it again and redo the edit on the fresh text. One section: pass `section` (heading text as `read_note`'s `headings` lists it, without the `#` markers) and `content` (the section's new text, without its heading) to upsert it -- an existing section is replaced together with its sub-sections, a missing one is appended as `## <section>` -- and no hash is needed. The heading may not contain `[`, `]`, `|` or `#`, nor start with `^`, and `content` may not add a heading at the section's own level or above (such revisions are refused with code `revision_invalid`). `reason` is required: draft it yourself from what you changed, in a short clause, since it becomes the daily-log line `revised [[path#Section]] \u{2014} reason` (`revised [[path]] \u{2014} reason` for a whole body). Text identical to the note's current text writes and logs nothing and returns `changed: false`. The result's `new_hash` is the note's hash after the call: pass it as `expected_hash` on a follow-up revision."
+    )]
+    pub async fn revise_note(
+        &self,
+        Parameters(input): Parameters<ReviseNoteInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        // The domain refuses a blank reason too, but in its own words; the
+        // agent should hear it from the tool, naming the tool's field.
+        if input.reason.trim().is_empty() {
+            return Err(invalid_argument(
+                "reason",
+                "required: say briefly why the note was revised; it becomes the daily-log line",
+            ));
+        }
+        let revision = match (input.body, input.section, input.content) {
+            (Some(_), Some(_), _) => {
+                return Err(invalid_argument(
+                    "body",
+                    "pass either `body` (whole-body rewrite) or `section` with `content`, not both",
+                ));
+            }
+            (None, None, None) => {
+                return Err(invalid_argument(
+                    "body",
+                    "pass either `body` (whole-body rewrite) or `section` with `content`",
+                ));
+            }
+            (Some(_), None, Some(_)) | (None, None, Some(_)) => {
+                return Err(invalid_argument(
+                    "content",
+                    "`content` goes with `section`; for a whole-body rewrite pass `body` alone",
+                ));
+            }
+            (None, Some(_), None) => {
+                return Err(invalid_argument(
+                    "content",
+                    "`section` requires `content`, the section's new text without its heading",
+                ));
+            }
+            (Some(body), None, None) => {
+                // A blank hash is a missing hash: sent to the domain it would
+                // come back as `stale_revision`, whose "read it again" advice
+                // an agent that sent "" by mistake would follow in a loop.
+                if input
+                    .expected_hash
+                    .as_deref()
+                    .is_none_or(|hash| hash.trim().is_empty())
+                {
+                    return Err(invalid_argument(
+                        "expected_hash",
+                        "required with `body`: pass the `content_hash` from `read_note`, so a \
+                         change made since that read is refused rather than overwritten",
+                    ));
+                }
+                Revision::Body(body)
+            }
+            // Trimmed like `note`: headings are matched as trimmed text, so
+            // a padded heading would miss the real section and be appended
+            // as a duplicate of it.
+            (None, Some(heading), Some(content)) => Revision::Section {
+                heading: heading.trim().to_owned(),
+                content,
+            },
+        };
+        // A section upsert is not hash-guarded (the rest of the note is
+        // left alone), so a hash passed with it is ignored, not refused.
+        let expected_hash = match revision {
+            Revision::Body(_) => input.expected_hash,
+            Revision::Section { .. } => None,
+        };
+        let reference = input.note.trim().to_owned();
+        refuse_reference_outside_the_vault(&reference)?;
+        let today = at.date();
+        let reason = input.reason;
+        let outcome = self
+            .with_vault(move |vault| {
+                Ok::<_, DomainError>(match resolve_note_reference(vault, &reference, today)? {
+                    Ok(path) => Ok(vault.revise_note(
+                        &path,
+                        expected_hash.as_deref(),
+                        revision,
+                        &reason,
+                        at,
+                    )?),
+                    Err(rejection) => Err(rejection),
+                })
+            })
+            .await?
+            .map_err(into_mcp_error)??;
+        if !outcome.changed {
+            return json_result(ReviseNoteResponse::from(outcome));
+        }
+        let path = outcome.path.clone();
+        let response = ReviseNoteResponse::from(outcome);
+        self.verified_write_with(path, WriteShape::Rewritten, move |verification| {
+            ReviseNoteResponse {
+                verification: Some(verification),
+                ..response
+            }
+        })
+        .await
     }
 
     #[tool(

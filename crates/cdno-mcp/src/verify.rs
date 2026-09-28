@@ -101,15 +101,32 @@ impl CuadernoServer {
         message: String,
         shape: WriteShape,
     ) -> Result<CallToolResult, ErrorData> {
-        let target = path.clone();
+        let reported = path.to_string();
+        self.verified_write_with(path, shape, |verification| {
+            WriteResultDto::new(reported, message, verification)
+        })
+        .await
+    }
+
+    /// [`verified_write`](Self::verified_write) for a tool whose success
+    /// payload carries more than [`WriteResultDto`]'s fields: `build`
+    /// receives the verification and returns the payload. The same single
+    /// verify-then-nudge path, so the guarantee is unchanged: an
+    /// unverifiable write is a tool error, never a success.
+    pub(crate) async fn verified_write_with<T: serde::Serialize>(
+        &self,
+        path: VaultPath,
+        shape: WriteShape,
+        build: impl FnOnce(WriteVerificationDto) -> T,
+    ) -> Result<CallToolResult, ErrorData> {
         let verification = self
-            .with_vault(move |vault| verify(vault, &target, shape))
+            .with_vault(move |vault| verify(vault, &path, shape))
             .await??;
         // Only a *verified* write nudges the sync agent (GH #540): the
         // sentinel means "something landed", so an error path must
         // never reach here.
         self.nudge_sync_agent();
-        json_result(WriteResultDto::new(path.to_string(), message, verification))
+        json_result(build(verification))
     }
 }
 

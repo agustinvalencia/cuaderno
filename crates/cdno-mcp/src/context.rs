@@ -12,7 +12,7 @@ use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
-use cdno_domain::{Miss, RefResolution, SearchFilters};
+use cdno_domain::{Miss, RefResolution, SearchFilters, Vault};
 
 use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
@@ -477,28 +477,12 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let today = chrono::Local::now().date_naive();
         let reference = input.note.trim().to_owned();
-        // `VaultPath` rejects these with a message written for a programmer
-        // and as a mechanical error; the caller passed a bad argument, so
-        // say so plainly (`cdno open` draws the same line).
-        if reference_escapes_the_vault(&reference) {
-            return Err(invalid_argument(
-                "note",
-                &format!(
-                    "`{reference}` is outside the vault; pass a vault-relative path or a slug"
-                ),
-            ));
-        }
+        refuse_reference_outside_the_vault(&reference)?;
         let outcome = self
             .with_vault(move |vault| {
-                // The resolver owns the reference grammar, including the
-                // wikilink spelling of a path without `.md`.
-                let resolution = vault.resolve_note_ref(&reference, today)?;
-                Ok::<_, DomainError>(match resolution {
-                    RefResolution::Resolved(path) => Ok(vault.read_note(&path)?),
-                    RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(&reference, &hits)),
-                    RefResolution::NotFound { reference, miss } => {
-                        Err(unresolved_note_ref(&reference, miss))
-                    }
+                Ok::<_, DomainError>(match resolve_note_reference(vault, &reference, today)? {
+                    Ok(path) => Ok(vault.read_note(&path)?),
+                    Err(rejection) => Err(rejection),
                 })
             })
             .await?
@@ -542,11 +526,39 @@ impl CuadernoServer {
     }
 }
 
-/// Whether a reference names somewhere outside the vault, which
-/// `VaultPath` would reject as a mechanical error.
-fn reference_escapes_the_vault(reference: &str) -> bool {
+/// Refuse a note reference naming somewhere outside the vault as
+/// `INVALID_PARAMS`. `VaultPath` rejects these with a message written for
+/// a programmer and as a mechanical error; the caller passed a bad
+/// argument, so say so plainly (`cdno open` draws the same line). Shared
+/// by every tool taking a `note` reference (`read_note`, `revise_note`).
+pub(crate) fn refuse_reference_outside_the_vault(reference: &str) -> Result<(), ErrorData> {
     let p = std::path::Path::new(reference);
-    p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir)
+    if p.is_absolute() || p.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err(invalid_argument(
+            "note",
+            &format!("`{reference}` is outside the vault; pass a vault-relative path or a slug"),
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve a `note` reference the way `cdno open` does, through the
+/// domain resolver, which owns the reference grammar (including the
+/// wikilink spelling of a path without `.md`). The outer error is a
+/// domain failure; the inner one is the caller-actionable rejection for
+/// a reference that matches no note (`not_found`) or several
+/// (`ambiguous_slug`). Shared by `read_note` and `revise_note`, so both
+/// accept and refuse exactly the same references.
+pub(crate) fn resolve_note_reference(
+    vault: &Vault,
+    reference: &str,
+    today: chrono::NaiveDate,
+) -> Result<Result<VaultPath, ErrorData>, DomainError> {
+    Ok(match vault.resolve_note_ref(reference, today)? {
+        RefResolution::Resolved(path) => Ok(path),
+        RefResolution::Ambiguous(hits) => Err(ambiguous_note_ref(reference, &hits)),
+        RefResolution::NotFound { reference, miss } => Err(unresolved_note_ref(&reference, miss)),
+    })
 }
 
 /// `read_note`'s answer to a slug several notes share: a rejection carrying

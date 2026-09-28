@@ -163,6 +163,8 @@ fn body_revision_logs_one_revised_line() {
         outcome.log_line.as_deref(),
         Some("revised [[concepts/woodbury-identity]] \u{2014} rewrote the statement")
     );
+    // A whole-body revision has no anchored target.
+    assert_eq!(outcome.section_target, None);
     assert_eq!(
         revised_lines(&*store),
         vec![
@@ -247,6 +249,7 @@ fn identical_revision_writes_nothing_and_logs_nothing() {
     for outcome in [body_outcome, section_outcome] {
         assert!(!outcome.changed);
         assert_eq!(outcome.log_line, None);
+        assert_eq!(outcome.section_target, None);
         assert_eq!(outcome.new_hash, view.content_hash);
     }
     assert_eq!(store.read_file(&path).unwrap(), concept_note());
@@ -416,6 +419,12 @@ fn missing_section_is_upserted_as_a_level_two_section_at_the_end() {
     assert_eq!(
         outcome.log_line.as_deref(),
         Some("revised [[concepts/woodbury-identity#Proof]] \u{2014} added a proof")
+    );
+    // The outcome carries the anchored target itself, so no caller has to
+    // parse it back out of the log line.
+    assert_eq!(
+        outcome.section_target.as_deref(),
+        Some("concepts/woodbury-identity#Proof")
     );
     assert_eq!(revised_lines(&*store).len(), 1);
     assert_eq!(indexed_hash(&*index, &path), outcome.new_hash);
