@@ -110,7 +110,7 @@ Wire it into Claude Desktop / Claude Code with:
 
 The vault path can also be omitted; the server then opens whichever vault the working directory belongs to.
 
-**Tool surface today.** All 57 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`; [`STATUS.md`](STATUS.md) describes the main ones but its table is not exhaustive.
+**Tool surface today.** All 58 tools are wired through to the domain — context-gathering reads, daily/weekly note access, the write operations, structural creation, and lifecycle transitions. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`; [`STATUS.md`](STATUS.md) describes the main ones but its table is not exhaustive.
 
 ### Where to go next
 
@@ -193,7 +193,7 @@ The tool has three consumers:
 
 Phases 1 through 4 of [the build sequence](docs/implementation-plan.md) are complete (Phase 4's skill adaptations remain). Phases 5 and 6 built a Tauri desktop app, which has since been retired (#597). **The CLI is daily-usable end-to-end** — every note type (projects, actions, commitments, portfolios + evidence, questions, stewardships + tracking + periodic commitments) is reachable from the terminal with the flags-and-prompts ergonomics from [`docs/cli-ergonomics.md`](docs/cli-ergonomics.md). The aggregated `cdno orient` / `cdno status` / `cdno commitments` views compose across every source.
 
-The MCP server (Phase 4) is production-ready with all 57 tools wired through to the domain, over both stdio and Streamable HTTP transports.
+The MCP server (Phase 4) is production-ready with all 58 tools wired through to the domain, over both stdio and Streamable HTTP transports.
 
 The Tauri desktop UI built in Phases 5 and 6 was **removed** in #601. Its capabilities reached the CLI first — `cdno config`, `cdno templates` and `cdno watch` — so nothing it did is unreachable; the `pre-desktop-removal` tag marks the last commit containing it (`84db8ca`).
 

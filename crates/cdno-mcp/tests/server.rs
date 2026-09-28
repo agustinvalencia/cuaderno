@@ -86,7 +86,7 @@ fn advertised_catalogue_matches_expected_surface() {
         "get_commitments",
         "lint",
         "triage_inbox",
-        // Operations (34)
+        // Operations (35)
         "append_to_log",
         "capture",
         "discard_inbox_item",
@@ -113,6 +113,9 @@ fn advertised_catalogue_matches_expected_surface() {
         "complete_periodic",
         "create_tracking_entry",
         "upsert_daily_section",
+        // Substance to the daily note's `## Notes`, a pointer to `## Logs`
+        // (RFC 0002 T10, #623).
+        "note_to_daily",
         "upsert_weekly_section",
         "upsert_monthly_section",
         "create_project",
@@ -132,7 +135,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 57);
+    assert_eq!(tools.len(), 58);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
@@ -180,6 +183,32 @@ fn revise_note_is_a_write_tool_absent_from_the_read_only_server() {
         .collect();
     assert!(
         !read_only.iter().any(|n| n == "revise_note"),
+        "{read_only:?}"
+    );
+    assert_eq!(read_only.len(), 18, "{read_only:?}");
+}
+
+/// `note_to_daily` writes, so it is on the full catalogue and not on the
+/// read-only server (RFC 0002 T10).
+#[test]
+fn note_to_daily_is_a_write_tool_absent_from_the_read_only_server() {
+    let full: Vec<String> = empty_server()
+        .advertised_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(full.iter().any(|n| n == "note_to_daily"), "{full:?}");
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
+    let read_only: Vec<String> = CuadernoServer::read_only(Arc::new(vault))
+        .advertised_tools()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(
+        !read_only.iter().any(|n| n == "note_to_daily"),
         "{read_only:?}"
     );
     assert_eq!(read_only.len(), 18, "{read_only:?}");

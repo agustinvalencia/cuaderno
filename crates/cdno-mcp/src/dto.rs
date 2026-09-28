@@ -1184,6 +1184,42 @@ impl From<cdno_domain::vault::ReviseOutcome> for ReviseNoteResponse {
     }
 }
 
+/// Output of `note_to_daily` (RFC 0002 T10, #623): what
+/// [`WriteResultDto`] carries, plus the anchored target to cite and the
+/// pointer line written to `## Logs`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct NoteToDailyResponse {
+    /// Vault-relative path of the daily note, `.md` included.
+    pub path: String,
+    /// The anchored wikilink target of the entry, without the brackets
+    /// (`journal/2026/daily/2026-09-27#Woodbury identity`). Cite it as
+    /// `[[<target>]]`, for example from a concept's `origin`.
+    pub target: String,
+    /// The pointer line appended to `## Logs`, without its
+    /// `- **HH:MM**: ` stamp: `noted [[<target>]]`, then ` (<links>)`
+    /// when the body links out.
+    pub log_line: String,
+    /// Short summary line.
+    pub message: String,
+    /// Read-back proof the write landed; `appended_tail` is the last 512
+    /// bytes of the day's `## Notes`, which end with the entry just
+    /// written (a long entry shows only the end of its body).
+    pub verification: Option<WriteVerificationDto>,
+}
+
+impl From<cdno_domain::NoteToDailyOutcome> for NoteToDailyResponse {
+    fn from(o: cdno_domain::NoteToDailyOutcome) -> Self {
+        let path = o.path.to_string();
+        Self {
+            message: format!("Noted [[{}]] in {path}", o.target),
+            path,
+            target: o.target,
+            log_line: o.log_line,
+            verification: None,
+        }
+    }
+}
+
 /// Output of `read_weekly_note` — mirrors [`DailyNoteViewDto`]. A week
 /// with no note yet returns `exists: false` and empty `markdown`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]

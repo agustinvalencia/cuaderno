@@ -25,11 +25,11 @@ use cdno_mcp::server::{
     CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, DropActionInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
-    LinkPortfolioToQuestionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
-    ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
-    ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput, SetQuestionStatusInput,
-    StartActionInput, StartUnplannedActionInput, UpdateProjectStateInput, UpsertDailySectionInput,
-    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
+    LinkPortfolioToQuestionInput, NoteToDailyInput, ProjectSlugInput, PromoteActionInput,
+    ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput,
+    ResolveWaitingOnInput, ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput,
+    SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput, UpdateProjectStateInput,
+    UpsertDailySectionInput, UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -2646,4 +2646,256 @@ async fn revise_note_refuses_a_slug_two_notes_share_as_ambiguous() {
     assert_eq!(rejection_code(&err), "ambiguous_slug");
     assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
     assert!(!today_daily(&store).contains("revised"));
+}
+
+// ---------------------------------------------------------------------
+// note_to_daily (RFC 0002 T10, #623)
+// ---------------------------------------------------------------------
+
+fn note_input(heading: &str, body: &str) -> NoteToDailyInput {
+    NoteToDailyInput {
+        date: None,
+        heading: heading.to_owned(),
+        body: body.to_owned(),
+    }
+}
+
+/// The index of the line equal to `line` in `body`, panicking with the
+/// note when it is absent.
+fn line_index(body: &str, line: &str) -> usize {
+    body.lines()
+        .position(|l| l == line)
+        .unwrap_or_else(|| panic!("no line {line:?} in:\n{body}"))
+}
+
+/// The one `## Logs` line ending in `: <log_line>`, checked to be exactly
+/// `- **HH:MM**: <log_line>` and to sit below `## Logs`.
+fn assert_pointer_line(body: &str, log_line: &str) {
+    let suffix = format!("**: {log_line}");
+    let found: Vec<(usize, &str)> = body
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.ends_with(&suffix))
+        .collect();
+    assert_eq!(found.len(), 1, "exactly one pointer line in:\n{body}");
+    let (index, line) = found[0];
+    let stamp = &line[..line.len() - suffix.len()];
+    assert!(
+        stamp.len() == 9
+            && stamp.starts_with("- **")
+            && stamp[4..6].chars().all(|c| c.is_ascii_digit())
+            && &stamp[6..7] == ":"
+            && stamp[7..9].chars().all(|c| c.is_ascii_digit()),
+        "pointer line not `- **HH:MM**: …`: {line:?}"
+    );
+    assert!(
+        index > line_index(body, "## Logs"),
+        "pointer outside ## Logs:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn note_to_daily_keeps_the_bodys_leading_indentation() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let relpath = cdno_core::paths::daily_note_relpath(today);
+
+    // An entry that opens with an indented code block: only the leading
+    // blank lines and the trailing whitespace go; the first line's
+    // indentation is part of the substance.
+    server
+        .note_to_daily(Parameters(note_input(
+            "Indented",
+            "\n\n    x = A^-1 u\n    y = x + 1\n\n",
+        )))
+        .await
+        .expect("note_to_daily");
+
+    let body = store.read_file(&vp(&relpath)).unwrap();
+    assert!(
+        body.contains("### Indented\n    x = A^-1 u\n    y = x + 1\n"),
+        "body:\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn note_to_daily_writes_the_entry_under_notes_and_the_pointer_under_logs() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let relpath = cdno_core::paths::daily_note_relpath(today);
+    let target = format!("{}#Woodbury identity", relpath.trim_end_matches(".md"));
+
+    let result = server
+        .note_to_daily(Parameters(note_input(
+            "  Woodbury identity  ",
+            "(A + UCV)^-1 = A^-1 - ...\n",
+        )))
+        .await
+        .expect("note_to_daily");
+    let value = decode_json(&result);
+    assert_eq!(value["path"], relpath.as_str());
+    assert_eq!(value["target"], target.as_str());
+    assert_eq!(value["log_line"], format!("noted [[{target}]]").as_str());
+    let tail = value["verification"]["appended_tail"].as_str().unwrap();
+    assert!(tail.contains("### Woodbury identity"), "tail: {tail}");
+
+    let body = store.read_file(&vp(&relpath)).unwrap();
+    let notes = line_index(&body, "## Notes");
+    let entry = line_index(&body, "### Woodbury identity");
+    let logs = line_index(&body, "## Logs");
+    assert!(
+        notes < entry && entry < logs,
+        "entry not under ## Notes:\n{body}"
+    );
+    assert!(body.contains("(A + UCV)^-1 = A^-1 - ..."), "body:\n{body}");
+    assert_pointer_line(&body, &format!("noted [[{target}]]"));
+}
+
+#[tokio::test]
+async fn note_to_daily_lists_the_body_links_after_the_pointer() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+
+    let result = server
+        .note_to_daily(Parameters(note_input(
+            "Refit",
+            "Used on [[projects/surrogate-model]] with [[notes/kernels|kernels]] and again [[projects/surrogate-model]].\n#concept",
+        )))
+        .await
+        .expect("note_to_daily");
+    let value = decode_json(&result);
+    let target = value["target"].as_str().unwrap().to_owned();
+    let expected =
+        format!("noted [[{target}]] ([[projects/surrogate-model]] [[notes/kernels|kernels]])");
+    assert_eq!(value["log_line"], expected.as_str());
+
+    let body = store
+        .read_file(&vp(value["path"].as_str().unwrap()))
+        .unwrap();
+    assert_pointer_line(&body, &expected);
+}
+
+#[tokio::test]
+async fn note_to_daily_refuses_a_duplicate_heading_and_leaves_the_file_untouched() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    server
+        .note_to_daily(Parameters(note_input("Woodbury identity", "first")))
+        .await
+        .expect("first entry");
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let before = store.read_file(&path).unwrap();
+
+    let err = server
+        .note_to_daily(Parameters(note_input("woodbury identity", "second")))
+        .await
+        .expect_err("the heading is already in today's note");
+    assert_eq!(rejection_code(&err), "history_entry_heading_invalid");
+    assert_eq!(store.read_file(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn note_to_daily_refuses_a_heading_that_reuses_a_section_name() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let before = store.read_file(&path).unwrap();
+
+    let err = server
+        .note_to_daily(Parameters(note_input("Logs", "not a section")))
+        .await
+        .expect_err("`Logs` is a daily section name");
+    assert_eq!(rejection_code(&err), "history_entry_heading_invalid");
+    assert_eq!(store.read_file(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn note_to_daily_refuses_a_blank_heading_or_body_as_invalid_params() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let before = store.read_file(&path).unwrap();
+
+    for (input, field) in [
+        (note_input("  ", "substance"), "heading"),
+        (note_input("Heading", " \n\t "), "body"),
+    ] {
+        let err = server
+            .note_to_daily(Parameters(input))
+            .await
+            .expect_err("blank field");
+        assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "{err:?}");
+        assert!(err.message.contains(field), "{field}: {}", err.message);
+    }
+    assert_eq!(store.read_file(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn note_to_daily_with_a_past_date_lands_in_that_days_note() {
+    let (server, store) = server_with(|_v, _s| {});
+    let day = NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let mut input = note_input("Back-filled", "worked out yesterday");
+    input.date = Some(day);
+
+    let value = decode_json(&server.note_to_daily(Parameters(input)).await.expect("note"));
+    assert_eq!(value["path"], "journal/2026/daily/2026-09-01.md");
+    assert_eq!(value["target"], "journal/2026/daily/2026-09-01#Back-filled");
+
+    let body = store
+        .read_file(&vp("journal/2026/daily/2026-09-01.md"))
+        .unwrap();
+    assert!(
+        line_index(&body, "## Notes") < line_index(&body, "### Back-filled"),
+        "body:\n{body}"
+    );
+    assert_pointer_line(&body, "noted [[journal/2026/daily/2026-09-01#Back-filled]]");
+}
+
+#[tokio::test]
+async fn upsert_daily_section_refuses_replacing_notes_as_invalid_params() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let path = vp(&cdno_core::paths::daily_note_relpath(today));
+    let before = store.read_file(&path).unwrap();
+
+    let err = server
+        .upsert_daily_section(Parameters(UpsertDailySectionInput {
+            section: "notes".to_owned(),
+            content: "### Replaced\nnothing".to_owned(),
+            date: None,
+            append: false,
+        }))
+        .await
+        .expect_err("Notes is append-only");
+    assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+    assert!(err.message.contains("append"), "{}", err.message);
+    assert!(err.message.contains("append-only"), "{}", err.message);
+    assert!(err.message.contains("note_to_daily"), "{}", err.message);
+    assert_eq!(store.read_file(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn upsert_daily_section_appends_to_notes() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+
+    let value = decode_json(
+        &server
+            .upsert_daily_section(Parameters(UpsertDailySectionInput {
+                section: "notes".to_owned(),
+                content: "### Appended entry\nsubstance".to_owned(),
+                date: None,
+                append: true,
+            }))
+            .await
+            .expect("append to Notes"),
+    );
+    let body = store
+        .read_file(&vp(value["path"].as_str().unwrap()))
+        .unwrap();
+    let notes = line_index(&body, "## Notes");
+    let entry = line_index(&body, "### Appended entry");
+    assert!(
+        notes < entry && entry < line_index(&body, "## Logs"),
+        "body:\n{body}"
+    );
+    assert!(body.contains("substance"), "body:\n{body}");
 }

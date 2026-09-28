@@ -175,7 +175,7 @@ async fn full_catalogue_and_tool_call_over_http() {
     // to look plausible.
     assert_eq!(
         names.len(),
-        57,
+        58,
         "HTTP catalogue diverged from the stdio pin: {names:?}"
     );
     assert!(names.iter().any(|n| n == "get_orientation"), "{names:?}");
@@ -193,6 +193,62 @@ async fn full_catalogue_and_tool_call_over_http() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(resp["result"]["isError"], json!(false), "{resp}");
+}
+
+/// `note_to_daily` (RFC 0002 T10) through the real HTTP binary: the entry
+/// lands under `## Notes` and its pointer under `## Logs` on disk.
+#[tokio::test]
+async fn note_to_daily_writes_the_entry_and_its_pointer_over_http() {
+    let dir = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    let server = HttpServer::spawn(Some(dir.path()), &[]);
+    let client = reqwest::Client::new();
+
+    let (status, resp) = post_mcp(
+        &client,
+        server.port,
+        &json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {
+                "name": "note_to_daily",
+                "arguments": {
+                    "date": "2026-09-27",
+                    "heading": "Woodbury identity",
+                    "body": "Used on [[projects/surrogate-model]].\n#concept"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["isError"], json!(false), "{resp}");
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no text content: {resp}"));
+    let payload: Value = serde_json::from_str(text).expect("JSON payload");
+    let target = "journal/2026/daily/2026-09-27#Woodbury identity";
+    assert_eq!(payload["target"], target, "{payload}");
+    let pointer = format!("noted [[{target}]] ([[projects/surrogate-model]])");
+    assert_eq!(payload["log_line"], pointer.as_str(), "{payload}");
+
+    let note = std::fs::read_to_string(dir.path().join("journal/2026/daily/2026-09-27.md"))
+        .expect("daily note on disk");
+    let at = |line: &str| {
+        note.lines()
+            .position(|l| l == line)
+            .unwrap_or_else(|| panic!("no line {line:?} in:\n{note}"))
+    };
+    let (notes, entry, logs) = (at("## Notes"), at("### Woodbury identity"), at("## Logs"));
+    assert!(
+        notes < entry && entry < logs,
+        "entry not under ## Notes:\n{note}"
+    );
+    let suffix = format!("**: {pointer}");
+    let pointer_at = note
+        .lines()
+        .position(|l| l.starts_with("- **") && l.ends_with(&suffix))
+        .unwrap_or_else(|| panic!("no pointer line in:\n{note}"));
+    assert!(pointer_at > logs, "pointer outside ## Logs:\n{note}");
 }
 
 #[tokio::test]

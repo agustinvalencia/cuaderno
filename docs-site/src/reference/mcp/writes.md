@@ -122,7 +122,8 @@ the content.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `upsert_daily_section` | `section` (`Standup`\|`Intention`\|`Agenda`\|`Meeting`), `content?`, `date?`, `append?` | Write or append a daily-note section. |
+| `note_to_daily` | `heading`, `body`, `date?` | Write worked-out substance to the daily note as one `### <heading>` entry under `## Notes`, and the pointer line `noted [[journal/<year>/daily/<date>#<heading>]]` (followed by the body's wikilinks in parentheses) to `## Logs`, in one write; do not log the entry again. The heading must be unique within the day, must not reuse a daily section name, and must not contain `[`, `]`, `\|`, `#` or inline markup nor start with `^` (refused as `history_entry_heading_invalid`); deeper headings inside the body are fine. End an entry worth reusing with the tag `#concept` so the review can find it. The result adds `target`, the entry's anchored link to cite (for example from a concept's `origin`), and `log_line`. |
+| `upsert_daily_section` | `section` (`Standup`\|`Intention`\|`Agenda`\|`Meeting`\|`Notes`), `content?`, `date?`, `append?` | Write or append a daily-note section. `Notes` is append-only: it takes `append: true` only, and `append: false` is refused; for one entry with its `## Logs` pointer, use `note_to_daily`. |
 | `upsert_weekly_section` | `section` (`Wins`\|`Challenges`\|`One Improvement`\|`This Week's Goal`), `content?`, `date?`, `append?` | Write or append a weekly-note section. |
 | `upsert_monthly_section` | `section` (`Wins`\|`Themes`\|`Next Month's Focus`), `content?`, `date?`, `append?` | Write or append a monthly-note section. |
 
