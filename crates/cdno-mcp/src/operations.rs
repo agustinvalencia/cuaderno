@@ -25,7 +25,7 @@ use crate::verify::WriteShape;
 #[tool_router(router = operations_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist. The entry is stamped with the vault clock (`- **HH:MM**: <text>`), so pass the text alone; a time you prefix yourself is stamped twice. Link as you write: wikilink every vault note the line names (`[[slug]]`), and render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather than a bare `#N`. An unlinked line is invisible to the vault graph."
+        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist. `## Logs` is the sequence of one-line events; for worked-out substance (a derivation, a procedure, a page of reasoning) use `note_to_daily`, which writes the entry under `## Notes` and this pointer line for you. The entry is stamped with the vault clock (`- **HH:MM**: <text>`), so pass the text alone; a time you prefix yourself is stamped twice. Link as you write: wikilink every vault note the line names (`[[slug]]`), and render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather than a bare `#N`. An unlinked line is invisible to the vault graph."
     )]
     pub async fn append_to_log(
         &self,
@@ -747,8 +747,13 @@ impl CuadernoServer {
     /// response verbatim (`log_line`), so the tail need not show it.
     /// The heading comes from the domain (`DailySection::Notes`), not a
     /// literal here.
+    ///
+    /// The blank-body refusal is a check on the argument's shape, like
+    /// the blank-heading one, not a rule of the operation: the domain
+    /// accepts an empty body and writes a bare `### heading`, and a
+    /// later CLI verb decides for itself whether to demand substance.
     #[tool(
-        description = "Write worked-out substance (a derivation, a procedure, a page of reasoning) to a daily note (defaults to today) as one entry per call: `### <heading>` followed by `body`, appended under the day's `## Notes`. The pointer line `noted [[journal/<year>/daily/<date>#<heading>]] (<links>)`, listing the body's wikilinks, is written to `## Logs` for you in the same write, so do not log it again with `append_to_log`. Keep `## Logs` for one-line events and put the substance here. The heading must be unique within the day, must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), and must not contain `[`, `]`, `|`, `#` or inline markup (bold, italics, code) nor start with `^`; such headings are refused with code `history_entry_heading_invalid`. Deeper headings inside the body (`####` and below) are fine. Wikilink the vault notes the body names (`[[slug]]`). End an entry that could be reused beyond today with the tag `#concept` on the body's last line, so the review can find it as a candidate for promotion to a concept note. The returned `target` is the entry's anchored link: cite it as `[[<target>]]`, for example from a concept's `origin`."
+        description = "Write worked-out substance (a derivation, a procedure, a page of reasoning) to a daily note (defaults to today) as one entry per call: `### <heading>` followed by `body`, appended under the day's `## Notes`. The pointer line `noted [[journal/<year>/daily/<date>#<heading>]] (<links>)`, listing the body's wikilinks, is written to `## Logs` for you in the same write, so do not log it again with `append_to_log`. Keep `## Logs` for one-line events and put the substance here. The heading must be unique within the day, must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), and must not contain `[`, `]`, `|`, `#` or inline markup (bold, italics, code) nor start with `^`; such headings are refused with code `history_entry_heading_invalid`. Headings inside the body must be level 3 or deeper (a `#` or `##` line is refused) and are held to the same uniqueness rule as the entry heading, so a pasted derivation with its own `## Proof` must be demoted first. Wikilink the vault notes the body names (`[[slug]]`). End an entry that could be reused beyond today with the tag `#concept` on the body's last line, so the review can find it as a candidate for promotion to a concept note. The returned `target` is the entry's anchored link: cite it as `[[<target>]]`, for example from a concept's `origin`."
     )]
     pub async fn note_to_daily(
         &self,
@@ -766,8 +771,16 @@ impl CuadernoServer {
                 "required: the entry's heading, written as `### <heading>` under `## Notes`",
             ));
         }
-        let body = input.body.trim().to_owned();
-        if body.is_empty() {
+        // Only leading blank lines and trailing whitespace are stripped:
+        // the first line's indentation is part of the substance (an
+        // entry may open with an indented code block), and the domain
+        // writes the body verbatim.
+        let body = input
+            .body
+            .trim_start_matches(['\n', '\r'])
+            .trim_end()
+            .to_owned();
+        if body.trim().is_empty() {
             return Err(invalid_argument(
                 "body",
                 "required: the entry's substance; a one-line event belongs in `append_to_log`",

@@ -1201,8 +1201,9 @@ pub struct NoteToDailyResponse {
     pub log_line: String,
     /// Short summary line.
     pub message: String,
-    /// Read-back proof the write landed; `appended_tail` is the tail of
-    /// the day's `## Notes`, which ends with the entry just written.
+    /// Read-back proof the write landed; `appended_tail` is the last 512
+    /// bytes of the day's `## Notes`, which end with the entry just
+    /// written (a long entry shows only the end of its body).
     pub verification: Option<WriteVerificationDto>,
 }
 

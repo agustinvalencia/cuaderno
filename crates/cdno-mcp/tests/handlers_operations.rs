@@ -2695,6 +2695,30 @@ fn assert_pointer_line(body: &str, log_line: &str) {
 }
 
 #[tokio::test]
+async fn note_to_daily_keeps_the_bodys_leading_indentation() {
+    let (server, store) = server_with(|_v, store| seed_today_daily(&store));
+    let today = chrono::Local::now().date_naive();
+    let relpath = cdno_core::paths::daily_note_relpath(today);
+
+    // An entry that opens with an indented code block: only the leading
+    // blank lines and the trailing whitespace go; the first line's
+    // indentation is part of the substance.
+    server
+        .note_to_daily(Parameters(note_input(
+            "Indented",
+            "\n\n    x = A^-1 u\n    y = x + 1\n\n",
+        )))
+        .await
+        .expect("note_to_daily");
+
+    let body = store.read_file(&vp(&relpath)).unwrap();
+    assert!(
+        body.contains("### Indented\n    x = A^-1 u\n    y = x + 1\n"),
+        "body:\n{body}"
+    );
+}
+
+#[tokio::test]
 async fn note_to_daily_writes_the_entry_under_notes_and_the_pointer_under_logs() {
     let (server, store) = server_with(|_v, store| seed_today_daily(&store));
     let today = chrono::Local::now().date_naive();
