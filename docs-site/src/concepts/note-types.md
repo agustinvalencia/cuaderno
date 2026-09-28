@@ -22,12 +22,12 @@ Plus the **inbox**: raw, untyped captures in `inbox/` awaiting [triage](../tutor
 ## The journal: `daily`, `weekly`, and `monthly`
 
 The chronological backbone. Daily notes collect timestamped log lines plus structured sections
-(Intention, Agenda, Standup, Meeting), and a `## Notes` section for worked-out substance
-that the log points at (see [The concept library](concept-library.md#substance-in-the-day-pointers-in-the-log)). Weekly notes hold the review (Wins, Challenges, One
-Improvement) and the week's single goal. Monthly notes hold the higher-altitude review (Wins,
-Themes, Next Month's Focus) and a `## Weeks` block that **links** the month's weekly notes rather
-than copying them, so the weeks stay the source of truth. All three are **append-only** — the
-historical record only grows.
+(Intention, Agenda, Standup, Meeting), and a `## Notes` section for worked-out substance that
+the log points at (see [The concept library](concept-library.md#substance-in-the-day-pointers-in-the-log)).
+Weekly notes hold the review (Wins, Challenges, One Improvement) and the week's single goal.
+Monthly notes hold the higher-altitude review (Wins, Themes, Next Month's Focus) and a `## Weeks`
+block that **links** the month's weekly notes rather than copying them, so the weeks stay the
+source of truth. All three are **append-only** — the historical record only grows.
 
 ## `project` — the one mutable map
 

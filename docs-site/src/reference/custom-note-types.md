@@ -114,7 +114,9 @@ For a custom type, a `[schemas.<name>.fields.<field>]` declaration (see
 
 - **Lint type-checks it.** When the field is present in a note, `cdno lint` warns if its value does
   not match the declared `type` (or `values`), e.g. ``field `difficulty` is not a valid int for note
-  type `concept` ``. A warning, never an error.
+  type `concept` ``. A warning, never an error. A value passed with `--field` (or `fields`) at
+  creation is always written as a string, so a typed `int`, `float` or `bool` field set that way
+  draws this warning; set it afterwards with `cdno frontmatter set`, which writes the declared type.
 - **`settable = true` makes it writable** with [`cdno frontmatter set`](cli/frontmatter.md) or the
   `set_frontmatter` MCP tool, type-checked and without a hand edit. The key must already be in the
   note's frontmatter: the setter rewrites a field, it does not add one.
@@ -124,7 +126,8 @@ Two parts of a schema do **not** apply to a custom type:
 
 - **`extra_required` is not enforced.** A custom type's required fields come from its own
   `required` list, and that is what `cdno lint` and creation check. An `extra_required` name on a
-  custom type only shows up in `list_note_types` as an untyped field. Put the field in `required`.
+  custom type only shows up in `list_note_types`, as a `string` field in `fields`. Put the field in
+  `required`.
 - **A declared `default` is not written at creation.** A custom note's frontmatter carries what the
   template renders plus the fields you pass; to give every new note a field, write it into the
   template.

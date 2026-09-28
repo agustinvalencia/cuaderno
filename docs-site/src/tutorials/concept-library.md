@@ -9,20 +9,23 @@ first copy the declaration and template from
 [`examples/note-types/concept/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/note-types/concept).
 The project `surrogate-model` stands in for whatever you are working on.
 
+The input files below are scratch; write them outside the vault (for example under `/tmp`), or a
+stray `.md` in the vault root is reported as unindexable. The commands here use `/tmp`.
+
 ## 1. Note the substance in the day
 
 On 2 September you work out why a low-rank refit is cheap. It is not a one-line event, so it does
 not go in `## Logs`; write it to a file (or let the editor open, below) and log it as a note:
 
 ```bash
-cat > woodbury.md <<'EOF'
+cat > /tmp/woodbury.md <<'EOF'
 (A + UCV)^-1 = A^-1 - A^-1 U (C^-1 + V A^-1 U)^-1 V A^-1.
 
 Cheap when A^-1 is already known and the update is low-rank: today's use was the
 k=3 refit on [[surrogate-model]]. #concept
 EOF
 
-cdno log note --heading "Woodbury identity" --body-file woodbury.md
+cdno log note --heading "Woodbury identity" --body-file /tmp/woodbury.md
 ```
 
 ```text
@@ -59,9 +62,9 @@ own for that day. `--date` writes to a chosen day's note (stamped at the current
 shows everything the command returns:
 
 ```bash
-printf 'Refit again with k=5 on [[surrogate-model]]: Woodbury keeps the update at O(k^3) rather than a full re-inverse.\n#concept\n' > refit.md
+printf 'Refit again with k=5 on [[surrogate-model]]: Woodbury keeps the update at O(k^3) rather than a full re-inverse.\n#concept\n' > /tmp/refit.md
 
-cdno log note --heading "Low-rank refit" --body-file refit.md --date 2026-09-24 --json
+cdno log note --heading "Low-rank refit" --body-file /tmp/refit.md --date 2026-09-24 --json
 ```
 
 ```json
@@ -79,7 +82,7 @@ A heading already used that day, or one that reuses a section name, is refused a
 written:
 
 ```text
-$ cdno log note --heading "Logs" --body-file refit.md --date 2026-09-24
+$ cdno log note --heading "Logs" --body-file /tmp/refit.md --date 2026-09-24
 Error: heading `Logs` is not allowed in `## Notes`: it is the name of a daily section
 ```
 
@@ -129,12 +132,12 @@ Write the concept's opening in a file — without the `# Title` line, which the 
 create the note with `origin` pointing at both entries:
 
 ```bash
-cat > concept-body.md <<'EOF'
+cat > /tmp/concept-body.md <<'EOF'
 A low-rank correction to a matrix whose inverse you already hold can be inverted
 without starting again.
 EOF
 
-cdno note create concept --title "Woodbury identity" --body-file concept-body.md \
+cdno note create concept --title "Woodbury identity" --body-file /tmp/concept-body.md \
   --origin "[[journal/2026/daily/2026-09-02#Woodbury identity]] [[journal/2026/daily/2026-09-24#Low-rank refit]]"
 ```
 
@@ -163,8 +166,8 @@ without starting again.
 ```
 
 The body fills the template's `{{body}}` slot, and the template adds its three sections after it.
-`origin` is stored as a single quoted string; each link in it is indexed, so both daily notes now
-list the concept among their backlinks.
+`origin` is stored as a single quoted string. Its links are picked up as backlinks the next time the
+index is rebuilt (`cdno reindex`) — a write through `cdno` does not index its own links yet (#646).
 
 Fill in `tags` in your editor (`tags: [linear-algebra]`). A `--field tags=…` value is written as a
 plain string, not a list, so the tag list is easiest to edit by hand.
@@ -181,8 +184,8 @@ Fill the empty sections one at a time. Each call names the section, the file hol
 (without the heading), and a reason:
 
 ```bash
-printf '(A + UCV)^-1 = A^-1 - A^-1 U (C^-1 + V A^-1 U)^-1 V A^-1\n' > statement.md
-cdno note revise woodbury-identity --section Statement --content-file statement.md \
+printf '(A + UCV)^-1 = A^-1 - A^-1 U (C^-1 + V A^-1 U)^-1 V A^-1\n' > /tmp/statement.md
+cdno note revise woodbury-identity --section Statement --content-file /tmp/statement.md \
   --reason "stated the identity"
 ```
 
@@ -193,8 +196,8 @@ Revised concepts/woodbury-identity.md
 With `--json`, the result says what was logged:
 
 ```bash
-printf 'Refitting a rank-k update costs O(k^3) plus the products with A^-1, instead of a fresh O(n^3) inverse; the k=5 refit on [[surrogate-model]] is the worked case.\n' > why.md
-cdno note revise woodbury-identity --section "Why it matters" --content-file why.md \
+printf 'Refitting a rank-k update costs O(k^3) plus the products with A^-1, instead of a fresh O(n^3) inverse; the k=5 refit on [[surrogate-model]] is the worked case.\n' > /tmp/why.md
+cdno note revise woodbury-identity --section "Why it matters" --content-file /tmp/why.md \
   --reason "added the cost comparison" --json
 ```
 
@@ -212,7 +215,7 @@ cdno note revise woodbury-identity --section "Why it matters" --content-file why
 Running the same revision again changes nothing, so nothing is written or logged:
 
 ```text
-$ cdno note revise woodbury-identity --section Statement --content-file statement.md --reason "again"
+$ cdno note revise woodbury-identity --section Statement --content-file /tmp/statement.md --reason "again"
 No change to concepts/woodbury-identity.md
 ```
 
@@ -220,7 +223,7 @@ The reason is not optional. In a script, leaving it out is an error; in a termin
 for it:
 
 ```text
-$ cdno note revise woodbury-identity --no-interactive --section "See also" --content-file see-also.md
+$ cdno note revise woodbury-identity --no-interactive --section "See also" --content-file /tmp/see-also.md
 Error: missing required flag: --reason (provide it explicitly or run interactively in a TTY)
 ```
 
@@ -231,7 +234,7 @@ while that editor is open, the revision is refused rather than overwriting the c
 Only custom types that are not append-only can be revised; a project, for one, is refused:
 
 ```text
-$ cdno note revise surrogate-model --body-file why.md --reason "tidy"
+$ cdno note revise surrogate-model --body-file /tmp/why.md --reason "tidy"
 Error: note 'projects/surrogate-model.md' cannot be revised: 'project' is a built-in note type; its sections are owned by its own commands
 ```
 

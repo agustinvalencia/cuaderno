@@ -65,8 +65,8 @@ collaborators = "Who are the collaborators?"
 | `vault.name` | string | `"My Vault"` | A human label for the vault. |
 | `vault.max_active_projects` | integer | `5` | The active-project cap. |
 | `ignore` | list of globs | `[]` | Files the index skips. Additive; never deletes. See [Ignore globs](#ignore-globs). |
-| `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for that **built-in** note type, enforced by `cdno lint`. |
-| `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for a built-in note type (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor, type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
+| `schemas.<type>.extra_required` | list of strings | `[]` | Extra required frontmatter fields for a built-in note type (not enforced on a custom type), enforced by `cdno lint`. |
+| `schemas.<type>.fields.<name>` | table | — | A **typed** frontmatter field for any note type, built-in or custom (`type`, `default`, `required`, `values`, `settable`, `log_on_change`). Recognised by the Templates editor, type-checked by `cdno lint`, and (when `settable`) writable via `cdno frontmatter set`. See [Typed schema fields](#typed-schema-fields). |
 | `tracking.<activity>` | table | — | Declares how an activity's tracked numbers are read back (`records`, `group_by`, and a `metrics.<name>` table per metric). Without one, the activity's series come from its body table with each column summed. See [Tracking](#tracking). |
 | `note_types.<name>` | table | — | Declares a **config-defined custom note type** (`folder`, `required`/`optional` fields, `template`, …) — a schema-only type for entities the built-ins don't cover. See [Custom note types](custom-note-types.md). |
 | `variables.<name>` | string | — | Static template variable; resolves in any custom template (per-type values win on name clash). |
@@ -103,7 +103,7 @@ automatically, by location. See [vault structure](../concepts/vault-structure.md
 
 ## Typed schema fields
 
-`[schemas.<type>.fields.<name>]` declares a **typed** frontmatter field on a built-in note type. It
+`[schemas.<type>.fields.<name>]` declares a **typed** frontmatter field for any note type, built-in or custom. It
 is the richer sibling of `extra_required`: instead of just a name, each field carries a type (and
 optionally a default and an allowed-value set). Four things consume it today:
 
@@ -111,7 +111,9 @@ optionally a default and an allowed-value set). Four things consume it today:
   `{{<name>}}` no longer warns "renders literally";
 - **note creation** populates the field's `default` at create — a custom template referencing
   `{{<name>}}` renders that default (a field with no default renders `null`), so the value lands in
-  the new note's frontmatter instead of a literal `{{<name>}}`;
+  the new note's frontmatter instead of a literal `{{<name>}}` (built-in types only; a custom
+  type's `default` is not written — see
+  [Custom note types](custom-note-types.md#relationship-to-schemas));
 - **`cdno lint`** type-checks the field — a note whose value doesn't match the declared type (or
   isn't one of `values`) gets a warning;
 - the **`set_frontmatter` setter** (`cdno frontmatter set`, MCP `set_frontmatter`) writes the field

@@ -134,7 +134,8 @@ line. That is how you — or an assistant — find promotion candidates later.
 
 `## Notes` is not read by the project, weekly or monthly context: those read `## Logs`. An entry
 about a project reaches that project through the pointer line's wikilinks and the entry's own links
-(which become backlinks), so a review sees *that* you worked something out, not the working itself.
+(which become backlinks once the index is rebuilt; see [Promotion](#promotion)), so a review sees
+*that* you worked something out, not the working itself.
 
 ## Promotion
 
@@ -153,8 +154,10 @@ Creation is logged for you, to today's daily note, as `concept created [[concept
 and `origin` records where the concept came from. Over MCP the same step is `create_custom_note`
 with `body` and `origin`.
 
-The `## Notes` entries stay as they were — the day's record is append-only — and their daily notes
-now have a backlink from the concept.
+The `## Notes` entries stay as they were — the day's record is append-only — and, once the index is
+rebuilt, their daily notes have a backlink from the concept. A write through `cdno` does not index
+its own links yet, so links written by `cdno log note`, `cdno note create` or `cdno note revise`
+reach the backlinks only after `cdno reindex` (#646).
 
 **Search before you create.** A second note on a subject the library already covers is the
 duplicate this whole method exists to avoid. `cdno search <word> --type concept` first; if the
