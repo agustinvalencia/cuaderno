@@ -181,6 +181,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The concept method on the MCP surface (T15, #628).** The server instructions gain one
+  conditional bullet, "if the vault declares a `concept` type", carrying the filing test
+  (evidence, the question note, a stewardship routine, a concept note, or the daily `## Notes`),
+  the provenance rule (a concept is never the `origin` of evidence) and the refinement rule
+  (refined in place with `revise_note`, never appended to). `create_custom_note` now says to search
+  before creating a concept (one concept per subject; a duplicate is merged by `revise_note`) and
+  that a promotion needs no separate log line; `search_notes` says to search the concept type
+  first and how to find promotion candidates (`#concept` with `note_type: daily`, on two or more
+  dates); `read_note` says a concept's `origin` links are read the same way; `note_to_daily`
+  carries the promotion offer; `revise_note` carries the no-staleness rule. No tool is added; the
+  catalogue stays at 58.
 - **Domain rejections over MCP are tool results, not protocol errors (#560).** `into_mcp_error`
   flattened every `DomainError` to a `-32603` JSON-RPC error, and at least one client renders that
   as a bare "Tool execution failed" without ever showing `error.message` to the model — so an agent
