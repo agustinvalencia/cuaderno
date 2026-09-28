@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Status** | Draft, revised after review round two — 2026-09-28 |
-| **Tracked by** | this PR; an epic and task issues follow acceptance |
+| **Status** | Accepted — 2026-09-28 (three-seat review, two rounds, on the RFC PR; §7 confirmed by the maintainer) |
+| **Tracked by** | epic issue (opened on acceptance); implementation in one PR per §8 |
 | **Affects** | `cdno-cli` (`init`, `config note-type`), `cdno-mcp` (one description), `examples/note-types/`, `docs-site` |
 | **Related** | RFC 0002 (the `concept` type this exists to install); `cdno config` (#598) and `cdno templates` (#599), whose gates and verbs this reuses; `examples/note-types/README.md` (the two-file recipe this replaces) |
 
