@@ -346,7 +346,14 @@ impl CuadernoServer {
                 ));
             }
             (Some(body), None, None) => {
-                if input.expected_hash.is_none() {
+                // A blank hash is a missing hash: sent to the domain it would
+                // come back as `stale_revision`, whose "read it again" advice
+                // an agent that sent "" by mistake would follow in a loop.
+                if input
+                    .expected_hash
+                    .as_deref()
+                    .is_none_or(|hash| hash.trim().is_empty())
+                {
                     return Err(invalid_argument(
                         "expected_hash",
                         "required with `body`: pass the `content_hash` from `read_note`, so a \
@@ -355,7 +362,13 @@ impl CuadernoServer {
                 }
                 Revision::Body(body)
             }
-            (None, Some(heading), Some(content)) => Revision::Section { heading, content },
+            // Trimmed like `note`: headings are matched as trimmed text, so
+            // a padded heading would miss the real section and be appended
+            // as a duplicate of it.
+            (None, Some(heading), Some(content)) => Revision::Section {
+                heading: heading.trim().to_owned(),
+                content,
+            },
         };
         // A section upsert is not hash-guarded (the rest of the note is
         // left alone), so a hash passed with it is ignored, not refused.

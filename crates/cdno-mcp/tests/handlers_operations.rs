@@ -2547,3 +2547,103 @@ async fn revise_note_refuses_an_unknown_reference_as_not_found() {
     let err = revise(&server, input).await.expect_err("unknown");
     assert_eq!(rejection_code(&err), "not_found");
 }
+
+#[tokio::test]
+async fn revise_note_treats_a_blank_hash_as_missing() {
+    let mut input = revise_input(REVISE_PATH);
+    input.expected_hash = Some("  ".to_owned());
+    input.body = Some("\nNew body.\n".to_owned());
+    assert_invalid(input, "expected_hash").await;
+}
+
+#[tokio::test]
+async fn revise_note_trims_a_padded_section_heading_onto_the_existing_section() {
+    let (server, store) = revise_server();
+    let mut input = revise_input(REVISE_PATH);
+    input.section = Some(" Statement ".to_owned());
+    input.content = Some("A padded heading still finds its section.".to_owned());
+
+    let json = decode_json(&revise(&server, input).await.expect("revised"));
+    assert_eq!(
+        json["section_target"],
+        "concepts/woodbury-identity#Statement"
+    );
+    let written = store.read_file(&vp(REVISE_PATH)).unwrap();
+    assert_eq!(written.matches("Statement").count(), 1, "{written}");
+    assert!(written.ends_with("## Statement\n\nA padded heading still finds its section.\n"));
+}
+
+/// Refuse a section revision of `REVISE_PATH` as `revision_invalid`,
+/// leaving the note and the daily log untouched.
+async fn assert_revision_invalid(section: &str, content: &str) {
+    let (server, store) = revise_server();
+    let mut input = revise_input(REVISE_PATH);
+    input.section = Some(section.to_owned());
+    input.content = Some(content.to_owned());
+
+    let err = revise(&server, input).await.expect_err("invalid");
+    assert_eq!(rejection_code(&err), "revision_invalid");
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+    assert!(!today_daily(&store).contains("revised"));
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_heading_containing_a_pipe() {
+    assert_revision_invalid("Bad|Heading", "x").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_content_that_adds_a_same_level_heading() {
+    assert_revision_invalid("Statement", "x\n\n## Smuggled\n\ny").await;
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_daily_note() {
+    let (server, store) = revise_server();
+    seed_today_daily(&store);
+    let before = today_daily(&store);
+    let mut input = revise_input("today");
+    input.section = Some("Logs".to_owned());
+    input.content = Some("x".to_owned());
+
+    let err = revise(&server, input).await.expect_err("a daily note");
+    assert_eq!(rejection_code(&err), "note_not_revisable");
+    assert_eq!(today_daily(&store), before);
+}
+
+#[tokio::test]
+async fn revise_note_refuses_an_uppercase_copy_of_the_right_hash_as_stale() {
+    let (server, store) = revise_server();
+    let hash = read_hash(&server, REVISE_PATH).await;
+    assert_ne!(hash, hash.to_uppercase(), "the hash has hex letters");
+    let mut input = revise_input(REVISE_PATH);
+    input.expected_hash = Some(hash.to_uppercase());
+    input.body = Some("\nNew body.\n".to_owned());
+
+    let err = revise(&server, input).await.expect_err("case-sensitive");
+    assert_eq!(rejection_code(&err), "stale_revision");
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+}
+
+#[tokio::test]
+async fn revise_note_refuses_a_slug_two_notes_share_as_ambiguous() {
+    let (server, store) = server_with_config(config_with_person_and_concept(), |v, s| {
+        s.write_file(&vp(REVISE_PATH), REVISE_NOTE).unwrap();
+        s.write_file(
+            &vp("projects/woodbury-identity.md"),
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Woodbury project\n",
+        )
+        .unwrap();
+        v.reconcile().unwrap();
+    });
+    let mut input = revise_input("woodbury-identity");
+    input.section = Some("Statement".to_owned());
+    input.content = Some("x".to_owned());
+
+    let err = revise(&server, input)
+        .await
+        .expect_err("two notes share the slug");
+    assert_eq!(rejection_code(&err), "ambiguous_slug");
+    assert_eq!(store.read_file(&vp(REVISE_PATH)).unwrap(), REVISE_NOTE);
+    assert!(!today_daily(&store).contains("revised"));
+}

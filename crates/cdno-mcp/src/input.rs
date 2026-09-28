@@ -352,13 +352,14 @@ pub struct ReviseNoteInput {
     pub note: String,
     /// The `content_hash` `read_note` returned. Required with `body`, and
     /// the revision is refused as stale when the note changed since that
-    /// read. Ignored with `section`.
+    /// read; a blank value counts as missing. Ignored with `section`.
     pub expected_hash: Option<String>,
     /// The note's whole new body (everything after the frontmatter, which
     /// is kept as it is). Written verbatim.
     pub body: Option<String>,
     /// Heading text of the section to upsert, as `read_note`'s `headings`
-    /// lists it, without the `#` markers. Requires `content`.
+    /// lists it, without the `#` markers; surrounding whitespace is
+    /// ignored. Requires `content`.
     pub section: Option<String>,
     /// The section's new content, without its heading. Only with `section`.
     pub content: Option<String>,
