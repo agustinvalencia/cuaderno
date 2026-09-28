@@ -37,8 +37,8 @@ cdno log "nightly run complete" --json
 
 Daily notes are [append-only](../../concepts/business-rules.md) — `log` only ever adds.
 
-A first argument that names a subcommand (`note`) selects it. To log that bare word as a message,
-pass it after `--`: `cdno log -- note`.
+A first argument, before any option, that names a subcommand (`note`) selects it. To log that bare
+word as a message, pass it after `--`: `cdno log -- note`.
 
 ## `cdno log note`
 

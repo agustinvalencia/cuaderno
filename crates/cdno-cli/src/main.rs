@@ -95,9 +95,9 @@ enum Commands {
     /// Append a log entry to today's daily note (or a chosen moment).
     ///
     /// `cdno log note` instead writes worked-out substance under the day's
-    /// `## Notes`, with its pointer line in `## Logs`. A first argument
-    /// that names a subcommand selects it, so to log the bare word `note`,
-    /// pass it after `--` (`cdno log -- note`).
+    /// `## Notes`, with its pointer line in `## Logs`. A first argument,
+    /// before any option, that names a subcommand selects it, so to log the
+    /// bare word `note`, pass it after `--` (`cdno log -- note`).
     // No `help` subcommand: `cdno log help` stays a message, as before.
     #[command(
         args_conflicts_with_subcommands = true,

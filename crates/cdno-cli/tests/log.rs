@@ -383,25 +383,84 @@ fn log_note_with_an_unreadable_body_file_fails_naming_the_path_and_writes_nothin
     assert!(!dir.path().join(DAILY).exists(), "nothing may be written");
 }
 
+/// Runs `cdno --vault <dir> log <args…>` with nothing between `log` and
+/// `args`, and returns the daily note the command reports writing. Any
+/// option before the first word would already stop clap reading it as a
+/// subcommand (`args_conflicts_with_subcommands`), so these tests pass no
+/// `--at` and read the path back from stdout rather than guess the date.
+fn log_bare(dir: &Path, args: &[&str]) -> String {
+    let output = cdno()
+        .args(["--vault", &vault_arg(dir), "log"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let rel = stdout
+        .strip_prefix("Logged to ")
+        .and_then(|s| s.strip_suffix('\n'))
+        .unwrap_or_else(|| panic!("unexpected stdout: {stdout}"));
+    fs::read_to_string(dir.join(rel)).unwrap()
+}
+
 #[test]
-fn log_help_and_log_dash_dash_note_are_messages_not_subcommands() {
+fn log_dash_dash_note_logs_the_word_note() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).expect("init");
 
-    for message in [vec!["help"], vec!["--", "note"]] {
-        cdno()
-            .args(["--vault", &vault_arg(dir.path())])
-            .args(["log", "--at", "2026-04-25T09:15"])
-            .args(&message)
-            .assert()
-            .success()
-            .stdout(format!("Logged to {DAILY}\n"));
-    }
-    let content = fs::read_to_string(dir.path().join(DAILY)).unwrap();
+    let content = log_bare(dir.path(), &["--", "note"]);
+    let last = content.lines().last().unwrap();
     assert!(
-        content.ends_with("## Logs\n- **09:15**: help\n- **09:15**: note\n"),
+        last.starts_with("- **") && last.ends_with("**: note"),
         "{content}"
     );
+}
+
+#[test]
+fn log_help_logs_the_word_help() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+
+    let content = log_bare(dir.path(), &["help"]);
+    let last = content.lines().last().unwrap();
+    assert!(
+        last.starts_with("- **") && last.ends_with("**: help"),
+        "{content}"
+    );
+}
+
+#[test]
+fn log_with_an_option_before_note_logs_the_word_note() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+
+    // Only the first argument, before any option, can name a subcommand.
+    cdno()
+        .args(["--vault", &vault_arg(dir.path())])
+        .args(["log", "--at", "2026-04-25T09:15", "note"])
+        .assert()
+        .success()
+        .stdout(format!("Logged to {DAILY}\n"));
+    let content = fs::read_to_string(dir.path().join(DAILY)).unwrap();
+    assert!(
+        content.ends_with("## Logs\n- **09:15**: note\n"),
+        "{content}"
+    );
+}
+
+#[test]
+fn bare_log_note_runs_the_subcommand_and_fails_on_the_missing_heading() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+
+    cdno()
+        .args(["--vault", &vault_arg(dir.path()), "log", "note"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "missing required flag: --heading (provide it explicitly or run interactively in a TTY)",
+        ));
+    assert!(!today_daily(dir.path()).exists(), "nothing may be written");
 }
 
 #[test]

@@ -20,7 +20,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   are stripped) and a blank one is refused naming `--body-file`; every heading rule is the
   domain's, surfaced with its message. `--date` defaults to today and is stamped at the current
   time. The human line is `Noted <target>`; `--json` emits `path`, `message`, `target` and
-  `log_line`.
+  `log_line`. `docs/cli-ergonomics.md` gains a Status row recording this positional-plus-subcommand
+  shape and its `--` escape.
 - **`cdno note revise` (T11, #624).** The CLI half of `Vault::revise_note`: `cdno note revise
   [NOTE] [--body-file PATH | --section STRING --content-file PATH] [--reason STRING]` refines a
   mutable custom note in place and logs `revised [[path]] — reason` (with `#Section` for a
