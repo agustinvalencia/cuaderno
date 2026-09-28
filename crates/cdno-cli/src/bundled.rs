@@ -358,12 +358,15 @@ pub fn append_block(original: &str, block: &str) -> String {
 ///
 /// Two refusals get plain words because the gate's own message names the
 /// symptom rather than the fix: a `note_types` inline table cannot take an
-/// appended `[note_types.<name>]` header (TOML reports a duplicate key), and
+/// appended `[note_types.<name>]` header (TOML reports a duplicate key, or an
+/// attempt to extend an inline table, depending on the shape), and
 /// another type already owning the folder is reported as "both declare
 /// folder". Everything else is the structured verbs' own message.
 fn translate(name: &str, folder: &str, err: ConfigSaveError) -> anyhow::Error {
     if let ConfigSaveError::Validation(e) = &err {
-        if e.message.contains("duplicate key") && e.message.contains("note_types") {
+        if e.message.contains("note_types")
+            && (e.message.contains("duplicate key") || e.message.contains("inline table"))
+        {
             return anyhow!(
                 "`note_types` is declared inline; add the block with `cdno config edit`. \
                  Nothing was written."
@@ -532,4 +535,74 @@ impl Undo {
             let _ = fs::remove_dir(dir);
         }
     }
+}
+
+/// Where a vault stands with one bundled type, for `install --list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstalledState {
+    /// The config does not declare the name.
+    NotInstalled,
+    /// Declared exactly as bundled, with the bundled template in place.
+    Matches,
+    /// Declared, but differently from the bundled declaration.
+    DeclarationDiffers,
+    /// Declared as bundled, and the template file differs from the bundled
+    /// one.
+    TemplateCustomised,
+    /// Declared as bundled, and the template file it names is absent. Not
+    /// one of RFC 0003's four states: a vault that followed the old two-file
+    /// recipe halfway lands here, and calling it "matches" would hide the
+    /// one step `install` would still take.
+    TemplateMissing,
+}
+
+impl InstalledState {
+    /// The text `--list` prints.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NotInstalled => "not installed",
+            Self::Matches => "installed (matches)",
+            Self::DeclarationDiffers => "installed (declaration differs)",
+            Self::TemplateCustomised => "installed (template customised)",
+            Self::TemplateMissing => "installed (template missing)",
+        }
+    }
+
+    /// The value `--list --json` carries.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::NotInstalled => "not_installed",
+            Self::Matches => "installed_matches",
+            Self::DeclarationDiffers => "installed_declaration_differs",
+            Self::TemplateCustomised => "installed_template_customised",
+            Self::TemplateMissing => "installed_template_missing",
+        }
+    }
+}
+
+/// The state of `bundled` in the vault at `root`, decided exactly as
+/// [`install`] decides it: on the parsed config, comparing field by field.
+pub fn installed_state(root: &Path, bundled: &BundledType) -> Result<InstalledState> {
+    let store = FsVaultStore::new(root);
+    let original = read_config_from(&store).context("reading .cuaderno/config.toml")?;
+    let model = crate::commands::config::read_model(&original.content)?;
+    let Some(current) = model.note_types.get(bundled.name) else {
+        return Ok(InstalledState::NotInstalled);
+    };
+    if !compare(bundled.name, &bundled.declaration()?, current).is_empty() {
+        return Ok(InstalledState::DeclarationDiffers);
+    }
+    let path = root
+        .join(paths::TEMPLATES_DIR)
+        .join(template_in_force(bundled.name, current));
+    if !path.exists() {
+        return Ok(InstalledState::TemplateMissing);
+    }
+    let present =
+        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(if present == bundled.template {
+        InstalledState::Matches
+    } else {
+        InstalledState::TemplateCustomised
+    })
 }

@@ -8,6 +8,7 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ErrorData};
 use rmcp::{tool, tool_router};
 
+use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, QuestionDomain};
 
 use crate::input::*;
@@ -137,7 +138,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — each key must be a declared `required`/`optional` field. A required `title`, `slug`, `created` or `date` is filled in by the engine when omitted from `fields`, and may be overridden with a non-blank value (for example, to backdate `created`); every other required field must be supplied. The valid types and their fields come from the vault's config, not this schema. `body` is the note's markdown prose WITHOUT the title heading (the engine writes the `# <title>` H1 itself, and a leading H1 equal to the title is dropped): it fills the template's `{{body}}` placeholder, or is inserted after the H1 when the template has none. `origin` is one string of wikilinks to where the note came from, stored as a frontmatter string, e.g. `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion, RFC 0002 §5.5 — promoting a daily `## Notes` entry is creating the note with `origin`); it must be a field the type declares (the `concept` type declares it optional), else the call is refused. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand, and a promotion needs no separate log line. For a `concept`, search before you create: run `search_notes` with `note_type: concept` and one or two distinctive words for the subject (terms are ANDed, so a long query misses), and if a note on the subject exists, refine it with `revise_note` rather than creating a second; if you find two already, tell the person rather than merging them yourself. Nothing on the server checks this: a second create with the same title succeeds as `<slug>-2`. Keep one concept per note: if the body needs two headings that could each be cited on their own, it is usually two notes. The `concept` template `cdno init` writes appends its own `## Statement`, `## Why it matters` and `## See also` after `body`, so do not repeat those headings in `body`: a duplicated heading makes `revise_note` refuse that section as `ambiguous_section`. A concept is understanding you will reuse independent of any deliverable (a theorem, a definition, a technique, a procedure); a dated observation bearing on a question is evidence, not a concept."
+        description = "Create a note of a config-defined custom type (declared under `[note_types.<name>]` in the vault config; built-in types have their own dedicated create tools). `type_name` is the custom type; `fields` is a name -> value map of its declared frontmatter fields — each key must be a declared `required`/`optional` field. A required `title`, `slug`, `created` or `date` is filled in by the engine when omitted from `fields`, and may be overridden with a non-blank value (for example, to backdate `created`); every other required field must be supplied. The valid types and their fields come from the vault's config, not this schema. `body` is the note's markdown prose WITHOUT the title heading (the engine writes the `# <title>` H1 itself, and a leading H1 equal to the title is dropped): it fills the template's `{{body}}` placeholder, or is inserted after the H1 when the template has none. `origin` is one string of wikilinks to where the note came from, stored as a frontmatter string, e.g. `[[journal/2026/daily/2026-09-02#Woodbury identity]]` (promotion, RFC 0002 §5.5 — promoting a daily `## Notes` entry is creating the note with `origin`); it must be a field the type declares (the `concept` type declares it optional), else the call is refused. Creation is logged to today's daily note as `<type> created [[…]] — <title>`; do not log it again by hand, and a promotion needs no separate log line. For a `concept`, search before you create: run `search_notes` with `note_type: concept` and one or two distinctive words for the subject (terms are ANDed, so a long query misses), and if a note on the subject exists, refine it with `revise_note` rather than creating a second; if you find two already, tell the person rather than merging them yourself. Nothing on the server checks this: a second create with the same title succeeds as `<slug>-2`. Keep one concept per note: if the body needs two headings that could each be cited on their own, it is usually two notes. The `concept` template `cdno init` writes appends its own `## Statement`, `## Why it matters` and `## See also` after `body`, so do not repeat those headings in `body`: a duplicated heading makes `revise_note` refuse that section as `ambiguous_section`. A concept is understanding you will reuse independent of any deliverable (a theorem, a definition, a technique, a procedure); a dated observation bearing on a question is evidence, not a concept. If the type is not declared in this vault and is one the `cdno` binary ships (`concept`), the refusal names the command that installs it, `cdno config note-type install --name <name>`; there is no install tool, so tell the owner to run it rather than retrying."
     )]
     pub async fn create_custom_note(
         &self,
@@ -159,7 +160,7 @@ impl CuadernoServer {
                 )
             })
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(custom_create_error)?;
         let message = format!("Created {} note at {}", type_name, path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
@@ -189,5 +190,28 @@ impl CuadernoServer {
         let message = format!("Created stewardship at {}", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
+    }
+}
+
+/// Translate a `create_custom_note` failure. A type that is not declared but
+/// is bundled with `cdno` gets the command that installs it (RFC 0003 §4.5),
+/// so an agent can tell the owner what to run; everything else is the
+/// ordinary translation.
+fn custom_create_error(e: DomainError) -> ErrorData {
+    match &e {
+        DomainError::UnknownNoteType { note_type }
+            if cdno_core::paths::BUNDLED_NOTE_TYPE_NAMES.contains(&note_type.as_str()) =>
+        {
+            let command = format!("cdno config note-type install --name {note_type}");
+            crate::rejection::reject(
+                crate::rejection::RejectionCode::UnknownNoteType,
+                format!(
+                    "{e}: `{note_type}` ships with cdno but is not installed in this vault; \
+                     run `{command}` to install it"
+                ),
+                serde_json::json!({ "note_type": note_type, "install_command": command }),
+            )
+        }
+        _ => into_mcp_error(e),
     }
 }
