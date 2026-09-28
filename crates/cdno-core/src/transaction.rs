@@ -338,16 +338,26 @@ impl VaultTransaction {
                 // by an in-tool write has to land here or not at all. The
                 // extraction is the one reconcile uses
                 // (`extractors::extract_note_facets`), so the two agree.
-                // Unparseable frontmatter or an invalid `tags:` field leaves
-                // the facets as they were: reconcile reports that note as
-                // an error anyway, and FTS above is equally best-effort.
+                //
+                // Both facets are always replaced, so nothing from the
+                // note's previous content survives the fresh stamp. An
+                // invalid `tags:` value (e.g. `tags: linalg`, a string
+                // rather than a list) affects only the tags facet: the links
+                // are staged as usual, and the tags fall back to the body's
+                // inline `#tags` alone, the part that still parses. Only
+                // unparseable frontmatter, or a failed path query, leaves
+                // both facets as they were, as FTS above is equally
+                // best-effort.
                 if let Some((fm, body)) = &parsed
                     && let Ok(targets) =
                         link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
-                    && let Ok(facets) =
-                        crate::extractors::extract_note_facets(fm, &fm.as_json(), body, targets)
                 {
-                    if let Err(e) = self.index.replace_tags(&entry.path, &facets.tags) {
+                    let facets =
+                        crate::extractors::extract_note_facets(fm, &fm.as_json(), body, targets);
+                    let tags = facets
+                        .tags
+                        .unwrap_or_else(|_| crate::extractors::extract_inline_tags(body));
+                    if let Err(e) = self.index.replace_tags(&entry.path, &tags) {
                         index_errors.push(e);
                     }
                     if let Err(e) = self.index.replace_links(&entry.path, &facets.links) {

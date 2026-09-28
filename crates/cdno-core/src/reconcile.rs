@@ -390,9 +390,12 @@ fn reconcile_one(
     // Resolution staleness is bounded by the next reconcile pass (every
     // Vault::new) — see `extractors::resolve_wikilinks` for the
     // exact-then-basename policy.
+    // An invalid `tags:` value fails the whole note here, as it always
+    // has: the row stays unstamped, so the note is retried and reported
+    // on every pass until fixed.
     let crate::extractors::NoteFacets { tags, links } =
-        crate::extractors::extract_note_facets(&frontmatter, &frontmatter_json, body, vault_paths)
-            .map_err(|e| format!("invalid `tags` field: {e}"))?;
+        crate::extractors::extract_note_facets(&frontmatter, &frontmatter_json, body, vault_paths);
+    let tags = tags.map_err(|e| format!("invalid `tags` field: {e}"))?;
 
     // Project-type notes contribute deadlines and milestones via
     // `## Milestones`. Other types skip both even if they happen to

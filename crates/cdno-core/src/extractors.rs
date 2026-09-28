@@ -34,11 +34,18 @@ use crate::path::VaultPath;
 
 /// A note's derived `tags` and `links` facets, ready for
 /// `VaultIndex::replace_tags` / `VaultIndex::replace_links`.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// The two facets are independent: an invalid frontmatter `tags:` value
+/// fails `tags` alone, and `links` is always derived, so a caller never
+/// loses a note's edges to a malformed tag list.
+#[derive(Debug)]
 pub struct NoteFacets {
     /// Frontmatter `tags:` merged with body `#tag` tokens, deduped and
-    /// sorted so the `note_tags` table doesn't churn across passes.
-    pub tags: Vec<String>,
+    /// sorted so the `note_tags` table doesn't churn across passes. `Err`
+    /// when the frontmatter `tags:` field is present but not a list of
+    /// strings; the body's inline tags alone are then
+    /// [`extract_inline_tags`] of the same body.
+    pub tags: Result<Vec<String>, ValidationError>,
     /// Body wikilinks followed by frontmatter wikilinks, deduped by
     /// `(target, label)` and resolved with [`resolve_wikilinks`].
     pub links: Vec<LinkEntry>,
@@ -52,27 +59,26 @@ pub struct NoteFacets {
 /// once. `vault_paths` is the set of note paths links resolve against.
 ///
 /// Tags: the frontmatter `tags:` list merged with the body's inline tags,
-/// deduped and sorted. Links: body wikilinks merged with frontmatter
-/// wikilinks (a project's `core_question:`, an evidence or concept note's
-/// `origin:`, …) so backlinks see frontmatter references too (#395).
-/// Deduped by `(target, label)`, body first so its position wins, then
-/// resolved against `vault_paths`.
-///
-/// Errors only when the frontmatter `tags:` field is present but not a
-/// list of strings.
+/// deduped and sorted; an invalid `tags:` value makes
+/// [`NoteFacets::tags`] an `Err` and nothing else. Links: body wikilinks
+/// merged with frontmatter wikilinks (a project's `core_question:`, an
+/// evidence or concept note's `origin:`, …) so backlinks see frontmatter
+/// references too (#395). Deduped by `(target, label)`, body first so its
+/// position wins, then resolved against `vault_paths`.
 pub fn extract_note_facets(
     frontmatter: &Frontmatter,
     frontmatter_json: &serde_json::Value,
     body: &str,
     vault_paths: &HashSet<VaultPath>,
-) -> Result<NoteFacets, ValidationError> {
-    let frontmatter_tags: Vec<String> = frontmatter
-        .optional_field::<Vec<String>>("tags")?
-        .unwrap_or_default();
-    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    tag_set.extend(frontmatter_tags);
-    tag_set.extend(extract_inline_tags(body));
-    let tags: Vec<String> = tag_set.into_iter().collect();
+) -> NoteFacets {
+    let tags = frontmatter
+        .optional_field::<Vec<String>>("tags")
+        .map(|frontmatter_tags| {
+            let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            tag_set.extend(frontmatter_tags.unwrap_or_default());
+            tag_set.extend(extract_inline_tags(body));
+            tag_set.into_iter().collect()
+        });
 
     let mut raw_links = extract_wikilinks(body);
     raw_links.extend(extract_frontmatter_wikilinks(frontmatter_json));
@@ -80,7 +86,7 @@ pub fn extract_note_facets(
     raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
     let links = resolve_wikilinks(raw_links, vault_paths);
 
-    Ok(NoteFacets { tags, links })
+    NoteFacets { tags, links }
 }
 
 /// Tag pattern is ASCII-only by design: `#[a-zA-Z0-9][a-zA-Z0-9_/-]*`,

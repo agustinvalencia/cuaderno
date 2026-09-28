@@ -338,6 +338,52 @@ fn upsert_with_paired_write_stages_links_and_tags() {
 }
 
 #[test]
+fn invalid_tags_field_still_stages_links() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let a = vp("concepts/a.md");
+    // A stale edge and tag from the note's previous content: both must be
+    // replaced even though the new `tags:` is a string, not a list.
+    index
+        .replace_links(
+            &a,
+            &[LinkEntry {
+                target_raw: "concepts/old".to_owned(),
+                resolved_path: Some(vp("concepts/old.md")),
+                label: None,
+            }],
+        )
+        .unwrap();
+    index.replace_tags(&a, &["stale".to_owned()]).unwrap();
+
+    let mut tx = VaultTransaction::new(store, index.clone()).expect("write lock");
+    tx.write_file(vp("concepts/b.md"), LINKED_NOTE);
+    tx.upsert_note(sample_note("concepts/b.md", "concept"));
+    tx.write_file(
+        a.clone(),
+        "---\ntype: concept\ntags: linalg\n---\n\n# A\n\nSee [[concepts/b]]. #idea\n",
+    );
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.commit().unwrap();
+
+    // An invalid `tags:` affects only the tags facet.
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/b.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert!(
+        index
+            .find_backlinks(&vp("concepts/old.md"))
+            .unwrap()
+            .is_empty()
+    );
+    // Tags fall back to the body's inline tags alone.
+    assert_eq!(index.find_by_tag("idea").unwrap(), vec![a.clone()]);
+    assert!(index.find_by_tag("stale").unwrap().is_empty());
+    assert!(index.find_by_tag("linalg").unwrap().is_empty());
+}
+
+#[test]
 fn upsert_without_paired_write_leaves_facets_alone() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());

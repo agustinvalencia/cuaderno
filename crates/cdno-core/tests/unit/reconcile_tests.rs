@@ -378,6 +378,28 @@ fn note_without_frontmatter_is_reported_as_error() {
     assert_eq!(report.errors[0].path, vp("broken.md"));
 }
 
+/// Reconcile still refuses a note whose `tags:` is not a list, leaving it
+/// unindexed so it is retried and reported on every pass. (The commit
+/// seam, by contrast, stages its links and inline tags; #646.)
+#[test]
+fn non_list_tags_field_is_reported_as_error() {
+    let (store, index) = fixtures();
+    seed_note(&store, "concepts/a.md", "concept", "tags: linalg\n");
+
+    let report = reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
+    assert_eq!(report.added, 0);
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].path, vp("concepts/a.md"));
+    assert!(
+        report.errors[0]
+            .reason
+            .starts_with("invalid `tags` field: "),
+        "{}",
+        report.errors[0].reason
+    );
+    assert!(index.find_by_path(&vp("concepts/a.md")).unwrap().is_none());
+}
+
 #[test]
 fn one_broken_note_does_not_block_others() {
     let (store, index) = fixtures();
