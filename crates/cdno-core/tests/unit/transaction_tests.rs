@@ -384,6 +384,40 @@ fn invalid_tags_field_still_stages_links() {
 }
 
 #[test]
+fn failed_path_query_is_reported_as_index_stale() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let backing_index = Arc::new(MemoryIndex::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(FailingIndex::new(
+        backing_index.clone(),
+        FailPoint::ListAllPaths,
+    ));
+
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.write_file(vp("concepts/a.md"), LINKING_NOTE);
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+
+    // The facets cannot be resolved without the path set; the commit says
+    // so rather than returning `Ok` over the note's stale facet rows.
+    match tx.commit().unwrap_err() {
+        TransactionError::IndexStale(errs) => assert_eq!(errs.len(), 1),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    // The row itself landed; only the facets were skipped.
+    assert!(
+        backing_index
+            .find_by_path(&vp("concepts/a.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        backing_index
+            .find_outgoing_links(&vp("concepts/a.md"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn upsert_without_paired_write_leaves_facets_alone() {
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
@@ -485,6 +519,8 @@ impl VaultStore for FailingStore {
 enum FailPoint {
     UpsertNote,
     AlwaysFail,
+    /// Only the `list_all_paths` read fails; every write passes through.
+    ListAllPaths,
 }
 
 struct FailingIndex {
@@ -501,6 +537,7 @@ impl FailingIndex {
         match self.mode {
             FailPoint::UpsertNote => is_upsert_note,
             FailPoint::AlwaysFail => true,
+            FailPoint::ListAllPaths => false,
         }
     }
 }
@@ -525,6 +562,9 @@ impl VaultIndex for FailingIndex {
         self.inner.list_by_type(note_type)
     }
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        if matches!(self.mode, FailPoint::ListAllPaths) {
+            return Err(IndexError::Query("forced test failure".to_owned()));
+        }
         self.inner.list_all_paths()
     }
     fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {

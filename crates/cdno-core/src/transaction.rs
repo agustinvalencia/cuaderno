@@ -344,24 +344,30 @@ impl VaultTransaction {
                 // invalid `tags:` value (e.g. `tags: linalg`, a string
                 // rather than a list) affects only the tags facet: the links
                 // are staged as usual, and the tags fall back to the body's
-                // inline `#tags` alone, the part that still parses. Only
-                // unparseable frontmatter, or a failed path query, leaves
-                // both facets as they were, as FTS above is equally
-                // best-effort.
-                if let Some((fm, body)) = &parsed
-                    && let Ok(targets) =
-                        link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
-                {
-                    let facets =
-                        crate::extractors::extract_note_facets(fm, &fm.as_json(), body, targets);
-                    let tags = facets
-                        .tags
-                        .unwrap_or_else(|_| crate::extractors::extract_inline_tags(body));
-                    if let Err(e) = self.index.replace_tags(&entry.path, &tags) {
-                        index_errors.push(e);
-                    }
-                    if let Err(e) = self.index.replace_links(&entry.path, &facets.links) {
-                        index_errors.push(e);
+                // inline `#tags` alone, the part that still parses.
+                // Unparseable frontmatter leaves both facets as they were
+                // (FTS above is equally best-effort); a failed path query
+                // does too, and is reported as `IndexStale`.
+                if let Some((fm, body)) = &parsed {
+                    match link_targets_for(&mut link_targets, &*self.index, &self.file_ops) {
+                        Err(e) => index_errors.push(e),
+                        Ok(targets) => {
+                            let facets = crate::extractors::extract_note_facets(
+                                fm,
+                                &fm.as_json(),
+                                body,
+                                targets,
+                            );
+                            let tags = facets
+                                .tags
+                                .unwrap_or_else(|_| crate::extractors::extract_inline_tags(body));
+                            if let Err(e) = self.index.replace_tags(&entry.path, &tags) {
+                                index_errors.push(e);
+                            }
+                            if let Err(e) = self.index.replace_links(&entry.path, &facets.links) {
+                                index_errors.push(e);
+                            }
+                        }
                     }
                 }
             }
@@ -404,8 +410,8 @@ fn latest_write_content<'a>(file_ops: &'a [FileOp], path: &VaultPath) -> Option<
 /// set is reconcile's own `fs_set` less any file it could not parse, so an
 /// in-tool write resolves as a reindex would. Computed once per commit and
 /// cached in
-/// `cache`; the index query error, if any, is returned (and the facets
-/// are skipped) rather than failing the commit.
+/// `cache`; the index query error, if any, is returned, and the caller
+/// skips the facets and reports it as `IndexStale`.
 fn link_targets_for<'a>(
     cache: &'a mut Option<HashSet<VaultPath>>,
     index: &dyn VaultIndex,
