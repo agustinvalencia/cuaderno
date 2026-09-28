@@ -68,7 +68,7 @@ The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 | Command | What it does |
 |---------|--------------|
 | [`init`](init.md) | Create a new vault |
-| [`log`](log.md) | Append a line to today's daily note |
+| [`log`](log.md) | Append a line to today's daily note, or (`log note`) a worked-out entry under `## Notes` |
 | [`capture`](capture.md) | Drop a quick note into the inbox |
 | [`triage`](triage.md) | Process inbox captures |
 | [`orient`](orient.md) | Morning orientation |

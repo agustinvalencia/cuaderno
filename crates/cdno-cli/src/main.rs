@@ -69,7 +69,7 @@ struct Cli {
     /// write verbs (`log`, `capture`, `file`, `track`, `note create`, and
     /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
-    /// result (`note revise` adds its outcome fields) and run
+    /// result (`note revise` and `log note` add their outcome fields) and run
     /// non-interactively. Ignored by maintenance/
     /// interactive/bootstrap commands (`init`, `lint`, `reindex`,
     /// `normalise`, `triage`, `review`, `weekly`, `monthly`).
@@ -93,14 +93,29 @@ enum Commands {
     },
 
     /// Append a log entry to today's daily note (or a chosen moment).
+    ///
+    /// `cdno log note` instead writes worked-out substance under the day's
+    /// `## Notes`, with its pointer line in `## Logs`. A first argument
+    /// that names a subcommand selects it, so to log the bare word `note`,
+    /// pass it after `--` (`cdno log -- note`).
+    // No `help` subcommand: `cdno log help` stays a message, as before.
+    #[command(
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true,
+        disable_help_subcommand = true
+    )]
     Log {
         /// The log message. Quote if it contains spaces.
-        message: String,
+        #[arg(required = true)]
+        message: Option<String>,
 
         /// Override the timestamp. Accepts `YYYY-MM-DDTHH:MM:SS` or
         /// `YYYY-MM-DDTHH:MM`. Defaults to now.
         #[arg(long, value_name = "TIMESTAMP")]
         at: Option<String>,
+
+        #[command(subcommand)]
+        subcommand: Option<cdno_cli::commands::log::LogCommands>,
     },
 
     /// Validate every indexed note and report frontmatter problems.
@@ -450,8 +465,24 @@ fn main() -> Result<()> {
             };
             commands::init::run(&target)
         }
-        Commands::Log { message, at } => {
+        Commands::Log {
+            message,
+            at,
+            subcommand,
+        } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            if let Some(subcommand) = subcommand {
+                return commands::log::run_command(
+                    &root,
+                    Local::now().naive_local(),
+                    subcommand,
+                    cli.no_interactive,
+                    cli.json,
+                );
+            }
+            // `required = true` with `args_conflicts_with_subcommands` makes
+            // a missing message unreachable without a subcommand.
+            let message = message.context("missing log message")?;
             let at = match at {
                 Some(s) => parse_timestamp(&s)?,
                 None => Local::now().naive_local(),

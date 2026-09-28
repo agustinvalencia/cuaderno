@@ -8,6 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno log note` (T12, #625).** The CLI half of `Vault::note_to_daily`: `cdno log note
+  [--heading STRING] [--body-file PATH] [--date YYYY-MM-DD]` writes one `### <heading>` entry
+  under the day's `## Notes` and the pointer line `noted [[journal/…#<heading>]] (<links>)` under
+  `## Logs`, in one write. It is a subcommand of `cdno log` beside the positional message
+  (`args_conflicts_with_subcommands`, `subcommand_negates_reqs`, no `help` subcommand), so
+  `cdno log "text"` and `cdno log help` log exactly as before; the bare word `note` is logged with
+  `cdno log -- note`. Interactively a missing heading is prompted and a missing body opened in the
+  editor, followed by a confirm; under `--no-interactive` or `--json` each is a missing-flag error.
+  The body keeps its first line's indentation (only leading blank lines and trailing whitespace
+  are stripped) and a blank one is refused naming `--body-file`; every heading rule is the
+  domain's, surfaced with its message. `--date` defaults to today and is stamped at the current
+  time. The human line is `Noted <target>`; `--json` emits `path`, `message`, `target` and
+  `log_line`.
 - **`cdno note revise` (T11, #624).** The CLI half of `Vault::revise_note`: `cdno note revise
   [NOTE] [--body-file PATH | --section STRING --content-file PATH] [--reason STRING]` refines a
   mutable custom note in place and logs `revised [[path]] — reason` (with `#Section` for a
