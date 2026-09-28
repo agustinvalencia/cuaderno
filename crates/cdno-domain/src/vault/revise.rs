@@ -83,6 +83,12 @@ pub struct ReviseOutcome {
     /// The daily-log entry written (without the `- **HH:MM**: ` prefix
     /// the daily log adds), or `None` when nothing changed.
     pub log_line: Option<String>,
+    /// The anchored wikilink target `<path without .md>#<heading>` the
+    /// log line links to, for a section revision that changed the note;
+    /// `None` for a whole-body revision or when nothing changed. Built
+    /// from the same value the log line is formatted from, so a caller
+    /// never has to parse it back out of `log_line`.
+    pub section_target: Option<String>,
 }
 
 impl Vault {
@@ -218,13 +224,12 @@ impl Vault {
                 changed: false,
                 new_hash: actual_hash,
                 log_line: None,
+                section_target: None,
             });
         }
 
-        let target = match anchor {
-            Some(heading) => format!("{link_target}#{heading}"),
-            None => link_target,
-        };
+        let section_target = anchor.map(|heading| format!("{link_target}#{heading}"));
+        let target = section_target.as_deref().unwrap_or(&link_target);
         let log_line = format!("revised [[{target}]] \u{2014} {}", flatten_for_log(reason));
 
         let new_hash = content_hash(&new_content);
@@ -239,6 +244,7 @@ impl Vault {
             changed: true,
             new_hash,
             log_line: Some(log_line),
+            section_target,
         })
     }
 

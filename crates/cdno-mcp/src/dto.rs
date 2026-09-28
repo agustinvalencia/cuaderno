@@ -1165,12 +1165,6 @@ pub struct ReviseNoteResponse {
 impl From<cdno_domain::vault::ReviseOutcome> for ReviseNoteResponse {
     fn from(o: cdno_domain::vault::ReviseOutcome) -> Self {
         let path = o.path.to_string();
-        // The domain writes `revised [[<target>]] — <reason>`, and a section
-        // heading may not contain `]`, so the first `]]` closes the link.
-        let section_target = o.log_line.as_deref().and_then(|line| {
-            let target = line.strip_prefix("revised [[")?.split_once("]]")?.0;
-            target.contains('#').then(|| target.to_owned())
-        });
         let message = if o.changed {
             format!("Revised {path}")
         } else {
@@ -1184,7 +1178,7 @@ impl From<cdno_domain::vault::ReviseOutcome> for ReviseNoteResponse {
             changed: o.changed,
             new_hash: o.new_hash,
             log_line: o.log_line,
-            section_target,
+            section_target: o.section_target,
             verification: None,
         }
     }
