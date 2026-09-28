@@ -347,6 +347,15 @@ pub struct LinkEntry {
     pub label: Option<String>,
 }
 
+/// One conditional update for [`VaultIndex::set_link_resolutions`]: the
+/// rows with this `target_raw` currently resolved to `from` move to `to`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinkResolutionUpdate {
+    pub target_raw: String,
+    pub from: Option<VaultPath>,
+    pub to: Option<VaultPath>,
+}
+
 /// One row of the `milestones` table, scoped to a single project note.
 ///
 /// A superset of [`DeadlineEntry`]'s project-milestone source: it
@@ -461,17 +470,13 @@ pub trait VaultIndex: Send + Sync {
     /// re-resolves the pairs that are unresolved or point at a path that
     /// no longer exists, without re-reading any source note.
     fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError>;
-    /// Set `resolved_path` to `to` on every `links` row whose
-    /// `target_raw` is `target_raw` and whose `resolved_path` currently
-    /// equals `from` (`None` matching an unresolved row). Returns the
-    /// number of rows changed. The `from` guard keeps a row resolved by a
-    /// concurrent reindex from being overwritten with a stale answer.
-    fn set_link_resolution(
-        &self,
-        target_raw: &str,
-        from: Option<&VaultPath>,
-        to: Option<&VaultPath>,
-    ) -> Result<usize, IndexError>;
+    /// Apply each [`LinkResolutionUpdate`] in order, atomically: set
+    /// `resolved_path` to `to` on every `links` row whose `target_raw` is
+    /// `target_raw` and whose `resolved_path` currently equals `from`
+    /// (`None` matching an unresolved row). Returns the number of rows
+    /// changed. The `from` guard keeps a row resolved differently since it
+    /// was read from being overwritten with a stale answer.
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError>;
 
     // tags ------------------------------------------------------------
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError>;
@@ -934,22 +939,26 @@ impl VaultIndex for SqliteIndex {
         Ok(out)
     }
 
-    fn set_link_resolution(
-        &self,
-        target_raw: &str,
-        from: Option<&VaultPath>,
-        to: Option<&VaultPath>,
-    ) -> Result<usize, IndexError> {
-        let conn = self.lock_conn();
-        // `IS` rather than `=` so a `None` guard matches NULL rows.
-        let changed = conn.execute(
-            "UPDATE links SET resolved_path = ?3 WHERE target_raw = ?1 AND resolved_path IS ?2",
-            params![
-                target_raw,
-                from.map(|p| p.to_string()),
-                to.map(|p| p.to_string()),
-            ],
-        )?;
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
+        let mut conn = self.lock_conn();
+        // One transaction for the batch: a commit per row would make a
+        // write that heals many links pay a sync per link.
+        let tx = conn.transaction()?;
+        let mut changed = 0;
+        {
+            // `IS` rather than `=` so a `None` guard matches NULL rows.
+            let mut stmt = tx.prepare(
+                "UPDATE links SET resolved_path = ?3 WHERE target_raw = ?1 AND resolved_path IS ?2",
+            )?;
+            for u in updates {
+                changed += stmt.execute(params![
+                    u.target_raw,
+                    u.from.as_ref().map(|p| p.to_string()),
+                    u.to.as_ref().map(|p| p.to_string()),
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(changed)
     }
 
@@ -1488,18 +1497,16 @@ impl VaultIndex for MemoryIndex {
         Ok(pairs.into_iter().collect())
     }
 
-    fn set_link_resolution(
-        &self,
-        target_raw: &str,
-        from: Option<&VaultPath>,
-        to: Option<&VaultPath>,
-    ) -> Result<usize, IndexError> {
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
+        // One lock hold for the batch, matching SqliteIndex's transaction.
         let mut state = self.lock_state();
         let mut changed = 0;
-        for link in state.links.values_mut().flatten() {
-            if link.target_raw == target_raw && link.resolved_path.as_ref() == from {
-                link.resolved_path = to.cloned();
-                changed += 1;
+        for u in updates {
+            for link in state.links.values_mut().flatten() {
+                if link.target_raw == u.target_raw && link.resolved_path == u.from {
+                    link.resolved_path = u.to.clone();
+                    changed += 1;
+                }
             }
         }
         Ok(changed)

@@ -32,7 +32,7 @@ use crate::config::IgnoreSet;
 use crate::error::IndexError;
 use crate::frontmatter::Frontmatter;
 use crate::hash::content_hash;
-use crate::index::{DeadlineEntry, MilestoneEntry, NoteEntry, VaultIndex};
+use crate::index::{DeadlineEntry, LinkResolutionUpdate, MilestoneEntry, NoteEntry, VaultIndex};
 use crate::markdown::{MarkdownDocument, extract_hard_deadlines, extract_milestones_from_body};
 use crate::path::VaultPath;
 use crate::store::VaultStore;
@@ -75,8 +75,12 @@ pub struct ReconciliationReport {
     /// `links` rows whose resolution changed without their source note
     /// being reindexed (#640): a dangling `[[B]]` that resolves now that
     /// `B` exists, or a row pointing at a note that moved or vanished.
-    /// Only computed on a pass that added or removed a note — the only
-    /// passes that change the path set resolution runs against.
+    /// Only computed on a pass that added or removed an *indexed* note
+    /// (`added` or `removed` non-zero). A markdown file that never parses
+    /// moves neither counter, so one appearing or disappearing does not
+    /// trigger the step on its own; the rows it affects heal on the next
+    /// pass that does, or when the file parses (which counts as added).
+    /// Rows still resolving to a present note are never reconsidered.
     pub links_reresolved: usize,
     /// Per-file failures — typically parse errors on a corrupted note.
     /// Reconciliation continues past these; the offending file stays
@@ -226,14 +230,38 @@ pub fn reconcile(
     // and the path set, so a pass that neither added nor removed a note
     // cannot change any answer, and the work is bounded to passes that did
     // (a move is one of each).
+    //
+    // The trigger is precisely "an indexed note was added or removed", not
+    // "the path set changed": `fs_set` includes markdown files that fail to
+    // parse, but those move neither counter. So an unparseable file
+    // appearing (a `[[b]]` that a reindex would now resolve to it) or
+    // disappearing (rows still pointing at it, or an ambiguity its deletion
+    // cleared) does not trigger this step by itself; those rows heal on the
+    // next pass that does, or when the file parses, which counts as added.
+    // Widening the trigger would scan on every pass in any vault holding an
+    // unparseable note, so it is deliberately left narrow.
+    //
+    // This is a best-effort heal of a cache, so a failure here (the write
+    // lock timing out, the link query failing) is recorded as a per-pass
+    // issue and the pass continues: the rows stay as they were, the next
+    // qualifying pass retries, and the vault still opens.
     if report.added > 0 || report.removed > 0 {
-        // Index-only writes with no transaction to carry them, so take the
-        // vault write lock explicitly, as every other reconcile write does
-        // through its `VaultTransaction`.
-        let _lock = store.acquire_write_lock().map_err(|e| {
-            IndexError::Update(format!("acquiring write lock during reconcile: {e}"))
-        })?;
-        report.links_reresolved = reresolve_stale_links(&**index, &fs_set)?;
+        let healed = store
+            .acquire_write_lock()
+            .map_err(|e| IndexError::Update(format!("acquiring write lock: {e}")))
+            .and_then(|_lock| {
+                // Index-only writes with no transaction to carry them, so
+                // the vault write lock is held explicitly, as every other
+                // reconcile write holds it through its `VaultTransaction`.
+                reresolve_stale_links(&**index, &fs_set, |p| !fs_set.contains(p), |_| true)
+            });
+        match healed {
+            Ok(n) => report.links_reresolved = n,
+            Err(e) => report.errors.push(ReconciliationIssue {
+                path: VaultPath::root(),
+                reason: format!("re-resolving stale links: {e}"),
+            }),
+        }
     }
 
     // Phase 3: heal the FTS index by path-set diff against `notes`.
@@ -286,32 +314,55 @@ pub fn reconcile(
     Ok(report)
 }
 
-/// Re-resolve every `links` row whose resolution is stale against
-/// `vault_paths`: unresolved (`NULL`), or resolved to a path that is no
-/// longer in the set. Rows already resolved to a present note are left
-/// alone, so this never overrides what the source note's own reindex
-/// decided. Each target is resolved with the same policy as
-/// [`crate::extractors::resolve_wikilinks`] (reconcile and the transaction
-/// commit seam both use it), so the answer is the one a reindex of the
-/// linking note would give. Returns the number of rows changed.
+/// Re-resolve the `links` rows whose resolution may be stale against
+/// `vault_paths` (#640), with the same policy as
+/// [`crate::extractors::resolve_wikilinks`], so the answer is the one a
+/// reindex of the linking note would give. Returns the number of rows
+/// changed; every change is applied in one batch.
 ///
-/// Shared by reconciliation (Phase 2b) and `VaultTransaction::commit`,
-/// which runs it when a commit creates, moves or deletes a note (#640).
+/// A row is reconsidered when it is unresolved (`NULL`) and
+/// `consider_target` accepts its `target_raw`, or when it is resolved to a
+/// path for which `is_stale` holds. Rows resolved to any other path are
+/// left alone, so this never overrides what the source note's own reindex
+/// decided.
+///
+/// - Reconciliation (Phase 2b) passes `is_stale = |p| !vault_paths.contains(p)`
+///   and accepts every target: a pass sees the whole filesystem.
+/// - `VaultTransaction::commit` passes a predicate true only for the paths
+///   the commit deleted or moved away from, and accepts only targets that
+///   could name a path the commit added or removed
+///   ([`crate::extractors::target_may_name`]). Its path set is the index's,
+///   which omits notes present on disk but unparseable, so treating every
+///   absent path as stale there would unresolve rows reconcile resolved to
+///   such a note.
 pub(crate) fn reresolve_stale_links(
     index: &dyn VaultIndex,
     vault_paths: &HashSet<VaultPath>,
+    is_stale: impl Fn(&VaultPath) -> bool,
+    consider_target: impl Fn(&str) -> bool,
 ) -> Result<usize, IndexError> {
-    let mut changed = 0;
+    let mut updates = Vec::new();
     for (target_raw, current) in index.link_resolutions()? {
-        if current.as_ref().is_some_and(|p| vault_paths.contains(p)) {
+        let reconsider = match &current {
+            None => consider_target(&target_raw),
+            Some(p) => is_stale(p),
+        };
+        if !reconsider {
             continue;
         }
         let fresh = crate::extractors::resolve_one(&target_raw, vault_paths);
         if fresh != current {
-            changed += index.set_link_resolution(&target_raw, current.as_ref(), fresh.as_ref())?;
+            updates.push(LinkResolutionUpdate {
+                target_raw,
+                from: current,
+                to: fresh,
+            });
         }
     }
-    Ok(changed)
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    index.set_link_resolutions(&updates)
 }
 
 /// Backfill the FTS row for a single note from its file on disk. Used by

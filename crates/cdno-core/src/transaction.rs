@@ -268,19 +268,34 @@ impl VaultTransaction {
             }
         }
 
-        // Whether this commit changed the set of notes wikilinks resolve
-        // against — it created, moved or deleted a markdown file. Only then
-        // can a link held by some *other* note change its answer, so only
-        // then does the re-resolution below run (#640).
+        // The markdown paths this commit added (created, or moved to) and
+        // removed (deleted, or moved away from). Only a change to this set
+        // can change the answer for a link held by some *other* note, so
+        // only then does the re-resolution below run (#640).
         let is_md = |p: &VaultPath| p.as_path().extension() == Some(std::ffi::OsStr::new("md"));
-        let path_set_changed = applied.iter().any(|undo| match undo {
-            Undo::DeleteCreated { path } => is_md(path),
-            Undo::MoveBack { src, dest } => is_md(src) || is_md(dest),
-            Undo::Restore { .. } => false,
-        }) || self
-            .file_ops
-            .iter()
-            .any(|op| matches!(op, FileOp::Delete { path } if is_md(path)));
+        let mut added_paths: Vec<VaultPath> = Vec::new();
+        let mut removed_paths: HashSet<VaultPath> = HashSet::new();
+        for undo in &applied {
+            match undo {
+                Undo::DeleteCreated { path } if is_md(path) => added_paths.push(path.clone()),
+                Undo::MoveBack { src, dest } => {
+                    if is_md(src) {
+                        removed_paths.insert(src.clone());
+                    }
+                    if is_md(dest) {
+                        added_paths.push(dest.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        for op in &self.file_ops {
+            if let FileOp::Delete { path } = op
+                && is_md(path)
+            {
+                removed_paths.insert(path.clone());
+            }
+        }
 
         // The files are now on disk, so each note write's real mtime is
         // knowable. The domain stamps `NoteEntry::mtime_ns` with the
@@ -396,12 +411,33 @@ impl VaultTransaction {
         // A note created (or moved) here may be the target an earlier note
         // linked to before it existed; that note's row is not rewritten by
         // this commit, and reconcile's fast path would skip it too. Heal the
-        // stale rows now, with the reconcile helper and the same path set
+        // affected rows now, with the reconcile helper and the same path set
         // the facet seam above resolved against, so the new note's
         // backlinks are complete from the moment it is written (#640).
-        if path_set_changed && !link_targets_failed {
+        //
+        // Scoped to this commit's own changes. A resolved row is
+        // reconsidered only if it points at a path this commit removed:
+        // the path set is the index's, which omits notes present on disk
+        // but unparseable, so "absent from the set" would wrongly unresolve
+        // rows reconcile resolved to such a note. An unresolved row is
+        // reconsidered only if its target could name a path this commit
+        // added or removed, which keeps a routine note creation from
+        // re-resolving every long-standing dangling link in the vault.
+        if (!added_paths.is_empty() || !removed_paths.is_empty()) && !link_targets_failed {
+            let names: HashSet<&str> = added_paths
+                .iter()
+                .chain(removed_paths.iter())
+                .filter_map(crate::extractors::note_link_name)
+                .collect();
             let healed = link_targets_for(&mut link_targets, &*self.index, &self.file_ops)
-                .and_then(|targets| crate::reconcile::reresolve_stale_links(&*self.index, targets));
+                .and_then(|targets| {
+                    crate::reconcile::reresolve_stale_links(
+                        &*self.index,
+                        targets,
+                        |p| removed_paths.contains(p),
+                        |t| crate::extractors::target_may_name(t, &names),
+                    )
+                });
             if let Err(e) = healed {
                 index_errors.push(e);
             }

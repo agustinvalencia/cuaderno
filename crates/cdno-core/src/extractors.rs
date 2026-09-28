@@ -427,6 +427,37 @@ pub(crate) fn resolve_one(target: &str, vault_paths: &HashSet<VaultPath>) -> Opt
     Some(first.clone())
 }
 
+/// The name a note answers to under [`resolve_wikilinks`]'s name-based
+/// rules: its file stem, or for a folder note (`<dir>/_index.md`) the
+/// folder's name. Every rule that can resolve a target to `path` compares
+/// the target's last segment with one of these (see [`target_may_name`]).
+pub fn note_link_name(path: &VaultPath) -> Option<&str> {
+    let p = path.as_path();
+    let stem = p.file_stem()?.to_str()?;
+    if stem == "_index" {
+        p.parent()?.file_name()?.to_str()
+    } else {
+        Some(stem)
+    }
+}
+
+/// Whether the wikilink `target` could resolve to, or be disambiguated by,
+/// a note whose [`note_link_name`] is in `names`. A cheap pre-filter for
+/// re-resolution: it never rejects a target that some rule of
+/// [`resolve_wikilinks`] could match to such a note. The exact rule (with
+/// or without the anchor) and the stem rule all end on the note's stem,
+/// the folder-index rule on its folder's name, and a stem ambiguity is
+/// only cleared by removing a note with the same stem. Both the unsplit
+/// target (rule 0a, for a `#` in a file name) and the anchor-stripped one
+/// are checked.
+pub fn target_may_name(target: &str, names: &HashSet<&str>) -> bool {
+    let last = |t: &str| t.rsplit('/').next().unwrap_or(t).to_owned();
+    let unsplit = last(target);
+    let stripped = target.split_once('#').map_or(target, |(path, _)| path);
+    let stripped = last(stripped.trim_end());
+    names.contains(unsplit.as_str()) || names.contains(stripped.as_str())
+}
+
 /// The text of the body's first level-1 (`# `) heading, trimmed, or
 /// `None` if there isn't one.
 ///

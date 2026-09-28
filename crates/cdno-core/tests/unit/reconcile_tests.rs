@@ -7,8 +7,8 @@ use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
 use cdno_core::hash::content_hash;
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteCandidate, NoteEntry, SqliteIndex,
-    VaultIndex,
+    DeadlineEntry, LinkEntry, LinkResolutionUpdate, MemoryIndex, MilestoneEntry, NoteCandidate,
+    NoteEntry, SqliteIndex, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
@@ -733,9 +733,10 @@ fn reconcile_drops_orphan_fts_rows() {
 }
 
 /// Test wrapper that delegates every `VaultIndex` method to an inner
-/// `MemoryIndex`, with two probes: `remove_note` errors when
-/// `fail_remove` is set (the orphan-failure test), and `link_resolutions`
-/// calls are counted (the bounded re-resolution test, #640). Kept inline
+/// `MemoryIndex`, with probes: `remove_note` errors when `fail_remove`
+/// is set (the orphan-failure test), and `link_resolutions` calls are
+/// counted (the bounded re-resolution test, #640) and fail when
+/// `fail_link_resolutions` is set. Kept inline
 /// in this file because the broader `FailingIndex` in
 /// `transaction_tests.rs` is not accessible from this integration test
 /// binary.
@@ -743,6 +744,8 @@ struct ProbeIndex {
     inner: Arc<MemoryIndex>,
     fail_remove: bool,
     link_scans: AtomicUsize,
+    /// When set, `link_resolutions` errors (the re-resolution failure test).
+    fail_link_resolutions: bool,
 }
 
 impl ProbeIndex {
@@ -751,6 +754,7 @@ impl ProbeIndex {
             inner,
             fail_remove,
             link_scans: AtomicUsize::new(0),
+            fail_link_resolutions: false,
         }
     }
 }
@@ -802,15 +806,13 @@ impl VaultIndex for ProbeIndex {
     }
     fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
         self.link_scans.fetch_add(1, Ordering::SeqCst);
+        if self.fail_link_resolutions {
+            return Err(IndexError::Query("forced test failure".to_owned()));
+        }
         self.inner.link_resolutions()
     }
-    fn set_link_resolution(
-        &self,
-        target_raw: &str,
-        from: Option<&VaultPath>,
-        to: Option<&VaultPath>,
-    ) -> Result<usize, IndexError> {
-        self.inner.set_link_resolution(target_raw, from, to)
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
+        self.inner.set_link_resolutions(updates)
     }
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
         self.inner.replace_tags(path, tags)
@@ -1779,4 +1781,96 @@ fn reconcile_follows_a_link_whose_target_moved_within_its_tree() {
             .unwrap(),
         vec![vp("journal/a.md")]
     );
+}
+
+#[test]
+fn a_commit_keeps_links_to_an_unparseable_note_resolved() {
+    // A note present on disk but unparseable is in reconcile's path set,
+    // so `[[b]]` resolves to it, but it is not in the index's. The commit
+    // seam must not read "absent from the index" as "vanished": a later
+    // write that creates an unrelated note leaves the row resolved, and a
+    // fresh reindex agrees.
+    let (vault, _db, store, index) = fs_vault();
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
+    std::fs::create_dir_all(vault.path().join("concepts")).unwrap();
+    std::fs::write(
+        vault.path().join("concepts/b.md"),
+        "no frontmatter at all\n",
+    )
+    .unwrap();
+    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(first.errors.len(), 1, "b.md does not parse");
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+
+    let content = "---\ntype: concept\n---\n\n# C\n";
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).unwrap();
+    tx.write_file(vp("concepts/c.md"), content);
+    tx.upsert_note(NoteEntry {
+        path: vp("concepts/c.md"),
+        note_type: "concept".to_owned(),
+        title: None,
+        content_hash: content_hash(content),
+        mtime_ns: 0,
+        size: content.len() as u64,
+        frontmatter: json!({"type": "concept"}),
+        indexed_at_ns: 0,
+    });
+    tx.commit().unwrap();
+
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+}
+
+#[test]
+fn a_link_reresolution_failure_is_reported_and_the_pass_continues() {
+    // The re-resolution step is a best-effort cache heal: its failure is
+    // a per-pass issue, not an aborted reconcile, and Phase 3 (the FTS
+    // heal) still runs after it.
+    let (store, backing) = fixtures();
+    let raw = "---\ntype: inbox\ntitle: A title\n---\n# Body\n\nsearchable backfill text\n";
+    store.write_file(&vp("inbox/a.md"), raw).unwrap();
+    // Indexed with the right hash but no FTS row, so only Phase 3 fills it.
+    backing
+        .upsert_note(&NoteEntry {
+            path: vp("inbox/a.md"),
+            note_type: "inbox".to_owned(),
+            title: Some("A title".to_owned()),
+            content_hash: content_hash(raw),
+            mtime_ns: 1,
+            size: raw.len() as u64,
+            frontmatter: json!({}),
+            indexed_at_ns: 1,
+        })
+        .unwrap();
+    // A new note, so the pass qualifies for the re-resolution step.
+    seed_note(&store, "inbox/b.md", "inbox", "");
+
+    let mut probe = ProbeIndex::new(backing.clone(), false);
+    probe.fail_link_resolutions = true;
+    let index: Arc<dyn VaultIndex> = Arc::new(probe);
+    let report = reconcile(&as_store(&store), &index, &IgnoreSet::empty())
+        .expect("a re-resolution failure must not abort the pass");
+
+    assert_eq!(report.added, 1);
+    assert_eq!(report.links_reresolved, 0);
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].path, VaultPath::root());
+    assert!(
+        report.errors[0]
+            .reason
+            .starts_with("re-resolving stale links: "),
+        "{}",
+        report.errors[0].reason
+    );
+    assert_eq!(report.fts_built, 1, "Phase 3 still ran");
 }

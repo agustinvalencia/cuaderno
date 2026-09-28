@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use cdno_core::error::{IndexError, StoreError, TransactionError};
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteCandidate, NoteEntry, VaultIndex,
+    DeadlineEntry, LinkEntry, LinkResolutionUpdate, MemoryIndex, MilestoneEntry, NoteCandidate,
+    NoteEntry, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -602,16 +603,11 @@ impl VaultIndex for FailingIndex {
     fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
         self.inner.link_resolutions()
     }
-    fn set_link_resolution(
-        &self,
-        target_raw: &str,
-        from: Option<&VaultPath>,
-        to: Option<&VaultPath>,
-    ) -> Result<usize, IndexError> {
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
         if self.should_fail(false) {
             return Err(IndexError::Update("forced test failure".to_owned()));
         }
-        self.inner.set_link_resolution(target_raw, from, to)
+        self.inner.set_link_resolutions(updates)
     }
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
         if self.should_fail(false) {
@@ -800,4 +796,144 @@ fn creating_a_note_resolves_earlier_dangling_links_to_it() {
         .find(|l| l.target_raw == "missing")
         .unwrap();
     assert_eq!(missing.resolved_path, None);
+}
+
+/// Write `content` to `path` and upsert its row, as a domain write does.
+fn commit_note(
+    store: &Arc<dyn VaultStore>,
+    index: &Arc<dyn VaultIndex>,
+    path: &str,
+    content: &str,
+) {
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(vp(path), content);
+    tx.upsert_note(sample_note(path, "concept"));
+    tx.commit().unwrap();
+}
+
+fn resolution_of(index: &Arc<dyn VaultIndex>, source: &str, target_raw: &str) -> Option<VaultPath> {
+    index
+        .find_outgoing_links(&vp(source))
+        .unwrap()
+        .into_iter()
+        .find(|l| l.target_raw == target_raw)
+        .expect("link row present")
+        .resolved_path
+}
+
+#[test]
+fn commit_reresolution_filter_admits_every_rule_that_can_match() {
+    // The seam only reconsiders a dangling target whose last segment could
+    // name a path the commit added or removed. Each resolution rule must
+    // still get through: exact (bare and anchored), folder-index,
+    // last-segment, and a stem ambiguity cleared by a delete.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    commit_note(&store, &index, "notes/one/dup.md", LINKED_NOTE);
+    commit_note(&store, &index, "notes/two/dup.md", LINKED_NOTE);
+    let src = "journal/src.md";
+    commit_note(
+        &store,
+        &index,
+        src,
+        "---\ntype: concept\n---\n\nSee [[concepts/b]], [[concepts/b#Why]], \
+         [[portfolios/p]], [[actions/x]] and [[dup]].\n",
+    );
+    for target in [
+        "concepts/b",
+        "concepts/b#Why",
+        "portfolios/p",
+        "actions/x",
+        "dup",
+    ] {
+        assert_eq!(resolution_of(&index, src, target), None, "{target}");
+    }
+
+    commit_note(&store, &index, "concepts/b.md", LINKED_NOTE);
+    assert_eq!(
+        resolution_of(&index, src, "concepts/b"),
+        Some(vp("concepts/b.md"))
+    );
+    assert_eq!(
+        resolution_of(&index, src, "concepts/b#Why"),
+        Some(vp("concepts/b.md"))
+    );
+
+    commit_note(&store, &index, "portfolios/p/_index.md", LINKED_NOTE);
+    assert_eq!(
+        resolution_of(&index, src, "portfolios/p"),
+        Some(vp("portfolios/p/_index.md"))
+    );
+
+    commit_note(&store, &index, "actions/_done/2026/x.md", LINKED_NOTE);
+    assert_eq!(
+        resolution_of(&index, src, "actions/x"),
+        Some(vp("actions/_done/2026/x.md"))
+    );
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.delete_file(vp("notes/two/dup.md"));
+    tx.remove_note(vp("notes/two/dup.md"));
+    tx.commit().unwrap();
+    assert_eq!(
+        resolution_of(&index, src, "dup"),
+        Some(vp("notes/one/dup.md"))
+    );
+}
+
+#[test]
+fn commit_moves_a_resolved_link_to_the_note_it_moved_with() {
+    // A resolved row pointing at a path this commit moved away from is
+    // reconsidered, so an in-tool archival keeps the backlink.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    commit_note(&store, &index, "actions/y.md", LINKED_NOTE);
+    let src = "journal/src.md";
+    commit_note(
+        &store,
+        &index,
+        src,
+        "---\ntype: concept\n---\n\nDid [[actions/y]].\n",
+    );
+    assert_eq!(
+        resolution_of(&index, src, "actions/y"),
+        Some(vp("actions/y.md"))
+    );
+
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.move_file(vp("actions/y.md"), vp("actions/_done/2026/y.md"));
+    tx.remove_note(vp("actions/y.md"));
+    tx.upsert_note(sample_note("actions/_done/2026/y.md", "action"));
+    tx.commit().unwrap();
+
+    assert_eq!(
+        resolution_of(&index, src, "actions/y"),
+        Some(vp("actions/_done/2026/y.md"))
+    );
+}
+
+#[test]
+fn commit_reresolution_skips_targets_unrelated_to_the_commit() {
+    // The filter's other side: a dangling row whose target does not share
+    // a name with anything this commit added or removed is not touched,
+    // even if it would now resolve (its target arrived out of band, which
+    // the next reconcile pass that adds or removes a note heals).
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let src = "journal/src.md";
+    commit_note(
+        &store,
+        &index,
+        src,
+        "---\ntype: concept\n---\n\nSee [[late]].\n",
+    );
+    store
+        .write_file(&vp("concepts/late.md"), LINKED_NOTE)
+        .unwrap();
+    index
+        .upsert_note(&sample_note("concepts/late.md", "concept"))
+        .unwrap();
+
+    commit_note(&store, &index, "concepts/unrelated.md", LINKED_NOTE);
+    assert_eq!(resolution_of(&index, src, "late"), None);
 }
