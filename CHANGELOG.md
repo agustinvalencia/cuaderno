@@ -184,7 +184,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **`STATUS.md` and the RFC 0002 status line catch up with the shipped concept method.** "What
   works today" now lists `cdno log note`, `cdno note revise` and the `read_note`, `note_to_daily`
   and `revise_note` MCP tools; the RFC's status row records stages 0 to 2 and both follow-ups
-  (#658, #659) as shipped, with stage 3 open. Docs only.
+  (#658, #659) as shipped, with stages 3 and 4 open. Docs only.
 - **The user guide teaches the concept library (T17, #630).** New pages
   `docs-site/src/concepts/concept-library.md` (the filing test and provenance rule, `## Notes` and
   the `noted [[…#Heading]]` pointer, promotion as creation with `origin`, refinement with its
