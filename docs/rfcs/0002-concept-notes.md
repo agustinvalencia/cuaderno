@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9). Stages 0 and 1 shipped, with T13 to T15 of stage 2: #635 (T0), #638 (T1), #647 (T2), #639 (T3), #642 (T4), #643 (T5), #648 (T6), #645 (T7), #650 (T8), #651 (T9), #652 (T10), #653 (T11), #654 (T12), #644 (T13), #649 (T14), #655 (T15). T16 aligns the design documents; T17 (docs-site) is open. Open follow-ups: #640 (T3b), #646 (T7b) |
+| **Status** | Accepted — 2026-09-27 (after review-panel rounds on #604 and #610; maintainer rulings in §9). Stages 0 to 2 shipped: #635 (T0), #638 (T1), #647 (T2), #639 (T3), #642 (T4), #643 (T5), #648 (T6), #645 (T7), #650 (T8), #651 (T9), #652 (T10), #653 (T11), #654 (T12), #644 (T13), #649 (T14), #655 (T15), #656 (T16), #657 (T17). Follow-ups shipped: #659 (T3b), #658 (T7b). Stage 3 (T18 trial, T19 decision) is open. |
 | **Tracked by** | #612 (epic), #613–#632 (T0–T19); task breakdown in [0002-implementation-plan.md](0002-implementation-plan.md) |
 | **Affects** | `cdno-core` (one resolver fix), `cdno-domain`, `cdno-cli`, `cdno-mcp`, `docs/design.md`, `docs/implementation-plan.md`, `docs-site`, `examples/` |
 | **Related** | RFC 0001 (format precedent); custom note types (`docs-site/src/reference/custom-note-types.md`); #597 (desktop retirement — CLI and MCP surfaces only); `docs/implementation-plan.md` Phase 7 (the "standalone note" this RFC resolves); #604 (superseded draft) |
