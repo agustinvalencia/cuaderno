@@ -1108,8 +1108,9 @@ pub struct ReadNoteResponse {
     /// write made in between is detected rather than overwritten.
     pub content_hash: String,
     /// Paths of the distinct notes that link to this one, sorted by path.
-    /// Read from the index's link table, which reconcile refreshes, so a
-    /// link written moments ago may not appear yet. Uncapped, like the
+    /// Read from the index's link table, which every cuaderno write
+    /// updates; a link made by editing a file elsewhere appears once the
+    /// index next reconciles. Uncapped, like the
     /// body; flat rather than grouped by type, because the grouping
     /// [`ProjectBacklinksDto`] carries is specific to project maps.
     pub backlinks: Vec<String>,

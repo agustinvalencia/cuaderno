@@ -38,8 +38,8 @@ anything. Inputs marked optional may be omitted.
   field, so a completion early in a busy week is not lost to that cap.
 - **`read_note`** reads any note, of any type. `content_hash` is the hash of the bytes just read,
   the value to hand back as `expected_hash` when revising the note, so a change made in between is
-  detected rather than overwritten. `backlinks` comes from the index, which reconciliation
-  refreshes, so a link written moments ago may not appear yet. A slug several notes share is
+  detected rather than overwritten. `backlinks` comes from the index, which every cuaderno write
+  updates; a link made by editing a file elsewhere appears once the index next reconciles. A slug several notes share is
   refused with code `ambiguous_slug` and the candidates' paths in `details.candidates`; a
   reference matching nothing is refused with code `not_found`. `headings` lists every heading in
   the body with inline markup stripped, the form `revise_note`'s `section` takes. To follow a

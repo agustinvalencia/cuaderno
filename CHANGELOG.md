@@ -251,6 +251,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   and that over-length text is rejected rather than truncated — most of these rejections are
   preventable up front, independently of how they are reported.
 
+### Fixed
+
+- **Every domain write indexes the note's links and tags (T7b, #646).** `VaultTransaction::commit`
+  already derived a written note's search row from its paired file write; the same seam now stages
+  its `links` and `tags` facets, so a wikilink or tag added through `revise_note`,
+  `set_frontmatter`, `update_project_state`, `create_custom_note`, `note_to_daily` or any other
+  writer is in `read_note`'s `backlinks` and the tag index at once. Before, the commit stamped the
+  file's real mtime, reconcile's fast path then skipped the note, and the edge stayed missing until
+  `cdno reindex`. The extraction moved out of reconcile into `extractors::extract_note_facets`,
+  which both paths call; in-tool links resolve against the index's paths plus the transaction's own
+  writes, so a note created in the same commit is a valid target. The user guide's reindex caveat
+  (concept library tutorial step 5 and the concept page) and the `read_note` backlinks wording are
+  updated to match.
+
 ## [0.39.0] - 2026-09-26
 
 ### Removed

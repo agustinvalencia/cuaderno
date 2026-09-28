@@ -285,6 +285,79 @@ fn multiple_index_failures_are_all_collected() {
 }
 
 // ---------------------------------------------------------------------
+// Links and tags facets derived at the commit seam (#646)
+// ---------------------------------------------------------------------
+
+const LINKING_NOTE: &str = "---\ntype: concept\ntags: [algebra]\norigin: \"[[concepts/seed]]\"\n---\n\n# A\n\nSee [[concepts/b]] and [[missing]]. #idea\n";
+const LINKED_NOTE: &str = "---\ntype: concept\n---\n\n# B\n";
+
+#[test]
+fn upsert_with_paired_write_stages_links_and_tags() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut seed = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    seed.write_file(vp("concepts/seed.md"), LINKED_NOTE);
+    seed.upsert_note(sample_note("concepts/seed.md", "concept"));
+    seed.commit().unwrap();
+
+    // The linking note is staged *before* the note it links to, in the
+    // same transaction: the link still resolves, because the path set
+    // accounts for this transaction's own writes.
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(vp("concepts/a.md"), LINKING_NOTE);
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.write_file(vp("concepts/b.md"), LINKED_NOTE);
+    tx.upsert_note(sample_note("concepts/b.md", "concept"));
+    tx.commit().unwrap();
+
+    let a = vp("concepts/a.md");
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/b.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/seed.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert_eq!(index.find_by_tag("idea").unwrap(), vec![a.clone()]);
+    assert_eq!(index.find_by_tag("algebra").unwrap(), vec![a.clone()]);
+
+    // The seam agrees with reconcile: a full reindex of the same files
+    // into a fresh index derives exactly the same facet rows.
+    let fresh: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    cdno_core::reconcile::reconcile(&store, &fresh, &cdno_core::config::IgnoreSet::empty())
+        .unwrap();
+    assert_eq!(
+        index.find_outgoing_links(&a).unwrap(),
+        fresh.find_outgoing_links(&a).unwrap()
+    );
+    assert_eq!(
+        index.find_by_tag("idea").unwrap(),
+        fresh.find_by_tag("idea").unwrap()
+    );
+}
+
+#[test]
+fn upsert_without_paired_write_leaves_facets_alone() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let a = vp("concepts/a.md");
+    let links = vec![LinkEntry {
+        target_raw: "x".to_owned(),
+        resolved_path: None,
+        label: None,
+    }];
+    index.replace_links(&a, &links).unwrap();
+
+    // Reconcile's re-stamp shape: an upsert with no file write.
+    let mut tx = VaultTransaction::new(store, index.clone()).expect("write lock");
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.commit().unwrap();
+
+    assert_eq!(index.find_outgoing_links(&a).unwrap(), links);
+}
+
+// ---------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------
 

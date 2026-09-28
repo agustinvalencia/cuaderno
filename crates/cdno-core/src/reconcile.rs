@@ -381,39 +381,18 @@ fn reconcile_one(
         .optional_field::<String>("title")
         .map_err(|e| format!("invalid `title` field: {e}"))?;
 
-    // Frontmatter `tags:` list, then merge with body-scanned inline
-    // tags. The extractor returns an already-deduped sorted list; the
-    // merge path here keeps the order stable across reconcile passes
-    // so the `note_tags` table doesn't churn.
-    let frontmatter_tags: Vec<String> = frontmatter
-        .optional_field::<Vec<String>>("tags")
-        .map_err(|e| format!("invalid `tags` field: {e}"))?
-        .unwrap_or_default();
-    let inline_tags = crate::extractors::extract_inline_tags(body);
-    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    tag_set.extend(frontmatter_tags);
-    tag_set.extend(inline_tags);
-    let tags: Vec<String> = tag_set.into_iter().collect();
-
     // Serialise the parsed frontmatter once — reused for the wikilink scan
     // and the `NoteEntry.frontmatter` column below.
     let frontmatter_json = frontmatter.as_json();
 
-    // Body-scanned wikilinks, merged with frontmatter wikilinks (a
-    // project's `core_question:`, a portfolio's `project:`, an evidence
-    // note's `origin:`, …) so backlinks see frontmatter references too
-    // (#395). Deduped by (target, label): a link present in both the body
-    // and frontmatter — and any duplicate within the body — collapses to
-    // one edge (body-first, so its position wins). Resolution staleness is
-    // bounded by the next reconcile pass (every Vault::new) — see
-    // `extractors::resolve_wikilinks` for the exact-then-basename policy.
-    let mut raw_links = crate::extractors::extract_wikilinks(body);
-    raw_links.extend(crate::extractors::extract_frontmatter_wikilinks(
-        &frontmatter_json,
-    ));
-    let mut seen = std::collections::HashSet::new();
-    raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
-    let links = crate::extractors::resolve_wikilinks(raw_links, vault_paths);
+    // Tags and links facets. The same helper runs at the transaction's
+    // commit seam for in-tool writes (#646), so both paths agree.
+    // Resolution staleness is bounded by the next reconcile pass (every
+    // Vault::new) — see `extractors::resolve_wikilinks` for the
+    // exact-then-basename policy.
+    let crate::extractors::NoteFacets { tags, links } =
+        crate::extractors::extract_note_facets(&frontmatter, &frontmatter_json, body, vault_paths)
+            .map_err(|e| format!("invalid `tags` field: {e}"))?;
 
     // Project-type notes contribute deadlines and milestones via
     // `## Milestones`. Other types skip both even if they happen to

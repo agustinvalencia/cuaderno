@@ -121,9 +121,10 @@ impl Vault {
     /// appended inside the link for a section revision; the reason
     /// flattened to one line) commit together.
     ///
-    /// The note's `links` and tag facets are refreshed only by reconcile
-    /// until #646 lands, so [`Vault::read_note`]'s `backlinks` can lag a
-    /// wikilink added by a revision.
+    /// The note's `links` and `tags` facets are staged in the same commit
+    /// (the transaction derives them from the written file, #646), so a
+    /// wikilink added by a revision is in [`Vault::read_note`]'s
+    /// `backlinks` straight away.
     ///
     /// `at` is a parameter so tests can pin the log timestamp and the
     /// daily-note date; production callers pass

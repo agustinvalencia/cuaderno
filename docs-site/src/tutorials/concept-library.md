@@ -166,8 +166,8 @@ without starting again.
 ```
 
 The body fills the template's `{{body}}` slot, and the template adds its three sections after it.
-`origin` is stored as a single quoted string. Its links are picked up as backlinks the next time the
-index is rebuilt (`cdno reindex`) — a write through `cdno` does not index its own links yet (#646).
+`origin` is stored as a single quoted string. Its links are indexed with the write, so the daily
+notes it names show the concept among their backlinks straight away.
 
 Fill in `tags` in your editor (`tags: [linear-algebra]`). A `--field tags=…` value is written as a
 plain string, not a list, so the tag list is easiest to edit by hand.

@@ -154,10 +154,9 @@ Creation is logged for you, to today's daily note, as `concept created [[concept
 and `origin` records where the concept came from. Over MCP the same step is `create_custom_note`
 with `body` and `origin`.
 
-The `## Notes` entries stay as they were — the day's record is append-only — and, once the index is
-rebuilt, their daily notes have a backlink from the concept. A write through `cdno` does not index
-its own links yet, so links written by `cdno log note`, `cdno note create` or `cdno note revise`
-reach the backlinks only after `cdno reindex` (#646).
+The `## Notes` entries stay as they were — the day's record is append-only — and their daily notes
+have a backlink from the concept. Every write through `cdno` indexes the links it writes, so links
+from `cdno log note`, `cdno note create` or `cdno note revise` are in the backlinks at once.
 
 **Search before you create.** A second note on a subject the library already covers is the
 duplicate this whole method exists to avoid. `cdno search <word> --type concept` first; if the

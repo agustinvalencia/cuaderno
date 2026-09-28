@@ -1,9 +1,12 @@
 //! Body-scanned extractors for inline `#tag` tokens and `[[wikilink]]`
 //! references.
 //!
-//! Frontmatter `tags:` lists are handled directly by the reconciler;
-//! the helpers in this module cover the body-scanned facets the
-//! reconciler merges in.
+//! [`extract_note_facets`] is the single place a note's `tags` and
+//! `links` facets are derived: it merges the frontmatter `tags:` list and
+//! frontmatter wikilinks with the body-scanned ones below. Reconciliation
+//! and the transaction's commit seam both call it, so a note indexed by
+//! an in-tool write and the same note reindexed from disk produce the
+//! same facet rows (#646).
 //!
 //! ## Skip rules
 //!
@@ -24,8 +27,61 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+use crate::error::ValidationError;
+use crate::frontmatter::Frontmatter;
 use crate::index::LinkEntry;
 use crate::path::VaultPath;
+
+/// A note's derived `tags` and `links` facets, ready for
+/// `VaultIndex::replace_tags` / `VaultIndex::replace_links`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoteFacets {
+    /// Frontmatter `tags:` merged with body `#tag` tokens, deduped and
+    /// sorted so the `note_tags` table doesn't churn across passes.
+    pub tags: Vec<String>,
+    /// Body wikilinks followed by frontmatter wikilinks, deduped by
+    /// `(target, label)` and resolved with [`resolve_wikilinks`].
+    pub links: Vec<LinkEntry>,
+}
+
+/// Derive a note's `tags` and `links` facets from its parsed frontmatter
+/// and body.
+///
+/// `frontmatter_json` is `frontmatter.as_json()`, passed in so a caller
+/// that also needs it (reconcile stores it on the `notes` row) serialises
+/// once. `vault_paths` is the set of note paths links resolve against.
+///
+/// Tags: the frontmatter `tags:` list merged with the body's inline tags,
+/// deduped and sorted. Links: body wikilinks merged with frontmatter
+/// wikilinks (a project's `core_question:`, an evidence or concept note's
+/// `origin:`, …) so backlinks see frontmatter references too (#395).
+/// Deduped by `(target, label)`, body first so its position wins, then
+/// resolved against `vault_paths`.
+///
+/// Errors only when the frontmatter `tags:` field is present but not a
+/// list of strings.
+pub fn extract_note_facets(
+    frontmatter: &Frontmatter,
+    frontmatter_json: &serde_json::Value,
+    body: &str,
+    vault_paths: &HashSet<VaultPath>,
+) -> Result<NoteFacets, ValidationError> {
+    let frontmatter_tags: Vec<String> = frontmatter
+        .optional_field::<Vec<String>>("tags")?
+        .unwrap_or_default();
+    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    tag_set.extend(frontmatter_tags);
+    tag_set.extend(extract_inline_tags(body));
+    let tags: Vec<String> = tag_set.into_iter().collect();
+
+    let mut raw_links = extract_wikilinks(body);
+    raw_links.extend(extract_frontmatter_wikilinks(frontmatter_json));
+    let mut seen = HashSet::new();
+    raw_links.retain(|l| seen.insert((l.target.clone(), l.label.clone())));
+    let links = resolve_wikilinks(raw_links, vault_paths);
+
+    Ok(NoteFacets { tags, links })
+}
 
 /// Tag pattern is ASCII-only by design: `#[a-zA-Z0-9][a-zA-Z0-9_/-]*`,
 /// with trailing slashes trimmed by the caller. The inner `/` carries
