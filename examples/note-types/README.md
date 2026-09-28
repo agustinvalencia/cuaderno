@@ -40,14 +40,19 @@ A concept note is a unit of understanding worth keeping and reusing, tied to no 
 stewardship or portfolio: a theorem and the intuition behind it, a definition, a technique and when
 it applies, a procedure you will run again (RFC 0002). A new vault needs
 nothing from this folder: `cdno init` writes the same `[note_types.concept]` block into its config
-and installs the same template as `.cuaderno/templates/concept.md`. These two files are for existing
-vaults created before that, and a test keeps both byte-identical to what `cdno init` writes.
+and installs the same template as `.cuaderno/templates/concept.md`. These two files are the ones the
+`cdno` binary carries (it `include_str!`s them), so they cannot drift from what it writes.
 
-1. Copy the block in [`concept/config.toml`](concept/config.toml) into your vault's
-   `.cuaderno/config.toml`.
-2. Copy [`concept/concept.md`](concept/concept.md) to `.cuaderno/templates/concept.md` (the block
-   names it as the type's template).
-3. Create concepts, supplying the body and, when promoting from the daily log, the origin:
+1. In a vault created before the concept type existed, install it:
+
+   ```bash
+   cdno config note-type install --name concept
+   ```
+
+   This writes the block, the template and the `concepts/` folder, each only when absent, and never
+   changes a declaration you already have; `--list` shows whether a vault has it and `--dry-run`
+   what would be written. There is no need to copy either file by hand.
+2. Create concepts, supplying the body and, when promoting from the daily log, the origin:
 
    ```bash
    cdno note create concept --title "Woodbury identity" --body-file woodbury.md \

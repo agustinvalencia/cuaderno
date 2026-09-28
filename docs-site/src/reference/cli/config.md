@@ -19,6 +19,7 @@ the column and the reason.
 | `validate` | Run the exact check `Vault::new` performs. Exits non-zero on a bad config. `--file <PATH>` checks a candidate without putting it in place. |
 | `edit` | Open the config in `$EDITOR`, then save it through the validate-first, compare-and-swap gate. |
 | `note-type set\|remove` | Add, change or remove a custom note type (`[note_types.<name>]`). |
+| `note-type install` | Install a note type that ships with `cdno` (such as `concept`) into this vault. See [Installing a bundled note type](#installing-a-bundled-note-type). |
 | `field set\|remove` | Add, change or remove a schema field (`[schemas.<type>.fields.<field>]`). |
 | `plot set` | Set how a declared tracking metric is plotted. |
 | `var set\|remove` | Add, change or remove a static template variable (`[variables]`). |
@@ -52,6 +53,61 @@ for a boolean (`--no-append-only`, `--no-settable`, `--no-log-on-change`, `--no-
 Changing a field's `--type` is the one exception: `default` and `values` are declared against the old
 type, so they are dropped and the command says so. Re-set them in the same command or afterwards.
 
+## Installing a bundled note type
+
+`cdno` ships with note types that `cdno init` declares in every new vault. Today there is one,
+[`concept`](../../concepts/concept-library.md). `note-type install` adds one to a vault created
+before it existed, so the older vault ends up exactly as a new one would:
+
+```bash
+cdno config note-type install --list            # what ships, and whether this vault has it
+cdno config note-type install --name concept --dry-run
+cdno config note-type install --name concept
+```
+
+It takes three steps, in this order, and each writes only what is absent:
+
+1. **Template.** Creates `.cuaderno/templates/` if needed and writes the type's template, but
+   only when no file of that name exists. A template you have edited is never overwritten; the
+   report says whether it matches the bundled one. If your declaration names a different template
+   file, the bundled one is not installed.
+2. **Folder.** Creates the type's folder (`concepts/`) if absent.
+3. **Declaration.** Appends the `[note_types.<name>]` block, comment included, through the same
+   save gate as every other verb. If the config already declares the type, the declaration is
+   never modified: it is compared with the bundled one, key by key, and the report names the
+   `note-type set` command that would adopt each bundled value you might want.
+
+```text
+declaration  written
+template     written .cuaderno/templates/concept.md
+folder       created concepts/
+```
+
+Re-running is safe. When there is nothing left to write, the report ends with
+`concept: already installed, nothing to do` and the command exits 0.
+
+Two refusals are phrased in plain words, and in both nothing is left behind:
+
+- a config that declares `note_types` as an inline table cannot take an appended block; add it with
+  `cdno config edit`;
+- another custom type already using the folder (`concepts`) is refused by the gate.
+
+`--list` prints each bundled type's purpose, folder, fields, template and its section headings,
+with this vault's state: `not installed`, `installed (matches)`, `installed (declaration differs)`,
+`installed (template customised)` or `installed (template missing)`. `--dry-run` prints the exact
+block and template that would be written, checks the result would validate, and writes nothing.
+With `--json`, the report is one object with `changed`, as the other verbs carry it:
+
+```json
+{"changed": true, "note_type": "concept",
+ "declaration": "written",
+ "template": {"path": "templates/concept.md", "action": "written"},
+ "folder": {"path": "concepts", "action": "created"}}
+```
+
+Once installed, a bundled type is an ordinary custom declaration: edit it with `note-type set`, or
+delete it with `note-type remove`.
+
 ## Options
 
 Promptable arguments are flags. Omit one in a terminal and you are asked for it; omit one with
@@ -71,6 +127,9 @@ cdno config edit                       # $EDITOR round trip through the gate
 cdno config note-type set --name people --folder people --required name,email
 cdno config note-type set --name people --folder humans          # keeps required + template
 cdno config field set --note-type people --field email --type string --required
+
+# Add the concept library to a vault created before it existed.
+cdno config note-type install --name concept
 
 # Template variables.
 cdno config var set --name author --value "Your Name"

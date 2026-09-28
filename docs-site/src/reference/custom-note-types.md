@@ -44,6 +44,24 @@ Validation runs at vault-open, so a malformed declaration fails fast. Cuaderno r
 - **name shadows a built-in type** (`project`, `daily`, … — case-insensitive). Built-in names are
   reserved so a stray `type:` typo can't silently mint a type.
 
+## Bundled types
+
+Some custom types ship with `cdno` itself. They are ordinary declarations, not built-ins: `cdno init`
+writes them into a new vault's config, and you may edit or delete them like any type you declared.
+Today there is one, [`concept`](../concepts/concept-library.md).
+
+A vault created before a bundled type existed does not have it. Install it with
+
+```bash
+cdno config note-type install --list            # what ships, and whether this vault has it
+cdno config note-type install --name concept
+```
+
+which writes the type's template, folder and declaration, each only when absent, and never changes
+a declaration you already have. See
+[Installing a bundled note type](cli/config.md#installing-a-bundled-note-type) for the report and
+the refusals.
+
 ## Creating notes
 
 ```bash
@@ -149,6 +167,6 @@ commands), and so is a custom type declared `append_only = true`.
 [Tracking people](../tutorials/tracking-people.md) walks a `person` type end to end — declaring it,
 creating people, and linking them from your notes to answer "what was my last interaction with X?".
 
-[The concept library](../concepts/concept-library.md) is the custom type `cdno init` declares for
-you, and [Building a concept library](../tutorials/concept-library.md) walks its creation with
+[The concept library](../concepts/concept-library.md) is the bundled type `cdno init` declares for
+you (`cdno config note-type install --name concept` adds it to an older vault), and [Building a concept library](../tutorials/concept-library.md) walks its creation with
 `--body-file` and `--origin`, and its revision.

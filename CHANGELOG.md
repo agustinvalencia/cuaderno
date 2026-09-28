@@ -8,6 +8,26 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Install the concept library into an existing vault (RFC 0003, #662).** Run
+  `cdno config note-type install --name concept` to add the concept library to a vault created
+  before 0.40. The new verb installs a note type that ships with `cdno` into an existing vault:
+  it writes the type's template to `.cuaderno/templates/`, creates its folder, and appends its
+  `[note_types.<name>]` declaration, comment included, through the validate-first,
+  compare-and-swap config gate, each step only when absent and in that order, so a failure never
+  leaves a declaration naming a missing template. An existing declaration is never modified: it
+  is compared with the bundled one key by key and reported, with the `note-type set` command that
+  would adopt each bundled value, and a template you have edited is kept and reported as
+  customised. Re-running is safe and exits 0, ending with `<name>: already installed, nothing to
+  do`. `--list` shows each bundled type's purpose, folder, fields, template sections and the
+  vault's state; `--dry-run` prints the exact block and template that would be written and writes
+  nothing; `--json` reports each step. An inline `note_types` table and a folder another type
+  already uses are refused in plain words, and whatever the install had created is removed again.
+  `cdno init` now installs `concept` through the same function, so a new vault and an upgraded
+  one are identical (its output is unchanged, byte for byte). The concept declaration and template
+  are read from `examples/note-types/concept/` at build time, so the examples cannot drift from
+  the binary. Over MCP, `create_custom_note` refused for an undeclared `concept` now names the
+  install command, so an agent can tell the owner what to run.
+
 - **`cdno log note` (T12, #625).** The CLI half of `Vault::note_to_daily`: `cdno log note
   [--heading STRING] [--body-file PATH] [--date YYYY-MM-DD]` writes one `### <heading>` entry
   under the day's `## Notes` and the pointer line `noted [[journal/…#<heading>]] (<links>)` under

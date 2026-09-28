@@ -32,9 +32,14 @@ optional = ["tags", "origin"]
 template = "concept.md"
 ```
 
-If you do not want a library, delete the block. A vault created before the type existed can copy
-the declaration and the template from
-[`examples/note-types/concept/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/note-types/concept).
+If you do not want a library, delete the block. A vault created before the type existed gets the
+declaration, the template and the folder with one command, which writes only what is absent and never
+changes a declaration you already have (see
+[Installing a bundled note type](../reference/cli/config.md#installing-a-bundled-note-type)):
+
+```bash
+cdno config note-type install --name concept
+```
 
 A concept note looks like this:
 

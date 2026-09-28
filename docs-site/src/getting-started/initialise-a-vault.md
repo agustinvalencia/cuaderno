@@ -8,8 +8,10 @@ cdno init ~/notebook
 cd ~/notebook
 ```
 
-This scaffolds the full folder tree, writes a default `.cuaderno/config.toml`, and drops the
-built-in note templates into `.cuaderno/templates/` (so you can customise them later). What you get:
+This scaffolds the full folder tree, writes a default `.cuaderno/config.toml` (which declares the
+[`concept`](../concepts/concept-library.md) type), and writes two starter templates into
+`.cuaderno/templates/`: `daily.md` and `concept.md`. Every other note type renders from its built-in
+template until you add a file for it there. What you get:
 
 ```text
 ~/notebook/
@@ -27,6 +29,7 @@ built-in note templates into `.cuaderno/templates/` (so you can customise them l
 │   ├── research/
 │   └── life/
 ├── inbox/            # quick captures awaiting triage
+├── concepts/         # the concept library (a custom type init declares)
 └── .cuaderno/
     ├── config.toml   # vault configuration
     └── templates/    # note templates (override the built-ins here)
@@ -55,6 +58,23 @@ cdno log "spotted a bug in the sampler"
 
 > If you're standing inside vault A while `CUADERNO_VAULT_PATH` points at vault B, the directory you
 > are in wins — writes land in A. The env var is only a fallback for when discovery finds nothing.
+
+## Upgrading an older vault
+
+`cdno init` refuses to run on a vault that already exists: re-initialising is destructive, so it is
+never done for you. When a newer `cdno` ships a note type that `init` now declares, add it to your
+existing vault instead:
+
+```bash
+cdno config note-type install --list             # what ships, and whether this vault has it
+cdno config note-type install --name concept
+```
+
+It writes the type's template, its folder and its declaration, each only when absent. A
+declaration you already have, or a template you have edited, is kept and reported, never
+overwritten, so the command is safe to re-run; it ends with `concept: already installed, nothing to
+do` when there is nothing left to write. Add `--dry-run` to see exactly what it would write first.
+See [Installing a bundled note type](../reference/cli/config.md#installing-a-bundled-note-type).
 
 ## Back up your vault
 

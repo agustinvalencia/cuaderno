@@ -5,8 +5,7 @@ note: you work something out, note it, meet it again three weeks later, promote 
 improve it. The method behind each step is in [The concept library](../concepts/concept-library.md).
 
 It assumes a vault created by `cdno init`, which declares the `concept` type. For an older vault,
-first copy the declaration and template from
-[`examples/note-types/concept/`](https://github.com/agustinvalencia/cuaderno/tree/main/examples/note-types/concept).
+first run `cdno config note-type install --name concept`.
 The project `surrogate-model` stands in for whatever you are working on.
 
 The input files below are scratch; write them outside the vault (for example under `/tmp`), or a
