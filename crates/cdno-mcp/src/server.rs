@@ -250,17 +250,20 @@ impl ServerHandler for CuadernoServer {
                 a past entry; add a new one. When a mutable section changes, its \
                 previous value is logged for you — that history is how a project's \
                 evolution is traced.\n\
-                - If the vault declares a `concept` type (list_note_types is how \
-                you check for a concept type), file by what the thing is. A dated observation bearing on a \
-                question is evidence; the answer to a question stays on the question \
-                note; a stewardship's prescribed practice is a routine; understanding \
-                you will reuse independent of any deliverable (a theorem, a \
-                definition, a technique, a procedure) is a concept note; anything \
-                not yet settled goes to the daily note's `## Notes` until promoted. \
-                A concept is never the `origin` of evidence: evidence records what \
-                happened then, a concept describes understanding now. A concept is \
-                refined in place with revise_note, never appended to, and the daily \
-                log records when and why.\n\n\
+                - CONCEPTS, if the vault declares a `concept` type (list_note_types \
+                shows whether there is a concept type). File by what the thing is: a \
+                dated observation bearing on a question is evidence; the answer to a \
+                question stays on the question note; a stewardship's prescribed \
+                practice is a routine; understanding you will reuse independent of \
+                any deliverable (a theorem, a definition, a technique, a procedure) \
+                is a concept note; anything not yet settled goes to the daily \
+                `## Notes` with note_to_daily until promoted. Evidence never depends \
+                on a concept's current text: record what was done and observed (the \
+                exact command, version, parameters) in the evidence itself, link a \
+                concept only as see-also, and never make a concept the `origin` of \
+                evidence. Evidence records what happened then; a concept describes \
+                understanding now. A concept is refined in place with revise_note, \
+                never appended to, and the daily log records when and why.\n\n\
                 Energy (deep/medium/light) tags an action's cognitive cost so \
                 get_orientation can match work to how the person actually feels.\n\n\
                 Tools split into context-gathering reads (get_orientation, \

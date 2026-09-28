@@ -485,14 +485,16 @@ fn instructions_carry_the_conditional_concept_filing_test() {
     let instructions = info.instructions.as_deref().unwrap_or_default();
     for phrase in [
         "concept type",
-        "If the vault declares a `concept` type",
+        "CONCEPTS, if the vault declares a `concept` type",
         "list_note_types",
         "is evidence",
         "is a routine",
         "is a concept note",
-        "`## Notes` until promoted",
-        "A concept is never the `origin` of evidence",
-        "evidence records what happened then, a concept describes understanding now",
+        "`## Notes` with note_to_daily until promoted",
+        "Evidence never depends on a concept's current text",
+        "link a concept only as see-also",
+        "never make a concept the `origin` of evidence",
+        "Evidence records what happened then; a concept describes understanding now",
         "refined in place with revise_note, never appended to",
     ] {
         assert!(
@@ -509,15 +511,32 @@ fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
     let read_note = description_of("read_note");
     assert!(read_note.contains("expected_hash"), "{read_note}");
     assert!(read_note.contains("A concept's `origin`"), "{read_note}");
+    assert!(
+        read_note.contains("passing the part before the `#`"),
+        "{read_note}"
+    );
 
     let create = description_of("create_custom_note");
     assert!(create.contains("`origin`"), "{create}");
     assert!(create.contains("search before you create"), "{create}");
-    assert!(create.contains("one concept per subject"), "{create}");
+    assert!(create.contains("one concept per note"), "{create}");
+    assert!(create.contains("terms are ANDed"), "{create}");
+    assert!(
+        create.contains("rather than merging them yourself"),
+        "{create}"
+    );
+    assert!(!create.contains("merged into the first"), "{create}");
+    assert!(create.contains("`ambiguous_section`"), "{create}");
     assert!(create.contains("needs no separate log line"), "{create}");
 
     let search = description_of("search_notes");
     assert!(search.contains("#concept"), "{search}");
+    assert!(search.contains("matches the word, not the tag"), "{search}");
+    assert!(
+        search.contains("Read each hit with `read_note`"),
+        "{search}"
+    );
+    assert!(!search.contains("search `#concept`"), "{search}");
     assert!(search.contains("`note_type: concept`"), "{search}");
     assert!(search.contains("two or more dates"), "{search}");
 
@@ -529,6 +548,7 @@ fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
 
     let revise = description_of("revise_note");
     assert!(revise.contains("current best account"), "{revise}");
+    assert!(revise.contains("when it was last run"), "{revise}");
 
     for name in [
         "read_note",
