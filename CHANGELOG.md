@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-09-28
+
 ### Added
 
 - **Install the concept library into an existing vault (RFC 0003, #662).** Run
