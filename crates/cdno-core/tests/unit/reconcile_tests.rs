@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -6,13 +7,15 @@ use cdno_core::error::{IndexError, StoreError};
 use cdno_core::file_meta::FileMeta;
 use cdno_core::hash::content_hash;
 use cdno_core::index::{
-    DeadlineEntry, LinkEntry, MemoryIndex, MilestoneEntry, NoteCandidate, NoteEntry, VaultIndex,
+    DeadlineEntry, LinkEntry, LinkResolutionUpdate, MemoryIndex, MilestoneEntry, NoteCandidate,
+    NoteEntry, SqliteIndex, VaultIndex,
 };
 use cdno_core::path::VaultPath;
 use cdno_core::reconcile::reconcile;
-use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_core::store::{FsVaultStore, MemoryVaultStore, VaultStore};
 use cdno_core::transaction::VaultTransaction;
 use serde_json::json;
+use tempfile::TempDir;
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -639,9 +642,7 @@ fn orphan_removal_failure_is_reported_as_error() {
 
     // Run reconciliation through a wrapper whose remove_note always
     // fails. The underlying index is still the same backing store.
-    let failing: Arc<dyn VaultIndex> = Arc::new(FailOnRemoveIndex {
-        inner: backing_index.clone(),
-    });
+    let failing: Arc<dyn VaultIndex> = Arc::new(ProbeIndex::new(backing_index.clone(), true));
     let store_arc: Arc<dyn VaultStore> = store.clone();
     let report = reconcile(&store_arc, &failing, &IgnoreSet::empty()).unwrap();
 
@@ -732,20 +733,41 @@ fn reconcile_drops_orphan_fts_rows() {
 }
 
 /// Test wrapper that delegates every `VaultIndex` method to an inner
-/// `MemoryIndex` except `remove_note`, which always errors. Kept
-/// inline in this file because it's specific to the orphan-failure
-/// test; the broader `FailingIndex` in `transaction_tests.rs` is not
-/// accessible from this integration test binary.
-struct FailOnRemoveIndex {
+/// `MemoryIndex`, with probes: `remove_note` errors when `fail_remove`
+/// is set (the orphan-failure test), and `link_resolutions` calls are
+/// counted (the bounded re-resolution test, #640) and fail when
+/// `fail_link_resolutions` is set. Kept inline
+/// in this file because the broader `FailingIndex` in
+/// `transaction_tests.rs` is not accessible from this integration test
+/// binary.
+struct ProbeIndex {
     inner: Arc<MemoryIndex>,
+    fail_remove: bool,
+    link_scans: AtomicUsize,
+    /// When set, `link_resolutions` errors (the re-resolution failure test).
+    fail_link_resolutions: bool,
 }
 
-impl VaultIndex for FailOnRemoveIndex {
+impl ProbeIndex {
+    fn new(inner: Arc<MemoryIndex>, fail_remove: bool) -> Self {
+        Self {
+            inner,
+            fail_remove,
+            link_scans: AtomicUsize::new(0),
+            fail_link_resolutions: false,
+        }
+    }
+}
+
+impl VaultIndex for ProbeIndex {
     fn upsert_note(&self, entry: &NoteEntry) -> Result<(), IndexError> {
         self.inner.upsert_note(entry)
     }
-    fn remove_note(&self, _path: &VaultPath) -> Result<(), IndexError> {
-        Err(IndexError::Update("forced test failure".to_owned()))
+    fn remove_note(&self, path: &VaultPath) -> Result<(), IndexError> {
+        if self.fail_remove {
+            return Err(IndexError::Update("forced test failure".to_owned()));
+        }
+        self.inner.remove_note(path)
     }
     fn find_by_path(&self, path: &VaultPath) -> Result<Option<NoteEntry>, IndexError> {
         self.inner.find_by_path(path)
@@ -781,6 +803,16 @@ impl VaultIndex for FailOnRemoveIndex {
     }
     fn find_outgoing_links(&self, path: &VaultPath) -> Result<Vec<LinkEntry>, IndexError> {
         self.inner.find_outgoing_links(path)
+    }
+    fn link_resolutions(&self) -> Result<Vec<(String, Option<VaultPath>)>, IndexError> {
+        self.link_scans.fetch_add(1, Ordering::SeqCst);
+        if self.fail_link_resolutions {
+            return Err(IndexError::Query("forced test failure".to_owned()));
+        }
+        self.inner.link_resolutions()
+    }
+    fn set_link_resolutions(&self, updates: &[LinkResolutionUpdate]) -> Result<usize, IndexError> {
+        self.inner.set_link_resolutions(updates)
     }
     fn replace_tags(&self, path: &VaultPath, tags: &[String]) -> Result<(), IndexError> {
         self.inner.replace_tags(path, tags)
@@ -1568,4 +1600,277 @@ fn a_stub_owns_markdown_nested_deeper_inside_its_artefact_folder() {
     assert_eq!(report.artefacts, 1);
     assert_eq!(report.scanned, 1);
     assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+}
+
+// ---- #640: re-resolve dangling links when their target appears ----------
+
+/// A real-files vault in a temp dir: an `FsVaultStore` over one temp
+/// directory and a `SqliteIndex` in another, so the index file is not
+/// itself walked.
+fn fs_vault() -> (TempDir, TempDir, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let vault = TempDir::new().unwrap();
+    let db = TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    let index: Arc<dyn VaultIndex> =
+        Arc::new(SqliteIndex::open(db.path().join("index.sqlite")).unwrap());
+    (vault, db, store, index)
+}
+
+fn write_md(root: &Path, rel: &str, body: &str) {
+    let path = root.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, format!("---\ntype: concept\n---\n\n{body}\n")).unwrap();
+}
+
+fn outgoing_resolution(
+    index: &Arc<dyn VaultIndex>,
+    source: &str,
+    target_raw: &str,
+) -> Option<VaultPath> {
+    index
+        .find_outgoing_links(&vp(source))
+        .unwrap()
+        .into_iter()
+        .find(|l| l.target_raw == target_raw)
+        .expect("link row present")
+        .resolved_path
+}
+
+/// The issue's probe, run against a given index: A links `[[b]]` while B
+/// does not exist; B is added; a reconcile pass that skips A (unchanged,
+/// fast path) must still give B the backlink from A.
+fn late_target_gains_backlink(index: Arc<dyn VaultIndex>) {
+    let vault = TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(outgoing_resolution(&index, "journal/a.md", "b"), None);
+
+    write_md(vault.path(), "concepts/b.md", "# B");
+    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(report.added, 1, "only B is new; A takes the fast path");
+    assert_eq!(report.updated, 0);
+    assert_eq!(report.links_reresolved, 1);
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/b.md")).unwrap(),
+        vec![vp("journal/a.md")]
+    );
+}
+
+#[test]
+fn reconcile_resolves_a_dangling_link_once_its_target_appears_sqlite() {
+    let db = TempDir::new().unwrap();
+    late_target_gains_backlink(Arc::new(
+        SqliteIndex::open(db.path().join("index.sqlite")).unwrap(),
+    ));
+}
+
+#[test]
+fn reconcile_resolves_a_dangling_link_once_its_target_appears_memory() {
+    late_target_gains_backlink(Arc::new(MemoryIndex::new()));
+}
+
+#[test]
+fn reconcile_skips_link_reresolution_when_no_note_was_added_or_removed() {
+    // The re-resolution only runs on a pass that changed the path set.
+    // Counted through the index double, and backed up behaviourally: a
+    // row forced stale behind reconcile's back stays stale across passes
+    // that only skip or update notes.
+    let vault = TempDir::new().unwrap();
+    let store: Arc<dyn VaultStore> = Arc::new(FsVaultStore::new(vault.path()));
+    let inner = Arc::new(MemoryIndex::new());
+    let probe = Arc::new(ProbeIndex::new(inner.clone(), false));
+    let index: Arc<dyn VaultIndex> = probe.clone();
+
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
+    write_md(vault.path(), "concepts/b.md", "# B");
+    write_md(vault.path(), "concepts/c.md", "# C");
+    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(first.added, 3);
+    assert_eq!(probe.link_scans.load(Ordering::SeqCst), 1);
+
+    inner
+        .replace_links(
+            &vp("journal/a.md"),
+            &[LinkEntry {
+                target_raw: "b".to_owned(),
+                resolved_path: None,
+                label: None,
+            }],
+        )
+        .unwrap();
+    probe.link_scans.store(0, Ordering::SeqCst);
+
+    // A pass with nothing to do.
+    let idle = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!((idle.added, idle.updated, idle.removed), (0, 0, 0));
+    // A pass that only updates a note (C's content changes; no path does).
+    write_md(vault.path(), "concepts/c.md", "# C\n\nEdited, and longer.");
+    let edit = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!((edit.added, edit.updated, edit.removed), (0, 1, 0));
+
+    assert_eq!(probe.link_scans.load(Ordering::SeqCst), 0);
+    assert_eq!(idle.links_reresolved + edit.links_reresolved, 0);
+    assert!(
+        index
+            .find_backlinks(&vp("concepts/b.md"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn reconcile_unresolves_a_link_whose_target_was_renamed_away() {
+    // B renamed to C by moving the file: `[[b]]` names no note any more
+    // (exact, folder-index and stem rules all miss), so the row goes back
+    // to NULL — a dangling link that lint reports — instead of pointing
+    // at the vanished `concepts/b.md`. Neither B nor C backlinks A.
+    let (vault, _db, store, index) = fs_vault();
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
+    write_md(vault.path(), "concepts/b.md", "# B");
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+
+    std::fs::rename(
+        vault.path().join("concepts/b.md"),
+        vault.path().join("concepts/c.md"),
+    )
+    .unwrap();
+    let report = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!((report.added, report.removed), (1, 1));
+    assert_eq!(report.links_reresolved, 1);
+    assert_eq!(outgoing_resolution(&index, "journal/a.md", "b"), None);
+    assert!(
+        index
+            .find_backlinks(&vp("concepts/b.md"))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        index
+            .find_backlinks(&vp("concepts/c.md"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn reconcile_follows_a_link_whose_target_moved_within_its_tree() {
+    // A move that keeps the note's name (an action archived by hand to
+    // `actions/_done/<year>/`) re-resolves through the last-segment rule,
+    // so the backlink follows the note to its new path.
+    let (vault, _db, store, index) = fs_vault();
+    write_md(vault.path(), "journal/a.md", "# A\n\nDid [[actions/b]].");
+    write_md(vault.path(), "actions/b.md", "# B");
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+
+    std::fs::create_dir_all(vault.path().join("actions/_done/2026")).unwrap();
+    std::fs::rename(
+        vault.path().join("actions/b.md"),
+        vault.path().join("actions/_done/2026/b.md"),
+    )
+    .unwrap();
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+
+    assert_eq!(
+        index
+            .find_backlinks(&vp("actions/_done/2026/b.md"))
+            .unwrap(),
+        vec![vp("journal/a.md")]
+    );
+}
+
+#[test]
+fn a_commit_keeps_links_to_an_unparseable_note_resolved() {
+    // A note present on disk but unparseable is in reconcile's path set,
+    // so `[[b]]` resolves to it, but it is not in the index's. The commit
+    // seam must not read "absent from the index" as "vanished": a later
+    // write that creates an unrelated note leaves the row resolved, and a
+    // fresh reindex agrees.
+    let (vault, _db, store, index) = fs_vault();
+    write_md(vault.path(), "journal/a.md", "# A\n\nSee [[b]].");
+    std::fs::create_dir_all(vault.path().join("concepts")).unwrap();
+    std::fs::write(
+        vault.path().join("concepts/b.md"),
+        "no frontmatter at all\n",
+    )
+    .unwrap();
+    let first = reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(first.errors.len(), 1, "b.md does not parse");
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+
+    let content = "---\ntype: concept\n---\n\n# C\n";
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).unwrap();
+    tx.write_file(vp("concepts/c.md"), content);
+    tx.upsert_note(NoteEntry {
+        path: vp("concepts/c.md"),
+        note_type: "concept".to_owned(),
+        title: None,
+        content_hash: content_hash(content),
+        mtime_ns: 0,
+        size: content.len() as u64,
+        frontmatter: json!({"type": "concept"}),
+        indexed_at_ns: 0,
+    });
+    tx.commit().unwrap();
+
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+    reconcile(&store, &index, &IgnoreSet::empty()).unwrap();
+    assert_eq!(
+        outgoing_resolution(&index, "journal/a.md", "b"),
+        Some(vp("concepts/b.md"))
+    );
+}
+
+#[test]
+fn a_link_reresolution_failure_is_reported_and_the_pass_continues() {
+    // The re-resolution step is a best-effort cache heal: its failure is
+    // a per-pass issue, not an aborted reconcile, and Phase 3 (the FTS
+    // heal) still runs after it.
+    let (store, backing) = fixtures();
+    let raw = "---\ntype: inbox\ntitle: A title\n---\n# Body\n\nsearchable backfill text\n";
+    store.write_file(&vp("inbox/a.md"), raw).unwrap();
+    // Indexed with the right hash but no FTS row, so only Phase 3 fills it.
+    backing
+        .upsert_note(&NoteEntry {
+            path: vp("inbox/a.md"),
+            note_type: "inbox".to_owned(),
+            title: Some("A title".to_owned()),
+            content_hash: content_hash(raw),
+            mtime_ns: 1,
+            size: raw.len() as u64,
+            frontmatter: json!({}),
+            indexed_at_ns: 1,
+        })
+        .unwrap();
+    // A new note, so the pass qualifies for the re-resolution step.
+    seed_note(&store, "inbox/b.md", "inbox", "");
+
+    let mut probe = ProbeIndex::new(backing.clone(), false);
+    probe.fail_link_resolutions = true;
+    let index: Arc<dyn VaultIndex> = Arc::new(probe);
+    let report = reconcile(&as_store(&store), &index, &IgnoreSet::empty())
+        .expect("a re-resolution failure must not abort the pass");
+
+    assert_eq!(report.added, 1);
+    assert_eq!(report.links_reresolved, 0);
+    assert_eq!(report.errors.len(), 1);
+    assert_eq!(report.errors[0].path, VaultPath::root());
+    assert!(
+        report.errors[0]
+            .reason
+            .starts_with("re-resolving stale links: "),
+        "{}",
+        report.errors[0].reason
+    );
+    assert_eq!(report.fts_built, 1, "Phase 3 still ran");
 }
