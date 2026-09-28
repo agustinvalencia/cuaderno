@@ -368,19 +368,36 @@ pub struct ReviseNoteInput {
     pub reason: String,
 }
 
+/// Input for `note_to_daily` (RFC 0002 T10, #623). `heading` and `body`
+/// are trimmed by the handler, and either one blank is refused as
+/// `INVALID_PARAMS` naming the field.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct NoteToDailyInput {
+    /// ISO `YYYY-MM-DD` of the daily note to write to. Omitted = today.
+    pub date: Option<chrono::NaiveDate>,
+    /// The entry's heading, written as `### <heading>` under `## Notes`
+    /// and used verbatim as the pointer's anchor. Unique within the day.
+    pub heading: String,
+    /// The entry's substance, written under its heading. Its wikilinks
+    /// are listed after the pointer line in `## Logs`.
+    pub body: String,
+}
+
 /// Input for `upsert_daily_section` (GH #158, #170). `section` is one of
 /// the writable daily sections; `content` defaults to empty; `date`
 /// defaults to today; `append` defaults to replace.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpsertDailySectionInput {
-    /// One of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive).
+    /// One of `Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`
+    /// (case-insensitive). `Notes` is append-only: it needs `append: true`.
     pub section: String,
     #[serde(default)]
     pub content: String,
     /// ISO `YYYY-MM-DD`. Omitted = today.
     pub date: Option<chrono::NaiveDate>,
     /// Append to the section instead of replacing it (for live meeting
-    /// notes that accrue). Defaults to false (replace).
+    /// notes that accrue). Defaults to false (replace); must be true for
+    /// `Notes`.
     #[serde(default)]
     pub append: bool,
 }

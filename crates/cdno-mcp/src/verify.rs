@@ -68,7 +68,8 @@ pub(crate) enum WriteShape {
     ///
     /// The heading must be the one the domain actually appends to, and
     /// must come from the domain rather than be restated here — pass
-    /// [`cdno_domain::DAILY_LOGS_SECTION`], not a literal. The section
+    /// [`cdno_domain::DAILY_LOGS_SECTION`] (or, for `note_to_daily`,
+    /// `DailySection::Notes.heading()`), not a literal. The section
     /// is then located in the re-read content with the same
     /// `MarkdownDocument` lookup the domain used to write it, so the
     /// window is the changed region wherever in the file it sits.

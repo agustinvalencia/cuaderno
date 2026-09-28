@@ -8,6 +8,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The `note_to_daily` MCP tool (T10, #623).** Writes worked-out substance to a daily note
+  through `Vault::note_to_daily`: one `### <heading>` entry under `## Notes` and the pointer line
+  `noted [[journal/…#<heading>]] (<links>)` under `## Logs`, in one transaction. `NoteToDailyInput`
+  takes `heading`, `body` and an optional `date` (omitted is now; a past date is stamped at the
+  current local time); a blank heading or body is `INVALID_PARAMS` naming the field, and the
+  domain's heading refusals (duplicate within the day, a reused section name, `[`, `]`, `|`, `#`,
+  inline markup, a leading `^`) arrive as `history_entry_heading_invalid`. Verified with the
+  appended-section shape on `## Notes`, so the result's `appended_tail` shows the entry.
+  `NoteToDailyResponse` carries `path`, the anchored `target` to cite, `log_line`, `message` and
+  `verification`. The description tells agents to end a reusable entry with `#concept`.
+  `upsert_daily_section` now lists `Notes` and says it is append-only: `section: "notes"` with
+  `append: false` is `INVALID_PARAMS` naming `append` and pointing at `note_to_daily`. It is a
+  write tool, so it is not on the read-only server; the catalogue grows from 57 to 58 tools.
 - **The `revise_note` MCP tool (T9, #622).** Refines a mutable custom note in place through
   `Vault::revise_note`, logging `revised [[path]] — reason` (with `#Section` for a section
   revision) to today's daily note. `ReviseNoteInput` takes `note` (resolved exactly as `read_note`

@@ -14,7 +14,7 @@ use cdno_domain::vault::Revision;
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
 use crate::context::{refuse_reference_outside_the_vault, resolve_note_reference};
-use crate::dto::ReviseNoteResponse;
+use crate::dto::{NoteToDailyResponse, ReviseNoteResponse};
 use crate::input::*;
 
 use crate::util::{into_mcp_error, invalid_argument, json_result};
@@ -727,8 +727,71 @@ impl CuadernoServer {
             .await
     }
 
+    /// Append one `### <heading>` entry to a daily note's `## Notes` and
+    /// its `noted [[…#<heading>]]` pointer to `## Logs`, in one domain
+    /// transaction (RFC 0002 §5.4, §6.4; T10, #623).
+    ///
+    /// Blank `heading` or `body` (after trimming) is `INVALID_PARAMS`
+    /// naming the field; every other refusal is the domain's
+    /// (`history_entry_heading_invalid` for a bad, reused or duplicate
+    /// heading) and reaches the client as a rejection unchanged. `date`
+    /// omitted is now; a given date is stamped at the current local
+    /// time, as `complete_periodic` does, so the pointer carries a time.
+    ///
+    /// Verified with [`WriteShape::AppendedToSection`] on `## Notes`
+    /// rather than [`WriteShape::Rewritten`]: the verification re-reads
+    /// the whole file either way, and the appended shape additionally
+    /// carries back the tail of `## Notes`, which ends with the entry
+    /// just written — the substance, the half a caller cannot see from
+    /// the response's `log_line`. The pointer half is already in the
+    /// response verbatim (`log_line`), so the tail need not show it.
+    /// The heading comes from the domain (`DailySection::Notes`), not a
+    /// literal here.
     #[tool(
-        description = "Write a section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda`, `Meeting` (case-insensitive); any other value is rejected as an invalid argument. The append-only history sections (`## Logs`, `## Notes`) are NOT writable here — they grow via `append_to_log`. With `append: false` (default) the section is replaced (the planning sections); with `append: true` the content is appended (live meeting notes that accrue). Creates the section (and the daily note) if absent. An empty `content` with `append: false` clears the section to just its heading. The prose written here follows the same linking convention as the log: wikilink the vault notes it names (`[[slug]]`) and give forge references markdown links, never a bare `#N`."
+        description = "Write worked-out substance (a derivation, a procedure, a page of reasoning) to a daily note (defaults to today) as one entry per call: `### <heading>` followed by `body`, appended under the day's `## Notes`. The pointer line `noted [[journal/<year>/daily/<date>#<heading>]] (<links>)`, listing the body's wikilinks, is written to `## Logs` for you in the same write, so do not log it again with `append_to_log`. Keep `## Logs` for one-line events and put the substance here. The heading must be unique within the day, must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), and must not contain `[`, `]`, `|`, `#` or inline markup (bold, italics, code) nor start with `^`; such headings are refused with code `history_entry_heading_invalid`. Deeper headings inside the body (`####` and below) are fine. Wikilink the vault notes the body names (`[[slug]]`). End an entry that could be reused beyond today with the tag `#concept` on the body's last line, so the review can find it as a candidate for promotion to a concept note. The returned `target` is the entry's anchored link: cite it as `[[<target>]]`, for example from a concept's `origin`."
+    )]
+    pub async fn note_to_daily(
+        &self,
+        Parameters(input): Parameters<NoteToDailyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let now = chrono::Local::now().naive_local();
+        let at = match input.date {
+            Some(date) => date.and_time(now.time()),
+            None => now,
+        };
+        let heading = input.heading.trim().to_owned();
+        if heading.is_empty() {
+            return Err(invalid_argument(
+                "heading",
+                "required: the entry's heading, written as `### <heading>` under `## Notes`",
+            ));
+        }
+        let body = input.body.trim().to_owned();
+        if body.is_empty() {
+            return Err(invalid_argument(
+                "body",
+                "required: the entry's substance; a one-line event belongs in `append_to_log`",
+            ));
+        }
+        let outcome = self
+            .with_vault(move |vault| vault.note_to_daily(at, &heading, &body))
+            .await?
+            .map_err(into_mcp_error)?;
+        let path = outcome.path.clone();
+        let response = NoteToDailyResponse::from(outcome);
+        self.verified_write_with(
+            path,
+            WriteShape::AppendedToSection(DailySection::Notes.heading()),
+            move |verification| NoteToDailyResponse {
+                verification: Some(verification),
+                ..response
+            },
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Write a section of the daily note (defaults to today). `section` is one of `Standup`, `Intention`, `Agenda`, `Meeting`, `Notes` (case-insensitive); any other value is rejected as an invalid argument. With `append: false` (default) the section is replaced (the planning sections); with `append: true` the content is appended (live meeting notes that accrue). `Notes` is append-only: it takes `append: true` only, and `append: false` is refused; to add one entry to it, use `note_to_daily`, which also writes the pointer line to `## Logs`. `## Logs` is not writable here at all -- it grows via `append_to_log`. Creates the section (and the daily note) if absent. An empty `content` with `append: false` clears the section to just its heading. The prose written here follows the same linking convention as the log: wikilink the vault notes it names (`[[slug]]`) and give forge references markdown links, never a bare `#N`."
     )]
     pub async fn upsert_daily_section(
         &self,
@@ -739,6 +802,19 @@ impl CuadernoServer {
             .unwrap_or_else(|| chrono::Local::now().date_naive());
         let section = DailySection::from_str(&input.section)
             .map_err(|reason| invalid_argument("section", &reason))?;
+        // The domain refuses this too (`history_section_not_replaceable`),
+        // but it is an argument-shape mistake the tool can name, with the
+        // tool that does what the caller most likely meant.
+        if section.is_history() && !input.append {
+            return Err(invalid_argument(
+                "append",
+                &format!(
+                    "`{}` is append-only: pass `append: true` to append to it; to add one \
+                     entry, use `note_to_daily`, which also writes its pointer line to `## Logs`",
+                    section.heading()
+                ),
+            ));
+        }
         let append = input.append;
         let path = self
             .with_vault(move |vault| {
