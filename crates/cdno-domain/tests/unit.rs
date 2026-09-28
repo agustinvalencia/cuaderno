@@ -33,4 +33,5 @@ mod unit {
     mod type_registry_tests;
     mod vault_tests;
     mod weekly_tests;
+    mod write_facets_tests;
 }

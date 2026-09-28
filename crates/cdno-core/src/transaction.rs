@@ -16,6 +16,7 @@
 //! leave the vault in a transient inconsistent state, which the
 //! startup reconciliation pass detects and fixes.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -83,7 +84,8 @@ enum IndexOp {
     RecordArchivalSnapshot(VaultPath, ArchivalSnapshot),
     /// Replace the FTS row for a note: `(path, title, body)`. Buffered
     /// explicitly only by reconciliation; ordinary writes get their FTS
-    /// row derived from the paired file write at commit (see `commit`).
+    /// row (and their tags and links facets) derived from the paired file
+    /// write at commit (see `commit`).
     ReplaceFts(VaultPath, Option<String>, String),
 }
 
@@ -288,6 +290,10 @@ impl VaultTransaction {
         // Phase 2: index ops. A failure here leaves files correct;
         // collect every error so the caller sees the full picture.
         let mut index_errors: Vec<IndexError> = Vec::new();
+        // The note paths wikilinks resolve against, for the facet seam
+        // below. Built lazily, once per commit, and only when some upsert
+        // has a paired write.
+        let mut link_targets: Option<HashSet<VaultPath>> = None;
         for op in &self.index_ops {
             let op_ok = match apply_index_op(&*self.index, op) {
                 Ok(()) => true,
@@ -318,10 +324,51 @@ impl VaultTransaction {
                 && let IndexOp::UpsertNote(entry) = op
                 && let Some(content) = latest_write_content(&self.file_ops, &entry.path)
             {
-                let body = Frontmatter::parse(content).map_or(content, |(_, body)| body);
+                let parsed = Frontmatter::parse(content).ok();
+                let body = parsed.as_ref().map_or(content, |(_, body)| *body);
                 let title = crate::extractors::first_h1(body);
                 if let Err(e) = self.index.replace_fts(&entry.path, title.as_deref(), body) {
                     index_errors.push(e);
+                }
+
+                // Same seam for the `tags` and `links` facets (#646). The
+                // commit stamps the file's real mtime and size on the row
+                // above, so reconcile's fast path skips this note from now
+                // on and would never re-derive them — an edge or tag added
+                // by an in-tool write has to land here or not at all. The
+                // extraction is the one reconcile uses
+                // (`extractors::extract_note_facets`), so the two agree.
+                //
+                // Both facets are always replaced, so nothing from the
+                // note's previous content survives the fresh stamp. An
+                // invalid `tags:` value (e.g. `tags: linalg`, a string
+                // rather than a list) affects only the tags facet: the links
+                // are staged as usual, and the tags fall back to the body's
+                // inline `#tags` alone, the part that still parses.
+                // Unparseable frontmatter leaves both facets as they were
+                // (FTS above is equally best-effort); a failed path query
+                // does too, and is reported as `IndexStale`.
+                if let Some((fm, body)) = &parsed {
+                    match link_targets_for(&mut link_targets, &*self.index, &self.file_ops) {
+                        Err(e) => index_errors.push(e),
+                        Ok(targets) => {
+                            let facets = crate::extractors::extract_note_facets(
+                                fm,
+                                &fm.as_json(),
+                                body,
+                                targets,
+                            );
+                            let tags = facets
+                                .tags
+                                .unwrap_or_else(|_| crate::extractors::extract_inline_tags(body));
+                            if let Err(e) = self.index.replace_tags(&entry.path, &tags) {
+                                index_errors.push(e);
+                            }
+                            if let Err(e) = self.index.replace_links(&entry.path, &facets.links) {
+                                index_errors.push(e);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -354,6 +401,45 @@ fn latest_write_content<'a>(file_ops: &'a [FileOp], path: &VaultPath) -> Option<
         FileOp::Write { path: p, content } if p == path => Some(content.as_str()),
         _ => None,
     })
+}
+
+/// The note paths a wikilink written in this transaction resolves
+/// against: every note the index holds, adjusted by this transaction's
+/// file ops so a note created (or deleted) alongside the linking note is
+/// already accounted for. After startup reconciliation the index's path
+/// set is reconcile's own `fs_set` less any file it could not parse, so an
+/// in-tool write resolves as a reindex would. Computed once per commit and
+/// cached in
+/// `cache`; the index query error, if any, is returned, and the caller
+/// skips the facets and reports it as `IndexStale`.
+fn link_targets_for<'a>(
+    cache: &'a mut Option<HashSet<VaultPath>>,
+    index: &dyn VaultIndex,
+    file_ops: &[FileOp],
+) -> Result<&'a HashSet<VaultPath>, IndexError> {
+    if cache.is_none() {
+        let mut paths: HashSet<VaultPath> = index.list_all_paths()?.into_iter().collect();
+        let is_md = |p: &VaultPath| p.as_path().extension() == Some(std::ffi::OsStr::new("md"));
+        for op in file_ops {
+            match op {
+                FileOp::Write { path, .. } | FileOp::Append { path, .. } if is_md(path) => {
+                    paths.insert(path.clone());
+                }
+                FileOp::Move { src, dest } => {
+                    paths.remove(src);
+                    if is_md(dest) {
+                        paths.insert(dest.clone());
+                    }
+                }
+                FileOp::Delete { path } => {
+                    paths.remove(path);
+                }
+                _ => {}
+            }
+        }
+        *cache = Some(paths);
+    }
+    Ok(cache.as_ref().expect("populated above"))
 }
 
 /// Apply a single file op, returning the undo information needed to

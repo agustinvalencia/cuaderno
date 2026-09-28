@@ -782,3 +782,85 @@ impl VaultStore for EditorRaceStore {
         self.inner.acquire_write_lock()
     }
 }
+
+// ---------------------------------------------------------------------
+// Link and tag facets are staged on the write (#646)
+// ---------------------------------------------------------------------
+
+const OTHER_PATH: &str = "concepts/other.md";
+
+/// A vault seeded as [`vault_with_index`] plus a second concept note at
+/// [`OTHER_PATH`] for the revised note to link to.
+fn vault_with_other_concept() -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    seed(&*store);
+    store
+        .write_file(
+            &vp(OTHER_PATH),
+            "---\ntype: concept\ncreated: 2026-09-01\n---\n\n# Other\n",
+        )
+        .unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _r) =
+        Vault::new(Arc::clone(&store), Arc::clone(&index), config()).expect("Vault::new");
+    (vault, store, index)
+}
+
+#[test]
+fn revision_adding_a_link_is_a_backlink_without_reconcile() {
+    let (vault, _store, _index) = vault_with_other_concept();
+    let path = vp(CONCEPT_PATH);
+    let other = vp(OTHER_PATH);
+    assert!(
+        !vault.read_note(&other).unwrap().backlinks.contains(&path),
+        "no edge before the revision"
+    );
+    let view = vault.read_note(&path).unwrap();
+
+    vault
+        .revise_note(
+            &path,
+            Some(&view.content_hash),
+            Revision::Section {
+                heading: "See also".to_owned(),
+                content: "- [[concepts/other]]".to_owned(),
+            },
+            "linked the other concept",
+            at(),
+        )
+        .expect("revise");
+
+    let backlinks = vault.read_note(&other).unwrap().backlinks;
+    assert!(
+        backlinks.contains(&path),
+        "the revised note links to the other concept: {backlinks:?}"
+    );
+}
+
+#[test]
+fn revision_adding_an_inline_tag_lands_in_the_tags_facet() {
+    let (vault, _store, index) = vault_with_index();
+    let path = vp(CONCEPT_PATH);
+    assert!(!index.find_by_tag("concept").unwrap().contains(&path));
+    let view = vault.read_note(&path).unwrap();
+
+    vault
+        .revise_note(
+            &path,
+            Some(&view.content_hash),
+            Revision::Section {
+                heading: "Why it matters".to_owned(),
+                content: "Cheap updates. #concept".to_owned(),
+            },
+            "tagged it",
+            at(),
+        )
+        .expect("revise");
+
+    assert!(
+        index.find_by_tag("concept").unwrap().contains(&path),
+        "the body tag is indexed on write"
+    );
+    // The frontmatter `tags:` list still merges in.
+    assert!(index.find_by_tag("linear-algebra").unwrap().contains(&path));
+}

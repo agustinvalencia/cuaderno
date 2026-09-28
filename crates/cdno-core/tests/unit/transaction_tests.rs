@@ -285,6 +285,159 @@ fn multiple_index_failures_are_all_collected() {
 }
 
 // ---------------------------------------------------------------------
+// Links and tags facets derived at the commit seam (#646)
+// ---------------------------------------------------------------------
+
+const LINKING_NOTE: &str = "---\ntype: concept\ntags: [algebra]\norigin: \"[[concepts/seed]]\"\n---\n\n# A\n\nSee [[concepts/b]] and [[missing]]. #idea\n";
+const LINKED_NOTE: &str = "---\ntype: concept\n---\n\n# B\n";
+
+#[test]
+fn upsert_with_paired_write_stages_links_and_tags() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let mut seed = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    seed.write_file(vp("concepts/seed.md"), LINKED_NOTE);
+    seed.upsert_note(sample_note("concepts/seed.md", "concept"));
+    seed.commit().unwrap();
+
+    // The linking note is staged *before* the note it links to, in the
+    // same transaction: the link still resolves, because the path set
+    // accounts for this transaction's own writes.
+    let mut tx = VaultTransaction::new(store.clone(), index.clone()).expect("write lock");
+    tx.write_file(vp("concepts/a.md"), LINKING_NOTE);
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.write_file(vp("concepts/b.md"), LINKED_NOTE);
+    tx.upsert_note(sample_note("concepts/b.md", "concept"));
+    tx.commit().unwrap();
+
+    let a = vp("concepts/a.md");
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/b.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/seed.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert_eq!(index.find_by_tag("idea").unwrap(), vec![a.clone()]);
+    assert_eq!(index.find_by_tag("algebra").unwrap(), vec![a.clone()]);
+
+    // The seam agrees with reconcile: a full reindex of the same files
+    // into a fresh index derives exactly the same facet rows.
+    let fresh: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    cdno_core::reconcile::reconcile(&store, &fresh, &cdno_core::config::IgnoreSet::empty())
+        .unwrap();
+    assert_eq!(
+        index.find_outgoing_links(&a).unwrap(),
+        fresh.find_outgoing_links(&a).unwrap()
+    );
+    assert_eq!(
+        index.find_by_tag("idea").unwrap(),
+        fresh.find_by_tag("idea").unwrap()
+    );
+}
+
+#[test]
+fn invalid_tags_field_still_stages_links() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let a = vp("concepts/a.md");
+    // A stale edge and tag from the note's previous content: both must be
+    // replaced even though the new `tags:` is a string, not a list.
+    index
+        .replace_links(
+            &a,
+            &[LinkEntry {
+                target_raw: "concepts/old".to_owned(),
+                resolved_path: Some(vp("concepts/old.md")),
+                label: None,
+            }],
+        )
+        .unwrap();
+    index.replace_tags(&a, &["stale".to_owned()]).unwrap();
+
+    let mut tx = VaultTransaction::new(store, index.clone()).expect("write lock");
+    tx.write_file(vp("concepts/b.md"), LINKED_NOTE);
+    tx.upsert_note(sample_note("concepts/b.md", "concept"));
+    tx.write_file(
+        a.clone(),
+        "---\ntype: concept\ntags: linalg\n---\n\n# A\n\nSee [[concepts/b]]. #idea\n",
+    );
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.commit().unwrap();
+
+    // An invalid `tags:` affects only the tags facet.
+    assert_eq!(
+        index.find_backlinks(&vp("concepts/b.md")).unwrap(),
+        vec![a.clone()]
+    );
+    assert!(
+        index
+            .find_backlinks(&vp("concepts/old.md"))
+            .unwrap()
+            .is_empty()
+    );
+    // Tags fall back to the body's inline tags alone.
+    assert_eq!(index.find_by_tag("idea").unwrap(), vec![a.clone()]);
+    assert!(index.find_by_tag("stale").unwrap().is_empty());
+    assert!(index.find_by_tag("linalg").unwrap().is_empty());
+}
+
+#[test]
+fn failed_path_query_is_reported_as_index_stale() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let backing_index = Arc::new(MemoryIndex::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(FailingIndex::new(
+        backing_index.clone(),
+        FailPoint::ListAllPaths,
+    ));
+
+    let mut tx = VaultTransaction::new(store, index).expect("write lock");
+    tx.write_file(vp("concepts/a.md"), LINKING_NOTE);
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+
+    // The facets cannot be resolved without the path set; the commit says
+    // so rather than returning `Ok` over the note's stale facet rows.
+    match tx.commit().unwrap_err() {
+        TransactionError::IndexStale(errs) => assert_eq!(errs.len(), 1),
+        other => panic!("unexpected error: {other:?}"),
+    }
+    // The row itself landed; only the facets were skipped.
+    assert!(
+        backing_index
+            .find_by_path(&vp("concepts/a.md"))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        backing_index
+            .find_outgoing_links(&vp("concepts/a.md"))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn upsert_without_paired_write_leaves_facets_alone() {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let a = vp("concepts/a.md");
+    let links = vec![LinkEntry {
+        target_raw: "x".to_owned(),
+        resolved_path: None,
+        label: None,
+    }];
+    index.replace_links(&a, &links).unwrap();
+
+    // Reconcile's re-stamp shape: an upsert with no file write.
+    let mut tx = VaultTransaction::new(store, index.clone()).expect("write lock");
+    tx.upsert_note(sample_note("concepts/a.md", "concept"));
+    tx.commit().unwrap();
+
+    assert_eq!(index.find_outgoing_links(&a).unwrap(), links);
+}
+
+// ---------------------------------------------------------------------
 // Test doubles
 // ---------------------------------------------------------------------
 
@@ -366,6 +519,8 @@ impl VaultStore for FailingStore {
 enum FailPoint {
     UpsertNote,
     AlwaysFail,
+    /// Only the `list_all_paths` read fails; every write passes through.
+    ListAllPaths,
 }
 
 struct FailingIndex {
@@ -382,6 +537,7 @@ impl FailingIndex {
         match self.mode {
             FailPoint::UpsertNote => is_upsert_note,
             FailPoint::AlwaysFail => true,
+            FailPoint::ListAllPaths => false,
         }
     }
 }
@@ -406,6 +562,9 @@ impl VaultIndex for FailingIndex {
         self.inner.list_by_type(note_type)
     }
     fn list_all_paths(&self) -> Result<Vec<VaultPath>, IndexError> {
+        if matches!(self.mode, FailPoint::ListAllPaths) {
+            return Err(IndexError::Query("forced test failure".to_owned()));
+        }
         self.inner.list_all_paths()
     }
     fn list_candidates(&self) -> Result<Vec<NoteCandidate>, IndexError> {
