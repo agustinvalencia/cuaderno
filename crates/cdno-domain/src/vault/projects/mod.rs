@@ -226,31 +226,38 @@ impl Vault {
         Ok((location.path, doc))
     }
 
-    /// Resolve a project slug to a map that may be closed: an active map at
-    /// `projects/<slug>.md` or a parked one at `projects/_parked/<slug>.md`,
-    /// folder and frontmatter agreeing (RFC 0004 §5.1). Anything else,
-    /// including a map already closed, is `ProjectNotActive` carrying its
-    /// status.
+    /// Resolve a project slug to a map a closing verb may act on, folder
+    /// and frontmatter agreeing: an active map at `projects/<slug>.md`, a
+    /// parked one at `projects/_parked/<slug>.md` (RFC 0004 §5.1), or a
+    /// closed one under `projects/_done/<year>/`, whose outcome the caller
+    /// may switch (§5.7). Anything else, such as a map hand-marked
+    /// `completed` under `projects/`, is `ProjectNotActive` carrying its
+    /// status: a verb that closed it would log, dated today, an ending it
+    /// never saw (Q4).
     pub(super) fn resolve_closable_project(
         &self,
         slug: &str,
-    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+    ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
         let location = self.locate_project(slug)?;
-        let expected = match location.frontmatter.status {
-            ProjectStatus::Active => Some(cdno_core::paths::PROJECTS),
-            ProjectStatus::Parked => Some(cdno_core::paths::PROJECTS_PARKED),
-            ProjectStatus::Completed | ProjectStatus::Dropped => None,
-        };
-        let in_place = match expected {
-            Some(folder) => location.path == VaultPath::new(format!("{folder}/{slug}.md"))?,
-            None => false,
+        let in_place = match location.frontmatter.status {
+            ProjectStatus::Active => {
+                location.path
+                    == VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?
+            }
+            ProjectStatus::Parked => {
+                location.path
+                    == VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?
+            }
+            ProjectStatus::Completed | ProjectStatus::Dropped => {
+                is_closed_project_path(&location.path)
+            }
         };
         if !in_place {
             return Err(not_active(slug, &location.frontmatter));
         }
 
         let doc = MarkdownDocument::parse(location.raw)?;
-        Ok((location.path, doc))
+        Ok((location.path, doc, location.frontmatter))
     }
 
     /// Resolve a project slug to its file plus parsed markdown plus

@@ -40,7 +40,7 @@ pub enum DomainError {
         closed: Option<chrono::NaiveDate>,
     },
 
-    #[error("project is not parked: {0}")]
+    #[error("project is not parked or closed: {0}")]
     ProjectNotParked(String),
 
     #[error("commitment is not active: {0}")]

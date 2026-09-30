@@ -25,7 +25,7 @@ use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
 use super::milestones::stage_milestone_index_rows;
 use super::{
-    MILESTONES_SECTION, is_under_projects_done, project_slug_from_path,
+    MILESTONES_SECTION, is_closed_project_path, is_under_projects_done, project_slug_from_path,
     rewrite_field_in_frontmatter,
 };
 
@@ -231,8 +231,9 @@ impl Vault {
         Ok(parked_path)
     }
 
-    /// Move a parked project back to `projects/`, flipping its
-    /// frontmatter `status` from `parked` to `active`. Enforces the
+    /// Move a parked or closed project back to `projects/`, flipping its
+    /// frontmatter `status` to `active` and clearing `closed:`, so it can be
+    /// closed again with a fresh date (RFC 0004 §5.7). Enforces the
     /// active-project cap: if activating would exceed
     /// `config.max_active_projects` (default 5), returns
     /// [`DomainError::ProjectCapReached`] with the slugs of the
@@ -241,9 +242,10 @@ impl Vault {
     ///
     /// Errors:
     /// - `ProjectCapReached` — at or above the cap.
-    /// - `ProjectNotParked` — file lives at `projects/<slug>.md` (the
-    ///   active folder) or its frontmatter `status` is anything other
-    ///   than `parked`.
+    /// - `ProjectNotParked` — the map is neither parked at
+    ///   `projects/_parked/<slug>.md` nor closed (`completed` or
+    ///   `dropped`) under `projects/_done/<year>/`: it is already active,
+    ///   or its status and folder disagree.
     /// - `Store(NotFound)` — slug doesn't resolve to any folder.
     /// - `AmbiguousProject` — the slug exists at more than one location.
     /// - `Store(AlreadyExists)` — `projects/<slug>.md` is occupied
@@ -271,15 +273,21 @@ impl Vault {
             });
         }
 
-        // Located from the disk. A project that is not in `_parked/`, or
-        // whose frontmatter is not `parked`, is `ProjectNotParked`; a
-        // missing one is `Store(NotFound)`. (Reactivating from `_done/`
-        // is a later change.)
+        // Located from the disk. A map that is not parked in `_parked/` or
+        // closed under `_done/<year>/`, folder and status agreeing, is
+        // `ProjectNotParked`; a missing one is `Store(NotFound)`.
         let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-        if location.path != parked_path || location.frontmatter.status != ProjectStatus::Parked {
+        let reactivatable = match location.frontmatter.status {
+            ProjectStatus::Parked => location.path == parked_path,
+            ProjectStatus::Completed | ProjectStatus::Dropped => {
+                is_closed_project_path(&location.path)
+            }
+            ProjectStatus::Active => false,
+        };
+        if !reactivatable {
             return Err(DomainError::ProjectNotParked(slug.to_owned()));
         }
         if self.store.exists(&active_path)? {
@@ -289,18 +297,23 @@ impl Vault {
         }
 
         let doc = MarkdownDocument::parse(location.raw)?;
-        let new_content =
+        let mut new_content =
             rewrite_field_in_frontmatter(doc.render(), "status", ProjectStatus::Active.as_str())?;
+        // Only a map that carries a date has a key to clear; a pre-RFC map
+        // without `closed:` is left without one, which reads the same.
+        if location.frontmatter.closed.is_some() {
+            new_content = rewrite_field_in_frontmatter(&new_content, "closed", "null")?;
+        }
         let entry_meta =
             build_index_entry_for(&active_path, &new_content, NoteType::Project.as_str())?;
 
         let log_entry = format!("project [[{slug}]] activated");
 
         tx.write_file(active_path.clone(), new_content);
-        tx.delete_file(parked_path.clone());
+        tx.delete_file(location.path.clone());
         tx.upsert_note(entry_meta);
         stage_moved_milestone_rows(&active_path, &doc, &mut tx);
-        tx.remove_note(parked_path);
+        tx.remove_note(location.path);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
