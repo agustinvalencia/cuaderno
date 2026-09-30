@@ -410,6 +410,30 @@ impl From<DailyLogLine> for DailyLogLineDto {
     }
 }
 
+/// A project that ended inside a review window (RFC 0004): completed (the
+/// work was done) or dropped (it is not going to happen).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ClosedProjectDto {
+    pub slug: String,
+    pub title: String,
+    pub context: String,
+    /// `"completed"` or `"dropped"`.
+    pub outcome: String,
+    pub closed_on: NaiveDate,
+}
+
+impl From<cdno_domain::ClosedProjectEntry> for ClosedProjectDto {
+    fn from(e: cdno_domain::ClosedProjectEntry) -> Self {
+        Self {
+            slug: e.slug,
+            title: e.title,
+            context: e.context.as_str().to_owned(),
+            outcome: e.outcome.as_str().to_owned(),
+            closed_on: e.closed_on,
+        }
+    }
+}
+
 /// One completed action, in either form it can take.
 ///
 /// `slug` and `path` are null for an inline bullet, which never had a
@@ -588,6 +612,8 @@ pub struct WeeklyContextDto {
     pub week_of: NaiveDate,
     pub logs: Vec<DailyLogLineDto>,
     pub completed_actions: Vec<CompletedActionEntryDto>,
+    /// Projects completed or dropped this week, by closing date.
+    pub closed_projects: Vec<ClosedProjectDto>,
     pub state_changes: Vec<ProjectStateChangeDto>,
     /// Commitments in the next two weeks (design §11 explicit
     /// figure). Overdue rows from the standing 30-day look-back
@@ -623,6 +649,11 @@ pub struct MonthlyContextDto {
     /// Everything completed in the past 30 days, oldest-first, in both
     /// forms: action notes and inline bullets (#586).
     pub completed_actions: Vec<CompletedActionEntryDto>,
+    /// Projects completed or dropped in the past 30 days, by closing
+    /// date.
+    pub closed_projects: Vec<ClosedProjectDto>,
+    /// Every parked project: the shelf the monthly review decides on.
+    pub parked_projects: Vec<ProjectListEntryDto>,
     /// Every question with `status: active`, sorted by (domain, slug).
     pub active_questions: Vec<QuestionSummaryDto>,
     /// Every portfolio with its evidence count and staleness.

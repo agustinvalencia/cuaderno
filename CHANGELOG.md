@@ -30,6 +30,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   dropped projects under `closed`, each with its `closed` date; `get_project_context` reads a
   closed project, and the `activate_project` description covers bringing one back (RFC 0004,
   #688).
+- MCP `get_weekly_context` carries `closed_projects`, the projects completed or dropped that
+  week, and `get_monthly_context` carries them for its 30 days plus `parked_projects`, so a review
+  sees what ended and what is on the shelf without reading the log (RFC 0004, #689).
 
 ### Changed
 

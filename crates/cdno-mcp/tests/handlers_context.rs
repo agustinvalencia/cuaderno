@@ -2122,3 +2122,81 @@ async fn get_project_context_reads_a_closed_project() {
     assert_eq!(value["frontmatter"]["closed"], "2026-09-01");
     assert!(value["body_markdown"].as_str().unwrap().contains("# Beta"));
 }
+
+/// A vault with one project completed today, one dropped 40 days ago (out
+/// of both windows), one parked, and one active.
+fn server_with_review_projects() -> CuadernoServer {
+    let now = today().and_hms_opt(9, 0, 0).unwrap();
+    let long_ago = (today() - chrono::Duration::days(40))
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    let let_go = || cdno_domain::OpenItems::Drop {
+        expected: None,
+        hash_required: false,
+    };
+    server_with(move |v| {
+        for title in ["Shipped", "Old", "Shelved", "Live"] {
+            v.create_project(long_ago, title, Context::Work, None)
+                .unwrap();
+        }
+        // Clear the template's open items without a cascade: drop, then
+        // switch to completed today.
+        v.drop_project(long_ago, "shipped", None, let_go()).unwrap();
+        v.complete_project(now, "shipped").unwrap();
+        v.drop_project(long_ago, "old", None, let_go()).unwrap();
+        v.park_project(now, "shelved").unwrap();
+    })
+}
+
+#[tokio::test]
+async fn get_weekly_context_includes_closed_projects() {
+    let server = server_with_review_projects();
+
+    let value = decode_json(
+        &server
+            .get_weekly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_weekly_context"),
+    );
+
+    let closed = value["closed_projects"].as_array().unwrap();
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert_eq!(closed[0]["slug"], "shipped");
+    assert_eq!(closed[0]["title"], "Shipped");
+    assert_eq!(closed[0]["outcome"], "completed");
+    assert_eq!(
+        closed[0]["closed_on"],
+        today().format("%Y-%m-%d").to_string()
+    );
+}
+
+#[tokio::test]
+async fn get_monthly_context_includes_parked_and_closed_projects() {
+    let server = server_with_review_projects();
+
+    let value = decode_json(
+        &server
+            .get_monthly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_monthly_context"),
+    );
+
+    let closed: Vec<&str> = value["closed_projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(closed, vec!["shipped"], "the 40-day-old drop is outside");
+    let parked: Vec<&str> = value["parked_projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(parked, vec!["shelved"]);
+    assert_eq!(
+        value["parked_projects"][0]["frontmatter"]["status"],
+        "parked"
+    );
+}
