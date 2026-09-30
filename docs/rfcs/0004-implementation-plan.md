@@ -176,7 +176,7 @@ candidates: Vec<VaultPath> }`, a new variant with its own message. Zero hits: `S
 with `available_projects_hint`. Then rewrite every two-path probe onto it: `resolve_active_project`,
 `resolve_any_project` (`projects/mod.rs`), `update_project_state` (`projects/state.rs`),
 `get_project_full` (`context.rs`), `resolve_project_path` (`commitments.rs`), `available_projects_hint`
-(labels `(parked)`, `(completed)`, `(dropped)`), `activate_project` (`projects/lifecycle.rs`),
+(labels `(parked)` and `(closed)`: the hint is built from the index without reading files), `activate_project` (`projects/lifecycle.rs`),
 `project_summary`, and the project-only branch of `note_ref::narrow` (reads keep the documented
 active-beats-parked rule; writes refuse). `commitments()` builds its stem-to-path map once per
 call instead of probing per action note. Because `classify` in `crates/cdno-mcp/src/rejection.rs`

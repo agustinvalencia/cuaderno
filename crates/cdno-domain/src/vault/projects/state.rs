@@ -21,9 +21,9 @@ impl Vault {
     /// transaction.
     ///
     /// `slug` identifies the project (matching the CLI surface,
-    /// `cdno project state <slug> "..."`). Lookup is unambiguous
-    /// because slug uniqueness spans `projects/`,
-    /// `projects/_parked/` and `projects/_done/<year>/`. Resolves errors as:
+    /// `cdno project state <slug> "..."`), located on disk across
+    /// `projects/`, `projects/_parked/` and `projects/_done/<year>/`.
+    /// Resolves errors as:
     /// - the project is not both directly at `projects/<slug>.md` **and**
     ///   `status: active` in its frontmatter (a parked or closed project,
     ///   or a hand-edited map whose folder and status disagree) →
@@ -56,7 +56,7 @@ impl Vault {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         // Resolved from the disk: parked, closed and misfiled maps are
         // `ProjectNotActive`, a missing slug is `Store(NotFound)`, and
-        // the frontmatter (not the folder) is trusted for status.
+        // folder and frontmatter must both say active.
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let old_state = doc.section(CURRENT_STATE_SECTION)?.trim().to_owned();
