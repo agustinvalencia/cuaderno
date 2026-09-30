@@ -597,17 +597,20 @@ mod tests {
                     text: "Run feature set B (deep)".into(),
                     note: None,
                     note_status: None,
+                    line: 0,
                 },
                 OpenAction {
                     text: "[[actions/characterise-kan]] (deep)".into(),
                     note: Some("characterise-kan".into()),
                     note_status: Some(ActionStatus::Active),
+                    line: 1,
                 },
             ],
             milestones: vec![OpenMilestone {
                 title: "ICML paper submitted".into(),
                 date: Some(day(22)),
                 hard: true,
+                line: 0,
             }],
             untouched_commitments: vec![LinkedCommitment {
                 slug: "reviewer-report".into(),

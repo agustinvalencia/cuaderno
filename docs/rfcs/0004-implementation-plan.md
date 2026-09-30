@@ -495,7 +495,11 @@ must be present** (a `bool` on the domain call, true for MCP, false for the CLI'
 `_done` destination first (each attached note's, then the project's) and refuse on any
 collision before staging anything; dedupe attached slugs; skip an attached note whose status is
 not `Active`; remove each open bullet and each open milestone (with continuation lines) through
-the T9 helpers on the one document; `stage_action_archival(…, Closure::Dropped, …)` for each
+the T9 helpers on the one document, at the `line` index each report entry carries (the report
+picks lines with the verbs' own predicates, so the cascade removes exactly what was listed);
+work from the highest index down so earlier removals do not shift later ones, and treat an
+indented `- [ ]` milestone that the removal of its parent already consumed as a continuation
+line, not a second removal; `stage_action_archival(…, Closure::Dropped, …)` for each
 distinct active attached note; then the T10 steps. The single `stage_daily_logs` call carries
 one line per dropped child, children first — `format_action_dropped_log_entry(slug, text,
 Some(reason))` and `format_milestone_dropped_log_entry(slug, title, Some(reason))` with reason
@@ -597,7 +601,7 @@ with a picker over active and parked projects (labelled); `--reason` never promp
 milestones with their date, "Still open, not touched:" for linked commitments, the two
 sentences of advice); interactive — `prompt_confirm("Let these N go and complete <slug>?",
 false)`, on yes retry with `Drop { expected: Some(hash) }`; non-interactive — exit 1, and under
-`--json` print the same object the MCP rejection carries (T16's shape) on stdout. Success:
+`--json` print the same object the MCP rejection carries (T8's shape) on stdout. Success:
 "Completed <slug>. N of M slots in use." (+ " Let go: 2 actions, 1 milestone." when the cascade
 ran); "Dropped <slug>. …" for a drop. `--drop-open` calls with `expected: None` and the
 "required" flag false. The word "abandoned" appears nowhere.
