@@ -169,6 +169,15 @@ impl Vault {
                 issues.push(LintIssue::error(path.clone(), msg));
             }
 
+            // Project status against folder (RFC 0004 §6.2). The locator
+            // trusts the frontmatter, so a map whose status disagrees with
+            // its folder is unreachable by the verb its folder suggests:
+            // an Error. A missing or stray `closed:` trips nothing (the
+            // review query only skips the row): a Warning.
+            if entry.note_type == "project" {
+                issues.extend(project_status_issues(&path, &entry.frontmatter));
+            }
+
             // Attachment stub ↔ artefact-folder pairing, forward
             // direction (#154). An evidence note carrying a `kind`
             // field is an attachment stub: it links a non-markdown
@@ -1098,4 +1107,74 @@ fn check_append_only(
         ));
     }
     Ok(None)
+}
+
+/// The fix a map closed outside `projects/_done/<year>/` needs. Only the
+/// user knows when it ended, so no verb repairs it: a verb would have to
+/// invent the date and log, dated today, an ending it never saw.
+const CLOSED_OUTSIDE_DONE_FIX: &str = "move the map to `projects/_done/<year>/` and set \
+                                       `closed: <date>`, or set `status: active` and close it \
+                                       with `cdno project complete`";
+
+/// The status/folder and `closed:` rows for one project map.
+fn project_status_issues(path: &VaultPath, frontmatter: &serde_json::Value) -> Vec<LintIssue> {
+    let field = |key: &str| frontmatter.as_object().and_then(|o| o.get(key));
+    let Some(status) = field("status").and_then(|v| v.as_str()) else {
+        return Vec::new();
+    };
+    let closed = field("closed").filter(|v| !v.is_null());
+    let parent = path.as_path().parent();
+    let in_folder = |folder: &str| parent == Some(std::path::Path::new(folder));
+
+    let mut issues = Vec::new();
+    match status {
+        "active" => {
+            if !in_folder(cdno_core::paths::PROJECTS) {
+                issues.push(LintIssue::error(
+                    path.clone(),
+                    "project says `status: active` but is not at `projects/<slug>.md`; move it \
+                     there, or set the status its folder stands for",
+                ));
+            }
+        }
+        "parked" => {
+            if !in_folder(cdno_core::paths::PROJECTS_PARKED) {
+                issues.push(LintIssue::error(
+                    path.clone(),
+                    "project says `status: parked` but is not in `projects/_parked/`; move it \
+                     there, or set the status its folder stands for",
+                ));
+            }
+        }
+        "completed" | "dropped" => {
+            if !super::projects::is_closed_project_path(path) {
+                issues.push(LintIssue::error(
+                    path.clone(),
+                    format!(
+                        "project says `status: {status}` but is not under \
+                         `projects/_done/<year>/`; {CLOSED_OUTSIDE_DONE_FIX}"
+                    ),
+                ));
+            }
+        }
+        _ => return issues,
+    }
+    match (status, closed) {
+        ("completed" | "dropped", None) => issues.push(LintIssue::warning(
+            path.clone(),
+            format!(
+                "project is `{status}` but has no `closed:` date, so the reviews cannot place \
+                 it; set `closed: <date>`"
+            ),
+        )),
+        ("active" | "parked", Some(date)) => issues.push(LintIssue::warning(
+            path.clone(),
+            format!(
+                "project is `{status}` but carries `closed: {}`; set `closed: null`",
+                date.as_str().unwrap_or("?")
+            ),
+        )),
+        _ => {}
+    }
+    issues
 }

@@ -110,7 +110,7 @@ pub(in crate::vault) fn is_under_projects_done(path: &VaultPath) -> bool {
 }
 
 /// Whether `path` is a map under `projects/_done/<year>/`.
-fn is_closed_project_path(path: &VaultPath) -> bool {
+pub(in crate::vault) fn is_closed_project_path(path: &VaultPath) -> bool {
     let p = path.as_path();
     let Some(year_dir) = p.parent() else {
         return false;
