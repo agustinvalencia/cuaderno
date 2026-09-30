@@ -9,8 +9,8 @@
 //! A project with an open action or milestone is refused with the open
 //! items listed (§5.3). `complete_project` never lets them go: completion is
 //! a claim that the work is done, so each item is completed or dropped
-//! first (D11). `drop_project` may, on explicit request (`OpenItems::Drop`,
-//! the cascade).
+//! first (D11). `drop_project` may, on explicit request (`OpenItems::Drop`),
+//! drop them with it: the cascade, in the same transaction, or nothing.
 
 use std::collections::HashMap;
 
@@ -18,10 +18,11 @@ use chrono::{Datelike, NaiveDateTime};
 use serde_json::Value;
 
 use cdno_core::error::StoreError;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::ProjectStatus;
+use crate::frontmatter::{ActionStatus, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
@@ -31,9 +32,13 @@ use super::super::frontmatter_edit::merge_fields_into_frontmatter;
 use super::super::index_entry::build_index_entry_for;
 use super::super::normalise::reorder_frontmatter;
 use super::super::write_outcome::WriteOutcome;
-use super::actions::{LOG_REASON_KEY, flatten_reason};
+use super::actions::{
+    LOG_REASON_KEY, flatten_reason, format_action_dropped_log_entry, remove_action_line,
+};
 use super::lifecycle::stage_moved_milestone_rows;
-use super::open_items::{LinkedCommitment, OpenItems};
+use super::milestones::{format_milestone_dropped_log_entry, remove_milestone_block};
+use super::open_items::{LinkedCommitment, OpenItems, OpenItemsReport};
+use super::{MILESTONES_SECTION, NEXT_ACTIONS_SECTION};
 
 /// What closing a project did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +92,17 @@ impl Vault {
     /// surface) the call is refused with them listed, like
     /// [`complete_project`](Self::complete_project).
     ///
-    /// Errors: as `complete_project`.
+    /// `OpenItems::Drop` cascades, in the same transaction: every open
+    /// bullet and milestone the report lists leaves the map, each attached
+    /// action note not already closed is archived as dropped (blocked
+    /// included, RFC 0004 D12), and each gets its own `… dropped on` line
+    /// with `reason: project dropped` (plus the project's reason in
+    /// parentheses) before the project's line. The call is refused with
+    /// the fresh report instead when `expected` differs from its hash, or
+    /// is absent while `hash_required` (D10).
+    ///
+    /// Errors: as `complete_project`, plus `Store(AlreadyExists)` when an
+    /// attached note's `actions/_done/<year>/` path is occupied.
     pub fn drop_project(
         &self,
         at: NaiveDateTime,
@@ -107,24 +122,58 @@ impl Vault {
         open_items: OpenItems,
     ) -> Result<ProjectClosureOutcome, DomainError> {
         // The lock is held from before the first read to the commit, so the
-        // report the refusal shows is the state the close acts on.
+        // report the refusal shows, and the hash a cascade is checked
+        // against, is the state the close acts on.
         let mut tx = self.transaction()?;
-        let (path, doc) = self.resolve_closable_project(slug)?;
+        let (path, mut doc) = self.resolve_closable_project(slug)?;
 
         let report = self.open_items_report(&doc, slug)?;
-        if !report.is_empty() {
-            // The cascade (`OpenItems::Drop` on a drop) is not implemented
-            // yet, so any open item refuses, whatever was asked.
-            let _ = open_items;
+        if !report.is_empty() && !cascade_confirmed(closure, &open_items, &report) {
             return Err(DomainError::ProjectHasOpenItems {
                 slug: slug.to_owned(),
                 report,
             });
         }
+        let today = at.date();
+
+        // The cascade (a confirmed drop with open items; a no-op otherwise).
+        // Each open line the report listed leaves the map, and each attached
+        // note still in play is archived as dropped (RFC 0004 D12: blocked
+        // included). A note already closed by hand stays where it is: its
+        // bullet goes, but archiving it would restamp a completed note as
+        // dropped.
+        remove_open_items(&mut doc, &report)?;
+        let mut archived: Vec<&str> = Vec::new();
+        for action in &report.actions {
+            let (Some(note), Some(status)) = (action.note.as_deref(), action.note_status) else {
+                continue;
+            };
+            if matches!(status, ActionStatus::Completed | ActionStatus::Dropped)
+                || archived.contains(&note)
+            {
+                continue;
+            }
+            archived.push(note);
+        }
+
+        // A collision anywhere refuses with nothing written: staging only
+        // buffers, and `stage_action_archival` refuses an occupied
+        // `actions/_done/` path itself, so an error before `commit` leaves
+        // every file and index row as it was. The locator already refuses a
+        // slug with a map at the map's destination (`AmbiguousProject`), so
+        // the check below only guards a file written behind the lock's back.
+        let dest = VaultPath::new(format!(
+            "{}/{slug}.md",
+            cdno_core::paths::projects_done_dir(today.year())
+        ))?;
+        if self.store.exists(&dest)? {
+            return Err(DomainError::Store(StoreError::AlreadyExists(
+                dest.to_string(),
+            )));
+        }
 
         // Stamp the document already in hand, not a fresh read: the cascade
-        // edits it before this point, and re-reading would discard them.
-        let today = at.date();
+        // edited it above, and re-reading would discard the edits.
         let status = match closure {
             Closure::Completed => ProjectStatus::Completed,
             Closure::Dropped => ProjectStatus::Dropped,
@@ -146,38 +195,111 @@ impl Vault {
         )?;
         let new_content = reorder_frontmatter(&stamped, &order).unwrap_or(stamped);
 
-        // The locator already refuses a slug with a map at the destination
-        // (`AmbiguousProject`), so this only guards a file written behind
-        // the lock's back. Checked before anything is staged.
-        let dest = VaultPath::new(format!(
-            "{}/{slug}.md",
-            cdno_core::paths::projects_done_dir(today.year())
-        ))?;
-        if self.store.exists(&dest)? {
-            return Err(DomainError::Store(StoreError::AlreadyExists(
-                dest.to_string(),
-            )));
-        }
-
         let entry_meta = build_index_entry_for(&dest, &new_content, NoteType::Project.as_str())?;
         let title = body_title_or_slug(&new_content, slug).to_owned();
-        let log_entry = format_project_closed_log_entry(closure, slug, &title, reason);
 
+        // One line per dropped child, children first, each carrying why it
+        // went, then the project's own line; one daily-note write.
+        let child_reason = match reason.map(str::trim).filter(|r| !r.is_empty()) {
+            Some(reason) => format!("{CASCADE_REASON} ({reason})"),
+            None => CASCADE_REASON.to_owned(),
+        };
+        let mut log_entries: Vec<String> = Vec::new();
+        for action in &report.actions {
+            log_entries.push(format_action_dropped_log_entry(
+                slug,
+                &action.text,
+                Some(&child_reason),
+            ));
+        }
+        for milestone in &report.milestones {
+            log_entries.push(format_milestone_dropped_log_entry(
+                slug,
+                &milestone.title,
+                Some(&child_reason),
+            ));
+        }
+        log_entries.push(format_project_closed_log_entry(
+            closure, slug, &title, reason,
+        ));
+        let log_refs: Vec<&str> = log_entries.iter().map(String::as_str).collect();
+
+        for note in &archived {
+            self.stage_action_archival(at, note, Closure::Dropped, &mut tx)?;
+        }
         tx.write_file(dest.clone(), new_content);
         tx.delete_file(path.clone());
         tx.upsert_note(entry_meta);
         stage_moved_milestone_rows(&dest, &doc, &mut tx);
         tx.remove_note(path);
-        self.stage_daily_log(at, &log_entry, &mut tx)?;
+        self.stage_daily_logs(at, &log_refs, &mut tx)?;
         let touched = tx.commit()?;
 
         Ok(ProjectClosureOutcome {
             outcome: WriteOutcome::written(dest, touched),
-            dropped_actions: Vec::new(),
-            dropped_milestones: Vec::new(),
+            dropped_actions: report.actions.into_iter().map(|a| a.text).collect(),
+            dropped_milestones: report.milestones.into_iter().map(|m| m.title).collect(),
             untouched_commitments: report.untouched_commitments,
         })
     }
+}
+
+/// The reason each cascaded child's log line carries, with the project's
+/// own reason appended in parentheses when there is one.
+const CASCADE_REASON: &str = "project dropped";
+
+/// Whether a close may go ahead over the open items in `report`. Only a
+/// drop cascades (a completion never does, RFC 0004 D11), and only on an
+/// explicit `OpenItems::Drop` whose hash, when present, matches the fresh
+/// report, and is present when the caller said it must be (D10).
+fn cascade_confirmed(closure: Closure, open_items: &OpenItems, report: &OpenItemsReport) -> bool {
+    match (closure, open_items) {
+        (
+            Closure::Dropped,
+            OpenItems::Drop {
+                expected,
+                hash_required,
+            },
+        ) => match expected {
+            Some(hash) => *hash == report.hash(),
+            None => !hash_required,
+        },
+        _ => false,
+    }
+}
+
+/// Remove every open line `report` lists from `doc`, through the same
+/// section edits `drop_action` and `drop_milestone` make, at the index each
+/// entry carries (the report picked them with the verbs' own predicates).
+///
+/// Each section is edited from its highest listed index down, so a removal
+/// never shifts a line still to be removed. That order also settles nested
+/// milestones: an indented open `- [ ]` under an open parent sits below it,
+/// so it goes (as its own listed item) before its parent's block is cut,
+/// and the parent never takes it along as a continuation line.
+fn remove_open_items(
+    doc: &mut MarkdownDocument,
+    report: &OpenItemsReport,
+) -> Result<(), DomainError> {
+    if !report.actions.is_empty() {
+        let mut lines: Vec<usize> = report.actions.iter().map(|a| a.line).collect();
+        lines.sort_unstable_by(|a, b| b.cmp(a));
+        let mut section = doc.section(NEXT_ACTIONS_SECTION)?.to_owned();
+        for idx in lines {
+            section = remove_action_line(&section, idx);
+        }
+        doc.replace_section(NEXT_ACTIONS_SECTION, &section)?;
+    }
+    if !report.milestones.is_empty() {
+        let mut lines: Vec<usize> = report.milestones.iter().map(|m| m.line).collect();
+        lines.sort_unstable_by(|a, b| b.cmp(a));
+        let mut section = doc.section(MILESTONES_SECTION)?.to_owned();
+        for idx in lines {
+            section = remove_milestone_block(&section, idx);
+        }
+        doc.replace_section(MILESTONES_SECTION, &section)?;
+    }
+    Ok(())
 }
 
 /// The daily-log line recording a closure (RFC 0004 D6):

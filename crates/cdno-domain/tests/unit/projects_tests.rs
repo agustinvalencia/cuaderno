@@ -3589,6 +3589,33 @@ fn drop_milestone_takes_its_child_lines_with_it() {
     );
 }
 
+#[test]
+fn drop_milestone_on_a_nested_milestone_keeps_its_siblings() {
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "- [ ] Paper \u{2014} target: 2026-06-01\n  - [ ] Draft \u{2014} target: 2026-05-01\n    outline first\n  - [x] Figures \u{2014} target: 2026-05-02\n",
+        "(nothing yet)\n",
+    );
+    let (vault, store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
+
+    vault
+        .drop_milestone(dt(2026, 5, 14, 16, 30), "icml", "Draft", None)
+        .expect("drop succeeds");
+
+    let raw = store.read_file(&vp("projects/icml.md")).unwrap();
+    assert!(!raw.contains("outline first"), "{raw}");
+    assert!(
+        raw.contains(
+            "- [ ] Paper \u{2014} target: 2026-06-01\n  - [x] Figures \u{2014} target: 2026-05-02"
+        ),
+        "a sibling at the dropped milestone's own depth stays:\n{raw}"
+    );
+}
+
 /// The placeholder is matched after `trim`, not byte-for-byte: an
 /// ASCII-hyphen spelling is a different line and is kept. Pinned so the
 /// comparison's actual reach cannot drift from what the doc claims.
@@ -4125,28 +4152,6 @@ fn complete_project_refuses_with_open_items_listed() {
 }
 
 #[test]
-fn drop_project_is_refused_with_open_items_even_when_asked_to_drop_them() {
-    // The cascade is T11; until then no call closes over open items.
-    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Next Actions\n- [ ] One (light)\n";
-    let (vault, store, _index) = closing_vault(&[("projects/x.md", map)]);
-
-    let err = vault
-        .drop_project(
-            dt(2026, 9, 29, 10, 0),
-            "x",
-            None,
-            cdno_domain::OpenItems::Drop { expected: None },
-        )
-        .expect_err("refused");
-
-    assert!(
-        matches!(err, DomainError::ProjectHasOpenItems { .. }),
-        "got {err:?}"
-    );
-    assert_eq!(store.read_file(&vp("projects/x.md")).unwrap(), map);
-}
-
-#[test]
 fn drop_project_closes_a_parked_project_at_cap() {
     let mut notes: Vec<(String, String)> = (1..=5)
         .map(|i| {
@@ -4499,4 +4504,549 @@ fn closure_line_takes_the_title_from_the_body_not_a_frontmatter_comment() {
         log.contains("project completed [[surrogate]] \u{2014} Surrogate model\n"),
         "{log}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The drop cascade (RFC 0004 §5.3, §6.2 step 3, D2, D3, D10, D12)
+// ---------------------------------------------------------------------------
+
+/// A map with two open bullets and one open milestone (with a continuation
+/// line), beside a ticked bullet and a ticked milestone that must survive.
+const CASCADE_MAP: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate\n\n## Current State\nStalled.\n\n## Next Actions\n- [ ] Run feature set B (deep)\n- [x] Clean the data (light)\n- [ ] Write it up (medium)\n\n## Milestones\n- [x] Kickoff \u{2014} 2026-04-02\n- [ ] ICML \u{2014} hard: 2026-10-22\n  venue booked separately\n";
+
+/// A map whose only open item is a bullet per slug in `notes`, each
+/// wikilinking `actions/<slug>`.
+fn attached_map(notes: &[&str]) -> String {
+    let bullets: String = notes
+        .iter()
+        .map(|n| format!("- [ ] [[actions/{n}]] (deep)\n"))
+        .collect();
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate\n\n## Next Actions\n{bullets}\n## Milestones\n- [x] Kickoff \u{2014} 2026-04-02\n"
+    )
+}
+
+fn action_note(status: &str) -> String {
+    format!(
+        "---\ntype: action\nstatus: {status}\nproject: surrogate\nenergy: deep\nmilestone: null\ndue: null\ncreated: 2026-05-01\ncompleted: null\nblocker: null\ncriteria: null\ntags: []\n---\n\n# Probe\n"
+    )
+}
+
+/// The report `drop_project` would show for `slug`, read the way a caller
+/// reads it before confirming.
+fn shown_report(
+    vault: &Vault,
+    store: &Arc<dyn VaultStore>,
+    path: &str,
+) -> cdno_domain::OpenItemsReport {
+    let raw = store.read_file(&vp(path)).unwrap();
+    let doc = cdno_core::markdown::MarkdownDocument::parse(raw).unwrap();
+    let slug = path.rsplit('/').next().unwrap().trim_end_matches(".md");
+    vault.open_items_report(&doc, slug).unwrap()
+}
+
+fn drop_confirmed(report: &cdno_domain::OpenItemsReport) -> cdno_domain::OpenItems {
+    cdno_domain::OpenItems::Drop {
+        expected: Some(report.hash()),
+        hash_required: true,
+    }
+}
+
+#[test]
+fn drop_project_drop_open_cascades_as_drops_with_reason() {
+    let (vault, store, index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+
+    let outcome = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    assert_eq!(
+        outcome.dropped_actions,
+        vec!["Run feature set B (deep)", "Write it up (medium)"]
+    );
+    assert_eq!(outcome.dropped_milestones, vec!["ICML"]);
+
+    let dest = vp("projects/_done/2026/surrogate.md");
+    let raw = store.read_file(&dest).unwrap();
+    assert_eq!(frontmatter_of(&raw).status, ProjectStatus::Dropped);
+    assert!(
+        raw.contains("## Next Actions\n- [x] Clean the data (light)\n\n"),
+        "{raw}"
+    );
+    assert!(
+        raw.contains("## Milestones\n- [x] Kickoff \u{2014} 2026-04-02\n"),
+        "{raw}"
+    );
+    assert!(!raw.contains("- [ ]"), "{raw}");
+    assert!(!raw.contains("venue booked separately"), "{raw}");
+
+    // The closed milestone's row moved; the dropped one left no row.
+    let rows = index.milestones_for_project(&dest).unwrap();
+    let names: Vec<&str> = rows.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, vec!["Kickoff"]);
+
+    let log = daily_log(&store, "2026-09-29");
+    let expected = [
+        "action dropped on [[surrogate]] \u{2014} Run feature set B (deep)\n  reason: project dropped\n",
+        "action dropped on [[surrogate]] \u{2014} Write it up (medium)\n  reason: project dropped\n",
+        "milestone dropped on [[surrogate]] \u{2014} ICML\n  reason: project dropped\n",
+        "project dropped on [[surrogate]] \u{2014} Surrogate\n",
+    ];
+    let mut from = 0;
+    for line in expected {
+        let at = log[from..]
+            .find(line)
+            .unwrap_or_else(|| panic!("{line:?} missing or out of order in:\n{log}"));
+        from += at + line.len();
+    }
+    assert_eq!(log.matches("reason: ").count(), 3, "{log}");
+    // The ordered check above is also the one-write check: a second
+    // daily-note write would have lost the lines staged before it.
+}
+
+#[test]
+fn drop_project_carries_reason_to_children() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            Some("superseded"),
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    let log = daily_log(&store, "2026-09-29");
+    assert_eq!(
+        log.matches("  reason: project dropped (superseded)\n")
+            .count(),
+        3,
+        "{log}"
+    );
+    assert!(
+        log.contains("project dropped on [[surrogate]] \u{2014} Surrogate\n  reason: superseded\n"),
+        "{log}"
+    );
+}
+
+#[test]
+fn drop_project_cascade_drops_nested_milestones_once_each() {
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate\n\n## Milestones\n- [ ] Paper \u{2014} 2026-10-01\n  - [ ] Draft \u{2014} 2026-09-01\n  - [x] Outline \u{2014} 2026-08-01\n- [x] Kickoff \u{2014} 2026-04-02\n";
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", map)]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+    assert_eq!(report.milestones.len(), 2);
+
+    let outcome = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    // Named as `drop_milestone` names them: a plain date stays in the title.
+    assert_eq!(
+        outcome.dropped_milestones,
+        vec!["Paper \u{2014} 2026-10-01", "Draft \u{2014} 2026-09-01"]
+    );
+    let raw = store
+        .read_file(&vp("projects/_done/2026/surrogate.md"))
+        .unwrap();
+    assert!(
+        raw.contains("## Milestones\n- [x] Kickoff \u{2014} 2026-04-02\n"),
+        "{raw}"
+    );
+    assert!(!raw.contains("Outline"), "{raw}");
+    let log = daily_log(&store, "2026-09-29");
+    assert_eq!(
+        log.matches("milestone dropped on [[surrogate]]").count(),
+        2,
+        "{log}"
+    );
+}
+
+#[test]
+fn drop_project_cascade_archives_attached_notes_as_dropped_and_frozen() {
+    let (vault, store, index) = closing_vault(&[
+        ("projects/surrogate.md", &attached_map(&["probe"])),
+        ("actions/probe.md", &action_note("active")),
+    ]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    let done = vp("actions/_done/2026/probe.md");
+    assert!(!store.exists(&vp("actions/probe.md")).unwrap());
+    let (fm, _) = Frontmatter::parse(&store.read_file(&done).unwrap()).unwrap();
+    let action = cdno_domain::frontmatter::ActionFrontmatter::try_from(fm).unwrap();
+    assert_eq!(
+        action.status,
+        cdno_domain::frontmatter::ActionStatus::Dropped
+    );
+    assert_eq!(action.completed, None);
+    assert!(index.find_archival_snapshot(&done).unwrap().is_some());
+    assert!(index.find_by_path(&done).unwrap().is_some());
+    assert!(
+        index
+            .find_by_path(&vp("actions/probe.md"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn drop_project_cascade_dedupes_attached_note() {
+    let (vault, store, _index) = closing_vault(&[
+        ("projects/surrogate.md", &attached_map(&["probe", "probe"])),
+        ("actions/probe.md", &action_note("active")),
+    ]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+    assert_eq!(report.actions.len(), 2);
+
+    let outcome = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("one archive, and the commit succeeds");
+
+    assert_eq!(outcome.dropped_actions.len(), 2);
+    assert!(store.exists(&vp("actions/_done/2026/probe.md")).unwrap());
+    assert!(!store.exists(&vp("actions/probe.md")).unwrap());
+    let log = daily_log(&store, "2026-09-29");
+    assert_eq!(
+        log.matches("action dropped on [[surrogate]]").count(),
+        2,
+        "{log}"
+    );
+}
+
+#[test]
+fn drop_project_cascade_skips_closed_attached_note() {
+    let note = action_note("completed");
+    let (vault, store, _index) = closing_vault(&[
+        ("projects/surrogate.md", &attached_map(&["probe"])),
+        ("actions/probe.md", &note),
+    ]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    assert_eq!(store.read_file(&vp("actions/probe.md")).unwrap(), note);
+    assert!(!store.exists(&vp("actions/_done/2026/probe.md")).unwrap());
+    let raw = store
+        .read_file(&vp("projects/_done/2026/surrogate.md"))
+        .unwrap();
+    assert!(!raw.contains("[[actions/probe]]"), "{raw}");
+}
+
+#[test]
+fn drop_project_cascade_drops_blocked_attached_note() {
+    let (vault, store, _index) = closing_vault(&[
+        ("projects/surrogate.md", &attached_map(&["probe"])),
+        ("actions/probe.md", &action_note("blocked")),
+    ]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    let raw = store.read_file(&vp("actions/_done/2026/probe.md")).unwrap();
+    let (fm, _) = Frontmatter::parse(&raw).unwrap();
+    let action = cdno_domain::frontmatter::ActionFrontmatter::try_from(fm).unwrap();
+    assert_eq!(
+        action.status,
+        cdno_domain::frontmatter::ActionStatus::Dropped
+    );
+}
+
+#[test]
+fn drop_project_cascade_collision_writes_nothing() {
+    let map = attached_map(&["alpha", "probe"]);
+    let note = action_note("active");
+    let occupant = action_note("dropped");
+    let (vault, store, index) = closing_vault(&[
+        ("projects/surrogate.md", &map),
+        ("actions/alpha.md", &note),
+        ("actions/probe.md", &note),
+        ("actions/_done/2026/probe.md", &occupant),
+    ]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+    let paths = [
+        "projects/surrogate.md",
+        "actions/alpha.md",
+        "actions/probe.md",
+        "actions/_done/2026/probe.md",
+    ];
+    let rows_before: Vec<_> = paths
+        .iter()
+        .map(|p| index.find_by_path(&vp(p)).unwrap())
+        .collect();
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect_err("an occupied destination refuses");
+
+    assert!(
+        matches!(&err, DomainError::Store(StoreError::AlreadyExists(p)) if p == "actions/_done/2026/probe.md"),
+        "got {err:?}"
+    );
+    assert_eq!(store.read_file(&vp("projects/surrogate.md")).unwrap(), map);
+    assert_eq!(store.read_file(&vp("actions/alpha.md")).unwrap(), note);
+    assert_eq!(store.read_file(&vp("actions/probe.md")).unwrap(), note);
+    assert_eq!(
+        store.read_file(&vp("actions/_done/2026/probe.md")).unwrap(),
+        occupant
+    );
+    assert!(!store.exists(&vp("actions/_done/2026/alpha.md")).unwrap());
+    assert!(
+        !store
+            .exists(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap()
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
+    let rows_after: Vec<_> = paths
+        .iter()
+        .map(|p| index.find_by_path(&vp(p)).unwrap())
+        .collect();
+    assert_eq!(rows_after, rows_before);
+    assert!(
+        index
+            .find_by_path(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn drop_project_refuses_stale_open_items_hash() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+    let shown = shown_report(&vault, &store, "projects/surrogate.md");
+    vault
+        .add_action(
+            dt(2026, 9, 29, 9, 0),
+            "surrogate",
+            "Something new",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+    let before = store.read_file(&vp("projects/surrogate.md")).unwrap();
+    let fresh = shown_report(&vault, &store, "projects/surrogate.md");
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&shown),
+        )
+        .expect_err("a stale list refuses");
+
+    let DomainError::ProjectHasOpenItems { report, .. } = err else {
+        panic!("expected ProjectHasOpenItems, got {err:?}");
+    };
+    assert_eq!(report, fresh);
+    assert_ne!(report.hash(), shown.hash());
+    assert_eq!(
+        store.read_file(&vp("projects/surrogate.md")).unwrap(),
+        before
+    );
+    assert!(
+        !store
+            .exists(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn drop_project_without_hash_is_refused_when_required() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            cdno_domain::OpenItems::Drop {
+                expected: None,
+                hash_required: true,
+            },
+        )
+        .expect_err("an agent must present the hash");
+
+    let DomainError::ProjectHasOpenItems { report, .. } = err else {
+        panic!("expected ProjectHasOpenItems, got {err:?}");
+    };
+    assert_eq!(report.open_count(), 3);
+    assert_eq!(
+        store.read_file(&vp("projects/surrogate.md")).unwrap(),
+        CASCADE_MAP
+    );
+}
+
+#[test]
+fn drop_project_without_hash_is_accepted_when_not_required() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+
+    let outcome = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            cdno_domain::OpenItems::Drop {
+                expected: None,
+                hash_required: false,
+            },
+        )
+        .expect("a typed --drop-open cascades");
+
+    assert_eq!(outcome.dropped_actions.len(), 2);
+    assert!(!store.exists(&vp("projects/surrogate.md")).unwrap());
+}
+
+#[test]
+fn drop_project_with_open_items_and_refuse_writes_nothing() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect_err("refused by default");
+
+    assert!(
+        matches!(err, DomainError::ProjectHasOpenItems { .. }),
+        "got {err:?}"
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/surrogate.md")).unwrap(),
+        CASCADE_MAP
+    );
+}
+
+#[test]
+fn complete_project_never_cascades() {
+    // `complete_project` takes no open-items choice at all (RFC 0004 D11):
+    // open items refuse, and an attached note is left in play.
+    let map = attached_map(&["probe"]);
+    let note = action_note("active");
+    let (vault, store, _index) =
+        closing_vault(&[("projects/surrogate.md", &map), ("actions/probe.md", &note)]);
+
+    let err = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect_err("refused");
+
+    assert!(
+        matches!(err, DomainError::ProjectHasOpenItems { .. }),
+        "got {err:?}"
+    );
+    assert_eq!(store.read_file(&vp("projects/surrogate.md")).unwrap(), map);
+    assert_eq!(store.read_file(&vp("actions/probe.md")).unwrap(), note);
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
+}
+
+#[test]
+fn drop_project_cascade_keeps_a_closed_sibling_of_a_nested_open_milestone() {
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate\n\n## Milestones\n- [x] Parent \u{2014} 2026-06-01\n  - [ ] A \u{2014} 2026-07-01\n  - [x] B done \u{2014} 2026-07-02\n  - [ ] C \u{2014} 2026-07-03\n    child note of C\n- [ ] D \u{2014} 2026-08-01\n";
+    let (vault, store, index) = closing_vault(&[("projects/surrogate.md", map)]);
+    let report = shown_report(&vault, &store, "projects/surrogate.md");
+    assert_eq!(report.milestones.len(), 3);
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            drop_confirmed(&report),
+        )
+        .expect("the cascade drops");
+
+    let dest = vp("projects/_done/2026/surrogate.md");
+    let raw = store.read_file(&dest).unwrap();
+    assert!(
+        raw.contains(
+            "## Milestones\n- [x] Parent \u{2014} 2026-06-01\n  - [x] B done \u{2014} 2026-07-02\n"
+        ),
+        "{raw}"
+    );
+    assert!(!raw.contains("child note of C"), "{raw}");
+    let names: Vec<String> = index
+        .milestones_for_project(&dest)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.name)
+        .collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+}
+
+#[test]
+fn drop_project_refuses_stale_hash_even_when_not_required() {
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", CASCADE_MAP)]);
+    let shown = shown_report(&vault, &store, "projects/surrogate.md");
+    vault
+        .add_action(
+            dt(2026, 9, 29, 9, 0),
+            "surrogate",
+            "Something new",
+            EnergyLevel::Light,
+        )
+        .unwrap();
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "surrogate",
+            None,
+            cdno_domain::OpenItems::Drop {
+                expected: Some(shown.hash()),
+                hash_required: false,
+            },
+        )
+        .expect_err("a hash that no longer matches always refuses");
+
+    assert!(
+        matches!(err, DomainError::ProjectHasOpenItems { .. }),
+        "got {err:?}"
+    );
+    assert!(store.exists(&vp("projects/surrogate.md")).unwrap());
 }

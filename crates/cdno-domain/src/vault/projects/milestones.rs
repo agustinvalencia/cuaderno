@@ -317,18 +317,26 @@ pub(in crate::vault) fn stage_milestone_index_rows(
 }
 
 /// The end (exclusive) of the milestone bullet at `idx` together with its
-/// indented continuation lines, in `lines` (the section split on `'\n'`).
-/// The block stops at the first blank or unindented line.
+/// continuation lines, in `lines` (the section split on `'\n'`). A
+/// continuation line is indented deeper than the bullet; the block stops at
+/// the first blank line or the first line indented no deeper, so a nested
+/// bullet takes its own children but never a sibling at its level.
 pub(in crate::vault) fn milestone_block_end(lines: &[&str], idx: usize) -> usize {
+    let depth = indent_width(lines[idx]);
     let mut end = idx + 1;
     while end < lines.len() {
         let line = lines[end];
-        if line.trim().is_empty() || !line.starts_with(char::is_whitespace) {
+        if line.trim().is_empty() || indent_width(line) <= depth {
             break;
         }
         end += 1;
     }
     end
+}
+
+/// The number of leading whitespace characters on `line`.
+fn indent_width(line: &str) -> usize {
+    line.chars().take_while(|c| c.is_whitespace()).count()
 }
 
 /// `section` without the milestone at `idx` and its indented continuation
@@ -419,7 +427,11 @@ fn resolve_open_milestone(
 /// shape is not load-bearing for any reader — nothing parses milestone
 /// log entries back — but writing it differently here would leave the
 /// vault with two spellings of the same idea.
-fn format_milestone_dropped_log_entry(slug: &str, title: &str, reason: Option<&str>) -> String {
+pub(in crate::vault) fn format_milestone_dropped_log_entry(
+    slug: &str,
+    title: &str,
+    reason: Option<&str>,
+) -> String {
     let base = format!("milestone dropped on [[{slug}]] \u{2014} {title}");
     match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
         Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),
