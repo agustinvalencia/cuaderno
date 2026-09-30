@@ -14,6 +14,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Project verbs now find a project wherever it lives, including `projects/_done/<year>/`, and
   refuse a project whose name exists in two folders with a message naming both paths (MCP code
   `ambiguous_project`) instead of reporting that the destination exists (RFC 0004, #672).
+- A malformed project map under `projects/_done/` no longer makes `cdno project create`,
+  `activate`, `orient`, the project pickers or the MCP weekly context fail: the scans for
+  active and parked projects now skip closed maps without reading them (RFC 0004, #673).
 - `cdno init` now also creates `projects/_done/<year>/`, the folder closed projects will move to
   (RFC 0004, #670).
 

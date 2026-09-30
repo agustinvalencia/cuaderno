@@ -85,6 +85,13 @@ fn is_year_dir_name(name: &str) -> bool {
     name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Whether `path` lies anywhere under `projects/_done/`. The
+/// active-only scans skip these before reading the file, so a malformed
+/// closed map can never fail a live-vault query (RFC 0004 §5.5).
+pub(in crate::vault) fn is_under_projects_done(path: &VaultPath) -> bool {
+    path.as_path().starts_with(cdno_core::paths::PROJECTS_DONE)
+}
+
 /// Whether `path` is a map under `projects/_done/<year>/`.
 fn is_closed_project_path(path: &VaultPath) -> bool {
     let p = path.as_path();

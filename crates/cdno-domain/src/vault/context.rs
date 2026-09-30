@@ -45,11 +45,11 @@ use crate::note_type::NoteType;
 
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
-use super::projects::ProjectSummary;
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::projects::actions::{parse_attached_action_slug, strip_energy_suffix};
+use super::projects::{ProjectSummary, is_under_projects_done};
 
 // ---------------------------------------------------------------------
 // Return types
@@ -397,10 +397,13 @@ impl Vault {
         let entries = self.index.list_by_type(NoteType::Project.as_str())?;
         let mut out = Vec::new();
         for entry in entries {
-            // Parked / completed projects are out of scope — the
+            // Parked / closed projects are out of scope — the
             // "stuck" heuristic only makes sense for active work.
-            // Cheap check: skip parked-folder paths, then read the
-            // file to confirm frontmatter status.
+            // Skip closed maps unread, then read the file to confirm
+            // frontmatter status.
+            if is_under_projects_done(&entry.path) {
+                continue;
+            }
             let raw = self.store.read_file(&entry.path)?;
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = ProjectFrontmatter::try_from(fm)?;
@@ -439,6 +442,9 @@ impl Vault {
         for entry in entries {
             // Same active-only gate as stuck_projects: the "stuck"
             // heuristic is meaningless for parked / completed work.
+            if is_under_projects_done(&entry.path) {
+                continue;
+            }
             let raw = self.store.read_file(&entry.path)?;
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let pf = ProjectFrontmatter::try_from(fm)?;
