@@ -280,8 +280,11 @@ impl Vault {
 
     /// Pending (uncompleted) milestones for a project, in source
     /// order — the candidate set for the `cdno project milestone done`
-    /// fuzzy picker. Resolves the project's location and reads its
-    /// milestones from the index. Errors if the project does not exist.
+    /// and `drop` pickers. Resolves the project's map, active or
+    /// parked, and reads its milestones from the index for that path.
+    /// Errors with `Store(NotFound)` and the available-projects hint
+    /// when no map exists, or with a parse error when its frontmatter
+    /// is malformed.
     pub fn open_milestones(&self, slug: &str) -> Result<Vec<MilestoneEntry>, DomainError> {
         let (path, _doc, _project) = self.resolve_any_project(slug)?;
         let all = self.index.milestones_for_project(&path)?;

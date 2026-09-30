@@ -476,8 +476,8 @@ pub trait VaultIndex: Send + Sync {
         milestones: &[MilestoneEntry],
     ) -> Result<(), IndexError>;
     /// Every milestone of the project at `path`, in source order
-    /// (by row id). The caller is responsible for resolving the project's
-    /// location (active or parked).
+    /// (by row id). The caller resolves where the project lives; the
+    /// index does not guess.
     fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError>;
     /// Dated milestones across all projects whose `date` falls in the
     /// inclusive `[from, to]` window, sorted by date. Non-date markers
@@ -1542,8 +1542,8 @@ impl VaultIndex for MemoryIndex {
 
     fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
         let state = self.lock_state();
-        // Return the milestones for the given path, or an empty vec if
-        // no milestones have been recorded for this path.
+        // Stored Vec order is source order, mirroring SqliteIndex's
+        // `ORDER BY id`. A path with no rows yields an empty list.
         Ok(state.milestones.get(path).cloned().unwrap_or_default())
     }
 

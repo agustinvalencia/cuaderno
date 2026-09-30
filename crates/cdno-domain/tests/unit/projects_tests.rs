@@ -3507,13 +3507,47 @@ fn add_milestone_replaces_an_indented_placeholder() {
 
 #[test]
 fn open_milestones_unknown_slug_is_not_found() {
-    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) =
+        vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
 
     let err = vault
         .open_milestones("unknown_project")
         .expect_err("open_milestones of unknown project should error");
 
-    // The error should be a NotFound error from the store.
-    // Check that it's indeed a NotFound error.
-    assert!(err.to_string().contains("projects/unknown_project.md"));
+    let DomainError::Store(StoreError::NotFound(msg)) = err else {
+        panic!("expected Store(NotFound), got {err:?}");
+    };
+    assert!(msg.contains("projects/unknown_project.md"), "{msg}");
+    assert!(msg.contains("available projects: icml"), "{msg}");
+}
+
+/// The parked location used to be the index's guess; since T1 it is the
+/// resolver's. This pins that the picker still reaches a parked map's
+/// milestones, and guards the resolver swap in T2.
+#[test]
+fn open_milestones_reads_a_parked_project() {
+    let body = project_body_full(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Dormant",
+        "- [ ] Revisit the survey \u{2014} target: 2026-10-01\n- [x] Draft outline \u{2014} 2026-04-02\n",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/dormant.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let open = vault.open_milestones("dormant").expect("open_milestones");
+    let names: Vec<&str> = open.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Revisit the survey"]);
 }
