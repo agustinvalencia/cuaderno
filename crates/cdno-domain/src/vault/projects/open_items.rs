@@ -144,9 +144,17 @@ pub enum OpenItems {
     #[default]
     Refuse,
     /// Drop the open actions and milestones in the same transaction.
-    /// `expected` is the hash of the list the caller was shown; `None`
-    /// only where a human typed the request against their own vault.
-    Drop { expected: Option<OpenItemsHash> },
+    ///
+    /// `expected` is the hash of the list the caller was shown. A present
+    /// hash that differs from the fresh report's refuses, so a list
+    /// confirmed once is the list dropped. `hash_required` says whether
+    /// the caller must present one: true for an agent, which is refused
+    /// with the report (and its hash) when it sends none, false only where
+    /// a human typed the request against their own vault.
+    Drop {
+        expected: Option<OpenItemsHash>,
+        hash_required: bool,
+    },
 }
 
 impl Vault {

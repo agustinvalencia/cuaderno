@@ -648,7 +648,11 @@ fn format_action_done_log_entry(slug: &str, action_text: &str) -> String {
 /// drop-with-a-reason stops clearing its start.
 ///
 /// Whitespace in the reason is flattened so one drop stays one entry.
-fn format_action_dropped_log_entry(slug: &str, action_text: &str, reason: Option<&str>) -> String {
+pub(in crate::vault) fn format_action_dropped_log_entry(
+    slug: &str,
+    action_text: &str,
+    reason: Option<&str>,
+) -> String {
     let base = format!("{LOG_ACTION_DROPPED_PREFIX}[[{slug}]] \u{2014} {action_text}");
     match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
         Some(reason) => format!("{base}\n  {LOG_REASON_KEY}{reason}"),

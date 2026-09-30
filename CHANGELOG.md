@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- `cdno project milestone drop` (MCP `drop_milestone`) on a nested milestone now removes only
+  that milestone and the lines indented beneath it; before, it also removed the sibling milestones
+  that followed it at the same depth (RFC 0004, #681).
 - `cdno project milestone done` and `drop`, run interactively with an unknown `--slug`, now say the
   project was not found and list the available ones, instead of reporting no open milestones
   (RFC 0004, #671).
