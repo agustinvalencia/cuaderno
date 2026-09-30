@@ -26,6 +26,7 @@
 //! slug helpers shared across error paths.
 
 use cdno_core::error::StoreError;
+use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 
@@ -66,39 +67,106 @@ pub(super) const WAITING_ON_SECTION: &str = "Waiting On";
 /// commitments aggregation query (#32).
 pub(super) const MILESTONES_SECTION: &str = "Milestones";
 
+/// Where a project map lives on disk and the frontmatter read from it.
+/// Returned by [`Vault::locate_project`].
+#[derive(Debug, Clone)]
+pub struct ProjectLocation {
+    pub path: VaultPath,
+    pub frontmatter: ProjectFrontmatter,
+}
+
 impl Vault {
+    /// Find a project map by slug, from the **store** and never the
+    /// index: `projects/<slug>.md`, `projects/_parked/<slug>.md`, then
+    /// `projects/_done/<year>/<slug>.md` for each year directory. Where
+    /// a verb writes must not depend on a cache that can be stale (an
+    /// `IndexStale` commit, or a hand move the server has not yet
+    /// reconciled), so this is the one answer to "where is project X
+    /// and what state is it in" (RFC 0004 §5.5).
+    ///
+    /// Errors:
+    /// - `Store(NotFound)` — the slug is at none of the locations, with
+    ///   the available-projects hint.
+    /// - `AmbiguousProject` — the slug is at two or more locations
+    ///   (candidates sorted). Distinct from `Store(AlreadyExists)`,
+    ///   which means "destination occupied".
+    /// - a parse error when the one file found has malformed frontmatter.
+    pub(in crate::vault) fn locate_project(
+        &self,
+        slug: &str,
+    ) -> Result<ProjectLocation, DomainError> {
+        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
+        let mut candidates = vec![
+            active_path.clone(),
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?,
+        ];
+        for entry in self
+            .store
+            .list_dir(&VaultPath::new(cdno_core::paths::PROJECTS_DONE)?)?
+        {
+            let Some(year) = entry
+                .as_path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|n| n.len() == 4 && n.bytes().all(|b| b.is_ascii_digit()))
+            else {
+                continue;
+            };
+            candidates.push(VaultPath::new(format!(
+                "{}/{year}/{slug}.md",
+                cdno_core::paths::PROJECTS_DONE
+            ))?);
+        }
+
+        let mut hits = Vec::new();
+        for candidate in candidates {
+            if self.store.exists(&candidate)? {
+                hits.push(candidate);
+            }
+        }
+
+        match hits.len() {
+            0 => Err(DomainError::Store(StoreError::NotFound(format!(
+                "{active_path}{}",
+                self.available_projects_hint()
+            )))),
+            1 => {
+                let path = hits.remove(0);
+                let raw = self.store.read_file(&path)?;
+                let (fm, _body) = Frontmatter::parse(&raw)?;
+                let frontmatter = ProjectFrontmatter::try_from(fm)?;
+                Ok(ProjectLocation { path, frontmatter })
+            }
+            _ => {
+                hits.sort_by(|a, b| a.as_path().cmp(b.as_path()));
+                Err(DomainError::AmbiguousProject {
+                    slug: slug.to_owned(),
+                    candidates: hits,
+                })
+            }
+        }
+    }
+
     /// Resolve a project slug to its active file plus parsed
     /// markdown, or surface the right error when it isn't active.
     /// Used by every mutation that operates on the project body.
+    ///
+    /// A project counts as active only when its frontmatter says so
+    /// *and* it sits directly at `projects/<slug>.md`; anything else
+    /// (parked, closed, or a misfiled map) is `ProjectNotActive`.
     pub(super) fn resolve_active_project(
         &self,
         slug: &str,
     ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+        let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-
-        let path = if self.store.exists(&active_path)? {
-            active_path
-        } else if self.store.exists(&parked_path)? {
-            return Err(DomainError::ProjectNotActive(slug.to_owned()));
-        } else {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_projects_hint()
-            ))));
-        };
-
-        let raw = self.store.read_file(&path)?;
-        let doc = MarkdownDocument::parse(raw)?;
-        // Defensive frontmatter check — manual edits could put a
-        // non-active project under projects/. Frontmatter wins.
-        let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
-        if project.status != ProjectStatus::Active {
+        if location.frontmatter.status != ProjectStatus::Active || location.path != active_path {
             return Err(DomainError::ProjectNotActive(slug.to_owned()));
         }
 
-        Ok((path, doc))
+        let raw = self.store.read_file(&location.path)?;
+        let doc = MarkdownDocument::parse(raw)?;
+        Ok((location.path, doc))
     }
 
     /// Resolve a project slug to its file plus parsed markdown plus
@@ -107,38 +175,24 @@ impl Vault {
     /// on parked or completed projects too — gatekeeping by status
     /// belongs in the caller.
     ///
-    /// Errors only when the slug doesn't resolve to either folder
-    /// (`Store(NotFound)`) or when the file's frontmatter is
+    /// Errors only when the slug doesn't resolve to any location
+    /// (`Store(NotFound)`), resolves to several
+    /// (`AmbiguousProject`), or when the file's frontmatter is
     /// malformed.
     pub(in crate::vault) fn resolve_any_project(
         &self,
         slug: &str,
     ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
-        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-
-        let path = if self.store.exists(&active_path)? {
-            active_path
-        } else if self.store.exists(&parked_path)? {
-            parked_path
-        } else {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_projects_hint()
-            ))));
-        };
-
-        let raw = self.store.read_file(&path)?;
+        let location = self.locate_project(slug)?;
+        let raw = self.store.read_file(&location.path)?;
         let doc = MarkdownDocument::parse(raw)?;
-        let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
-
-        Ok((path, doc, project))
+        Ok((location.path, doc, location.frontmatter))
     }
 
     /// " — available projects: …" suffix for a project slug not-found,
-    /// listing every indexed project (parked ones flagged) so a caller can
-    /// self-correct. Shared by the resolvers, state update, and activate.
+    /// listing every indexed project (parked and closed ones flagged) so
+    /// a caller can self-correct. Shared by the resolvers, state update,
+    /// and activate.
     /// See [`slug_hint::available_slugs_hint`](super::slug_hint::available_slugs_hint).
     pub(in crate::vault) fn available_projects_hint(&self) -> String {
         super::slug_hint::available_slugs_hint(
@@ -152,6 +206,10 @@ impl Vault {
                     .starts_with(cdno_core::paths::PROJECTS_PARKED)
                 {
                     format!("{slug} (parked)")
+                } else if path.as_path().starts_with(cdno_core::paths::PROJECTS_DONE) {
+                    // Status is not readable from the path; the index
+                    // hint does not parse files.
+                    format!("{slug} (closed)")
                 } else {
                     slug.clone()
                 };

@@ -97,6 +97,7 @@ pub(crate) enum RejectionCode {
     AmbiguousAction,
     AmbiguousMilestone,
     AmbiguousPeriodic,
+    AmbiguousProject,
     AmbiguousSection,
     AmbiguousSlug,
     AmbiguousWaitingOn,
@@ -243,6 +244,13 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         } => (
             RejectionCode::AmbiguousWaitingOn,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
+        ),
+        DomainError::AmbiguousProject { slug, candidates } => (
+            RejectionCode::AmbiguousProject,
+            json!({
+                "slug": slug,
+                "candidates": candidates.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+            }),
         ),
         DomainError::AmbiguousSlug(slug) => (RejectionCode::AmbiguousSlug, json!({ "slug": slug })),
 
@@ -531,6 +539,27 @@ mod tests {
                 .expect("message")
                 .contains("ambiguous action match"),
             "payload: {payload}"
+        );
+    }
+
+    #[test]
+    fn a_project_at_two_locations_is_ambiguous_with_its_candidates() {
+        use cdno_core::path::VaultPath;
+
+        let payload = classify(&DomainError::AmbiguousProject {
+            slug: "thesis".into(),
+            candidates: vec![
+                VaultPath::new("projects/_parked/thesis.md").unwrap(),
+                VaultPath::new("projects/thesis.md").unwrap(),
+            ],
+        })
+        .expect("a duplicated project is caller-actionable");
+
+        assert_eq!(payload["code"], "ambiguous_project");
+        assert_eq!(payload["details"]["slug"], "thesis");
+        assert_eq!(
+            payload["details"]["candidates"],
+            json!(["projects/_parked/thesis.md", "projects/thesis.md"])
         );
     }
 

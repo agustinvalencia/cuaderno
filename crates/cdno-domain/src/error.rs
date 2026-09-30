@@ -2,6 +2,7 @@ use cdno_core::error::{
     ConfigError, IndexError, ManipulationError, ParseError, PathError, StoreError, TemplateError,
     TransactionError, ValidationError,
 };
+use cdno_core::path::VaultPath;
 
 /// Errors from domain-level business logic.
 ///
@@ -108,6 +109,15 @@ pub enum DomainError {
         slug: String,
         query: String,
         candidates: Vec<String>,
+    },
+
+    #[error(
+        "project '{slug}' exists at more than one location: {} \u{2014} keep one",
+        .candidates.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    AmbiguousProject {
+        slug: String,
+        candidates: Vec<VaultPath>,
     },
 
     #[error("ambiguous slug '{0}' \u{2014} matches more than one note across domains")]

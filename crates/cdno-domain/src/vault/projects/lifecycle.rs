@@ -181,11 +181,13 @@ impl Vault {
     /// Errors:
     /// - `ProjectNotActive` — file lives at `projects/_parked/<slug>.md`
     ///   or its frontmatter `status` is anything other than `active`.
-    /// - `Store(NotFound)` — slug doesn't resolve to either folder.
+    /// - `Store(NotFound)` — slug doesn't resolve to any folder.
+    /// - `AmbiguousProject` — the slug exists at more than one location
+    ///   (a manual edit or a rogue write broke the uniqueness invariant
+    ///   from #24); the locator refuses before anything is written.
     /// - `Store(AlreadyExists)` — `projects/_parked/<slug>.md` is
-    ///   already occupied (defensive guard against drift; under the
-    ///   slug-uniqueness invariant from #24 this can't normally happen
-    ///   but a manual edit or a rogue write could).
+    ///   occupied (defensive; unreachable through the locator, which
+    ///   reports the duplicate first).
     pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (active_path, _doc) = self.resolve_active_project(slug)?;
@@ -228,9 +230,11 @@ impl Vault {
     /// - `ProjectNotParked` — file lives at `projects/<slug>.md` (the
     ///   active folder) or its frontmatter `status` is anything other
     ///   than `parked`.
-    /// - `Store(NotFound)` — slug doesn't resolve to either folder.
-    /// - `Store(AlreadyExists)` — `projects/<slug>.md` is already
-    ///   occupied (defensive guard against drift).
+    /// - `Store(NotFound)` — slug doesn't resolve to any folder.
+    /// - `AmbiguousProject` — the slug exists at more than one location.
+    /// - `Store(AlreadyExists)` — `projects/<slug>.md` is occupied
+    ///   (defensive; unreachable through the locator, which reports the
+    ///   duplicate first).
     pub fn activate_project(
         &self,
         at: NaiveDateTime,
@@ -254,22 +258,19 @@ impl Vault {
             });
         }
 
+        // Located from the disk. A project that is not in `_parked/`, or
+        // whose frontmatter is not `parked`, is `ProjectNotParked`; a
+        // missing one is `Store(NotFound)`. (Reactivating from `_done/`
+        // is a later change.)
+        let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-
-        let parked_exists = self.store.exists(&parked_path)?;
-        if !parked_exists {
-            // Distinguish "file lives at active path" (wrong state)
-            // from "no such project" — Store(NotFound) versus
-            // ProjectNotParked.
-            if self.store.exists(&active_path)? {
-                return Err(DomainError::ProjectNotParked(slug.to_owned()));
-            }
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{parked_path}{}",
-                self.available_projects_hint()
-            ))));
+        let parked_path = location.path;
+        if !parked_path
+            .as_path()
+            .starts_with(cdno_core::paths::PROJECTS_PARKED)
+            || location.frontmatter.status != ProjectStatus::Parked
+        {
+            return Err(DomainError::ProjectNotParked(slug.to_owned()));
         }
         if self.store.exists(&active_path)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
@@ -278,15 +279,6 @@ impl Vault {
         }
 
         let raw = self.store.read_file(&parked_path)?;
-        // Defensive: the file is at projects/_parked/ but a manual
-        // edit could have set status to active or completed. Trust
-        // the frontmatter, refuse if it's not parked.
-        let (fm, _body) = Frontmatter::parse(&raw)?;
-        let project = ProjectFrontmatter::try_from(fm)?;
-        if project.status != ProjectStatus::Parked {
-            return Err(DomainError::ProjectNotParked(slug.to_owned()));
-        }
-
         let new_content =
             rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Active.as_str())?;
         let entry_meta =
