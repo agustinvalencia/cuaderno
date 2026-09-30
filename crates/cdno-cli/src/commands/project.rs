@@ -83,7 +83,7 @@ pub enum ProjectCommands {
     /// and never needs a slot.
     Complete {
         /// Project slug (active or parked).
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
     },
 
@@ -92,7 +92,7 @@ pub enum ProjectCommands {
     /// them and asks before letting them go (or takes --drop-open).
     Drop {
         /// Project slug (active or parked).
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Why it is being dropped; logged with the drop, and with each open
         /// item it lets go. Never prompted for.
@@ -104,15 +104,21 @@ pub enum ProjectCommands {
         drop_open: bool,
     },
 
-    /// Bring a parked project back, enforcing the active-project cap.
+    /// Bring a parked, completed or dropped project back, enforcing the
+    /// active-project cap.
     Activate {
-        /// Project slug (parked).
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_parked_project))]
+        /// Project slug (parked or closed).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_reactivatable_project))]
         slug: Option<String>,
     },
 
-    /// List active projects with their state snippet.
-    List,
+    /// List active projects with their state snippet, or with --closed
+    /// the closed ones, newest first, with outcome and date.
+    List {
+        /// List completed and dropped projects instead of active ones.
+        #[arg(long)]
+        closed: bool,
+    },
 
     /// Show a compact summary of a single project (any status).
     ///
@@ -254,7 +260,23 @@ pub fn run(
             interactive,
             json,
         )?,
-        ProjectCommands::List => {
+        ProjectCommands::List { closed: true } => {
+            let mut closed = vault
+                .closed_projects_between(NaiveDate::MIN, at.date())
+                .context("listing closed projects")?;
+            // Newest first: the recent endings are the ones looked for.
+            closed.sort_by(|a, b| {
+                b.closed_on
+                    .cmp(&a.closed_on)
+                    .then_with(|| a.slug.cmp(&b.slug))
+            });
+            if json {
+                println!("{}", serde_json::to_string_pretty(&closed)?);
+            } else {
+                print!("{}", render_closed_list(&closed));
+            }
+        }
+        ProjectCommands::List { closed: false } => {
             // One pass for both branches: the summaries the card renderer
             // needs are exactly the ones `--json` serialises, so fetching
             // them unconditionally costs nothing and keeps the two views
@@ -759,7 +781,8 @@ fn let_go_summary(outcome: &cdno_domain::ProjectClosureOutcome) -> String {
     parts.join(", ")
 }
 
-/// `cdno project activate` — fuzzy slug picker over *parked* projects.
+/// `cdno project activate` — fuzzy slug picker over parked and closed
+/// projects.
 fn activate(
     vault: &cdno_domain::Vault,
     at: NaiveDateTime,
@@ -770,7 +793,7 @@ fn activate(
     use crate::prompt;
     let mut prompted = false;
     let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
-        prompt::prompt_parked_project(vault)
+        prompt::prompt_reactivatable_project(vault)
     })?;
     if prompted && !prompt::confirm_preview(&format!("About to activate project '{slug}'"))? {
         println!("Aborted.");
@@ -1116,6 +1139,48 @@ pub fn render_list(summaries: &[cdno_domain::ProjectSummary]) -> String {
                 "{} active project{}",
                 summaries.len(),
                 if summaries.len() == 1 { "" } else { "s" }
+            )
+        ),
+        render_cards(&cards, &palette, crate::output::render_width()),
+    )
+}
+
+/// Render `cdno project list --closed`: one card per closed project,
+/// badged with its outcome and dated, in the order given (newest first).
+pub fn render_closed_list(entries: &[cdno_domain::ClosedProjectEntry]) -> String {
+    let palette = Palette::active();
+    if entries.is_empty() {
+        return format!(
+            "{}\n  {}\n",
+            palette.paint(Role::Heading, "Closed projects"),
+            palette.paint(
+                Role::Muted,
+                "(none — close one with `cdno project complete` or `cdno project drop`)"
+            )
+        );
+    }
+    let cards: Vec<Card> = entries
+        .iter()
+        .map(|entry| {
+            Card::new(&entry.slug)
+                .badge(entry.outcome.as_str())
+                .accent(Accent::for_context(entry.context))
+                .prose(&entry.title)
+                .meta(format!(
+                    "{} on {}",
+                    entry.outcome.as_str(),
+                    entry.closed_on.format("%Y-%m-%d")
+                ))
+        })
+        .collect();
+    format!(
+        "{}\n\n{}",
+        palette.paint(
+            Role::Heading,
+            &format!(
+                "{} closed project{}",
+                entries.len(),
+                if entries.len() == 1 { "" } else { "s" }
             )
         ),
         render_cards(&cards, &palette, crate::output::render_width()),
