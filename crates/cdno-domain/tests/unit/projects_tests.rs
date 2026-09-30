@@ -155,6 +155,40 @@ fn active_projects_propagates_malformed_frontmatter_error() {
     );
 }
 
+#[test]
+fn active_projects_ignores_malformed_done_map() {
+    // The same broken shape as above, but closed: a map under
+    // `projects/_done/` holds no slot, so the live-vault scans skip it
+    // unread instead of failing on it (RFC 0004 §5.5).
+    let bad = "---\ntype: project\ncontext: work\ncreated: 2025-01-10\n---\n# Old\n";
+    let vault = vault_with_notes(&[
+        ("projects/_done/2025/old.md", bad),
+        (
+            "projects/live.md",
+            &project_body("work", "active", "2026-01-10", "Live"),
+        ),
+    ]);
+
+    let active = vault.active_projects().expect("active_projects");
+    let paths: Vec<_> = active.iter().map(|(p, _)| p.clone()).collect();
+    assert_eq!(paths, vec![vp("projects/live.md")]);
+
+    assert!(vault.parked_projects().expect("parked_projects").is_empty());
+
+    // `MemoryVaultStore` stamps the real write time, so "today" must be
+    // the real date for a 0-day threshold to count the live map as stuck.
+    let today = chrono::Local::now().date_naive();
+    let stuck = vault.stuck_projects(today, 0).expect("stuck_projects");
+    let slugs: Vec<_> = stuck.iter().map(|s| s.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["live"]);
+
+    let days = vault
+        .stuck_project_days(today, 0)
+        .expect("stuck_project_days");
+    let slugs: Vec<_> = days.iter().map(|(s, _)| s.as_str()).collect();
+    assert_eq!(slugs, vec!["live"]);
+}
+
 // ---------------------------------------------------------------------
 // create_project
 // ---------------------------------------------------------------------

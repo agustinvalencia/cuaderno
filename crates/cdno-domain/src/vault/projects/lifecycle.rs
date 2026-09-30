@@ -21,7 +21,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
-use super::{project_slug_from_path, rewrite_field_in_frontmatter};
+use super::{is_under_projects_done, project_slug_from_path, rewrite_field_in_frontmatter};
 
 impl Vault {
     /// Return every active project: pairs of `(path, frontmatter)`
@@ -30,10 +30,15 @@ impl Vault {
     /// Errors propagate. If a project file's frontmatter fails to
     /// parse, the query fails — silently skipping a malformed project
     /// would let the user write a sixth active project under a broken
-    /// file and bypass the cap.
+    /// file and bypass the cap. Maps under `projects/_done/` are
+    /// skipped unread: they hold no slot, and a broken retrospective
+    /// must not block `create` or `activate`.
     pub fn active_projects(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
         let mut out = Vec::new();
         for entry in self.index.list_by_type(NoteType::Project.as_str())? {
+            if is_under_projects_done(&entry.path) {
+                continue;
+            }
             let raw = self.store.read_file(&entry.path)?;
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let project = ProjectFrontmatter::try_from(fm)?;
@@ -51,6 +56,9 @@ impl Vault {
     pub fn parked_projects(&self) -> Result<Vec<(VaultPath, ProjectFrontmatter)>, DomainError> {
         let mut out = Vec::new();
         for entry in self.index.list_by_type(NoteType::Project.as_str())? {
+            if is_under_projects_done(&entry.path) {
+                continue;
+            }
             let raw = self.store.read_file(&entry.path)?;
             let (fm, _body) = Frontmatter::parse(&raw)?;
             let project = ProjectFrontmatter::try_from(fm)?;
