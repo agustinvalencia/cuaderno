@@ -359,39 +359,44 @@ pub fn prompt_closable_project(vault: &Vault) -> Result<String> {
     Ok(candidates.swap_remove(idx).1)
 }
 
-/// Fuzzy-pick a *parked* project. Returns the project slug.
-/// Mirrors [`prompt_project`] but limited to parked candidates — the
-/// only valid input set for `cdno project activate`.
-pub fn prompt_parked_project(vault: &Vault) -> Result<String> {
-    let parked = vault.parked_projects()?;
-    if parked.is_empty() {
+/// Fuzzy-pick a project `cdno project activate` can bring back: parked
+/// and closed projects, each labelled with where it is (RFC 0004 §5.7).
+pub fn prompt_reactivatable_project(vault: &Vault) -> Result<String> {
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for (path, fm) in vault.parked_projects()? {
+        let slug = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+        candidates.push((format!("{slug} ({}, parked)", fm.context.as_str()), slug));
+    }
+    for (path, fm) in vault.closed_projects()? {
+        let slug = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+        let state = match fm.closed {
+            Some(date) => format!("{} on {date}", fm.status.as_str()),
+            None => fm.status.as_str().to_owned(),
+        };
+        candidates.push((format!("{slug} ({}, {state})", fm.context.as_str()), slug));
+    }
+    if candidates.is_empty() {
         return Err(anyhow!(
-            "no parked projects — `cdno project park <slug>` first",
+            "no parked or closed projects — `cdno project park` or `complete` one first",
         ));
     }
-    let labels: Vec<String> = parked
-        .iter()
-        .map(|(path, fm)| {
-            let slug = path
-                .as_path()
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            format!("{slug} ({})", fm.context.as_str())
-        })
-        .collect();
-    let pick = Select::new("Parked project", labels.clone()).prompt()?;
+    let labels: Vec<String> = candidates.iter().map(|(l, _)| l.clone()).collect();
+    let pick = Select::new("Project to bring back", labels.clone()).prompt()?;
     let idx = labels
         .iter()
         .position(|l| l == &pick)
         .expect("picked label was in the offered list");
-    let (path, _) = &parked[idx];
-    Ok(path
-        .as_path()
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_owned())
+    Ok(candidates.swap_remove(idx).1)
 }
 
 /// Fuzzy-pick an existing portfolio. Returns the portfolio slug.

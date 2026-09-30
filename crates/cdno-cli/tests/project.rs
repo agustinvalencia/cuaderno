@@ -231,7 +231,7 @@ fn list_succeeds_with_and_without_active_projects() {
     project::run(
         dir.path(),
         moment(2026, 5, 2, 9, 0),
-        ProjectCommands::List,
+        ProjectCommands::List { closed: false },
         true,
         false,
     )
@@ -241,7 +241,7 @@ fn list_succeeds_with_and_without_active_projects() {
     project::run(
         dir.path(),
         moment(2026, 5, 2, 10, 0),
-        ProjectCommands::List,
+        ProjectCommands::List { closed: false },
         true,
         false,
     )
@@ -1336,4 +1336,102 @@ fn drop_drop_open_succeeds_and_prints_destination() {
     );
     assert_eq!(value["dropped_actions"][0], "Run feature set B (deep)");
     assert_eq!(value["dropped_milestones"][0], "ICML");
+}
+
+// ---------------------------------------------------------------------
+// list --closed, activate from _done (RFC 0004 §6.3)
+// ---------------------------------------------------------------------
+
+fn write_closed_map(root: &Path, year: &str, slug: &str, status: &str, closed: &str) {
+    let path = root.join(format!("projects/_done/{year}/{slug}.md"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2025-01-01\ncore_question: null\nclosed: {closed}\n---\n\n# Title of {slug}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn list_closed_shows_outcome_and_date() {
+    let entries = vec![
+        cdno_domain::ClosedProjectEntry {
+            slug: "shipped".to_owned(),
+            title: "Shipped it".to_owned(),
+            context: Context::Work,
+            outcome: ProjectStatus::Completed,
+            closed_on: NaiveDate::from_ymd_opt(2026, 9, 24).unwrap(),
+        },
+        cdno_domain::ClosedProjectEntry {
+            slug: "abandoned".to_owned(),
+            title: "Not happening".to_owned(),
+            context: Context::Personal,
+            outcome: ProjectStatus::Dropped,
+            closed_on: NaiveDate::from_ymd_opt(2026, 9, 22).unwrap(),
+        },
+    ];
+
+    let out = project::render_closed_list(&entries);
+
+    assert!(out.starts_with("2 closed projects\n"), "{out}");
+    assert!(out.contains("completed on 2026-09-24"), "{out}");
+    assert!(out.contains("dropped on 2026-09-22"), "{out}");
+    assert!(out.contains("Shipped it"), "{out}");
+    assert!(
+        out.find("shipped").unwrap() < out.find("abandoned").unwrap(),
+        "rendered in the order given: {out}"
+    );
+    assert_eq!(
+        project::render_closed_list(&[]),
+        "Closed projects\n  (none — close one with `cdno project complete` or `cdno project drop`)\n"
+    );
+}
+
+#[test]
+fn list_closed_json_is_newest_first() {
+    let dir = vault();
+    write_closed_map(dir.path(), "2025", "older", "completed", "2025-11-01");
+    write_closed_map(dir.path(), "2026", "newer", "dropped", "2026-03-01");
+
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "list", "--closed"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let rows: serde_json::Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    assert_eq!(rows[0]["slug"], "newer");
+    assert_eq!(rows[0]["outcome"], "dropped");
+    assert_eq!(rows[0]["closed_on"], "2026-03-01");
+    assert_eq!(rows[0]["title"], "Title of newer");
+    assert_eq!(rows[1]["slug"], "older");
+    assert_eq!(rows[1]["outcome"], "completed");
+}
+
+#[test]
+fn activate_from_done_works() {
+    let dir = vault();
+    write_closed_map(dir.path(), "2025", "old", "dropped", "2025-11-01");
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Activate {
+            slug: Some("old".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("activate from _done");
+
+    let raw = fs::read_to_string(dir.path().join("projects/old.md")).unwrap();
+    assert!(raw.contains("status: active"), "{raw}");
+    assert!(raw.contains("closed: null"), "{raw}");
+    assert!(!dir.path().join("projects/_done/2025/old.md").exists());
 }

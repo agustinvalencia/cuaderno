@@ -121,18 +121,29 @@ pub fn complete_active_project(_current: &OsStr) -> Vec<CompletionCandidate> {
         .collect()
 }
 
-/// Parked project slugs. Used by `cdno project activate --slug`.
-pub fn complete_parked_project(_current: &OsStr) -> Vec<CompletionCandidate> {
+/// Parked and closed project slugs, each labelled with where it is. Used
+/// by `cdno project activate --slug`, which brings back either (RFC 0004
+/// §5.7).
+pub fn complete_reactivatable_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(vault) = try_open_vault() else {
         return Vec::new();
     };
-    let Ok(parked) = vault.parked_projects() else {
-        return Vec::new();
-    };
-    parked
-        .into_iter()
-        .filter_map(|(path, _fm)| slug_from_path(&path).map(CompletionCandidate::new))
-        .collect()
+    let mut out = Vec::new();
+    if let Ok(parked) = vault.parked_projects() {
+        for (path, _fm) in parked {
+            if let Some(slug) = slug_from_path(&path) {
+                out.push(CompletionCandidate::new(slug).help(Some("parked".into())));
+            }
+        }
+    }
+    if let Ok(closed) = vault.closed_projects() {
+        for (path, fm) in closed {
+            if let Some(slug) = slug_from_path(&path) {
+                out.push(CompletionCandidate::new(slug).help(Some(fm.status.as_str().into())));
+            }
+        }
+    }
+    out
 }
 
 /// Active + parked project slugs (the union). Used by `cdno project

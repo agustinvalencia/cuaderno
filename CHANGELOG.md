@@ -17,6 +17,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   with it, or takes `--drop-open`, logging each as dropped. Under `--json` the refusal is the
   `project_has_open_items` object the MCP server returns. A closed project may be closed again
   with the other outcome.
+- `cdno project list --closed` lists completed and dropped projects, newest first, with the
+  outcome and date (under `--json`, one row per project with `slug`, `title`, `context`,
+  `outcome` and `closed_on`). The `cdno project activate` picker and its shell completion now
+  offer closed projects beside parked ones, labelled (RFC 0004, #685).
 
 ### Changed
 

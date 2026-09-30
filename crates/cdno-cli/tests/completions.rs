@@ -348,3 +348,47 @@ fn intercept_note_type_completion_includes_custom_types() {
         "custom type in completions:\n{stdout}"
     );
 }
+
+#[test]
+fn intercept_returns_closed_and_parked_slugs_for_project_activate() {
+    let vault = init_vault();
+    for title in ["Old Initiative", "Finished Thing"] {
+        cdno()
+            .current_dir(vault.path())
+            .args(["project", "create", "--title", title, "--context", "work"])
+            .assert()
+            .success();
+    }
+    cdno()
+        .current_dir(vault.path())
+        .args(["project", "park", "--slug", "old-initiative"])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(vault.path())
+        .args([
+            "--no-interactive",
+            "project",
+            "drop",
+            "--slug",
+            "finished-thing",
+            "--drop-open",
+        ])
+        .assert()
+        .success();
+
+    let output = cdno()
+        .current_dir(vault.path())
+        .env("COMPLETE", "zsh")
+        .env("_CLAP_COMPLETE_INDEX", "4")
+        .args(["--", "cdno", "project", "activate", "--slug", ""])
+        .assert()
+        .success();
+    let stdout = std::str::from_utf8(&output.get_output().stdout).unwrap();
+    assert!(stdout.contains("old-initiative"), "{stdout}");
+    assert!(stdout.contains("finished-thing"), "{stdout}");
+    assert!(
+        stdout.contains("dropped"),
+        "labelled with its outcome:\n{stdout}"
+    );
+}

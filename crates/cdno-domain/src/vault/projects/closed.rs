@@ -3,6 +3,7 @@
 //! weekly and monthly reviews ask "what ended" of.
 
 use chrono::NaiveDate;
+use serde::Serialize;
 
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
@@ -16,7 +17,7 @@ use super::super::commitments::body_title_or_slug;
 use super::{is_closed_project_path, project_slug_from_path};
 
 /// One project closed inside a review window.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClosedProjectEntry {
     pub slug: String,
     /// The map's body heading, or the slug when it has none.
