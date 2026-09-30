@@ -171,8 +171,20 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             RejectionCode::StateTooLong,
             json!({ "slug": slug, "chars": chars, "max": max }),
         ),
-        DomainError::ProjectNotActive { slug, .. } => {
-            (RejectionCode::ProjectNotActive, json!({ "slug": slug }))
+        DomainError::ProjectNotActive {
+            slug,
+            status,
+            closed,
+        } => {
+            // The status says which recovery applies (activate a parked
+            // one, or nothing for one already closed the same way), so an
+            // agent branches on it rather than on the message. `closed`
+            // only when the map carries a date (RFC 0004 §6.4).
+            let mut details = json!({ "slug": slug, "status": status });
+            if let Some(date) = closed {
+                details["closed"] = json!(date);
+            }
+            (RejectionCode::ProjectNotActive, details)
         }
         DomainError::ProjectNotParked(slug) => {
             (RejectionCode::ProjectNotParked, json!({ "slug": slug }))
@@ -581,6 +593,42 @@ mod tests {
                 { "path": "projects/_parked/thesis.md", "note_type": "project" },
                 { "path": "projects/thesis.md", "note_type": "project" },
             ])
+        );
+    }
+
+    #[test]
+    fn project_not_active_details_carry_status() {
+        use cdno_domain::frontmatter::ProjectStatus;
+        use chrono::NaiveDate;
+
+        let payload = classify(&DomainError::ProjectNotActive {
+            slug: "surrogate".into(),
+            status: ProjectStatus::Completed,
+            closed: NaiveDate::from_ymd_opt(2026, 9, 29),
+        })
+        .expect("a closed project is the caller's to handle");
+        assert_eq!(payload["code"], "project_not_active");
+        assert_eq!(
+            payload["details"],
+            json!({ "slug": "surrogate", "status": "completed", "closed": "2026-09-29" })
+        );
+        assert!(
+            payload["message"]
+                .as_str()
+                .unwrap()
+                .contains("completed on 2026-09-29"),
+            "{payload}"
+        );
+
+        let payload = classify(&DomainError::ProjectNotActive {
+            slug: "shelved".into(),
+            status: ProjectStatus::Parked,
+            closed: None,
+        })
+        .expect("a parked project is the caller's to handle");
+        assert_eq!(
+            payload["details"],
+            json!({ "slug": "shelved", "status": "parked" })
         );
     }
 
