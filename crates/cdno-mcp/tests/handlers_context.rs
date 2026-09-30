@@ -28,7 +28,7 @@ use cdno_domain::frontmatter::QuestionDomain;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
     EmptyInput, GetActiveQuestionsInput, GetCommitmentsInput, GetOrientationInput,
-    PortfolioSlugInput, ReadNoteInput, SearchNotesInput,
+    ListProjectsInput, PortfolioSlugInput, ReadNoteInput, SearchNotesInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -1295,7 +1295,7 @@ async fn list_projects_splits_active_and_parked_with_slots() {
     });
 
     let result = server
-        .list_projects(Parameters(EmptyInput {}))
+        .list_projects(Parameters(ListProjectsInput::default()))
         .await
         .expect("list_projects");
     let v = decode_json(&result);
@@ -2020,4 +2020,105 @@ async fn read_note_rejects_a_path_outside_the_vault_as_invalid_params() {
         let err = read(&server, note).await.expect_err("outside the vault");
         assert_eq!(err.code, ErrorCode::INVALID_PARAMS, "`{note}`");
     }
+}
+
+// ---------------------------------------------------------------------
+// Closed projects (RFC 0004)
+// ---------------------------------------------------------------------
+
+/// A vault with one active project, one completed, and one dropped.
+fn server_with_closed_projects() -> CuadernoServer {
+    server_with(|v| {
+        v.create_project(moment(2026, 5, 1, 9, 0), "Alpha", Context::Work, None)
+            .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Beta", Context::Work, None)
+            .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Gamma", Context::Work, None)
+            .unwrap();
+        // Let the template's open items go, then close each way.
+        v.drop_project(
+            moment(2026, 9, 1, 9, 0),
+            "beta",
+            Some("superseded"),
+            cdno_domain::OpenItems::Drop {
+                expected: None,
+                hash_required: false,
+            },
+        )
+        .unwrap();
+        v.drop_project(
+            moment(2026, 9, 2, 9, 0),
+            "gamma",
+            None,
+            cdno_domain::OpenItems::Drop {
+                expected: None,
+                hash_required: false,
+            },
+        )
+        .unwrap();
+        v.complete_project(moment(2026, 9, 3, 9, 0), "gamma")
+            .unwrap();
+    })
+}
+
+#[tokio::test]
+async fn list_projects_includes_closed_only_when_asked() {
+    let server = server_with_closed_projects();
+
+    let default = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput::default()))
+            .await
+            .expect("list_projects"),
+    );
+    assert!(default.get("closed").is_none(), "{default}");
+    assert_eq!(default["active"].as_array().unwrap().len(), 1);
+
+    let with_closed = decode_json(
+        &server
+            .list_projects(Parameters(ListProjectsInput {
+                include_closed: true,
+            }))
+            .await
+            .expect("list_projects"),
+    );
+    let closed = with_closed["closed"].as_array().unwrap();
+    let rows: Vec<(&str, &str, &str)> = closed
+        .iter()
+        .map(|p| {
+            (
+                p["slug"].as_str().unwrap(),
+                p["frontmatter"]["status"].as_str().unwrap(),
+                p["frontmatter"]["closed"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("beta", "dropped", "2026-09-01"),
+            ("gamma", "completed", "2026-09-03"),
+        ]
+    );
+    assert_eq!(with_closed["slots"]["active"].as_u64().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn get_project_context_reads_a_closed_project() {
+    use cdno_mcp::server::ProjectSlugInput;
+    let server = server_with_closed_projects();
+
+    let value = decode_json(
+        &server
+            .get_project_context(Parameters(ProjectSlugInput {
+                project: "beta".to_owned(),
+            }))
+            .await
+            .expect("a closed project is readable"),
+    );
+
+    assert_eq!(value["slug"], "beta");
+    assert_eq!(value["frontmatter"]["status"], "dropped");
+    assert_eq!(value["frontmatter"]["closed"], "2026-09-01");
+    assert!(value["body_markdown"].as_str().unwrap().contains("# Beta"));
 }

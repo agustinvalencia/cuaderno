@@ -32,6 +32,16 @@ pub struct GetOrientationInput {
     pub energy: Option<String>,
 }
 
+/// Input for `list_projects`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListProjectsInput {
+    /// Also list completed and dropped projects under `closed`. Off by
+    /// default: the archive grows for years, and this is the lightweight
+    /// enumeration.
+    #[serde(default)]
+    pub include_closed: bool,
+}
+
 /// Input for tools that take a single project slug.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ProjectSlugInput {

@@ -26,6 +26,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   or milestone is open; `drop_project` with `open_items: "drop"` and `expected_open_items` set to
   that hash drops them with the project, and is refused again if the list changed. Results name
   what was dropped and the linked commitments left open. The server now advertises 60 tools.
+- MCP `list_projects` takes `include_closed` (default false) and then lists completed and
+  dropped projects under `closed`, each with its `closed` date; `get_project_context` reads a
+  closed project, and the `activate_project` description covers bringing one back (RFC 0004,
+  #688).
 
 ### Changed
 
