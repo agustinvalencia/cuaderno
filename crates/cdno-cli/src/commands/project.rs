@@ -833,6 +833,7 @@ pub fn render_show(summary: &cdno_domain::ProjectSummary) -> String {
         ProjectStatus::Active => "active",
         ProjectStatus::Parked => "parked",
         ProjectStatus::Completed => "completed",
+        ProjectStatus::Dropped => "dropped",
     };
     let mut out = format!(
         "[{}] ({})\n",

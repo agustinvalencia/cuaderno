@@ -91,7 +91,14 @@ impl NoteType {
             NoteType::Daily => &["type", "date"],
             NoteType::Weekly => &["type", "week", "date_start", "date_end"],
             NoteType::Monthly => &["type", "month", "date_start", "date_end"],
-            NoteType::Project => &["type", "context", "status", "created", "core_question"],
+            NoteType::Project => &[
+                "type",
+                "context",
+                "status",
+                "created",
+                "core_question",
+                "closed",
+            ],
             NoteType::Action => &[
                 "type",
                 "status",

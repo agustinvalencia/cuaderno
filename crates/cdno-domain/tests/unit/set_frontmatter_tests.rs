@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use chrono::{NaiveDate, NaiveDateTime};
 
-use cdno_core::config::{FieldSpec, FieldType, SchemaExtension, VaultConfig};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, SchemaExtension, VaultConfig};
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
@@ -648,4 +648,76 @@ fn the_setter_does_not_reach_into_a_nested_record_block() {
     let json = fm.as_json();
     assert_eq!(json["weight"], serde_json::json!(83.0));
     assert_eq!(json["detail"][0]["weight"], serde_json::json!(100));
+}
+
+/// A `closed` date field declared settable on `type`, so the only thing
+/// that can refuse it is the reserved-key rule.
+fn schema_with_settable_closed() -> SchemaExtension {
+    let mut schema = SchemaExtension::default();
+    schema.fields.insert(
+        "closed".to_owned(),
+        field(FieldType::Date, Some(true), None, None),
+    );
+    schema
+}
+
+#[test]
+fn set_frontmatter_refuses_closed_on_project() {
+    // `closed:` on a project map is stamped by `complete` and `drop` and
+    // cleared by `activate` (RFC 0004); even a vault that declares it
+    // settable cannot forge a closure through the generic setter.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-07-01\n\
+                   core_question: null\nclosed: null\n---\n\n# A project\n";
+    let path = VaultPath::new("projects/surrogate.md").unwrap();
+    store.write_file(&path, project).unwrap();
+    let mut config = VaultConfig::default();
+    config
+        .schemas
+        .insert("project".to_owned(), schema_with_settable_closed());
+    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+
+    match vault.set_frontmatter(moment(), "projects/surrogate.md", "closed", "2026-09-29") {
+        Err(DomainError::ReservedSchemaField { note_type, field }) => {
+            assert_eq!((note_type.as_str(), field.as_str()), ("project", "closed"));
+        }
+        other => panic!("expected ReservedSchemaField(closed), got {other:?}"),
+    }
+    assert_eq!(store.read_file(&path).unwrap(), project, "file untouched");
+}
+
+#[test]
+fn set_frontmatter_allows_closed_on_a_custom_type_that_declares_it() {
+    // The reservation is the project's, not the key's: a custom type
+    // with its own `closed` field keeps it settable.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let paper = "---\ntype: paper\nclosed: null\n---\n\n# A paper\n";
+    let path = VaultPath::new("papers/review.md").unwrap();
+    store.write_file(&path, paper).unwrap();
+    store.write_file(&daily_path(), DAILY_NOTE).unwrap();
+    let mut config = VaultConfig::default();
+    config.note_types.insert(
+        "paper".to_owned(),
+        CustomNoteType {
+            folder: "papers".to_owned(),
+            required: Vec::new(),
+            optional: vec!["closed".to_owned()],
+            template: None,
+            append_only: false,
+            title_field: None,
+            date_field: None,
+        },
+    );
+    config
+        .schemas
+        .insert("paper".to_owned(), schema_with_settable_closed());
+    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+
+    vault
+        .set_frontmatter(moment(), "papers/review.md", "closed", "2026-09-29")
+        .expect("closed is settable on a custom type");
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("closed: 2026-09-29"), "file: {raw}");
 }

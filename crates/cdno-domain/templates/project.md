@@ -4,6 +4,7 @@ context: {{context}}
 status: {{status}}
 created: {{created}}
 core_question: {{core_question}}
+closed: null
 ---
 
 # {{title}}

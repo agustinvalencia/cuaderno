@@ -117,6 +117,12 @@ fn project_status_serialises_as_kebab_case() {
             .trim(),
         "completed"
     );
+    assert_eq!(
+        serde_yaml::to_string(&ProjectStatus::Dropped)
+            .unwrap()
+            .trim(),
+        "dropped"
+    );
 }
 
 #[test]
@@ -133,6 +139,10 @@ fn project_status_deserialises_from_kebab_case() {
         serde_yaml::from_str::<ProjectStatus>("completed").unwrap(),
         ProjectStatus::Completed
     );
+    assert_eq!(
+        serde_yaml::from_str::<ProjectStatus>("dropped").unwrap(),
+        ProjectStatus::Dropped
+    );
 }
 
 #[test]
@@ -146,6 +156,7 @@ fn project_status_as_str_returns_kebab_case() {
         (ProjectStatus::Active, "active"),
         (ProjectStatus::Parked, "parked"),
         (ProjectStatus::Completed, "completed"),
+        (ProjectStatus::Dropped, "dropped"),
     ];
     for (variant, expected) in cases {
         assert_eq!(variant.as_str(), expected, "variant={variant:?}");
@@ -293,6 +304,52 @@ fn try_from_accepts_missing_optional_core_question() {
     assert_eq!(parsed.context, Context::Personal);
     assert_eq!(parsed.status, ProjectStatus::Parked);
     assert!(parsed.core_question.is_none());
+}
+
+#[test]
+fn try_from_parses_a_dropped_map_with_its_closed_date() {
+    let fm = parse_fm(concat!(
+        "type: project\n",
+        "context: work\n",
+        "status: dropped\n",
+        "created: 2026-01-15\n",
+        "core_question: null\n",
+        "closed: 2026-09-29\n",
+    ));
+
+    let parsed = ProjectFrontmatter::try_from(fm).expect("valid frontmatter");
+
+    assert_eq!(parsed.status, ProjectStatus::Dropped);
+    assert_eq!(
+        parsed.closed,
+        Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 29).unwrap())
+    );
+}
+
+#[test]
+fn try_from_reads_absent_or_null_closed_as_none() {
+    // A map written before `closed:` existed has no such key; a fresh
+    // scaffold carries `closed: null`. Both are an open project.
+    for tail in ["", "closed: null\n"] {
+        let fm = parse_fm(&format!(
+            "type: project\ncontext: work\nstatus: active\ncreated: 2026-01-15\n{tail}"
+        ));
+        let parsed = ProjectFrontmatter::try_from(fm).expect("valid frontmatter");
+        assert_eq!(parsed.closed, None, "tail={tail:?}");
+    }
+}
+
+#[test]
+fn try_from_rejects_a_closed_value_that_is_not_a_date() {
+    let fm = parse_fm(concat!(
+        "type: project\n",
+        "context: work\n",
+        "status: completed\n",
+        "created: 2026-01-15\n",
+        "closed: yesterday\n",
+    ));
+
+    assert!(ProjectFrontmatter::try_from(fm).is_err());
 }
 
 #[test]

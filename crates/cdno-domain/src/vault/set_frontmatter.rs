@@ -235,9 +235,15 @@ impl Vault {
 /// Whether `key` is engine-owned for `note_type` and therefore never settable
 /// through this generic path. The set is the per-type hard-reserved fields
 /// (`type` plus the calendar period key) unioned with `status`, which the
-/// lifecycle tools own for every type.
+/// lifecycle tools own for every type, and a project's `closed`, which the
+/// closing verbs own.
 fn is_reserved_key(note_type: &str, key: &str) -> bool {
     if key == "type" || key == "status" {
+        return true;
+    }
+    // A project's `closed:` date is stamped by `complete` and `drop` and
+    // cleared by `activate`; a raw set would forge a closure (RFC 0004).
+    if note_type == NoteType::Project.as_str() && key == "closed" {
         return true;
     }
     // A config-defined custom type has no built-in period key; only the
