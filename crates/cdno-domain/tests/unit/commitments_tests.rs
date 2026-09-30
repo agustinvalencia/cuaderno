@@ -676,6 +676,142 @@ fn commitments_does_not_duplicate_a_milestone_pinned_action() {
 }
 
 // ---------------------------------------------------------------------
+// The register asks the parent (RFC 0004 §5.5): a date surfaces only
+// while the container that owns it is active; a promise to someone
+// else surfaces regardless.
+// ---------------------------------------------------------------------
+
+/// A project map with one hard milestone, `status` and `created` set by
+/// the caller.
+fn project_with_hard_milestone(title: &str, status: &str, milestone: &str, date: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\n---\n\n# {title}\n\n## Milestones\n- [ ] {milestone} — hard: {date}\n\n## Next Actions\n"
+    )
+}
+
+fn action_note_for(project: &str, title: &str, due: &str) -> String {
+    format!(
+        "---\ntype: action\nstatus: active\nproject: {project}\nenergy: deep\nmilestone: null\ndue: {due}\ncreated: 2026-05-20\ncompleted: null\nblocker: null\ncriteria: null\ntags: []\n---\n\n# {title}\n"
+    )
+}
+
+#[test]
+fn commitments_skips_milestones_of_parked_projects() {
+    // Keep a handle on the index so the test can prove the parked map's
+    // row is present: before T4 no move restages rows, so a vault that
+    // reached this state by hand is the only way to have them, and the
+    // register must still omit the date.
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in [
+        (
+            "projects/alpha.md",
+            project_with_hard_milestone("Alpha", "active", "Submit paper", "2026-06-01"),
+        ),
+        (
+            "projects/_parked/beta.md",
+            project_with_hard_milestone("Beta", "parked", "Grant report", "2026-06-02"),
+        ),
+    ] {
+        store.write_file(&vp(path), &body).unwrap();
+    }
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+
+    let rows = index
+        .milestones_between("2026-04-26", "2026-06-09")
+        .unwrap();
+    assert!(
+        rows.iter()
+            .any(|(path, m)| *path == vp("projects/_parked/beta.md") && m.name == "Grant report"),
+        "the parked map's milestone row must be indexed for this test to mean anything: {rows:?}"
+    );
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let sources: Vec<&CommitmentSource> = got.iter().map(|c| &c.source).collect();
+    assert_eq!(
+        sources,
+        vec![&CommitmentSource::ProjectMilestone("alpha".to_owned())],
+    );
+}
+
+#[test]
+fn commitments_skips_action_dues_of_non_active_projects() {
+    let (vault, _store) = vault_with_seeded_store(&[
+        (
+            "projects/alpha.md",
+            &project_body_with_status("Alpha", "active"),
+        ),
+        (
+            "projects/_parked/beta.md",
+            &project_body_with_status("Beta", "parked"),
+        ),
+        (
+            "projects/_done/2026/gamma.md",
+            &project_body_with_status("Gamma", "completed"),
+        ),
+        (
+            "actions/live-work.md",
+            &action_note_for("alpha", "Live work", "2026-05-28"),
+        ),
+        (
+            "actions/shelved-work.md",
+            &action_note_for("beta", "Shelved work", "2026-05-29"),
+        ),
+        (
+            "actions/leftover-work.md",
+            &action_note_for("gamma", "Leftover work", "2026-05-30"),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(&str, &CommitmentSource)> =
+        got.iter().map(|c| (c.title.as_str(), &c.source)).collect();
+    assert_eq!(
+        summary,
+        vec![(
+            "Live work",
+            &CommitmentSource::ActionNote("alpha".to_owned())
+        )],
+    );
+}
+
+#[test]
+fn commitments_keeps_standalone_commitment_of_closed_project() {
+    // A commitment is a promise to someone else: closing the project it
+    // came from does not retire it, so the register keeps it.
+    let commitment = "---\ntype: commitment\nstatus: active\ndue: 2026-05-30\ncreated: 2026-05-01\ncompleted: null\ncontext: work\nproject: gamma\n---\n\n# Reviewer report\n";
+    let (vault, _store) = vault_with_seeded_store(&[
+        (
+            "projects/_done/2026/gamma.md",
+            &project_body_with_status("Gamma", "completed"),
+        ),
+        ("commitments/reviewer-report.md", commitment),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(&str, &CommitmentSource)> =
+        got.iter().map(|c| (c.title.as_str(), &c.source)).collect();
+    assert_eq!(
+        summary,
+        vec![(
+            "Reviewer report",
+            &CommitmentSource::StandaloneCommitment("reviewer-report".to_owned())
+        )],
+    );
+}
+
+fn project_body_with_status(title: &str, status: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\n---\n\n# {title}\n\n## Next Actions\n"
+    )
+}
+
+// ---------------------------------------------------------------------
 // Source 2: stewardship periodic commitments
 // ---------------------------------------------------------------------
 
