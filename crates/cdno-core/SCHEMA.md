@@ -279,7 +279,7 @@ CREATE TABLE schema_migrations (
 | `find_backlinks(p)` | `SELECT source_path FROM links WHERE resolved_path = ?` — `idx_links_resolved`. |
 | `find_outgoing_links(p)` | `SELECT resolved_path, target_raw, label FROM links WHERE source_path = ?` — `idx_links_source`. |
 | Notes tagged `#X` by recency | `SELECT n.path FROM note_tags t JOIN notes n ON n.path = t.note_path WHERE t.tag = ? ORDER BY n.mtime_ns DESC` — `idx_tags_tag` + PK. |
-| `milestones_for_project(slug)` | `SELECT … FROM milestones WHERE note_path = ? OR note_path = ? ORDER BY id` — resolves slug to active + parked paths. |
+| `milestones_for_project(path)` | `SELECT … FROM milestones WHERE note_path = ? ORDER BY id` — `idx_milestones_note` lookup; the caller resolves the project's path. |
 | `milestones_between(from, to)` | `SELECT … FROM milestones WHERE date IS NOT NULL AND date BETWEEN ? AND ? ORDER BY date` — `idx_milestones_date` range scan. |
 | `find_archival_snapshot(path)` | `SELECT frozen_size, frozen_hash, archived_at_ns FROM archived_action_snapshots WHERE note_path = ?` — PK lookup. |
 | `search(query, limit)` | `SELECT f.path, n.note_type, f.title, snippet(...), bm25(notes_fts, 0, 10, 1) FROM notes_fts f JOIN notes n ON n.path = f.path WHERE notes_fts MATCH ? ORDER BY bm25(...) LIMIT ?` — FTS5 index lookup, ranked best-first. |

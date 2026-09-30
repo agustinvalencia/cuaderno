@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- `cdno project milestone done` and `drop`, run interactively with an unknown `--slug`, now say the
+  project was not found and list the available ones, instead of reporting no open milestones
+  (RFC 0004, #671).
 - `cdno init` now also creates `projects/_done/<year>/`, the folder closed projects will move to
   (RFC 0004, #670).
 
