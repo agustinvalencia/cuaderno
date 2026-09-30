@@ -93,7 +93,6 @@ flowchart LR
     T12 --> T14
     T13 --> T15
     T12 --> T15
-    T8 --> T16
     T12 --> T16
     T11 --> T17
     T16 --> T17
@@ -369,11 +368,18 @@ note's existence and status are read from `actions/<slug>.md` on disk; open mile
 `cdno_core::markdown::extract_milestones_from_body` on `## Milestones`; linked commitments from
 `commitments_for_project` filtered to `status == Active`. Also `DomainError::ProjectHasOpenItems
 { slug, report: OpenItemsReport }` and `OpenItems { Refuse, Drop { expected: Option<OpenItemsHash> } }`.
+`is_empty` counts actions and milestones only: linked commitments never block a close (RFC §1.1
+closes a project with its reviewer report still open), but they are part of the report, so they
+are in the hash. Because `classify` in `crates/cdno-mcp/src/rejection.rs` matches every
+`DomainError` variant, the new variant is classified here as `project_has_open_items` with the
+RFC §6.4 details (`slug`, `open_items_hash`, `actions`, `milestones`, `untouched_commitments`),
+taken from the report's derived `Serialize` shape.
 
 **Why.** RFC §5.3: the report must parse the map, never `list_actions` (active-only) or
 `open_milestones` (index rows a parked map no longer has).
 
-**Deliverable.** The module, the two types, the error variant, and tests. Nothing calls it yet.
+**Deliverable.** The module, the two types, the error variant, its MCP classification, and tests.
+Nothing calls it yet.
 
 **Depends on.** T2, T6.
 
@@ -645,28 +651,24 @@ appropriate. `render_show` already has its `Dropped` arm from T6.
 
 ## Stage 5 — MCP
 
-### T16 — Rejection codes: `project_has_open_items`, status on `project_not_active`
+### T16 — Rejection codes: status on `project_not_active`
 
-**What.** In `crates/cdno-mcp/src/rejection.rs`: `RejectionCode::ProjectHasOpenItems` classified
-from `DomainError::ProjectHasOpenItems` with `details: { slug, open_items_hash, actions: [{text,
-note, note_status}], milestones: [{title, date, hard}], untouched_commitments: [{slug, due}] }`;
-`ProjectNotActive` now serialises `details: { slug, status, closed }`. The `rename_all` derive gives the wire codes; the
-`classify` match gains its arms.
+**What.** In `crates/cdno-mcp/src/rejection.rs`: `ProjectNotActive` now serialises `details: {
+slug, status, closed }`. (`ambiguous_project` shipped with T2 and `project_has_open_items` with
+T8, because `classify` matches every variant and each new variant had to be classified where it
+was added.)
 
-**Deliverable.** The two classifications and their tests; no tool changes yet. (`ambiguous_project`
-shipped with T2.)
+**Deliverable.** The classification and its test; no tool changes yet.
 
-**Depends on.** T8, T12.
+**Depends on.** T12.
 
-**Complexity.** S. The envelope is fixed; the work is the DTO of the report and keeping the
-existing code names stable.
+**Complexity.** S. The envelope is fixed; the work is keeping the existing code name stable
+while its details grow.
 
 **Probes.**
-- `cargo test -p cdno-mcp --test handlers_operations` (or the rejection test module) passes
-  with `complete_project_rejection_carries_open_items_and_hash` (exercised through a direct
-  `classify` call until T17 adds the tool) and `project_not_active_details_carry_status`.
-- The existing rejection-code snapshot test (the one guarding `rename_all`) passes with the
-  new code added to its expected list.
+- `cargo test -p cdno-mcp --lib` passes with `project_not_active_details_carry_status`
+  (exercised through a direct `classify` call). The `project_has_open_items` shape is pinned by
+  T8's `a_project_with_open_items_carries_the_report_and_its_hash`.
 
 **Correct means.** An agent can branch on the code and act on the details without parsing a
 message.

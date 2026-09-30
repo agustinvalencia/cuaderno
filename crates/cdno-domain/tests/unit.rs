@@ -17,6 +17,7 @@ mod unit {
     mod note_type_tests;
     mod notes_section_tests;
     mod notes_tests;
+    mod open_items_tests;
     mod orient_tests;
     mod portfolios_tests;
     mod projects_tests;

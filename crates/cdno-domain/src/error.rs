@@ -120,6 +120,18 @@ pub enum DomainError {
         candidates: Vec<VaultPath>,
     },
 
+    /// Closing a project with open actions or milestones (RFC 0004 §5.3).
+    /// Data, not prose: the CLI renders the report as a list and MCP
+    /// returns it with its hash, which a cascade must echo back.
+    #[error(
+        "project '{slug}' has {} open item(s) \u{2014} tick the ones that are done, or let them go explicitly",
+        .report.open_count()
+    )]
+    ProjectHasOpenItems {
+        slug: String,
+        report: crate::vault::OpenItemsReport,
+    },
+
     #[error("ambiguous slug '{0}' \u{2014} matches more than one note across domains")]
     AmbiguousSlug(String),
 

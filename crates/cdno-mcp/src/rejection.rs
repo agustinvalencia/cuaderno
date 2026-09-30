@@ -125,6 +125,7 @@ pub(crate) enum RejectionCode {
     PeriodicNotFound,
     PeriodicRecurrenceUnreadable,
     ProjectCapReached,
+    ProjectHasOpenItems,
     ProjectNotActive,
     ProjectNotParked,
     ReservedSchemaField,
@@ -255,6 +256,18 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
                     .iter()
                     .map(|p| json!({ "path": p.to_string(), "note_type": "project" }))
                     .collect::<Vec<_>>(),
+            }),
+        ),
+        DomainError::ProjectHasOpenItems { slug, report } => (
+            RejectionCode::ProjectHasOpenItems,
+            // The report's derived shape is the wire shape (RFC 0004 §6.4);
+            // the hash is what a `drop` call must echo back.
+            json!({
+                "slug": slug,
+                "open_items_hash": report.hash().as_str(),
+                "actions": report.actions,
+                "milestones": report.milestones,
+                "untouched_commitments": report.untouched_commitments,
             }),
         ),
         DomainError::AmbiguousSlug(slug) => (RejectionCode::AmbiguousSlug, json!({ "slug": slug })),
@@ -568,6 +581,72 @@ mod tests {
                 { "path": "projects/_parked/thesis.md", "note_type": "project" },
                 { "path": "projects/thesis.md", "note_type": "project" },
             ])
+        );
+    }
+
+    #[test]
+    fn a_project_with_open_items_carries_the_report_and_its_hash() {
+        use cdno_domain::frontmatter::ActionStatus;
+        use cdno_domain::{LinkedCommitment, OpenAction, OpenItemsReport, OpenMilestone};
+        use chrono::NaiveDate;
+
+        let day = |d| NaiveDate::from_ymd_opt(2026, 10, d).unwrap();
+        let report = OpenItemsReport {
+            actions: vec![
+                OpenAction {
+                    text: "Run feature set B (deep)".into(),
+                    note: None,
+                    note_status: None,
+                },
+                OpenAction {
+                    text: "[[actions/characterise-kan]] (deep)".into(),
+                    note: Some("characterise-kan".into()),
+                    note_status: Some(ActionStatus::Active),
+                },
+            ],
+            milestones: vec![OpenMilestone {
+                title: "ICML paper submitted".into(),
+                date: Some(day(22)),
+                hard: true,
+            }],
+            untouched_commitments: vec![LinkedCommitment {
+                slug: "reviewer-report".into(),
+                due: day(15),
+            }],
+        };
+        let hash = report.hash();
+        let payload = classify(&DomainError::ProjectHasOpenItems {
+            slug: "surrogate-model".into(),
+            report,
+        })
+        .expect("open items are the caller's to decide on");
+
+        assert_eq!(payload["code"], "project_has_open_items");
+        assert_eq!(
+            payload["details"],
+            json!({
+                "slug": "surrogate-model",
+                "open_items_hash": hash.as_str(),
+                "actions": [
+                    { "text": "Run feature set B (deep)", "note": null, "note_status": null },
+                    {
+                        "text": "[[actions/characterise-kan]] (deep)",
+                        "note": "characterise-kan",
+                        "note_status": "active"
+                    },
+                ],
+                "milestones": [
+                    { "title": "ICML paper submitted", "date": "2026-10-22", "hard": true },
+                ],
+                "untouched_commitments": [{ "slug": "reviewer-report", "due": "2026-10-15" }],
+            })
+        );
+        assert!(
+            payload["message"]
+                .as_str()
+                .expect("message")
+                .contains("3 open item(s)"),
+            "payload: {payload}"
         );
     }
 

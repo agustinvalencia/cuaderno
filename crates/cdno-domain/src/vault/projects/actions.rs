@@ -690,7 +690,7 @@ pub(in crate::vault) fn flatten_reason(reason: &str) -> String {
 /// `None`. Substring matching strips the suffix separately via
 /// [`strip_energy_suffix`]; the verbatim form is what gets logged
 /// on completion so the daily log preserves the energy tag.
-fn parse_open_action_text(line: &str) -> Option<&str> {
+pub(in crate::vault) fn parse_open_action_text(line: &str) -> Option<&str> {
     line.trim_start().strip_prefix("- [ ] ").map(str::trim)
 }
 
