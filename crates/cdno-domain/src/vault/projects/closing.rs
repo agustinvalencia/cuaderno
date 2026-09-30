@@ -4,7 +4,8 @@
 //! and `closed:`, swap the index rows and write one line to today's daily
 //! log, in one transaction. Both accept an active or a parked project and
 //! never check the cap, since closing never adds an active project
-//! (§5.1, D8).
+//! (§5.1, D8). A closed project may be closed again with the other outcome,
+//! as a new decision (§5.7); the same outcome again is refused.
 //!
 //! A project with an open action or milestone is refused with the open
 //! items listed (§5.3). `complete_project` never lets them go: completion is
@@ -38,7 +39,7 @@ use super::actions::{
 use super::lifecycle::stage_moved_milestone_rows;
 use super::milestones::{format_milestone_dropped_log_entry, remove_milestone_block};
 use super::open_items::{LinkedCommitment, OpenItems, OpenItemsReport};
-use super::{MILESTONES_SECTION, NEXT_ACTIONS_SECTION};
+use super::{MILESTONES_SECTION, NEXT_ACTIONS_SECTION, not_active};
 
 /// What closing a project did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,9 +70,13 @@ impl Vault {
     /// commitments do not block and are never touched; they come back in
     /// the outcome.
     ///
-    /// Errors: `ProjectNotActive` (with the project's status) for a map that
-    /// is neither active at `projects/` nor parked at `projects/_parked/`,
-    /// `ProjectHasOpenItems`, `AmbiguousProject` (also when a closed map
+    /// A dropped project may be completed: it is a new decision, so the map
+    /// is restamped, filed under this year's `_done/` folder, and logged
+    /// again (RFC 0004 §5.7).
+    ///
+    /// Errors: `ProjectNotActive` (with the project's status and closing
+    /// date) for a map already completed, or one whose status and folder
+    /// disagree, `ProjectHasOpenItems`, `AmbiguousProject` (also when a closed map
     /// already holds the slug, so the destination is occupied),
     /// `Store(NotFound)`, and `Store(AlreadyExists)` when a file appears at
     /// the destination behind the lock's back. Nothing is written on any of
@@ -85,7 +90,8 @@ impl Vault {
         self.close_project(at, slug, Closure::Completed, None, OpenItems::Refuse)
     }
 
-    /// Drop a project: it is not going to happen, from active or parked.
+    /// Drop a project: it is not going to happen, from active or parked, or
+    /// a completed project reconsidered (RFC 0004 §5.7).
     ///
     /// `reason` rides an indented continuation line under the log entry.
     /// With open items and `OpenItems::Refuse` (the default on every
@@ -125,7 +131,17 @@ impl Vault {
         // report the refusal shows, and the hash a cascade is checked
         // against, is the state the close acts on.
         let mut tx = self.transaction()?;
-        let (path, mut doc) = self.resolve_closable_project(slug)?;
+        let (path, mut doc, frontmatter) = self.resolve_closable_project(slug)?;
+        let status = match closure {
+            Closure::Completed => ProjectStatus::Completed,
+            Closure::Dropped => ProjectStatus::Dropped,
+        };
+        // A closed map may take the other outcome, as a new decision dated
+        // today; the same outcome again is refused with the date it already
+        // has (RFC 0004 §5.7, Q4).
+        if frontmatter.status == status {
+            return Err(not_active(slug, &frontmatter));
+        }
 
         let report = self.open_items_report(&doc, slug)?;
         if !report.is_empty() && !cascade_confirmed(closure, &open_items, &report) {
@@ -162,11 +178,16 @@ impl Vault {
         // every file and index row as it was. The locator already refuses a
         // slug with a map at the map's destination (`AmbiguousProject`), so
         // the check below only guards a file written behind the lock's back.
+        //
+        // The destination is this year's folder, so a switched outcome
+        // files the map by its new closing date. A map closed earlier this
+        // year is already there and is rewritten in place.
         let dest = VaultPath::new(format!(
             "{}/{slug}.md",
             cdno_core::paths::projects_done_dir(today.year())
         ))?;
-        if self.store.exists(&dest)? {
+        let moves = dest != path;
+        if moves && self.store.exists(&dest)? {
             return Err(DomainError::Store(StoreError::AlreadyExists(
                 dest.to_string(),
             )));
@@ -174,10 +195,6 @@ impl Vault {
 
         // Stamp the document already in hand, not a fresh read: the cascade
         // edited it above, and re-reading would discard the edits.
-        let status = match closure {
-            Closure::Completed => ProjectStatus::Completed,
-            Closure::Dropped => ProjectStatus::Dropped,
-        };
         let mut fields = serde_json::Map::new();
         fields.insert("status".to_owned(), Value::from(status.as_str()));
         fields.insert(
@@ -228,10 +245,14 @@ impl Vault {
             self.stage_action_archival(at, note, Closure::Dropped, &mut tx)?;
         }
         tx.write_file(dest.clone(), new_content);
-        tx.delete_file(path.clone());
+        if moves {
+            tx.delete_file(path.clone());
+        }
         tx.upsert_note(entry_meta);
         stage_moved_milestone_rows(&dest, &doc, &mut tx);
-        tx.remove_note(path);
+        if moves {
+            tx.remove_note(path);
+        }
         self.stage_daily_logs(at, &log_refs, &mut tx)?;
         let touched = tx.commit()?;
 

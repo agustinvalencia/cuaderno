@@ -4310,7 +4310,7 @@ fn complete_project_refuses_an_occupied_destination() {
 }
 
 #[test]
-fn complete_project_refuses_a_closed_project() {
+fn complete_project_on_completed_project_is_refused() {
     let closed = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2025-01-01\ncore_question: null\nclosed: 2026-03-01\n---\n\n# Old\n";
     let (vault, _store, _index) = closing_vault(&[("projects/_done/2026/old.md", closed)]);
 
@@ -5049,4 +5049,224 @@ fn drop_project_refuses_stale_hash_even_when_not_required() {
         "got {err:?}"
     );
     assert!(store.exists(&vp("projects/surrogate.md")).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// Reactivation and switching outcome (RFC 0004 §5.7, Q4)
+// ---------------------------------------------------------------------------
+
+/// A closed map as `complete` or `drop` leaves it, with one closed
+/// milestone so row restaging is visible.
+fn closed_map(status: &str, closed: &str, title: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2025-01-01\ncore_question: null\nclosed: {closed}\n---\n\n# {title}\n\n## Next Actions\n- [x] Submit (deep)\n\n## Milestones\n- [x] Paper submitted \u{2014} hard: 2025-05-22\n"
+    )
+}
+
+#[test]
+fn activate_project_from_done_clears_closed_and_cap_checks() {
+    let (vault, store, index) = closing_vault(&[(
+        "projects/_done/2025/old.md",
+        &closed_map("dropped", "2025-11-01", "Old"),
+    )]);
+
+    let path = vault
+        .activate_project(dt(2026, 9, 29, 10, 0), "old")
+        .expect("activate from _done");
+
+    assert_eq!(path, vp("projects/old.md"));
+    assert!(!store.exists(&vp("projects/_done/2025/old.md")).unwrap());
+    let raw = store.read_file(&path).unwrap();
+    let fm = frontmatter_of(&raw);
+    assert_eq!(fm.status, ProjectStatus::Active);
+    assert_eq!(fm.closed, None);
+    assert!(raw.contains("\nclosed: null\n"), "{raw}");
+    assert!(
+        daily_log(&store, "2026-09-29").contains("project [[old]] activated"),
+        "{}",
+        daily_log(&store, "2026-09-29")
+    );
+    assert!(index.find_by_path(&path).unwrap().is_some());
+    assert!(
+        index
+            .find_by_path(&vp("projects/_done/2025/old.md"))
+            .unwrap()
+            .is_none()
+    );
+    let rows = index.milestones_for_project(&path).unwrap();
+    assert_eq!(rows.len(), 1);
+
+    // At the cap, a closed project is refused like a parked one.
+    let mut notes: Vec<(String, String)> = (1..=5)
+        .map(|i| {
+            (
+                format!("projects/live-{i}.md"),
+                closable_map("active", &format!("Live {i}")),
+            )
+        })
+        .collect();
+    notes.push((
+        "projects/_done/2025/old.md".to_owned(),
+        closed_map("completed", "2025-11-01", "Old"),
+    ));
+    let refs: Vec<(&str, &str)> = notes
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let (vault, store, _index) = closing_vault(&refs);
+    let err = vault
+        .activate_project(dt(2026, 9, 29, 10, 0), "old")
+        .expect_err("at cap");
+    assert!(
+        matches!(err, DomainError::ProjectCapReached { .. }),
+        "got {err:?}"
+    );
+    assert!(store.exists(&vp("projects/_done/2025/old.md")).unwrap());
+}
+
+#[test]
+fn activate_project_refuses_a_map_hand_closed_outside_done() {
+    let hand_closed = closed_map("completed", "2026-03-01", "Hand");
+    let (vault, store, _index) = closing_vault(&[("projects/hand.md", &hand_closed)]);
+
+    let err = vault
+        .activate_project(dt(2026, 9, 29, 10, 0), "hand")
+        .expect_err("status and folder disagree");
+
+    assert!(
+        matches!(err, DomainError::ProjectNotParked(_)),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("not parked or closed"), "{err}");
+    assert_eq!(
+        store.read_file(&vp("projects/hand.md")).unwrap(),
+        hand_closed
+    );
+}
+
+#[test]
+fn complete_project_on_dropped_project_switches_outcome() {
+    let (vault, store, index) = closing_vault(&[(
+        "projects/_done/2025/old.md",
+        &closed_map("dropped", "2025-11-01", "Old"),
+    )]);
+
+    let outcome = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "old")
+        .expect("a dropped project may be completed");
+
+    let dest = vp("projects/_done/2026/old.md");
+    assert_eq!(outcome.outcome.primary, dest);
+    assert!(!store.exists(&vp("projects/_done/2025/old.md")).unwrap());
+    let fm = frontmatter_of(&store.read_file(&dest).unwrap());
+    assert_eq!(fm.status, ProjectStatus::Completed);
+    assert_eq!(fm.closed, Some(day(2026, 9, 29)));
+    assert!(index.find_by_path(&dest).unwrap().is_some());
+    assert!(
+        index
+            .find_by_path(&vp("projects/_done/2025/old.md"))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(index.milestones_for_project(&dest).unwrap().len(), 1);
+    assert!(
+        daily_log(&store, "2026-09-29").contains("project completed [[old]] \u{2014} Old\n"),
+        "{}",
+        daily_log(&store, "2026-09-29")
+    );
+}
+
+#[test]
+fn drop_project_on_completed_project_this_year_rewrites_in_place() {
+    // Closed earlier this year: the destination is the folder it is
+    // already in, so the map is rewritten, not moved and deleted.
+    let (vault, store, index) = closing_vault(&[(
+        "projects/_done/2026/old.md",
+        &closed_map("completed", "2026-02-01", "Old"),
+    )]);
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "old",
+            Some("it never shipped"),
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect("a completed project may be dropped");
+
+    let path = vp("projects/_done/2026/old.md");
+    let fm = frontmatter_of(&store.read_file(&path).unwrap());
+    assert_eq!(fm.status, ProjectStatus::Dropped);
+    assert_eq!(fm.closed, Some(day(2026, 9, 29)));
+    assert!(index.find_by_path(&path).unwrap().is_some());
+    assert_eq!(index.milestones_for_project(&path).unwrap().len(), 1);
+    assert!(
+        daily_log(&store, "2026-09-29")
+            .contains("project dropped on [[old]] \u{2014} Old\n  reason: it never shipped\n"),
+        "{}",
+        daily_log(&store, "2026-09-29")
+    );
+}
+
+#[test]
+fn drop_project_on_dropped_project_is_refused() {
+    let map = closed_map("dropped", "2026-02-01", "Old");
+    let (vault, store, _index) = closing_vault(&[("projects/_done/2026/old.md", &map)]);
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "old",
+            None,
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect_err("same outcome again");
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::ProjectNotActive { status: ProjectStatus::Dropped, closed: Some(d), .. }
+                if *d == day(2026, 2, 1)
+        ),
+        "got {err:?}"
+    );
+    assert!(err.to_string().contains("dropped on 2026-02-01"), "{err}");
+    assert_eq!(
+        store.read_file(&vp("projects/_done/2026/old.md")).unwrap(),
+        map
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
+}
+
+#[test]
+fn closing_refuses_a_map_hand_closed_outside_done() {
+    // No verb files an old closure: it would log, dated today, an ending
+    // it never saw (RFC 0004 Q4). Lint names the manual repair.
+    let hand_closed = closed_map("completed", "2026-03-01", "Hand");
+    let (vault, store, _index) = closing_vault(&[("projects/hand.md", &hand_closed)]);
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "hand",
+            None,
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect_err("status and folder disagree");
+
+    assert!(
+        matches!(
+            err,
+            DomainError::ProjectNotActive {
+                status: ProjectStatus::Completed,
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/hand.md")).unwrap(),
+        hand_closed
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
 }
