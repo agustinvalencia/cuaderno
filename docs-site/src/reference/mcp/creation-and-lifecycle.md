@@ -19,7 +19,9 @@ Tools that create new notes or move existing ones through their lifecycle.
 | Tool | Inputs | Effect |
 |------|--------|--------|
 | `park_project` | `project` | Move an active project to `_parked/`. |
-| `activate_project` | `project` | Bring a parked project back (enforces the five-project cap). |
+| `complete_project` | `project` | Close an active or parked project whose work is done: move it to `_done/<year>/` with `status: completed` and `closed:`. Refused while any action or milestone is open. ([`cdno project complete`](../cli/project.md#cdno-project-complete)) |
+| `drop_project` | `project`, `reason?`, `open_items?` (`refuse`\|`drop`), `expected_open_items?` | Close an active or parked project that is not going to happen: `status: dropped`, `closed:`, moved to `_done/<year>/`. Refused with the open items by default; `open_items: "drop"` with the refusal's hash drops them too. ([`cdno project drop`](../cli/project.md#cdno-project-drop)) |
+| `activate_project` | `project` | Bring a parked or closed project back, clearing `closed:` (enforces the five-project cap). |
 | `set_question_status` | `question`, `status` (`active`\|`parked`\|`answered`\|`retired`) | Transition a question's status. |
 | `add_periodic_commitment` | `stewardship`, `title`, `recurrence`, `next_date` | Append a periodic commitment to a stewardship dashboard. |
 
@@ -30,6 +32,19 @@ Tools that create new notes or move existing ones through their lifecycle.
   `yearly`, or `every N months`.
 - `activate_project` enforces the cap — if activating would exceed five active projects, the call
   fails and the assistant must park one first.
+- Closing a project never needs a slot, and works on a parked project directly. While an action or
+  milestone is open, both closing tools return a `project_has_open_items` rejection whose
+  `details` list the `actions`, the `milestones` (with `date` and `hard`), the
+  `untouched_commitments` (linked standalone commitments, which no close ever touches) and an
+  `open_items_hash`. `complete_project` stays refused until each item is completed or dropped: a
+  completion is a claim that the work was done. `drop_project` with `open_items: "drop"` and
+  `expected_open_items` set to that hash drops every listed item with the project, each logged with
+  `reason: project dropped (<reason>)`; if the list has changed since, it is refused again with the
+  new list and hash. The result names `dropped_actions`, `dropped_milestones` and
+  `untouched_commitments`.
+- A closed project can take the other outcome later (`complete_project` on a dropped one, and the
+  reverse), re-filed under this year's folder with a new `closed:` date. The same outcome again is a
+  `project_not_active` rejection whose `details` carry `status` and `closed`.
 - `vars?` is an optional `name -> value` map supplying values for a custom template's
   [`[variables.prompt]`](../../tutorials/templates-and-frontmatter.md) placeholders — the MCP analogue
   of the CLI's repeatable `--var name=value`. Supply an entry for each prompted variable the note's

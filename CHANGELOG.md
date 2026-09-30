@@ -17,6 +17,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   with it, or takes `--drop-open`, logging each as dropped. Under `--json` the refusal is the
   `project_has_open_items` object the MCP server returns. A closed project may be closed again
   with the other outcome.
+
+  **On upgrade:** no migration. `projects/_done/` is created on first use. A customised
+  `.cuaderno/templates/project.md` does not gain the new `closed: null` line by itself, and nothing
+  breaks if it never does: closing writes the key whenever it is missing. Add it as the template's
+  last frontmatter line to have new maps carry it from the start.
 - `cdno project list --closed` lists completed and dropped projects, newest first, with the
   outcome and date (under `--json`, one row per project with `slug`, `title`, `context`,
   `outcome` and `closed_on`). The `cdno project activate` picker and its shell completion now

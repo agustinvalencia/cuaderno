@@ -147,7 +147,8 @@ accurate one):
 
 Note types and where they live: `daily`/`weekly` (`journal/`, append-only — `monthly` lives there
 too but is mutable: its review sections are upserted), `project` (`projects/`, the primary mutable
-note, max 5 active, parked under `projects/_parked/`), `action` (`actions/`, completed notes
+note, max 5 active, parked under `projects/_parked/`, completed or dropped under
+`projects/_done/<year>/` with a `closed:` date), `action` (`actions/`, completed notes
 archived to `actions/_done/<year>/` — append-only past the frozen prefix, so late retrospectives
 may be appended, never edited in), `portfolio` + `evidence` (`portfolios/<slug>/_index.md` + dated
 notes), `stewardship` + `tracking` (flat `.md` or expanded folder with `_index.md` and `tracking/`),
@@ -166,6 +167,9 @@ the family: `noted [[journal/<year>/daily/<date>#<Heading>]]` points at a daily 
 section) records a custom-note revision with no `was:`/`now:` block, since the log keeps when and
 why and version control keeps what (`vault/revise.rs`); and `<type> created [[<path>]] — <title>`
 records a creation (`build_created_line` in `vault/log.rs`; a commitment links its bare slug).
+RFC 0004 adds the project closures: `project completed [[<slug>]] — <title>` and
+`project dropped on [[<slug>]] — <title>` (with an indented `reason:` line when one is given), and
+the child lines a drop cascade writes carry `reason: project dropped (<reason>)`.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

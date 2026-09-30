@@ -14,8 +14,11 @@ vault/
 │
 ├── projects/
 │   ├── surrogate-model.md        # type: project (mutable)
-│   └── _parked/                  # inactive projects (don't count toward the cap)
-│       └── bayesian-opt.md
+│   ├── _parked/                  # inactive projects (don't count toward the cap)
+│   │   └── bayesian-opt.md
+│   └── _done/
+│       └── 2025/                 # closed projects: completed or dropped
+│           └── thesis-chapter-2.md
 │
 ├── actions/
 │   ├── characterise-sampler.md   # type: action (manifest form)
@@ -63,8 +66,8 @@ vault/
 
 ## Conventions worth knowing
 
-- **`_parked/`** (projects) and **`_done/`** (actions, commitments) prefix folders hold inactive or
-  finished notes. The underscore keeps them sorted out of the way and signals "not the active set."
+- **`_parked/`** (projects) and **`_done/`** (projects, actions, commitments) prefix folders hold
+  inactive or finished notes. The underscore keeps them sorted out of the way and signals "not the active set."
   `_done/` is partitioned by year so the active folders stay scannable.
 - **`_index.md`** is the identity note of a folder — the `portfolio` note inside a portfolio folder,
   the `stewardship` note inside an expanded stewardship folder.

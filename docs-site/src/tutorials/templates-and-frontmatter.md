@@ -121,6 +121,13 @@ created, but eject saves the guesswork.)
 > `cdno normalise` only reorders frontmatter keys; it won't add a new section like `## Risks` to old
 > notes.)
 
+> **`closed:` in a customised project template.** The built-in project template ends its
+> frontmatter with `closed: null`, the date a project is completed or dropped. A
+> `.cuaderno/templates/project.md` you ejected before that key existed does not gain it by itself,
+> and nothing breaks if it never does: closing a project writes the key, last, whenever it is
+> missing. To have new maps carry it from the start, add `closed: null` as the last frontmatter line
+> of your template by hand.
+
 ### Tracking variants
 
 `tracking` is the one type whose template is chosen per **activity**. `cdno track <activity>`
