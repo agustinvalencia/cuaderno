@@ -46,6 +46,8 @@ fn run_creates_full_directory_tree_with_current_year_partitions() {
     assert!(exists(&format!("journal/{year}/monthly")));
     assert!(exists("projects"));
     assert!(exists("projects/_parked"));
+    assert!(exists(&cdno_core::paths::projects_done_dir(year)));
+    assert!(exists(&cdno_core::paths::actions_done_dir(year)));
     assert!(exists("portfolios"));
     assert!(exists("stewardships"));
     assert!(exists("commitments"));

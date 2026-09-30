@@ -10,10 +10,10 @@
 //! - `pub const` strings for the static parts of the layout
 //!   (`PROJECTS`, `INBOX`, `CUADERNO_DIR`, …). Use these when no date
 //!   information is involved.
-//! - Helper functions for the year-partitioned subtrees (journal,
-//!   `commitments/_done/`). High-frequency append-only folders are
-//!   year-partitioned so they don't accumulate thousands of siblings
-//!   over a multi-year vault lifetime.
+//! - Helper functions for the year-partitioned subtrees: the journal, and
+//!   the `_done/` archives under `commitments/`, `actions/` and
+//!   `projects/`. Year partitioning keeps a multi-year vault from piling
+//!   thousands of siblings into one folder.
 //!
 //! Strings are POSIX-style relative paths (forward slashes), suitable
 //! both as `&str` arguments to [`crate::path::VaultPath`] and as
@@ -26,9 +26,11 @@ use chrono::{Datelike, NaiveDate};
 // helper functions below to build the actual paths.
 pub const JOURNAL: &str = "journal";
 
-// Projects — active under `projects/`, parked under `projects/_parked/`.
+// Projects — active under `projects/`, parked under `projects/_parked/`,
+// and closed under `projects/_done/<year>/`.
 pub const PROJECTS: &str = "projects";
 pub const PROJECTS_PARKED: &str = "projects/_parked";
+pub const PROJECTS_DONE: &str = "projects/_done";
 
 // Knowledge layer.
 pub const PORTFOLIOS: &str = "portfolios";
@@ -123,6 +125,12 @@ pub fn actions_done_dir(year: i32) -> String {
     format!("{ACTIONS_DONE}/{year}")
 }
 
+/// Directory holding closed projects for the given year:
+/// `projects/_done/<year>`.
+pub fn projects_done_dir(year: i32) -> String {
+    format!("{PROJECTS_DONE}/{year}")
+}
+
 /// Vault-relative path of the daily note for `date`:
 /// `journal/<year>/daily/YYYY-MM-DD.md`.
 pub fn daily_note_relpath(date: NaiveDate) -> String {
@@ -172,6 +180,7 @@ pub fn init_dirs(today: NaiveDate) -> Vec<String> {
         journal_monthly_dir(year),
         PROJECTS.into(),
         PROJECTS_PARKED.into(),
+        projects_done_dir(year),
         PORTFOLIOS.into(),
         STEWARDSHIPS.into(),
         COMMITMENTS.into(),
