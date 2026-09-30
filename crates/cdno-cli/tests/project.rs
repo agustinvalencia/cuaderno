@@ -999,3 +999,341 @@ fn core_question_in_non_interactive_errors_when_missing_question() {
     let msg = format!("{err:#}");
     assert!(msg.contains("--question"), "error message: {msg}");
 }
+
+// ---------------------------------------------------------------------
+// complete / drop (RFC 0004 §6.3)
+// ---------------------------------------------------------------------
+
+/// A map with nothing open, written straight to disk (the vault
+/// reconciles it on open).
+fn write_map(root: &Path, rel: &str, status: &str, title: &str) {
+    let path = root.join(rel);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\ncore_question: null\nclosed: null\n---\n\n# {title}\n\n## Current State\nWrapping up.\n\n## Next Actions\n- [x] Submit (deep)\n\n## Milestones\n- [x] Paper submitted \u{2014} 2026-05-22\n"
+        ),
+    )
+    .unwrap();
+}
+
+/// A map with one open bullet and one open hard milestone.
+fn write_open_map(root: &Path, slug: &str) {
+    fs::write(
+        root.join(format!("projects/{slug}.md")),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\nclosed: null\n---\n\n# Surrogate\n\n## Next Actions\n- [ ] Run feature set B (deep)\n\n## Milestones\n- [ ] ICML \u{2014} hard: 2026-10-22\n",
+    )
+    .unwrap();
+}
+
+fn daily(root: &Path, date: &str) -> String {
+    fs::read_to_string(root.join(format!("journal/{}/daily/{date}.md", &date[..4])))
+        .unwrap_or_default()
+}
+
+#[test]
+fn complete_moves_a_map_with_nothing_open_to_done() {
+    let dir = vault();
+    write_map(dir.path(), "projects/surrogate.md", "active", "Surrogate");
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Complete {
+            slug: Some("surrogate".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("complete");
+
+    assert!(!dir.path().join("projects/surrogate.md").exists());
+    let raw = fs::read_to_string(dir.path().join("projects/_done/2026/surrogate.md")).unwrap();
+    assert!(raw.contains("status: completed"), "{raw}");
+    assert!(raw.contains("closed: 2026-09-29"), "{raw}");
+    assert!(
+        daily(dir.path(), "2026-09-29")
+            .contains("project completed [[surrogate]] \u{2014} Surrogate"),
+        "{}",
+        daily(dir.path(), "2026-09-29")
+    );
+}
+
+#[test]
+fn complete_in_vault_without_done_folder() {
+    // A vault made before `projects/_done/` existed needs no migration.
+    let dir = vault();
+    fs::remove_dir_all(dir.path().join("projects/_done")).unwrap();
+    write_map(dir.path(), "projects/surrogate.md", "active", "Surrogate");
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Complete {
+            slug: Some("surrogate".to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("complete");
+
+    assert!(dir.path().join("projects/_done/2026/surrogate.md").exists());
+}
+
+#[test]
+fn complete_missing_slug_non_interactive_errors_with_missing_flag() {
+    let dir = vault();
+
+    let err = project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Complete { slug: None },
+        true,
+        false,
+    )
+    .unwrap_err();
+
+    assert!(format!("{err:#}").contains("--slug"), "{err:#}");
+}
+
+#[test]
+fn drop_with_drop_open_lets_the_open_items_go() {
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 9, 29, 9, 0),
+        "Alpha",
+        Context::Work,
+    );
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Drop {
+            slug: Some("alpha".to_owned()),
+            reason: None,
+            drop_open: true,
+        },
+        true,
+        false,
+    )
+    .expect("drop --drop-open");
+
+    let raw = fs::read_to_string(dir.path().join("projects/_done/2026/alpha.md")).unwrap();
+    assert!(raw.contains("status: dropped"), "{raw}");
+    assert!(!raw.contains("- [ ]"), "{raw}");
+    let log = daily(dir.path(), "2026-09-29");
+    assert!(
+        log.contains("action dropped on [[alpha]] \u{2014} Define first concrete step (light)"),
+        "{log}"
+    );
+    assert!(log.contains("milestone dropped on [[alpha]]"), "{log}");
+    assert!(
+        log.contains("project dropped on [[alpha]] \u{2014} Alpha"),
+        "{log}"
+    );
+}
+
+#[test]
+fn drop_with_reason_writes_reason_line() {
+    let dir = vault();
+    write_map(dir.path(), "projects/surrogate.md", "active", "Surrogate");
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Drop {
+            slug: Some("surrogate".to_owned()),
+            reason: Some("superseded".to_owned()),
+            drop_open: false,
+        },
+        true,
+        false,
+    )
+    .expect("drop");
+
+    let log = daily(dir.path(), "2026-09-29");
+    assert!(
+        log.contains("project dropped on [[surrogate]] \u{2014} Surrogate\n  reason: superseded"),
+        "{log}"
+    );
+}
+
+#[test]
+fn drop_parked_project_needs_no_slot() {
+    let dir = vault();
+    for i in 1..=5 {
+        write_map(
+            dir.path(),
+            &format!("projects/live-{i}.md"),
+            "active",
+            &format!("Live {i}"),
+        );
+    }
+    write_map(
+        dir.path(),
+        "projects/_parked/shelved.md",
+        "parked",
+        "Shelved",
+    );
+
+    project::run(
+        dir.path(),
+        moment(2026, 9, 29, 10, 0),
+        ProjectCommands::Drop {
+            slug: Some("shelved".to_owned()),
+            reason: None,
+            drop_open: false,
+        },
+        true,
+        false,
+    )
+    .expect("a parked project drops at the cap");
+
+    assert!(dir.path().join("projects/_done/2026/shelved.md").exists());
+    assert!(!daily(dir.path(), "2026-09-29").contains("activated"));
+}
+
+// The refusal exits the process (as `config validate` does), so these run
+// the binary.
+
+fn cdno_bin() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd
+}
+
+#[test]
+fn complete_non_interactive_lists_open_items_and_fails() {
+    let dir = vault();
+    write_open_map(dir.path(), "surrogate");
+
+    let out = cdno_bin()
+        .args(["--no-interactive", "--vault"])
+        .arg(dir.path())
+        .args(["project", "complete", "--slug", "surrogate"])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(out).unwrap();
+    assert!(stdout.contains("surrogate has 2 open items:"), "{stdout}");
+    assert!(
+        stdout.contains("  - [ ] Run feature set B (deep)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  - [ ] ICML \u{2014} hard: 2026-10-22"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("then run again"), "{stdout}");
+    assert!(dir.path().join("projects/surrogate.md").exists());
+}
+
+#[test]
+fn complete_json_refusal_matches_mcp_shape() {
+    let dir = vault();
+    write_open_map(dir.path(), "surrogate");
+
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "complete", "--slug", "surrogate"])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let value: serde_json::Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    assert_eq!(value["code"], "project_has_open_items");
+    assert!(value["message"].as_str().unwrap().contains("surrogate"));
+    let details = &value["details"];
+    assert_eq!(details["slug"], "surrogate");
+    assert!(
+        details["open_items_hash"]
+            .as_str()
+            .is_some_and(|h| !h.is_empty())
+    );
+    assert_eq!(details["actions"][0]["text"], "Run feature set B (deep)");
+    assert_eq!(details["milestones"][0]["title"], "ICML");
+    assert_eq!(details["milestones"][0]["hard"], true);
+    assert_eq!(details["milestones"][0]["date"], "2026-10-22");
+    assert!(
+        details["untouched_commitments"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn complete_rejects_drop_open_flag() {
+    let dir = vault();
+    write_open_map(dir.path(), "surrogate");
+
+    cdno_bin()
+        .args(["--no-interactive", "--vault"])
+        .arg(dir.path())
+        .args(["project", "complete", "--slug", "surrogate", "--drop-open"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("--drop-open"));
+    assert!(dir.path().join("projects/surrogate.md").exists());
+}
+
+#[test]
+fn drop_non_interactive_without_drop_open_lists_and_fails() {
+    let dir = vault();
+    write_open_map(dir.path(), "surrogate");
+    let before = fs::read_to_string(dir.path().join("projects/surrogate.md")).unwrap();
+
+    let out = cdno_bin()
+        .args(["--no-interactive", "--vault"])
+        .arg(dir.path())
+        .args(["project", "drop", "--slug", "surrogate"])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(out).unwrap();
+    assert!(stdout.contains("--drop-open"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(dir.path().join("projects/surrogate.md")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn drop_drop_open_succeeds_and_prints_destination() {
+    let dir = vault();
+    write_open_map(dir.path(), "surrogate");
+    let year = chrono::Local::now().format("%Y").to_string();
+
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "drop", "--slug", "surrogate", "--drop-open"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let value: serde_json::Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    assert_eq!(value["path"], format!("projects/_done/{year}/surrogate.md"));
+    assert!(
+        value["message"]
+            .as_str()
+            .unwrap()
+            .contains("Let go: 1 action, 1 milestone."),
+        "{value}"
+    );
+    assert_eq!(value["dropped_actions"][0], "Run feature set B (deep)");
+    assert_eq!(value["dropped_milestones"][0], "ICML");
+}

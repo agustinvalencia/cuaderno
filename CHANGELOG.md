@@ -6,6 +6,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **Close a project: `cdno project complete` and `cdno project drop` (RFC 0004, #684).** Both
+  move the map to `projects/_done/<year>/`, stamp `status` and `closed:`, and log one line
+  (`project completed [[slug]] — <title>`, or `project dropped on [[slug]] — <title>` with an
+  optional `--reason`). Either works on an active or a parked project and never needs a slot. A
+  project with an open action or milestone is refused with the list; `complete` stays refused
+  until each is completed or dropped, while `drop` asks (defaulting to No) whether to let them go
+  with it, or takes `--drop-open`, logging each as dropped. Under `--json` the refusal is the
+  `project_has_open_items` object the MCP server returns. A closed project may be closed again
+  with the other outcome.
+
 ### Changed
 
 - `cdno project milestone drop` (MCP `drop_milestone`) on a nested milestone now removes only
