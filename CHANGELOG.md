@@ -30,6 +30,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   active and parked projects now skip closed maps without reading them (RFC 0004, #673).
 - `cdno init` now also creates `projects/_done/<year>/`, the folder closed projects will move to
   (RFC 0004, #670).
+- A project verb refused because the project is not active now says why: "parked", "completed on
+  <date>", "dropped on <date>", or that its status says active but the map is not at
+  `projects/<slug>.md` (RFC 0004, #680).
+- A commitment whose frontmatter holds a YAML comment such as `# owner: tbd` is now named by its
+  body heading in `cdno commitments` and in the log lines of `cdno commit done`, `drop` and
+  `reschedule`; before, the comment was taken for its title (RFC 0004, #680).
 
 ## [0.40.0] - 2026-09-28
 

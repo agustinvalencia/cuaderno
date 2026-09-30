@@ -26,8 +26,19 @@ pub enum DomainError {
         max: usize,
     },
 
-    #[error("project is not active: {0}")]
-    ProjectNotActive(String),
+    /// The project exists but not as an active map at `projects/<slug>.md`.
+    /// `status` is its frontmatter's, so a caller can tell parked from
+    /// completed from dropped (and, when it reads `active`, a map filed in
+    /// the wrong folder); `closed` is its closure date when it has one.
+    #[error(
+        "project is not active: {slug} ({})",
+        crate::error::describe_project_status(*.status, *.closed)
+    )]
+    ProjectNotActive {
+        slug: String,
+        status: crate::frontmatter::ProjectStatus,
+        closed: Option<chrono::NaiveDate>,
+    },
 
     #[error("project is not parked: {0}")]
     ProjectNotParked(String),
@@ -286,4 +297,20 @@ pub enum DomainError {
 
     #[error(transparent)]
     Config(#[from] ConfigError),
+}
+
+/// How [`DomainError::ProjectNotActive`] names a project's state: `parked`,
+/// `completed on 2026-09-29`, `dropped on …`, or, for a map whose status
+/// says `active` but which is not at `projects/<slug>.md`, the mismatch.
+pub(crate) fn describe_project_status(
+    status: crate::frontmatter::ProjectStatus,
+    closed: Option<chrono::NaiveDate>,
+) -> String {
+    use crate::frontmatter::ProjectStatus;
+    match (status, closed) {
+        (ProjectStatus::Active, _) => "marked active but not at projects/<slug>.md".to_owned(),
+        (ProjectStatus::Parked, _) => "parked".to_owned(),
+        (closed_status, Some(date)) => format!("{} on {date}", closed_status.as_str()),
+        (closed_status, None) => closed_status.as_str().to_owned(),
+    }
 }

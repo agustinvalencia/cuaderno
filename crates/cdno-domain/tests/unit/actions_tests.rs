@@ -139,7 +139,7 @@ fn add_action_with_note_on_parked_project_errors_and_writes_nothing() {
         )
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 
@@ -482,7 +482,7 @@ fn start_action_rejects_parked_project_and_blank_action() {
         .start_action(dt(2026, 5, 26, 9, 30), "beta", "Resume someday")
         .unwrap_err();
     assert!(
-        matches!(parked, DomainError::ProjectNotActive(_)),
+        matches!(parked, DomainError::ProjectNotActive { .. }),
         "{parked:?}"
     );
 

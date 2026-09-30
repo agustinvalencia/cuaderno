@@ -11,7 +11,7 @@ use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 
-use super::support::FailingStore;
+use super::support::{FailingStore, RacingStore};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -650,7 +650,7 @@ fn update_project_state_errors_when_project_parked() {
         .unwrap_err();
 
     assert!(
-        matches!(&err, DomainError::ProjectNotActive(s) if s == "old-idea"),
+        matches!(&err, DomainError::ProjectNotActive { slug: s, .. } if s == "old-idea"),
         "got {err:?}"
     );
 }
@@ -685,7 +685,7 @@ fn update_project_state_errors_when_status_mismatches_folder() {
         .unwrap_err();
 
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -1235,7 +1235,7 @@ fn add_action_errors_when_project_parked() {
         .add_action(dt(2026, 5, 1, 14, 0), "old", "anything", EnergyLevel::Deep)
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -1451,7 +1451,7 @@ fn complete_action_errors_when_project_parked() {
         .complete_action(dt(2026, 5, 1, 16, 0), "old", "Anything")
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -1503,7 +1503,7 @@ fn add_action_errors_when_status_mismatches_folder() {
         .add_action(dt(2026, 5, 1, 14, 0), "mismatched", "X", EnergyLevel::Deep)
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -1667,7 +1667,7 @@ fn add_milestone_errors_when_project_parked() {
         )
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -2416,7 +2416,7 @@ fn park_project_errors_when_already_parked() {
         .park_project(dt(2026, 5, 2, 10, 0), "old")
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -3094,7 +3094,7 @@ fn set_core_question_errors_when_project_parked() {
         .set_core_question(dt(2026, 5, 1, 10, 0), "old", Some("questions/research/foo"))
         .unwrap_err();
     assert!(
-        matches!(err, DomainError::ProjectNotActive(_)),
+        matches!(err, DomainError::ProjectNotActive { .. }),
         "got {err:?}"
     );
 }
@@ -3795,7 +3795,7 @@ fn update_project_state_on_a_closed_project_is_not_active_and_a_ghost_is_not_fou
         .update_project_state(dt(2026, 5, 1, 9, 0), "done", "anything")
         .unwrap_err();
     assert!(
-        matches!(&err, DomainError::ProjectNotActive(s) if s == "done"),
+        matches!(&err, DomainError::ProjectNotActive { slug: s, .. } if s == "done"),
         "got {err:?}"
     );
 
@@ -3945,7 +3945,7 @@ fn update_project_state_refuses_an_active_status_map_outside_projects() {
             .update_project_state(dt(2026, 5, 1, 9, 0), slug, "changed")
             .unwrap_err();
         assert!(
-            matches!(&err, DomainError::ProjectNotActive(s) if s == slug),
+            matches!(&err, DomainError::ProjectNotActive { slug: s, .. } if s == slug),
             "{slug}: got {err:?}"
         );
         assert_eq!(&store.read_file(&vp(path)).unwrap(), before);
@@ -3953,5 +3953,550 @@ fn update_project_state_refuses_an_active_status_map_outside_projects() {
     assert!(
         store.walk_dir(&vp("journal")).unwrap().is_empty(),
         "no daily note may be written"
+    );
+}
+
+// ---------------------------------------------------------------------
+// complete_project / drop_project (RFC 0004, T10)
+// ---------------------------------------------------------------------
+
+/// A vault seeded with `notes` plus handles on its store and index.
+fn closing_vault(notes: &[(&str, &str)]) -> (Vault, Arc<dyn VaultStore>, Arc<dyn VaultIndex>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (path, body) in notes {
+        store.write_file(&vp(path), body).unwrap();
+    }
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+    (vault, store, index)
+}
+
+/// A map written from the built-in template's shape, before `closed:`
+/// existed, with nothing open: one ticked action and one ticked milestone.
+fn closable_map(status: &str, title: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-04-01\ncore_question: null\n---\n\n# {title}\n\n## Current State\nWrapping up.\n\n## Next Actions\n- [x] Submit (deep)\n\n## Milestones\n- [x] Paper submitted \u{2014} 2026-05-22\n"
+    )
+}
+
+fn frontmatter_of(raw: &str) -> ProjectFrontmatter {
+    let (fm, _) = Frontmatter::parse(raw).expect("frontmatter parses");
+    ProjectFrontmatter::try_from(fm).expect("project frontmatter")
+}
+
+fn daily_log(store: &Arc<dyn VaultStore>, date: &str) -> String {
+    store
+        .read_file(&vp(&format!("journal/2026/daily/{date}.md")))
+        .unwrap_or_default()
+}
+
+#[test]
+fn complete_project_moves_stamps_and_logs() {
+    let (vault, store, index) = closing_vault(&[(
+        "projects/surrogate.md",
+        &closable_map("active", "Surrogate model"),
+    )]);
+
+    let outcome = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("complete succeeds");
+
+    let dest = vp("projects/_done/2026/surrogate.md");
+    assert_eq!(outcome.outcome.primary, dest);
+    assert!(!store.exists(&vp("projects/surrogate.md")).unwrap());
+    let raw = store.read_file(&dest).unwrap();
+    let fm = frontmatter_of(&raw);
+    assert_eq!(fm.status, ProjectStatus::Completed);
+    assert_eq!(fm.closed, Some(day(2026, 9, 29)));
+    assert!(
+        index.find_by_path(&dest).unwrap().is_some(),
+        "new path indexed"
+    );
+    assert!(
+        index
+            .find_by_path(&vp("projects/surrogate.md"))
+            .unwrap()
+            .is_none(),
+        "old path gone from the index"
+    );
+
+    let log = daily_log(&store, "2026-09-29");
+    let closures: Vec<&str> = log.lines().filter(|l| l.contains("project ")).collect();
+    assert_eq!(
+        closures,
+        vec!["- **10:00**: project completed [[surrogate]] \u{2014} Surrogate model"]
+    );
+    assert!(outcome.dropped_actions.is_empty() && outcome.dropped_milestones.is_empty());
+}
+
+#[test]
+fn drop_project_stamps_dropped_and_logs_reason() {
+    let (vault, store, _index) =
+        closing_vault(&[("projects/survey.md", &closable_map("active", "Survey"))]);
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 11, 0),
+            "survey",
+            Some("superseded by\nthe ICML work"),
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect("drop succeeds");
+
+    let raw = store
+        .read_file(&vp("projects/_done/2026/survey.md"))
+        .unwrap();
+    let fm = frontmatter_of(&raw);
+    assert_eq!(fm.status, ProjectStatus::Dropped);
+    assert_eq!(fm.closed, Some(day(2026, 9, 29)));
+    assert!(!raw.contains("completed:"), "no completed key: {raw}");
+    assert!(
+        daily_log(&store, "2026-09-29").contains(
+            "- **11:00**: project dropped on [[survey]] \u{2014} Survey\n  reason: superseded by the ICML work"
+        ),
+        "log: {}",
+        daily_log(&store, "2026-09-29")
+    );
+}
+
+#[test]
+fn complete_project_restages_milestone_rows_at_destination() {
+    let (vault, _store, index) = closing_vault(&[(
+        "projects/surrogate.md",
+        &closable_map("active", "Surrogate"),
+    )]);
+
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("complete succeeds");
+
+    let rows = index
+        .milestones_for_project(&vp("projects/_done/2026/surrogate.md"))
+        .unwrap();
+    let names: Vec<(&str, bool)> = rows
+        .iter()
+        .map(|m| (m.name.as_str(), m.completed))
+        .collect();
+    assert_eq!(names, vec![("Paper submitted", true)]);
+}
+
+#[test]
+fn complete_project_refuses_with_open_items_listed() {
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\n---\n\n# Surrogate\n\n## Next Actions\n- [ ] Run feature set B (deep)\n\n## Milestones\n- [ ] ICML \u{2014} hard: 2026-10-22\n";
+    let (vault, store, index) = closing_vault(&[("projects/surrogate.md", map)]);
+    let before_row = index.find_by_path(&vp("projects/surrogate.md")).unwrap();
+    let before_milestones = index
+        .milestones_for_project(&vp("projects/surrogate.md"))
+        .unwrap();
+
+    let err = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect_err("open items refuse");
+    assert_eq!(
+        index
+            .milestones_for_project(&vp("projects/surrogate.md"))
+            .unwrap(),
+        before_milestones
+    );
+
+    let DomainError::ProjectHasOpenItems { slug, report } = err else {
+        panic!("expected ProjectHasOpenItems, got {err:?}");
+    };
+    assert_eq!(slug, "surrogate");
+    let doc = cdno_core::markdown::MarkdownDocument::parse(map.to_owned()).unwrap();
+    assert_eq!(report, vault.open_items_report(&doc, "surrogate").unwrap());
+    assert_eq!(report.open_count(), 2);
+    assert_eq!(store.read_file(&vp("projects/surrogate.md")).unwrap(), map);
+    assert!(
+        !store
+            .exists(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap()
+    );
+    assert_eq!(
+        index.find_by_path(&vp("projects/surrogate.md")).unwrap(),
+        before_row
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "", "nothing logged");
+}
+
+#[test]
+fn drop_project_is_refused_with_open_items_even_when_asked_to_drop_them() {
+    // The cascade is T11; until then no call closes over open items.
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# X\n\n## Next Actions\n- [ ] One (light)\n";
+    let (vault, store, _index) = closing_vault(&[("projects/x.md", map)]);
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "x",
+            None,
+            cdno_domain::OpenItems::Drop { expected: None },
+        )
+        .expect_err("refused");
+
+    assert!(
+        matches!(err, DomainError::ProjectHasOpenItems { .. }),
+        "got {err:?}"
+    );
+    assert_eq!(store.read_file(&vp("projects/x.md")).unwrap(), map);
+}
+
+#[test]
+fn drop_project_closes_a_parked_project_at_cap() {
+    let mut notes: Vec<(String, String)> = (1..=5)
+        .map(|i| {
+            (
+                format!("projects/live-{i}.md"),
+                closable_map("active", &format!("Live {i}")),
+            )
+        })
+        .collect();
+    notes.push((
+        "projects/_parked/shelved.md".to_owned(),
+        closable_map("parked", "Shelved"),
+    ));
+    let refs: Vec<(&str, &str)> = notes
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let (vault, store, _index) = closing_vault(&refs);
+
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "shelved",
+            None,
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect("a parked project closes without a slot");
+
+    assert!(store.exists(&vp("projects/_done/2026/shelved.md")).unwrap());
+    let log = daily_log(&store, "2026-09-29");
+    assert!(!log.contains("activated"), "no activation recorded: {log}");
+    assert_eq!(vault.active_projects().unwrap().len(), 5);
+}
+
+#[test]
+fn drop_project_at_cap_lists_open_milestone_of_parked_project() {
+    // The parked map is written after the vault was built, so it has no
+    // milestone rows; the refusal must still list the milestone.
+    let notes: Vec<(String, String)> = (1..=5)
+        .map(|i| {
+            (
+                format!("projects/live-{i}.md"),
+                closable_map("active", &format!("Live {i}")),
+            )
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> = notes
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect();
+    let (vault, store, index) = closing_vault(&refs);
+    let parked = vp("projects/_parked/shelved.md");
+    store
+        .write_file(
+            &parked,
+            "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Shelved\n\n## Milestones\n- [ ] Grant report \u{2014} hard: 2026-11-02\n",
+        )
+        .unwrap();
+    assert!(index.milestones_for_project(&parked).unwrap().is_empty());
+
+    let err = vault
+        .drop_project(
+            dt(2026, 9, 29, 10, 0),
+            "shelved",
+            None,
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect_err("refused");
+
+    let DomainError::ProjectHasOpenItems { report, .. } = err else {
+        panic!("expected ProjectHasOpenItems, got {err:?}");
+    };
+    let titles: Vec<&str> = report.milestones.iter().map(|m| m.title.as_str()).collect();
+    assert_eq!(titles, vec!["Grant report"]);
+    assert!(store.exists(&parked).unwrap());
+}
+
+#[test]
+fn complete_project_refuses_when_a_closed_map_shares_the_slug() {
+    // A map already at the destination makes the slug ambiguous, so the
+    // locator refuses before the close stages anything.
+    let occupant = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2025-01-01\nclosed: 2026-01-01\n---\n\n# Other\n";
+    let (vault, store, _index) = closing_vault(&[
+        (
+            "projects/surrogate.md",
+            &closable_map("active", "Surrogate"),
+        ),
+        ("projects/_done/2026/surrogate.md", occupant),
+    ]);
+    let before = store.read_file(&vp("projects/surrogate.md")).unwrap();
+
+    let err = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect_err("refused");
+
+    assert!(
+        matches!(&err, DomainError::AmbiguousProject { .. }),
+        "got {err:?}"
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/surrogate.md")).unwrap(),
+        before
+    );
+    assert_eq!(
+        store
+            .read_file(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap(),
+        occupant
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
+}
+
+#[test]
+fn complete_project_refuses_an_occupied_destination() {
+    // A map appearing at the destination after the locator ran (an editor
+    // ignoring the lock) is caught by the destination check, before
+    // anything is staged.
+    let occupant = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2025-01-01\nclosed: 2026-01-01\n---\n\n# Other\n";
+    let inner = Arc::new(MemoryVaultStore::new());
+    let map = closable_map("active", "Surrogate");
+    inner
+        .write_file(&vp("projects/surrogate.md"), &map)
+        .unwrap();
+    let racing = Arc::new(RacingStore::new(
+        Arc::clone(&inner),
+        vp("projects/surrogate.md"),
+        vp("projects/_done/2026/surrogate.md"),
+        occupant,
+    ));
+    let store: Arc<dyn VaultStore> = racing.clone();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .unwrap();
+    racing.arm();
+
+    let err = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect_err("refused");
+
+    assert!(
+        matches!(&err, DomainError::Store(StoreError::AlreadyExists(p)) if p == "projects/_done/2026/surrogate.md"),
+        "got {err:?}"
+    );
+    assert_eq!(store.read_file(&vp("projects/surrogate.md")).unwrap(), map);
+    assert_eq!(
+        store
+            .read_file(&vp("projects/_done/2026/surrogate.md"))
+            .unwrap(),
+        occupant
+    );
+    assert_eq!(daily_log(&store, "2026-09-29"), "");
+}
+
+#[test]
+fn complete_project_refuses_a_closed_project() {
+    let closed = "---\ntype: project\ncontext: work\nstatus: completed\ncreated: 2025-01-01\ncore_question: null\nclosed: 2026-03-01\n---\n\n# Old\n";
+    let (vault, _store, _index) = closing_vault(&[("projects/_done/2026/old.md", closed)]);
+
+    let err = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "old")
+        .expect_err("already closed");
+
+    let DomainError::ProjectNotActive {
+        slug,
+        status,
+        closed,
+    } = &err
+    else {
+        panic!("expected ProjectNotActive, got {err:?}");
+    };
+    assert_eq!(slug, "old");
+    assert_eq!(*status, ProjectStatus::Completed);
+    assert_eq!(*closed, Some(day(2026, 3, 1)));
+    assert!(err.to_string().contains("completed on 2026-03-01"), "{err}");
+}
+
+#[test]
+fn closing_pre_rfc_map_leaves_frontmatter_in_canonical_order() {
+    let (vault, store, _index) = closing_vault(&[(
+        "projects/surrogate.md",
+        &closable_map("active", "Surrogate"),
+    )]);
+
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("complete succeeds");
+
+    let raw = store
+        .read_file(&vp("projects/_done/2026/surrogate.md"))
+        .unwrap();
+    let keys: Vec<&str> = raw
+        .lines()
+        .skip(1)
+        .take_while(|l| *l != "---")
+        .filter_map(|l| l.split_once(':').map(|(k, _)| k))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            "type",
+            "context",
+            "status",
+            "created",
+            "core_question",
+            "closed"
+        ]
+    );
+    let report = vault.lint_all_notes().expect("lint");
+    let order_warnings: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("canonical order"))
+        .collect();
+    assert!(order_warnings.is_empty(), "{order_warnings:?}");
+}
+
+#[test]
+fn closing_follows_a_custom_template_that_places_closed_mid_block() {
+    let custom = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\ncore_question: {{core_question}}\nclosed: null\nowner: unassigned\n---\n\n# {{title}}\n";
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: null\nowner: me\n---\n\n# Surrogate\n";
+    let (vault, store, _index) = closing_vault(&[
+        (".cuaderno/templates/project.md", custom),
+        ("projects/surrogate.md", map),
+    ]);
+
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("complete succeeds");
+
+    let raw = store
+        .read_file(&vp("projects/_done/2026/surrogate.md"))
+        .unwrap();
+    assert!(
+        raw.contains("core_question: null\nclosed: 2026-09-29\nowner: me\n"),
+        "closed sits where the template puts it:\n{raw}"
+    );
+    let report = vault.lint_all_notes().expect("lint");
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("canonical order")),
+        "{:?}",
+        report.issues
+    );
+}
+
+#[test]
+fn complete_project_returns_untouched_linked_commitments() {
+    let commitment = "---\ntype: commitment\nstatus: active\ndue: 2026-10-15\ncreated: 2026-05-01\ncompleted: null\ncontext: work\nproject: surrogate\n---\n\n# Reviewer report\n";
+    let (vault, store, _index) = closing_vault(&[
+        (
+            "projects/surrogate.md",
+            &closable_map("active", "Surrogate"),
+        ),
+        ("commitments/reviewer-report.md", commitment),
+    ]);
+
+    let outcome = vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("a linked commitment does not block");
+
+    let slugs: Vec<&str> = outcome
+        .untouched_commitments
+        .iter()
+        .map(|c| c.slug.as_str())
+        .collect();
+    assert_eq!(slugs, vec!["reviewer-report"]);
+    assert_eq!(
+        store
+            .read_file(&vp("commitments/reviewer-report.md"))
+            .unwrap(),
+        commitment,
+        "the commitment is never touched"
+    );
+}
+
+#[test]
+fn project_closure_lines_not_parsed_as_state_or_focus() {
+    let (vault, _store, _index) = closing_vault(&[
+        ("projects/a.md", &closable_map("active", "A")),
+        ("projects/b.md", &closable_map("active", "B")),
+        (
+            "projects/c.md",
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# C\n\n## Next Actions\n- [ ] Draft the intro (deep)\n",
+        ),
+    ]);
+    // A started action on another project: a closure line misread as a
+    // completion or a new start would clear or replace it.
+    vault
+        .start_action(dt(2026, 9, 29, 9, 0), "c", "Draft the intro")
+        .expect("start");
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "a")
+        .expect("complete");
+    vault
+        .drop_project(
+            dt(2026, 9, 29, 11, 0),
+            "b",
+            Some("no"),
+            cdno_domain::OpenItems::Refuse,
+        )
+        .expect("drop");
+
+    assert!(
+        vault
+            .project_state_changes_between(day(2026, 9, 29), day(2026, 9, 29))
+            .unwrap()
+            .is_empty()
+    );
+    let focus = vault
+        .current_focus(day(2026, 9, 29))
+        .unwrap()
+        .expect("the started action is still the focus");
+    assert_eq!(focus.project, "c");
+    assert_eq!(focus.action, "Draft the intro (deep)");
+
+    // The bare-slug link is what the project-mention matcher finds.
+    let mentions = vault.daily_log_mentions("a", day(2026, 9, 1)).unwrap();
+    assert!(
+        mentions
+            .iter()
+            .any(|l| l.text == "project completed [[a]] \u{2014} A"),
+        "{mentions:?}"
+    );
+    let mentions = vault.daily_log_mentions("b", day(2026, 9, 1)).unwrap();
+    assert!(
+        mentions
+            .iter()
+            .any(|l| l.text.starts_with("project dropped on [[b]] \u{2014} B")),
+        "{mentions:?}"
+    );
+}
+
+#[test]
+fn closure_line_takes_the_title_from_the_body_not_a_frontmatter_comment() {
+    let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n# owner: tbd\n---\n\n# Surrogate model\n";
+    let (vault, store, _index) = closing_vault(&[("projects/surrogate.md", map)]);
+
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .expect("complete succeeds");
+
+    let log = daily_log(&store, "2026-09-29");
+    assert!(
+        log.contains("project completed [[surrogate]] \u{2014} Surrogate model\n"),
+        "{log}"
     );
 }

@@ -89,3 +89,79 @@ impl VaultStore for FailingStore {
         self.inner.import_external(src, dest)
     }
 }
+
+/// Wraps a `MemoryVaultStore` and, once armed, writes `occupant` to
+/// `target` the first time `trigger` is read: a file appearing behind the
+/// write lock's back (an editor that ignores it) between a verb's locate
+/// and its destination check. Every call delegates otherwise.
+pub struct RacingStore {
+    inner: Arc<MemoryVaultStore>,
+    trigger: VaultPath,
+    target: VaultPath,
+    occupant: String,
+    armed: Mutex<bool>,
+}
+
+impl RacingStore {
+    pub fn new(
+        inner: Arc<MemoryVaultStore>,
+        trigger: VaultPath,
+        target: VaultPath,
+        occupant: &str,
+    ) -> Self {
+        Self {
+            inner,
+            trigger,
+            target,
+            occupant: occupant.to_owned(),
+            armed: Mutex::new(false),
+        }
+    }
+
+    /// Fire on the next read of `trigger` (and only that one).
+    pub fn arm(&self) {
+        *self.armed.lock().unwrap() = true;
+    }
+}
+
+impl VaultStore for RacingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        let read = self.inner.read_file(path);
+        let mut armed = self.armed.lock().unwrap();
+        if *armed && *path == self.trigger {
+            *armed = false;
+            self.inner.write_file(&self.target, &self.occupant)?;
+        }
+        read
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+}
