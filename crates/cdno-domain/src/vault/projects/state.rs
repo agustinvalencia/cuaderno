@@ -5,12 +5,8 @@
 use chrono::NaiveDateTime;
 
 use cdno_core::config::StateOverflow;
-use cdno_core::error::StoreError;
-use cdno_core::markdown::MarkdownDocument;
-use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
-use crate::frontmatter::{ProjectFrontmatter, ProjectStatus};
 use crate::note_type::NoteType;
 
 use super::super::Vault;
@@ -25,15 +21,17 @@ impl Vault {
     /// transaction.
     ///
     /// `slug` identifies the project (matching the CLI surface,
-    /// `cdno project state <slug> "..."`). Lookup is unambiguous
-    /// because slug uniqueness spans `projects/` and
-    /// `projects/_parked/`. Resolves errors as:
-    /// - file at `projects/_parked/<slug>.md` (parked) or frontmatter
-    ///   `status` not `active` → [`DomainError::ProjectNotActive`].
-    ///   Folder and frontmatter are checked independently because the
-    ///   frontmatter is the source of truth — manual edits could put a
-    ///   non-active project under `projects/`.
-    /// - file at neither location → [`StoreError::NotFound`].
+    /// `cdno project state <slug> "..."`), located on disk across
+    /// `projects/`, `projects/_parked/` and `projects/_done/<year>/`.
+    /// Resolves errors as:
+    /// - the project is not both directly at `projects/<slug>.md` **and**
+    ///   `status: active` in its frontmatter (a parked or closed project,
+    ///   or a hand-edited map whose folder and status disagree) →
+    ///   [`DomainError::ProjectNotActive`]. Folder and frontmatter must
+    ///   both say active; neither alone is enough.
+    /// - the slug exists at more than one location →
+    ///   [`DomainError::AmbiguousProject`].
+    /// - file at no location → [`StoreError::NotFound`](cdno_core::error::StoreError::NotFound).
     ///
     /// When `new_state.trim()` equals the existing trimmed state, the
     /// call is a silent no-op — no log entry, no project rewrite —
@@ -56,30 +54,10 @@ impl Vault {
         new_state: &str,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-
-        let path = if self.store.exists(&active_path)? {
-            active_path
-        } else if self.store.exists(&parked_path)? {
-            return Err(DomainError::ProjectNotActive(slug.to_owned()));
-        } else {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_projects_hint()
-            ))));
-        };
-
-        let raw = self.store.read_file(&path)?;
-        let mut doc = MarkdownDocument::parse(raw)?;
-        // Defensive frontmatter check: the file lives under projects/
-        // but a manual edit could have set status to parked or
-        // completed. Trust the frontmatter, not the folder.
-        let project = ProjectFrontmatter::try_from(doc.frontmatter().clone())?;
-        if project.status != ProjectStatus::Active {
-            return Err(DomainError::ProjectNotActive(slug.to_owned()));
-        }
+        // Resolved from the disk: parked, closed and misfiled maps are
+        // `ProjectNotActive`, a missing slug is `Store(NotFound)`, and
+        // folder and frontmatter must both say active.
+        let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let old_state = doc.section(CURRENT_STATE_SECTION)?.trim().to_owned();
         let new_trimmed = new_state.trim();

@@ -671,6 +671,12 @@ impl Vault {
         // read or parse, so a broken map is retried zero times.
         let mut project_context: HashMap<VaultPath, Option<Context>> = HashMap::new();
 
+        // Slug-to-map-path lookup for source 4, filled lazily so each
+        // distinct `action.project` is located on the disk once per call
+        // rather than once per action note. `None` records a slug that
+        // resolves nowhere (or ambiguously).
+        let mut project_paths: HashMap<String, Option<VaultPath>> = HashMap::new();
+
         // Source 1: hard project milestones via the index table. The
         // query already bounds by date and excludes undated markers.
         let from_s = from.format("%Y-%m-%d").to_string();
@@ -779,10 +785,18 @@ impl Vault {
             }
             // Action frontmatter carries no context of its own; it
             // inherits the owning project's. Resolve the project slug to
-            // its map (active or parked) and read the context through the
+            // its map (active, parked or closed) and read the context through the
             // same cache source 1 populated. A missing or unparseable
             // project map drops the entry silently.
-            let Some(project_path) = self.resolve_project_path(&action.project) else {
+            let project_path = match project_paths.get(&action.project) {
+                Some(cached) => cached.clone(),
+                None => {
+                    let resolved = self.resolve_project_path(&action.project);
+                    project_paths.insert(action.project.clone(), resolved.clone());
+                    resolved
+                }
+            };
+            let Some(project_path) = project_path else {
                 continue;
             };
             let Some(context) = self.cached_project_context(&project_path, &mut project_context)
@@ -873,20 +887,12 @@ impl Vault {
         context
     }
 
-    /// Resolve a bare project slug to its map path, preferring the
-    /// active location and falling back to `projects/_parked/`. `None`
-    /// when neither exists (a dangling `action.project` link).
+    /// Resolve a bare project slug to its map path (active, parked or
+    /// closed), read from the disk. `None` when it resolves nowhere, to
+    /// several places, or to an unreadable map (a dangling
+    /// `action.project` link).
     fn resolve_project_path(&self, slug: &str) -> Option<VaultPath> {
-        let active = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS)).ok()?;
-        if self.store.exists(&active).ok()? {
-            return Some(active);
-        }
-        let parked =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED)).ok()?;
-        if self.store.exists(&parked).ok()? {
-            return Some(parked);
-        }
-        None
+        self.locate_project(slug).ok().map(|l| l.path)
     }
 }
 

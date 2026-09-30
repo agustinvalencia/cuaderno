@@ -97,6 +97,7 @@ pub(crate) enum RejectionCode {
     AmbiguousAction,
     AmbiguousMilestone,
     AmbiguousPeriodic,
+    AmbiguousProject,
     AmbiguousSection,
     AmbiguousSlug,
     AmbiguousWaitingOn,
@@ -243,6 +244,18 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         } => (
             RejectionCode::AmbiguousWaitingOn,
             json!({ "slug": slug, "query": query, "candidates": candidates }),
+        ),
+        DomainError::AmbiguousProject { slug, candidates } => (
+            RejectionCode::AmbiguousProject,
+            json!({
+                "slug": slug,
+                // The shape `read_note`'s `ambiguous_slug` uses, minus the
+                // title, which the domain error does not carry.
+                "candidates": candidates
+                    .iter()
+                    .map(|p| json!({ "path": p.to_string(), "note_type": "project" }))
+                    .collect::<Vec<_>>(),
+            }),
         ),
         DomainError::AmbiguousSlug(slug) => (RejectionCode::AmbiguousSlug, json!({ "slug": slug })),
 
@@ -531,6 +544,30 @@ mod tests {
                 .expect("message")
                 .contains("ambiguous action match"),
             "payload: {payload}"
+        );
+    }
+
+    #[test]
+    fn a_project_at_two_locations_is_ambiguous_with_its_candidates() {
+        use cdno_core::path::VaultPath;
+
+        let payload = classify(&DomainError::AmbiguousProject {
+            slug: "thesis".into(),
+            candidates: vec![
+                VaultPath::new("projects/_parked/thesis.md").unwrap(),
+                VaultPath::new("projects/thesis.md").unwrap(),
+            ],
+        })
+        .expect("a duplicated project is caller-actionable");
+
+        assert_eq!(payload["code"], "ambiguous_project");
+        assert_eq!(payload["details"]["slug"], "thesis");
+        assert_eq!(
+            payload["details"]["candidates"],
+            json!([
+                { "path": "projects/_parked/thesis.md", "note_type": "project" },
+                { "path": "projects/thesis.md", "note_type": "project" },
+            ])
         );
     }
 

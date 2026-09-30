@@ -176,10 +176,13 @@ candidates: Vec<VaultPath> }`, a new variant with its own message. Zero hits: `S
 with `available_projects_hint`. Then rewrite every two-path probe onto it: `resolve_active_project`,
 `resolve_any_project` (`projects/mod.rs`), `update_project_state` (`projects/state.rs`),
 `get_project_full` (`context.rs`), `resolve_project_path` (`commitments.rs`), `available_projects_hint`
-(labels `(parked)`, `(completed)`, `(dropped)`), `activate_project` (`projects/lifecycle.rs`),
+(labels `(parked)` and `(closed)`: the hint is built from the index without reading files), `activate_project` (`projects/lifecycle.rs`),
 `project_summary`, and the project-only branch of `note_ref::narrow` (reads keep the documented
 active-beats-parked rule; writes refuse). `commitments()` builds its stem-to-path map once per
-call instead of probing per action note.
+call instead of probing per action note. Because `classify` in `crates/cdno-mcp/src/rejection.rs`
+matches every `DomainError` variant, the new variant is classified here too, as
+`ambiguous_project` with `details: { slug, candidates: [{path, note_type}] }` (the shape
+`read_note`'s `ambiguous_slug` uses, without the title), rather than in T16.
 
 **Why.** RFC §5.5, D9: where a verb writes must never depend on the index, which can be stale
 for up to 300 s on the HTTP server and until restart on stdio.
@@ -638,16 +641,16 @@ appropriate. `render_show` already has its `Dropped` arm from T6.
 
 ## Stage 5 — MCP
 
-### T16 — Rejection codes: `project_has_open_items`, `ambiguous_project`, status on `project_not_active`
+### T16 — Rejection codes: `project_has_open_items`, status on `project_not_active`
 
 **What.** In `crates/cdno-mcp/src/rejection.rs`: `RejectionCode::ProjectHasOpenItems` classified
 from `DomainError::ProjectHasOpenItems` with `details: { slug, open_items_hash, actions: [{text,
 note, note_status}], milestones: [{title, date, hard}], untouched_commitments: [{slug, due}] }`;
-`RejectionCode::AmbiguousProject` with `details: { slug, candidates }`; `ProjectNotActive` now
-serialises `details: { slug, status, closed }`. The `rename_all` derive gives the wire codes; the
+`ProjectNotActive` now serialises `details: { slug, status, closed }`. The `rename_all` derive gives the wire codes; the
 `classify` match gains its arms.
 
-**Deliverable.** The three classifications and their tests; no tool changes yet.
+**Deliverable.** The two classifications and their tests; no tool changes yet. (`ambiguous_project`
+shipped with T2.)
 
 **Depends on.** T8, T12.
 
@@ -657,10 +660,9 @@ existing code names stable.
 **Probes.**
 - `cargo test -p cdno-mcp --test handlers_operations` (or the rejection test module) passes
   with `complete_project_rejection_carries_open_items_and_hash` (exercised through a direct
-  `classify` call until T17 adds the tool), `ambiguous_project_rejection_carries_candidates`,
-  `project_not_active_details_carry_status`.
+  `classify` call until T17 adds the tool) and `project_not_active_details_carry_status`.
 - The existing rejection-code snapshot test (the one guarding `rename_all`) passes with the
-  two new codes added to its expected list.
+  new code added to its expected list.
 
 **Correct means.** An agent can branch on the code and act on the details without parsing a
 message.

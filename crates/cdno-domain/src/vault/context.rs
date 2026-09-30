@@ -33,7 +33,6 @@ use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
 use std::collections::{BTreeMap, BTreeSet};
 
 use cdno_core::config::{Aggregate, PlotKind, TrackingSpec};
-use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::{MarkdownDocument, extract_first_table};
 use cdno_core::path::VaultPath;
@@ -465,28 +464,15 @@ impl Vault {
     /// The typed frontmatter and the raw body of a project map.
     /// Mirrors [`Vault::get_portfolio`](Self::get_portfolio) and
     /// [`Vault::get_stewardship`](Self::get_stewardship). Resolves
-    /// the slug against both `projects/` and `projects/_parked/`.
+    /// the slug against `projects/`, `projects/_parked/` and
+    /// `projects/_done/<year>/`.
     pub fn get_project_full(
         &self,
         slug: &str,
     ) -> Result<(ProjectFrontmatter, String), DomainError> {
-        let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path =
-            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
-        let path = if self.store.exists(&active_path)? {
-            active_path
-        } else if self.store.exists(&parked_path)? {
-            parked_path
-        } else {
-            return Err(DomainError::Store(StoreError::NotFound(format!(
-                "{active_path}{}",
-                self.available_projects_hint()
-            ))));
-        };
-        let raw = self.store.read_file(&path)?;
-        let (fm, body) = Frontmatter::parse(&raw)?;
-        let project = ProjectFrontmatter::try_from(fm)?;
-        Ok((project, body.to_owned()))
+        let location = self.locate_project(slug)?;
+        let (_fm, body) = Frontmatter::parse(&location.raw)?;
+        Ok((location.frontmatter, body.to_owned()))
     }
 
     // -----------------------------------------------------------------
