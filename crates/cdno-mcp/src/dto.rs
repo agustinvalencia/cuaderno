@@ -684,11 +684,15 @@ pub struct ProjectListEntryDto {
 
 /// The `list_projects` payload: active and parked projects plus the
 /// slot budget, so a client can show "3 of 5 active" without a second
-/// call.
+/// call, and the closed projects when asked for.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ProjectListDto {
     pub active: Vec<ProjectListEntryDto>,
     pub parked: Vec<ProjectListEntryDto>,
+    /// Completed and dropped projects, present only with
+    /// `include_closed: true`. Each carries its `closed` date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closed: Option<Vec<ProjectListEntryDto>>,
     pub slots: ProjectSlotsDto,
 }
 

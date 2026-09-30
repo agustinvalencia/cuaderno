@@ -165,18 +165,24 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "List the vault's projects: active and parked, each with its slug and typed frontmatter, plus the slot budget (active count vs the configured cap). The lightweight enumeration tool -- use it to discover project slugs without pulling a full `get_monthly_context` or per-project `get_project_context`."
+        description = "List the vault's projects: active and parked, each with its slug and typed frontmatter, plus the slot budget (active count vs the configured cap). Closed projects (completed or dropped, under `projects/_done/<year>/`) are listed under `closed` only with `include_closed: true`. The lightweight enumeration tool -- use it to discover project slugs without pulling a full `get_monthly_context` or per-project `get_project_context`."
     )]
     pub async fn list_projects(
         &self,
-        Parameters(_input): Parameters<EmptyInput>,
+        Parameters(input): Parameters<ListProjectsInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let (active, parked, cap) = self
+        let include_closed = input.include_closed;
+        let (active, parked, closed, cap) = self
             .with_vault(move |vault| {
                 let active = vault.active_projects()?;
                 let parked = vault.parked_projects()?;
+                let closed = if include_closed {
+                    Some(vault.closed_projects()?)
+                } else {
+                    None
+                };
                 let cap = vault.config().vault.max_active_projects;
-                Ok::<_, DomainError>((active, parked, cap))
+                Ok::<_, DomainError>((active, parked, closed, cap))
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -187,6 +193,7 @@ impl CuadernoServer {
         json_result(ProjectListDto {
             active: active.into_iter().map(project_list_entry).collect(),
             parked: parked.into_iter().map(project_list_entry).collect(),
+            closed: closed.map(|c| c.into_iter().map(project_list_entry).collect()),
             slots,
         })
     }
@@ -259,7 +266,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug against both `projects/` and `projects/_parked/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
     )]
     pub async fn get_project_context(
         &self,
