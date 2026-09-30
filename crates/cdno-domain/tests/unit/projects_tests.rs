@@ -5270,3 +5270,166 @@ fn closing_refuses_a_map_hand_closed_outside_done() {
     );
     assert_eq!(daily_log(&store, "2026-09-29"), "");
 }
+
+// ---------------------------------------------------------------------------
+// closed_projects / closed_projects_between (RFC 0004 §6.2 "Queries")
+// ---------------------------------------------------------------------------
+
+#[test]
+fn closed_projects_between_returns_both_outcomes() {
+    let (vault, _store, _index) = closing_vault(&[
+        (
+            "projects/_done/2026/shipped.md",
+            &closed_map("completed", "2026-09-24", "Shipped it"),
+        ),
+        (
+            "projects/_done/2026/abandoned.md",
+            &closed_map("dropped", "2026-09-22", "Abandoned"),
+        ),
+        (
+            "projects/_done/2026/earlier.md",
+            &closed_map("completed", "2026-08-01", "Earlier"),
+        ),
+        ("projects/live.md", &closable_map("active", "Live")),
+    ]);
+
+    let rows = vault
+        .closed_projects_between(day(2026, 9, 21), day(2026, 9, 27))
+        .expect("query");
+
+    assert_eq!(
+        rows,
+        vec![
+            cdno_domain::ClosedProjectEntry {
+                slug: "abandoned".to_owned(),
+                title: "Abandoned".to_owned(),
+                context: Context::Work,
+                outcome: ProjectStatus::Dropped,
+                closed_on: day(2026, 9, 22),
+            },
+            cdno_domain::ClosedProjectEntry {
+                slug: "shipped".to_owned(),
+                title: "Shipped it".to_owned(),
+                context: Context::Work,
+                outcome: ProjectStatus::Completed,
+                closed_on: day(2026, 9, 24),
+            },
+        ]
+    );
+}
+
+#[test]
+fn closed_projects_between_includes_both_ends_and_orders_ties_by_slug() {
+    let (vault, _store, _index) = closing_vault(&[
+        (
+            "projects/_done/2026/b.md",
+            &closed_map("completed", "2026-09-21", "B"),
+        ),
+        (
+            "projects/_done/2026/a.md",
+            &closed_map("dropped", "2026-09-21", "A"),
+        ),
+        (
+            "projects/_done/2026/c.md",
+            &closed_map("completed", "2026-09-27", "C"),
+        ),
+    ]);
+
+    let slugs: Vec<String> = vault
+        .closed_projects_between(day(2026, 9, 21), day(2026, 9, 27))
+        .unwrap()
+        .into_iter()
+        .map(|e| e.slug)
+        .collect();
+
+    assert_eq!(slugs, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn closed_projects_lists_the_archive_and_skips_what_it_cannot_read() {
+    // A malformed map (no status) and a closed map without a date sit
+    // beside two good ones; the first is skipped, the second is listed but
+    // has no date for a review window to place it by.
+    let bad = "---\ntype: project\ncontext: work\ncreated: 2025-01-10\n---\n# Broken\n";
+    let undated = "---\ntype: project\ncontext: personal\nstatus: dropped\ncreated: 2025-01-10\n---\n# Undated\n";
+    let (vault, _store, _index) = closing_vault(&[
+        (
+            "projects/_done/2025/old.md",
+            &closed_map("completed", "2025-11-01", "Old"),
+        ),
+        (
+            "projects/_done/2026/new.md",
+            &closed_map("dropped", "2026-09-01", "New"),
+        ),
+        ("projects/_done/2026/broken.md", bad),
+        ("projects/_done/2026/undated.md", undated),
+        ("projects/live.md", &closable_map("active", "Live")),
+        (
+            "projects/_parked/shelf.md",
+            &closable_map("parked", "Shelf"),
+        ),
+        // Hand-marked closed but never moved: not in the archive (lint
+        // names the repair).
+        (
+            "projects/hand.md",
+            &closed_map("completed", "2026-09-01", "Hand"),
+        ),
+    ]);
+
+    let closed = vault
+        .closed_projects()
+        .expect("one bad map does not fail it");
+    let paths: Vec<String> = closed.iter().map(|(p, _)| p.to_string()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            "projects/_done/2025/old.md",
+            "projects/_done/2026/new.md",
+            "projects/_done/2026/undated.md",
+        ]
+    );
+
+    let rows = vault
+        .closed_projects_between(day(2020, 1, 1), day(2030, 1, 1))
+        .unwrap();
+    let slugs: Vec<&str> = rows.iter().map(|e| e.slug.as_str()).collect();
+    assert_eq!(slugs, vec!["old", "new"]);
+}
+
+#[test]
+fn active_projects_excludes_closed() {
+    let (vault, _store, _index) = closing_vault(&[
+        ("projects/live.md", &closable_map("active", "Live")),
+        (
+            "projects/_done/2026/done.md",
+            &closed_map("completed", "2026-09-01", "Done"),
+        ),
+    ]);
+
+    let active: Vec<String> = vault
+        .active_projects()
+        .unwrap()
+        .into_iter()
+        .map(|(p, _)| p.to_string())
+        .collect();
+    assert_eq!(active, vec!["projects/live.md"]);
+}
+
+#[test]
+fn a_project_closed_by_the_verb_shows_up_in_the_window() {
+    let (vault, _store, _index) = closing_vault(&[(
+        "projects/surrogate.md",
+        &closable_map("active", "Surrogate"),
+    )]);
+    vault
+        .complete_project(dt(2026, 9, 29, 10, 0), "surrogate")
+        .unwrap();
+
+    let rows = vault
+        .closed_projects_between(day(2026, 9, 28), day(2026, 10, 4))
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].slug, "surrogate");
+    assert_eq!(rows[0].outcome, ProjectStatus::Completed);
+    assert_eq!(rows[0].closed_on, day(2026, 9, 29));
+}

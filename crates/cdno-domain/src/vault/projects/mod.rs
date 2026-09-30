@@ -37,6 +37,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 
 pub(in crate::vault) mod actions;
+mod closed;
 mod closing;
 mod core_question;
 mod lifecycle;
@@ -47,6 +48,7 @@ mod summary;
 mod waiting;
 
 pub use actions::{ActionListEntry, AttachedAction};
+pub use closed::ClosedProjectEntry;
 pub use closing::ProjectClosureOutcome;
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
