@@ -300,7 +300,7 @@ impl Vault {
     }
 
     /// Vault-relative path of an active action note: `actions/<slug>.md`.
-    fn active_action_path(slug: &str) -> Result<VaultPath, DomainError> {
+    pub(in crate::vault) fn active_action_path(slug: &str) -> Result<VaultPath, DomainError> {
         VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::ACTIONS))
             .map_err(DomainError::from)
     }

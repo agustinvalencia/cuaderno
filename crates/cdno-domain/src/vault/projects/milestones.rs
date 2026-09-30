@@ -418,7 +418,7 @@ fn format_milestone_dropped_log_entry(slug: &str, title: &str, reason: Option<&s
 /// Both em-dash (`\u{2014}`) and ASCII hyphen-minus separators are
 /// recognised — same forgiveness as
 /// [`cdno_core::markdown::extract_hard_deadlines`].
-fn parse_open_milestone_title(line: &str) -> Option<&str> {
+pub(in crate::vault) fn parse_open_milestone_title(line: &str) -> Option<&str> {
     let after_box = line.trim_start().strip_prefix("- [ ] ")?;
     Some(strip_milestone_target_suffix(after_box.trim()))
 }

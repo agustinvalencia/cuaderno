@@ -40,11 +40,15 @@ pub(in crate::vault) mod actions;
 mod core_question;
 mod lifecycle;
 mod milestones;
+mod open_items;
 pub(crate) mod state;
 mod summary;
 mod waiting;
 
 pub use actions::{ActionListEntry, AttachedAction};
+pub use open_items::{
+    LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
+};
 pub use summary::{ProjectSummary, TopAction};
 
 /// The heading whose body holds the project's narrative state.

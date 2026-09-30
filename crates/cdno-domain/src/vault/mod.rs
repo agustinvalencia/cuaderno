@@ -114,7 +114,10 @@ pub use notes::NoteView;
 pub use notes_section::NoteToDailyOutcome;
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
-pub use projects::{ActionListEntry, AttachedAction, ProjectSummary, TopAction};
+pub use projects::{
+    ActionListEntry, AttachedAction, LinkedCommitment, OpenAction, OpenItems, OpenItemsHash,
+    OpenItemsReport, OpenMilestone, ProjectSummary, TopAction,
+};
 pub use questions::QuestionSummary;
 pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
