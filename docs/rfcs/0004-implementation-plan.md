@@ -432,7 +432,8 @@ reason: Option<&str>, open_items)`. This task implements everything except the c
 that). One transaction, lock taken first. Steps: a new `resolve_closable_project` (status
 `Active` or `Parked`, else `ProjectNotActive`, which gains the actual `status`); the T8 report,
 refused if non-empty; stamp `status` and `closed: <today>` **on the rendered document** through
-`merge_fields_into_frontmatter` (`frontmatter_edit.rs`); destination
+`merge_fields_into_frontmatter` (`frontmatter_edit.rs`), then pass the result through
+`reorder_frontmatter` with `canonical_frontmatter_order` (`normalise.rs`); destination
 `projects/_done/<year>/<slug>.md`, `AlreadyExists` if occupied; `write_file`, `delete_file`,
 `upsert_note`, `remove_note`, then `stage_milestone_index_rows` for the destination; one
 `stage_daily_logs` call with the line `project completed [[<slug>]] — <title>` or `project
@@ -466,7 +467,10 @@ and the RFC's reviewers found two ways to get it subtly wrong by copying `park_p
   no index rows for it; refused, milestone listed); `complete_project_refuses_an_occupied_destination`;
   `complete_project_refuses_a_closed_project` (a map at `_done/` — `ProjectNotActive` carrying
   its status; T12 relaxes this for the other outcome); `closing_pre_rfc_map_leaves_frontmatter_in_canonical_order`
-  (a map without `closed:` gains it as the last key and `cdno lint` reports no order warning);
+  (a map without `closed:` gains it as the last key under the built-in template, and `cdno lint`
+  reports no order warning); `closing_follows_a_custom_template_that_places_closed_mid_block`
+  (an override listing `closed` before a user key such as `owner:` puts it there, not last;
+  `merge_fields_into_frontmatter` appends a missing key, so without the reorder the lint warns);
   `project_closure_lines_not_parsed_as_state_or_focus` (`project_state_changes_between` and
   `current_focus` ignore the new lines).
 - Mutation: stamp on a fresh `store.read_file` instead of the rendered document; after T11 the
@@ -792,7 +796,10 @@ note-type table's `project` row, the CLI and MCP surface tables. `docs-site/src`
 named exception to "no un-drop" for projects), `tutorials/projects.md`. `CLAUDE.md`: the two new
 prefixes in the history-preservation paragraph. `CHANGELOG.md` `[Unreleased]` and `STATUS.md`
 (command list, tool count, the #611 fix). The RFC's status line moves to "Accepted — shipped"
-once the maintainer confirms D7.
+once the maintainer confirms D7. The upgrade note and `tutorials/templates-and-frontmatter.md` say
+that a customised project template (`.cuaderno/templates/project.md`) does not gain `closed:`
+by itself, that nothing breaks if it never does, and how to add it: by hand, or with
+`cdno templates sync` if #699 has shipped by then.
 
 **Deliverable.** The edits; `mdbook build docs-site` clean.
 
@@ -811,6 +818,13 @@ once the maintainer confirms D7.
 page still describes `park` as the only exit.
 
 ---
+
+## Outside this plan
+
+- #699, `cdno templates sync`: adds keys a release adds to a built-in template (here `closed:`)
+  to a vault's customised override without overwriting it, with a lint warning that the override
+  is behind. Spun off from the review of T6 (#698). Nothing here depends on it; T10's reorder and
+  T21's upgrade note cover a vault that never runs it.
 
 ## Done when
 
