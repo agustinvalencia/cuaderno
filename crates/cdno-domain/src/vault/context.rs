@@ -471,8 +471,7 @@ impl Vault {
         slug: &str,
     ) -> Result<(ProjectFrontmatter, String), DomainError> {
         let location = self.locate_project(slug)?;
-        let raw = self.store.read_file(&location.path)?;
-        let (_fm, body) = Frontmatter::parse(&raw)?;
+        let (_fm, body) = Frontmatter::parse(&location.raw)?;
         Ok((location.frontmatter, body.to_owned()))
     }
 

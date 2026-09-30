@@ -48,9 +48,12 @@ pub struct TopAction {
 impl Vault {
     /// Build a [`ProjectSummary`] for the project identified by
     /// `slug`, regardless of its status. Errors only on
-    /// [`Store(NotFound)`] (no file at either active or parked
-    /// path) or when the frontmatter is malformed; missing body
-    /// sections degrade gracefully.
+    /// [`Store(NotFound)`] (no file at the active, parked or
+    /// `projects/_done/<year>/` location), [`AmbiguousProject`] (the
+    /// slug exists at more than one of them) or when the frontmatter
+    /// is malformed; missing body sections degrade gracefully.
+    ///
+    /// [`AmbiguousProject`]: crate::error::DomainError::AmbiguousProject
     ///
     /// [`Store(NotFound)`]: cdno_core::error::StoreError::NotFound
     pub fn project_summary(&self, slug: &str) -> Result<ProjectSummary, DomainError> {

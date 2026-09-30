@@ -186,8 +186,8 @@ impl Vault {
     ///   (a manual edit or a rogue write broke the uniqueness invariant
     ///   from #24); the locator refuses before anything is written.
     /// - `Store(AlreadyExists)` — `projects/_parked/<slug>.md` is
-    ///   occupied (defensive; unreachable through the locator, which
-    ///   reports the duplicate first).
+    ///   occupied (defensive; the locator normally reports a duplicate
+    ///   first).
     pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         let (active_path, _doc) = self.resolve_active_project(slug)?;
@@ -233,8 +233,7 @@ impl Vault {
     /// - `Store(NotFound)` — slug doesn't resolve to any folder.
     /// - `AmbiguousProject` — the slug exists at more than one location.
     /// - `Store(AlreadyExists)` — `projects/<slug>.md` is occupied
-    ///   (defensive; unreachable through the locator, which reports the
-    ///   duplicate first).
+    ///   (defensive; the locator normally reports a duplicate first).
     pub fn activate_project(
         &self,
         at: NaiveDateTime,
@@ -264,12 +263,9 @@ impl Vault {
         // is a later change.)
         let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
-        let parked_path = location.path;
-        if !parked_path
-            .as_path()
-            .starts_with(cdno_core::paths::PROJECTS_PARKED)
-            || location.frontmatter.status != ProjectStatus::Parked
-        {
+        let parked_path =
+            VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
+        if location.path != parked_path || location.frontmatter.status != ProjectStatus::Parked {
             return Err(DomainError::ProjectNotParked(slug.to_owned()));
         }
         if self.store.exists(&active_path)? {
@@ -278,7 +274,7 @@ impl Vault {
             )));
         }
 
-        let raw = self.store.read_file(&parked_path)?;
+        let raw = location.raw;
         let new_content =
             rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Active.as_str())?;
         let entry_meta =

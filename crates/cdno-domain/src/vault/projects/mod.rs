@@ -73,6 +73,29 @@ pub(super) const MILESTONES_SECTION: &str = "Milestones";
 pub struct ProjectLocation {
     pub path: VaultPath,
     pub frontmatter: ProjectFrontmatter,
+    /// The text the locator read, so a caller that also needs the body
+    /// parses the same bytes the frontmatter came from.
+    pub(in crate::vault) raw: String,
+}
+
+/// Whether a directory name is a 4-digit year, the shape of the
+/// `projects/_done/<year>/` folders. Shared by the locator and the
+/// not-found hint so they agree on what counts as a closed location.
+fn is_year_dir_name(name: &str) -> bool {
+    name.len() == 4 && name.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Whether `path` is a map under `projects/_done/<year>/`.
+fn is_closed_project_path(path: &VaultPath) -> bool {
+    let p = path.as_path();
+    let Some(year_dir) = p.parent() else {
+        return false;
+    };
+    year_dir.parent() == Some(std::path::Path::new(cdno_core::paths::PROJECTS_DONE))
+        && year_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(is_year_dir_name)
 }
 
 impl Vault {
@@ -90,11 +113,20 @@ impl Vault {
     /// - `AmbiguousProject` — the slug is at two or more locations
     ///   (candidates sorted). Distinct from `Store(AlreadyExists)`,
     ///   which means "destination occupied".
+    /// - `Store(NotFound)` also for a path-shaped slug (containing `/` or
+    ///   `\`), which names no project and must not be probed as a path.
     /// - a parse error when the one file found has malformed frontmatter.
     pub(in crate::vault) fn locate_project(
         &self,
         slug: &str,
     ) -> Result<ProjectLocation, DomainError> {
+        if slug.contains(['/', '\\']) {
+            return Err(DomainError::Store(StoreError::NotFound(format!(
+                "{}/{slug}.md{}",
+                cdno_core::paths::PROJECTS,
+                self.available_projects_hint()
+            ))));
+        }
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         let mut candidates = vec![
             active_path.clone(),
@@ -108,7 +140,7 @@ impl Vault {
                 .as_path()
                 .file_name()
                 .and_then(|n| n.to_str())
-                .filter(|n| n.len() == 4 && n.bytes().all(|b| b.is_ascii_digit()))
+                .filter(|n| is_year_dir_name(n))
             else {
                 continue;
             };
@@ -135,7 +167,11 @@ impl Vault {
                 let raw = self.store.read_file(&path)?;
                 let (fm, _body) = Frontmatter::parse(&raw)?;
                 let frontmatter = ProjectFrontmatter::try_from(fm)?;
-                Ok(ProjectLocation { path, frontmatter })
+                Ok(ProjectLocation {
+                    path,
+                    frontmatter,
+                    raw,
+                })
             }
             _ => {
                 hits.sort_by(|a, b| a.as_path().cmp(b.as_path()));
@@ -164,8 +200,7 @@ impl Vault {
             return Err(DomainError::ProjectNotActive(slug.to_owned()));
         }
 
-        let raw = self.store.read_file(&location.path)?;
-        let doc = MarkdownDocument::parse(raw)?;
+        let doc = MarkdownDocument::parse(location.raw)?;
         Ok((location.path, doc))
     }
 
@@ -184,8 +219,7 @@ impl Vault {
         slug: &str,
     ) -> Result<(VaultPath, MarkdownDocument, ProjectFrontmatter), DomainError> {
         let location = self.locate_project(slug)?;
-        let raw = self.store.read_file(&location.path)?;
-        let doc = MarkdownDocument::parse(raw)?;
+        let doc = MarkdownDocument::parse(location.raw)?;
         Ok((location.path, doc, location.frontmatter))
     }
 
@@ -206,7 +240,7 @@ impl Vault {
                     .starts_with(cdno_core::paths::PROJECTS_PARKED)
                 {
                     format!("{slug} (parked)")
-                } else if path.as_path().starts_with(cdno_core::paths::PROJECTS_DONE) {
+                } else if is_closed_project_path(path) {
                     // Status is not readable from the path; the index
                     // hint does not parse files.
                     format!("{slug} (closed)")

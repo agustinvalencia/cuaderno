@@ -423,6 +423,50 @@ fn an_active_project_beats_its_parked_namesake() {
     );
 }
 
+/// A `_done/` map is never the "active" one: beside a parked namesake it
+/// leaves the slug ambiguous, and beside an active one the active map wins.
+#[test]
+fn a_parked_and_a_closed_namesake_stay_ambiguous() {
+    let vault = vault_with(&[
+        (
+            "projects/_parked/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+        (
+            "projects/_done/2025/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+    ]);
+
+    let result = vault
+        .resolve_note_ref("surrogate-model", day(2026, 8, 21))
+        .expect("resolve");
+
+    match result {
+        RefResolution::Ambiguous(hits) => assert_eq!(hits.len(), 2),
+        other => panic!("expected Ambiguous, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_active_project_beats_its_closed_namesake() {
+    let vault = vault_with(&[
+        (
+            "projects/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+        (
+            "projects/_done/2025/surrogate-model.md",
+            note("project", "Surrogate model"),
+        ),
+    ]);
+
+    assert_eq!(
+        resolved(&vault, "surrogate-model", day(2026, 8, 21)),
+        "projects/surrogate-model.md"
+    );
+}
+
 #[test]
 fn an_unknown_slug_is_not_found() {
     let vault = vault_with(&[(

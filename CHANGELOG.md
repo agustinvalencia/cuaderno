@@ -11,6 +11,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `cdno project milestone done` and `drop`, run interactively with an unknown `--slug`, now say the
   project was not found and list the available ones, instead of reporting no open milestones
   (RFC 0004, #671).
+- Project verbs now find a project wherever it lives, including `projects/_done/<year>/`, and
+  refuse a project whose name exists in two folders with a message naming both paths (MCP code
+  `ambiguous_project`) instead of reporting that the destination exists (RFC 0004, #672).
 - `cdno init` now also creates `projects/_done/<year>/`, the folder closed projects will move to
   (RFC 0004, #670).
 

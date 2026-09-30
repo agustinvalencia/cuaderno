@@ -24,12 +24,14 @@ impl Vault {
     /// `cdno project state <slug> "..."`). Lookup is unambiguous
     /// because slug uniqueness spans `projects/`,
     /// `projects/_parked/` and `projects/_done/<year>/`. Resolves errors as:
-    /// - file at `projects/_parked/<slug>.md` (parked) or frontmatter
-    ///   `status` not `active` → [`DomainError::ProjectNotActive`].
-    ///   Folder and frontmatter are checked independently because the
-    ///   frontmatter is the source of truth — manual edits could put a
-    ///   non-active project under `projects/`.
-    /// - file at neither location → [`StoreError::NotFound`].
+    /// - the project is not both directly at `projects/<slug>.md` **and**
+    ///   `status: active` in its frontmatter (a parked or closed project,
+    ///   or a hand-edited map whose folder and status disagree) →
+    ///   [`DomainError::ProjectNotActive`]. Folder and frontmatter must
+    ///   both say active; neither alone is enough.
+    /// - the slug exists at more than one location →
+    ///   [`DomainError::AmbiguousProject`].
+    /// - file at no location → [`StoreError::NotFound`](cdno_core::error::StoreError::NotFound).
     ///
     /// When `new_state.trim()` equals the existing trimmed state, the
     /// call is a silent no-op — no log entry, no project rewrite —

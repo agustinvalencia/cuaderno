@@ -249,7 +249,12 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             RejectionCode::AmbiguousProject,
             json!({
                 "slug": slug,
-                "candidates": candidates.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+                // The shape `read_note`'s `ambiguous_slug` uses, minus the
+                // title, which the domain error does not carry.
+                "candidates": candidates
+                    .iter()
+                    .map(|p| json!({ "path": p.to_string(), "note_type": "project" }))
+                    .collect::<Vec<_>>(),
             }),
         ),
         DomainError::AmbiguousSlug(slug) => (RejectionCode::AmbiguousSlug, json!({ "slug": slug })),
@@ -559,7 +564,10 @@ mod tests {
         assert_eq!(payload["details"]["slug"], "thesis");
         assert_eq!(
             payload["details"]["candidates"],
-            json!(["projects/_parked/thesis.md", "projects/thesis.md"])
+            json!([
+                { "path": "projects/_parked/thesis.md", "note_type": "project" },
+                { "path": "projects/thesis.md", "note_type": "project" },
+            ])
         );
     }
 

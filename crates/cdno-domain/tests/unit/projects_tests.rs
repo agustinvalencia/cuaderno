@@ -2336,7 +2336,7 @@ fn park_project_refuses_a_stem_at_two_locations() {
     // `AmbiguousProject` (T2) before the destination guard is reached.
     let active_body = project_body("work", "active", "2026-04-01", "X");
     let parked_body = project_body("work", "parked", "2026-04-01", "Y");
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[
             ("projects/dup.md", &active_body),
             ("projects/_parked/dup.md", &parked_body),
@@ -2347,10 +2347,25 @@ fn park_project_refuses_a_stem_at_two_locations() {
     let err = vault
         .park_project(dt(2026, 5, 2, 10, 0), "dup")
         .unwrap_err();
+    let DomainError::AmbiguousProject { slug, candidates } = err else {
+        panic!("expected AmbiguousProject, got {err:?}");
+    };
+    assert_eq!(slug, "dup");
+    assert_eq!(
+        candidates,
+        vec![vp("projects/_parked/dup.md"), vp("projects/dup.md")]
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/dup.md")).unwrap(),
+        active_body
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/_parked/dup.md")).unwrap(),
+        parked_body
+    );
     assert!(
-        matches!(&err, DomainError::AmbiguousProject { slug, candidates }
-            if slug == "dup" && candidates.len() == 2),
-        "got {err:?}"
+        store.walk_dir(&vp("journal")).unwrap().is_empty(),
+        "no daily note may be written"
     );
 }
 
@@ -2479,7 +2494,7 @@ fn activate_project_refuses_a_stem_at_two_locations() {
     // `AmbiguousProject` (T2) before the collision guard is reached.
     let active_body = project_body("work", "active", "2026-04-01", "Active");
     let parked_body = project_body("work", "parked", "2026-04-01", "Parked");
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[
             ("projects/dup.md", &active_body),
             ("projects/_parked/dup.md", &parked_body),
@@ -2490,10 +2505,25 @@ fn activate_project_refuses_a_stem_at_two_locations() {
     let err = vault
         .activate_project(dt(2026, 5, 2, 10, 0), "dup")
         .unwrap_err();
+    let DomainError::AmbiguousProject { slug, candidates } = err else {
+        panic!("expected AmbiguousProject, got {err:?}");
+    };
+    assert_eq!(slug, "dup");
+    assert_eq!(
+        candidates,
+        vec![vp("projects/_parked/dup.md"), vp("projects/dup.md")]
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/dup.md")).unwrap(),
+        active_body
+    );
+    assert_eq!(
+        store.read_file(&vp("projects/_parked/dup.md")).unwrap(),
+        parked_body
+    );
     assert!(
-        matches!(&err, DomainError::AmbiguousProject { slug, candidates }
-            if slug == "dup" && candidates.len() == 2),
-        "got {err:?}"
+        store.walk_dir(&vp("journal")).unwrap().is_empty(),
+        "no daily note may be written"
     );
 }
 
@@ -2773,9 +2803,11 @@ fn project_not_found_lists_available_projects_with_parked_flagged() {
     // parked ones flagged, sorted by slug.
     let alpha = project_body("work", "active", "2026-04-01", "Alpha");
     let gamma = project_body("work", "parked", "2026-04-01", "Gamma");
+    let delta = project_body("work", "completed", "2026-04-01", "Delta");
     let vault = vault_with_notes(&[
         ("projects/alpha.md", alpha.as_str()),
         ("projects/_parked/gamma.md", gamma.as_str()),
+        ("projects/_done/2025/delta.md", delta.as_str()),
     ]);
 
     let err = vault.project_summary("missing").unwrap_err();
@@ -2783,7 +2815,7 @@ fn project_not_found_lists_available_projects_with_parked_flagged() {
         panic!("expected Store(NotFound), got {err:?}");
     };
     assert!(
-        msg.ends_with("available projects: alpha, gamma (parked)"),
+        msg.ends_with("available projects: alpha, delta (closed), gamma (parked)"),
         "got: {msg}"
     );
 }
@@ -3570,7 +3602,7 @@ fn locate_project_finds_active_parked_and_closed() {
         &[
             ("projects/a.md", &a),
             ("projects/_parked/b.md", &b),
-            ("projects/_done/2026/c.md", &c),
+            ("projects/_done/2024/c.md", &c),
         ],
         VaultConfig::default(),
     );
@@ -3663,5 +3695,153 @@ fn update_project_state_on_a_closed_project_is_not_active_and_a_ghost_is_not_fou
     assert!(
         matches!(err, DomainError::Store(StoreError::NotFound(_))),
         "got {err:?}"
+    );
+}
+
+#[test]
+fn locate_project_refuses_a_path_shaped_slug() {
+    let active = project_body_full("work", "active", "2026-04-01", "X", "", "(nothing yet)\n");
+    let parked = project_body_full("work", "parked", "2026-04-01", "X", "", "(nothing yet)\n");
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/x.md", &active),
+            ("projects/_parked/x.md", &parked),
+        ],
+        VaultConfig::default(),
+    );
+
+    for slug in ["_parked/x", "_parked\\x", "../projects/x"] {
+        let err = vault.project_summary(slug).unwrap_err();
+        assert!(
+            matches!(err, DomainError::Store(StoreError::NotFound(_))),
+            "{slug}: got {err:?}"
+        );
+    }
+    let err = vault
+        .activate_project(dt(2026, 5, 1, 9, 0), "_parked/x")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::Store(StoreError::NotFound(_))),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn locate_project_ignores_non_year_directories_under_done() {
+    let active = project_body_full("work", "active", "2026-04-01", "X", "", "(nothing yet)\n");
+    let stray = project_body_full(
+        "work",
+        "completed",
+        "2026-04-01",
+        "X",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/x.md", &active),
+            ("projects/_done/archive/x.md", &stray),
+        ],
+        VaultConfig::default(),
+    );
+
+    assert_eq!(
+        vault.project_summary("x").unwrap().status,
+        ProjectStatus::Active
+    );
+}
+
+#[test]
+fn locate_project_refuses_active_and_closed_namesakes() {
+    let active = project_body_full("work", "active", "2026-04-01", "Y", "", "(nothing yet)\n");
+    let closed = project_body_full(
+        "work",
+        "completed",
+        "2026-04-01",
+        "Y",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/y.md", &active),
+            ("projects/_done/2025/y.md", &closed),
+        ],
+        VaultConfig::default(),
+    );
+
+    let err = vault.project_summary("y").unwrap_err();
+    let DomainError::AmbiguousProject { slug, candidates } = err else {
+        panic!("expected AmbiguousProject, got {err:?}");
+    };
+    assert_eq!(slug, "y");
+    assert_eq!(
+        candidates,
+        vec![vp("projects/_done/2025/y.md"), vp("projects/y.md")]
+    );
+}
+
+#[test]
+fn locate_project_refuses_two_closed_namesakes() {
+    let closed = project_body_full(
+        "work",
+        "completed",
+        "2026-04-01",
+        "Z",
+        "",
+        "(nothing yet)\n",
+    );
+    let (vault, _store) = vault_with_seeded_store(
+        &[
+            ("projects/_done/2024/z.md", &closed),
+            ("projects/_done/2025/z.md", &closed),
+        ],
+        VaultConfig::default(),
+    );
+
+    let err = vault.project_summary("z").unwrap_err();
+    let DomainError::AmbiguousProject { slug, candidates } = err else {
+        panic!("expected AmbiguousProject, got {err:?}");
+    };
+    assert_eq!(slug, "z");
+    assert_eq!(
+        candidates,
+        vec![
+            vp("projects/_done/2024/z.md"),
+            vp("projects/_done/2025/z.md")
+        ]
+    );
+}
+
+#[test]
+fn update_project_state_refuses_an_active_status_map_outside_projects() {
+    // Folder and frontmatter must both say active: a map that claims
+    // `status: active` from `_parked/` or `_done/` is still not active.
+    let p = project_body_with_state("work", "active", "2026-04-01", "P", "Initial.");
+    let q = project_body_with_state("work", "active", "2026-04-01", "Q", "Initial.");
+    let (vault, store) = vault_with_seeded_store(
+        &[
+            ("projects/_parked/p.md", &p),
+            ("projects/_done/2025/q.md", &q),
+        ],
+        VaultConfig::default(),
+    );
+
+    for (slug, path, before) in [
+        ("p", "projects/_parked/p.md", &p),
+        ("q", "projects/_done/2025/q.md", &q),
+    ] {
+        let err = vault
+            .update_project_state(dt(2026, 5, 1, 9, 0), slug, "changed")
+            .unwrap_err();
+        assert!(
+            matches!(&err, DomainError::ProjectNotActive(s) if s == slug),
+            "{slug}: got {err:?}"
+        );
+        assert_eq!(&store.read_file(&vp(path)).unwrap(), before);
+    }
+    assert!(
+        store.walk_dir(&vp("journal")).unwrap().is_empty(),
+        "no daily note may be written"
     );
 }

@@ -341,8 +341,12 @@ impl super::Vault {
             },
             1 => RefResolution::Resolved(hits[0].path.clone()),
             _ => {
-                // An active project beats its parked namesake, mirroring
-                // `resolve_project_path` (commitments.rs).
+                // An active project beats its parked namesake. This is a
+                // *read* rule: writes go through `locate_project`, which
+                // refuses a duplicate as `AmbiguousProject`, while a read
+                // that only wants to open the note prefers the active map.
+                // A map under `_parked/` or `_done/<year>/` never counts as
+                // active.
                 //
                 // `park_project` moves the file rather than copying it, so
                 // cdno itself never produces this state. It arises from a
@@ -351,11 +355,12 @@ impl super::Vault {
                 // projects, so preferring the active one is a documented
                 // rule rather than a guess. Defensive, not load-bearing.
                 let projects_only = hits.iter().all(|c| c.note_type == "project");
-                let mut unparked = hits
-                    .iter()
-                    .filter(|c| !c.path.as_path().starts_with(paths::PROJECTS_PARKED));
-                // Exactly one unparked hit, not merely at least one. With a
-                // bare `find`, two *unparked* projects sharing a slug would
+                let mut unparked = hits.iter().filter(|c| {
+                    let p = c.path.as_path();
+                    !p.starts_with(paths::PROJECTS_PARKED) && !p.starts_with(paths::PROJECTS_DONE)
+                });
+                // Exactly one active hit, not merely at least one. With a
+                // bare `find`, two *active* projects sharing a slug would
                 // resolve to whichever the index returned first — the silent
                 // wrong-file open this enum exists to prevent.
                 if projects_only && let (Some(active), None) = (unparked.next(), unparked.next()) {

@@ -280,8 +280,8 @@ impl Vault {
 
     /// Pending (uncompleted) milestones for a project, in source
     /// order — the candidate set for the `cdno project milestone done`
-    /// and `drop` pickers. Resolves the project's map, active or
-    /// parked, and reads its milestones from the index for that path.
+    /// and `drop` pickers. Resolves the project's map, active, parked
+    /// or closed, and reads its milestones from the index for that path.
     /// Errors with `Store(NotFound)` and the available-projects hint
     /// when no map exists, or with a parse error when its frontmatter
     /// is malformed.
