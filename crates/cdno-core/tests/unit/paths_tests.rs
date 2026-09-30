@@ -109,8 +109,9 @@ fn init_dirs_includes_projects_done_for_the_current_year() {
     let dirs = paths::init_dirs(today);
 
     let projects_done = paths::projects_done_dir(today.year());
-    assert!(dirs.contains(&projects_done));
-    // Verify it appears exactly once in the list
-    let count = dirs.iter().filter(|d| **d == projects_done).count();
-    assert_eq!(count, 1);
+    assert_eq!(
+        dirs.iter().filter(|d| **d == projects_done).count(),
+        1,
+        "init_dirs must list {projects_done} exactly once: {dirs:?}"
+    );
 }

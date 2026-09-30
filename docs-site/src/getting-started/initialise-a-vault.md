@@ -18,7 +18,8 @@ template until you add a file for it there. What you get:
 ├── journal/          # daily + weekly notes, partitioned by year
 │   └── 2026/         #   e.g. journal/2026/daily/2026-04-25.md, journal/2026/weekly/2026-W17.md
 ├── projects/         # project maps (max 5 active)
-│   └── _parked/      # inactive projects
+│   ├── _parked/      # inactive projects
+│   └── _done/        # closed projects, partitioned by year
 ├── actions/          # manifest action notes (the heavy form)
 │   └── _done/        # completed actions, partitioned by year
 ├── portfolios/       # evidence dossiers, one folder per question

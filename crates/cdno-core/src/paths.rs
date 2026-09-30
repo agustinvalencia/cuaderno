@@ -10,10 +10,10 @@
 //! - `pub const` strings for the static parts of the layout
 //!   (`PROJECTS`, `INBOX`, `CUADERNO_DIR`, …). Use these when no date
 //!   information is involved.
-//! - Helper functions for the year-partitioned subtrees (journal,
-//!   `commitments/_done/`). High-frequency append-only folders are
-//!   year-partitioned so they don't accumulate thousands of siblings
-//!   over a multi-year vault lifetime.
+//! - Helper functions for the year-partitioned subtrees: the journal, and
+//!   the `_done/` archives under `commitments/`, `actions/` and
+//!   `projects/`. Year partitioning keeps a multi-year vault from piling
+//!   thousands of siblings into one folder.
 //!
 //! Strings are POSIX-style relative paths (forward slashes), suitable
 //! both as `&str` arguments to [`crate::path::VaultPath`] and as
