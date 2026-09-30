@@ -24,12 +24,13 @@ use cdno_mcp::server::{
     AddWaitingOnInput, AppendToLogInput, CaptureInput, CompleteCommitmentInput,
     CompleteMilestoneInput, CreateCommitmentInput, CreateCustomNoteInput, CreatePortfolioInput,
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
-    DiscardInboxItemInput, DropActionInput, FileToPortfolioInput, LinkPortfolioToProjectInput,
-    LinkPortfolioToQuestionInput, NoteToDailyInput, ProjectSlugInput, PromoteActionInput,
-    ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput,
-    ResolveWaitingOnInput, ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput,
-    SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput, UpdateProjectStateInput,
-    UpsertDailySectionInput, UpsertMonthlySectionInput, UpsertWeeklySectionInput,
+    DiscardInboxItemInput, DropActionInput, DropProjectInput, FileToPortfolioInput,
+    LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput, NoteToDailyInput, OpenItemsChoice,
+    ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput,
+    ReadWeeklyNoteInput, ResolveWaitingOnInput, ReviseNoteInput, SetCoreQuestionInput,
+    SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
+    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
+    UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -2934,4 +2935,188 @@ async fn upsert_daily_section_appends_to_notes() {
         "body:\n{body}"
     );
     assert!(body.contains("substance"), "body:\n{body}");
+}
+
+// ---------------------------------------------------------------------
+// complete_project / drop_project (RFC 0004)
+// ---------------------------------------------------------------------
+
+/// The `cdno_rejection` payload a handler error carries.
+fn rejection_of(err: &rmcp::model::ErrorData) -> serde_json::Value {
+    err.data
+        .as_ref()
+        .and_then(|d| d.get("cdno_rejection"))
+        .cloned()
+        .unwrap_or_else(|| panic!("not marked as a rejection: {err:?}"))
+}
+
+fn this_year() -> String {
+    chrono::Local::now().format("%Y").to_string()
+}
+
+/// A fresh project: the template seeds one open bullet and one open
+/// milestone.
+fn server_with_widget() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with(|vault, _s| {
+        vault
+            .create_project(moment(2026, 1, 1, 9, 0), "Widget", Context::Work, None)
+            .unwrap();
+    })
+}
+
+#[tokio::test]
+async fn complete_project_tool_refuses_with_open_items() {
+    let (server, store) = server_with_widget();
+
+    let err = server
+        .complete_project(Parameters(ProjectSlugInput {
+            project: "widget".to_owned(),
+        }))
+        .await
+        .expect_err("open items refuse a completion");
+
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_has_open_items", "{rejection}");
+    let details = &rejection["details"];
+    assert_eq!(details["slug"], "widget");
+    assert_eq!(
+        details["actions"][0]["text"],
+        "Define first concrete step (light)"
+    );
+    assert_eq!(details["milestones"].as_array().unwrap().len(), 1);
+    assert!(details["open_items_hash"].as_str().is_some());
+    assert!(store.exists(&vp("projects/widget.md")).unwrap());
+}
+
+#[tokio::test]
+async fn complete_project_tool_moves_a_map_with_nothing_open() {
+    let (server, store) = server_with(|_vault, store| {
+        store
+            .write_file(
+                &vp("projects/done.md"),
+                "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\ncore_question: null\nclosed: null\n---\n\n# Done\n\n## Next Actions\n- [x] Ship (deep)\n",
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .complete_project(Parameters(ProjectSlugInput {
+            project: "done".to_owned(),
+        }))
+        .await
+        .expect("complete_project");
+
+    let body = decode_json(&result);
+    let path = format!("projects/_done/{}/done.md", this_year());
+    assert_eq!(body["path"], path);
+    assert_eq!(body["dropped_actions"], serde_json::json!([]));
+    assert!(body["verification"].is_object(), "{body}");
+    assert!(
+        store
+            .read_file(&vp(&path))
+            .unwrap()
+            .contains("status: completed")
+    );
+}
+
+#[tokio::test]
+async fn drop_project_with_open_items_drop_cascades() {
+    let (server, store) = server_with_widget();
+    let refusal = server
+        .drop_project(Parameters(DropProjectInput {
+            project: "widget".to_owned(),
+            reason: Some("superseded".to_owned()),
+            open_items: OpenItemsChoice::Refuse,
+            expected_open_items: None,
+        }))
+        .await
+        .expect_err("refused by default");
+    let hash = rejection_of(&refusal)["details"]["open_items_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let result = server
+        .drop_project(Parameters(DropProjectInput {
+            project: "widget".to_owned(),
+            reason: Some("superseded".to_owned()),
+            open_items: OpenItemsChoice::Drop,
+            expected_open_items: Some(hash),
+        }))
+        .await
+        .expect("the confirmed cascade drops");
+
+    let body = decode_json(&result);
+    let path = format!("projects/_done/{}/widget.md", this_year());
+    assert_eq!(body["path"], path);
+    assert_eq!(
+        body["dropped_actions"],
+        serde_json::json!(["Define first concrete step (light)"])
+    );
+    assert_eq!(body["dropped_milestones"].as_array().unwrap().len(), 1);
+    let raw = store.read_file(&vp(&path)).unwrap();
+    assert!(raw.contains("status: dropped"), "{raw}");
+    assert!(!raw.contains("- [ ]"), "{raw}");
+}
+
+#[tokio::test]
+async fn drop_project_with_stale_hash_is_re_refused() {
+    let (server, store) = server_with_widget();
+    let refusal = server
+        .drop_project(Parameters(DropProjectInput {
+            project: "widget".to_owned(),
+            reason: None,
+            open_items: OpenItemsChoice::Refuse,
+            expected_open_items: None,
+        }))
+        .await
+        .expect_err("refused by default");
+    let old_hash = rejection_of(&refusal)["details"]["open_items_hash"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "widget".to_owned(),
+            title: "Something new".to_owned(),
+            energy: "light".to_owned(),
+            with_note: false,
+            vars: None,
+        }))
+        .await
+        .expect("add_action");
+
+    let err = server
+        .drop_project(Parameters(DropProjectInput {
+            project: "widget".to_owned(),
+            reason: None,
+            open_items: OpenItemsChoice::Drop,
+            expected_open_items: Some(old_hash.clone()),
+        }))
+        .await
+        .expect_err("a changed list is refused again");
+
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "project_has_open_items");
+    assert_ne!(rejection["details"]["open_items_hash"], old_hash);
+    assert_eq!(rejection["details"]["actions"].as_array().unwrap().len(), 2);
+    assert!(store.exists(&vp("projects/widget.md")).unwrap());
+}
+
+#[tokio::test]
+async fn drop_project_drop_without_hash_is_refused_with_the_list() {
+    let (server, store) = server_with_widget();
+
+    let err = server
+        .drop_project(Parameters(DropProjectInput {
+            project: "widget".to_owned(),
+            reason: None,
+            open_items: OpenItemsChoice::Drop,
+            expected_open_items: None,
+        }))
+        .await
+        .expect_err("an agent must present the hash it was shown");
+
+    assert_eq!(rejection_of(&err)["code"], "project_has_open_items");
+    assert!(store.exists(&vp("projects/widget.md")).unwrap());
 }

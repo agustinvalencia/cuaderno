@@ -21,6 +21,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   outcome and date (under `--json`, one row per project with `slug`, `title`, `context`,
   `outcome` and `closed_on`). The `cdno project activate` picker and its shell completion now
   offer closed projects beside parked ones, labelled (RFC 0004, #685).
+- **MCP `complete_project` and `drop_project` (RFC 0004, #687).** The same closing rules over
+  MCP: both refuse with `project_has_open_items` (the list plus `open_items_hash`) while an action
+  or milestone is open; `drop_project` with `open_items: "drop"` and `expected_open_items` set to
+  that hash drops them with the project, and is refused again if the list changed. Results name
+  what was dropped and the linked commitments left open. The server now advertises 60 tools.
 
 ### Changed
 

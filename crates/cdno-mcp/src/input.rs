@@ -649,6 +649,45 @@ pub struct CreateStewardshipInput {
 }
 
 // `park_project` / `activate_project` (GH #166) reuse [`ProjectSlugInput`].
+// `complete_project` (RFC 0004) reuses it too: completion takes no choice
+// about open items, it is refused while any is open.
+
+/// What `drop_project` does when the project still has open actions or
+/// milestones.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenItemsChoice {
+    /// Refuse with the list (the default).
+    #[default]
+    Refuse,
+    /// Drop them with the project, each logged as dropped. Needs
+    /// `expected_open_items`.
+    Drop,
+}
+
+/// Input for `drop_project` (RFC 0004).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DropProjectInput {
+    /// Slug of an active or parked project.
+    pub project: String,
+    /// Why the project is being dropped, e.g. "superseded by the ICML
+    /// work". Optional, but strongly wanted: it is logged with the drop and
+    /// with every open item the drop lets go.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// `"refuse"` (default): with open actions or milestones, the call is
+    /// refused with `project_has_open_items`, listing them. `"drop"`: drop
+    /// them with the project; only after the user has seen that list and
+    /// agreed.
+    #[serde(default)]
+    pub open_items: OpenItemsChoice,
+    /// The `open_items_hash` from the `project_has_open_items` rejection
+    /// whose list the user agreed to drop. Required with `"drop"` while
+    /// items are open; if the list has changed since, the call is refused
+    /// again with the new list and hash.
+    #[serde(default)]
+    pub expected_open_items: Option<String>,
+}
 
 /// Input for `set_question_status` (GH #166).
 #[derive(Debug, Deserialize, JsonSchema)]

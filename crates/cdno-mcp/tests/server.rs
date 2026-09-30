@@ -125,9 +125,12 @@ fn advertised_catalogue_matches_expected_surface() {
         "create_question",
         "create_stewardship",
         "create_custom_note",
-        // Lifecycle (4)
+        // Lifecycle (6)
         "park_project",
         "activate_project",
+        // Closing a project (RFC 0004).
+        "complete_project",
+        "drop_project",
         "set_question_status",
         "add_periodic_commitment",
         // Generic frontmatter setter (1, #301)
@@ -135,7 +138,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 58);
+    assert_eq!(tools.len(), 60);
 }
 
 /// `read_note` is a read, so it rides the context router onto the
