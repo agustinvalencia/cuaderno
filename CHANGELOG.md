@@ -14,6 +14,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Project verbs now find a project wherever it lives, including `projects/_done/<year>/`, and
   refuse a project whose name exists in two folders with a message naming both paths (MCP code
   `ambiguous_project`) instead of reporting that the destination exists (RFC 0004, #672).
+- Parking and reactivating a project keeps its milestones and hard deadlines. Before, `cdno
+  project park` and `activate` lost them from the index, so a hard deadline stayed missing from
+  `cdno commitments` after reactivation until the next `cdno reindex` (RFC 0004, #674).
 - `cdno commitments`, `orient` and the MCP `get_commitments`, weekly and monthly contexts no
   longer list the milestones or action due dates of a parked or closed project: a project's own dates surface only while it is active.
   A standalone commitment linked to such a project keeps surfacing, since it is a promise to

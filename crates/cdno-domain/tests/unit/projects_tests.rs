@@ -2264,6 +2264,82 @@ fn resolve_waiting_on_errors_when_not_found() {
 // ---------------------------------------------------------------------
 
 #[test]
+fn park_then_activate_keeps_milestones_in_register() {
+    // RFC 0004 §3.3 G4: removing the old path's index entry cascades its
+    // milestone and deadline rows, and reconcile's fast path never heals
+    // the moved file. Each move must restage the rows at the new path.
+    // No reconcile runs between the steps below.
+    let body = project_body_full(
+        "work",
+        "active",
+        "2026-04-01",
+        "ICML",
+        "(none)\n",
+        "(nothing yet)\n",
+    );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store.write_file(&vp("projects/icml.md"), &body).unwrap();
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::clone(&index),
+        VaultConfig::default(),
+    )
+    .expect("Vault::new");
+
+    vault
+        .add_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "icml",
+            "Submit camera-ready",
+            Some(day(2026, 5, 22)),
+            true,
+        )
+        .expect("add_milestone");
+
+    // The rows a path holds: milestone names and hard-deadline titles.
+    let rows_at = |path: &str| {
+        let milestones: Vec<String> = index
+            .milestones_for_project(&vp(path))
+            .unwrap()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        let deadlines: Vec<String> = index
+            .deadlines_between("2026-01-01", "2026-12-31")
+            .unwrap()
+            .into_iter()
+            .filter(|(p, _)| *p == vp(path))
+            .map(|(_, d)| d.title)
+            .collect();
+        (milestones, deadlines)
+    };
+    let one = || {
+        (
+            vec!["Submit camera-ready".to_owned()],
+            vec!["Submit camera-ready".to_owned()],
+        )
+    };
+    let none = || (Vec::<String>::new(), Vec::<String>::new());
+
+    vault
+        .park_project(dt(2026, 5, 2, 10, 0), "icml")
+        .expect("park");
+    assert_eq!(rows_at("projects/_parked/icml.md"), one(), "park restages");
+    assert_eq!(rows_at("projects/icml.md"), none(), "nothing left behind");
+
+    vault
+        .activate_project(dt(2026, 5, 3, 10, 0), "icml")
+        .expect("activate");
+    assert_eq!(rows_at("projects/icml.md"), one(), "activate restages");
+    assert_eq!(rows_at("projects/_parked/icml.md"), none());
+
+    let register = vault.commitments(day(2026, 5, 3), 30).expect("commitments");
+    let titles: Vec<&str> = register.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, vec!["Submit camera-ready"]);
+}
+
+#[test]
 fn park_project_moves_file_and_flips_status_to_parked() {
     let body = project_body("work", "active", "2026-04-01", "ICML");
     let (vault, store) =
