@@ -327,12 +327,7 @@ impl Vault {
             .expect("matched line was previously parseable")
             .to_owned();
 
-        let kept: Vec<&str> = lines
-            .iter()
-            .enumerate()
-            .filter_map(|(i, l)| if i == removed_idx { None } else { Some(*l) })
-            .collect();
-        let new_section = kept.join("\n");
+        let new_section = remove_action_line(section, removed_idx);
         doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
 
         let new_content = doc.render().to_owned();
@@ -398,12 +393,7 @@ impl Vault {
             .expect("matched line was previously parseable")
             .to_owned();
 
-        let kept: Vec<&str> = lines
-            .iter()
-            .enumerate()
-            .filter_map(|(i, l)| if i == removed_idx { None } else { Some(*l) })
-            .collect();
-        let new_section = kept.join("\n");
+        let new_section = remove_action_line(section, removed_idx);
         doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
 
         let new_content = doc.render().to_owned();
@@ -682,6 +672,22 @@ pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 /// discard captures.
 pub(in crate::vault) fn flatten_reason(reason: &str) -> String {
     super::super::log::flatten_for_log(reason)
+}
+
+/// `section` without its line at `idx`, the index into
+/// `section.split('\n')` that [`resolve_open_action`] returns. An action
+/// bullet has no continuation lines of its own, so exactly one line goes.
+///
+/// Shared by `complete_action`, `drop_action` and the project cascade,
+/// which removes several bullets inside one transaction and so cannot call
+/// the verbs (each opens its own, and the lock is not re-entrant).
+pub(in crate::vault) fn remove_action_line(section: &str, idx: usize) -> String {
+    section
+        .split('\n')
+        .enumerate()
+        .filter_map(|(i, line)| (i != idx).then_some(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// If `line` is an open action bullet (`- [ ] <text>`), return the

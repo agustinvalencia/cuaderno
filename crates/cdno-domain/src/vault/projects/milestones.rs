@@ -241,27 +241,7 @@ impl Vault {
         let lines: Vec<&str> = section.split('\n').collect();
         let (matched_idx, title) = resolve_open_milestone(&lines, slug, query)?;
 
-        // Take the bullet's indented continuation lines with it. Removing
-        // the bullet alone would re-parent its sub-bullets to whichever
-        // milestone happens to precede it — notes about a milestone that
-        // is not happening, silently attached to one that is.
-        // `complete_milestone` has no equivalent problem: it replaces the
-        // line in place, so the children stay under their own bullet.
-        let mut drop_end = matched_idx + 1;
-        while drop_end < lines.len() {
-            let line = lines[drop_end];
-            if line.trim().is_empty() || !line.starts_with(char::is_whitespace) {
-                break;
-            }
-            drop_end += 1;
-        }
-        let new_lines: Vec<String> = lines
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !(matched_idx..drop_end).contains(i))
-            .map(|(_, s)| (*s).to_owned())
-            .collect();
-        let new_section = new_lines.join("\n");
+        let new_section = remove_milestone_block(section, matched_idx);
         doc.replace_section(MILESTONES_SECTION, &new_section)?;
 
         let new_content = doc.render().to_owned();
@@ -334,6 +314,43 @@ pub(in crate::vault) fn stage_milestone_index_rows(
             })
             .collect(),
     );
+}
+
+/// The end (exclusive) of the milestone bullet at `idx` together with its
+/// indented continuation lines, in `lines` (the section split on `'\n'`).
+/// The block stops at the first blank or unindented line.
+pub(in crate::vault) fn milestone_block_end(lines: &[&str], idx: usize) -> usize {
+    let mut end = idx + 1;
+    while end < lines.len() {
+        let line = lines[end];
+        if line.trim().is_empty() || !line.starts_with(char::is_whitespace) {
+            break;
+        }
+        end += 1;
+    }
+    end
+}
+
+/// `section` without the milestone at `idx` and its indented continuation
+/// lines. Removing the bullet alone would re-parent its sub-bullets to
+/// whichever milestone happens to precede it — notes about a milestone
+/// that is not happening, silently attached to one that is.
+/// `complete_milestone` has no equivalent problem: it replaces the line in
+/// place, so the children stay under their own bullet.
+///
+/// Shared by `drop_milestone` and the project cascade. A caller removing
+/// several milestones works from the highest index down, so each removal
+/// leaves the lower indices valid, and a nested `- [ ]` line already taken
+/// is simply gone by the time its parent is removed.
+pub(in crate::vault) fn remove_milestone_block(section: &str, idx: usize) -> String {
+    let lines: Vec<&str> = section.split('\n').collect();
+    let end = milestone_block_end(&lines, idx);
+    lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, line)| (!(idx..end).contains(&i)).then_some(*line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Resolve a substring `query` to exactly one open milestone within a
