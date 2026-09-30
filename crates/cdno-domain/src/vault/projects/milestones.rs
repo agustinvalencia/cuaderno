@@ -280,9 +280,11 @@ impl Vault {
 
     /// Pending (uncompleted) milestones for a project, in source
     /// order — the candidate set for the `cdno project milestone done`
-    /// fuzzy picker. Thin filter over [`milestones_for_project`].
+    /// fuzzy picker. Resolves the project's location and reads its
+    /// milestones from the index. Errors if the project does not exist.
     pub fn open_milestones(&self, slug: &str) -> Result<Vec<MilestoneEntry>, DomainError> {
-        let all = self.index.milestones_for_project(slug)?;
+        let (path, _doc, _project) = self.resolve_any_project(slug)?;
+        let all = self.index.milestones_for_project(&path)?;
         Ok(all.into_iter().filter(|m| !m.completed).collect())
     }
 }

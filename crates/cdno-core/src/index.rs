@@ -407,19 +407,6 @@ pub struct SearchHit {
     pub score: f64,
 }
 
-/// The two vault locations a project with `slug` can occupy: active
-/// `projects/<slug>.md` and parked `projects/_parked/<slug>.md`. Used
-/// by `milestones_for_project` to resolve a slug to its note path
-/// without a separate index lookup. Projects are the only note type
-/// that contributes milestones, and they live only in these two
-/// directories (design §4 vault structure).
-fn project_path_candidates(slug: &str) -> [String; 2] {
-    [
-        format!("{}/{slug}.md", crate::paths::PROJECTS),
-        format!("{}/{slug}.md", crate::paths::PROJECTS_PARKED),
-    ]
-}
-
 /// Cache-oriented query API for the vault index.
 ///
 /// All methods take `&self`; implementations are responsible for
@@ -488,10 +475,10 @@ pub trait VaultIndex: Send + Sync {
         path: &VaultPath,
         milestones: &[MilestoneEntry],
     ) -> Result<(), IndexError>;
-    /// Every milestone of the project named `slug`, in source order
-    /// (by row id). Resolves the slug against both the active and
-    /// parked project locations.
-    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError>;
+    /// Every milestone of the project at `path`, in source order
+    /// (by row id). The caller is responsible for resolving the project's
+    /// location (active or parked).
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError>;
     /// Dated milestones across all projects whose `date` falls in the
     /// inclusive `[from, to]` window, sorted by date. Non-date markers
     /// (`date IS NULL`) are excluded — they can't be placed on a
@@ -1026,14 +1013,13 @@ impl VaultIndex for SqliteIndex {
         Ok(())
     }
 
-    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
-        let [active, parked] = project_path_candidates(slug);
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
         let conn = self.lock_conn();
         let mut stmt = conn.prepare(
             "SELECT name, date, hard_soft, status FROM milestones \
-             WHERE note_path = ?1 OR note_path = ?2 ORDER BY id",
+             WHERE note_path = ?1 ORDER BY id",
         )?;
-        let rows = stmt.query_map(params![active, parked], row_to_milestone_entry)?;
+        let rows = stmt.query_map(params![path.to_string()], row_to_milestone_entry)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1554,20 +1540,11 @@ impl VaultIndex for MemoryIndex {
         Ok(())
     }
 
-    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
-        let candidates = project_path_candidates(slug);
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
         let state = self.lock_state();
-        // Source order within a project is the stored Vec order, which
-        // mirrors SqliteIndex's `ORDER BY id`. Active wins over parked
-        // if (pathologically) both exist; only one ever should.
-        for candidate in &candidates {
-            if let Ok(vp) = VaultPath::new(candidate)
-                && let Some(entries) = state.milestones.get(&vp)
-            {
-                return Ok(entries.clone());
-            }
-        }
-        Ok(Vec::new())
+        // Return the milestones for the given path, or an empty vec if
+        // no milestones have been recorded for this path.
+        Ok(state.milestones.get(path).cloned().unwrap_or_default())
     }
 
     fn milestones_between(

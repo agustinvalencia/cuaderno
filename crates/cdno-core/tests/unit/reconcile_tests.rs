@@ -493,8 +493,10 @@ title: Surrogate model
 
     reconcile(&as_store(&store), &as_index(&index), &IgnoreSet::empty()).unwrap();
 
-    // All three milestones land, in source order, queryable by slug.
-    let all = index.milestones_for_project("surrogate").unwrap();
+    // All three milestones land, in source order, queryable by path.
+    let all = index
+        .milestones_for_project(&vp("projects/surrogate.md"))
+        .unwrap();
     let names: Vec<&str> = all.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(
         names,
@@ -827,8 +829,8 @@ impl VaultIndex for ProbeIndex {
     ) -> Result<(), IndexError> {
         self.inner.replace_milestones(path, milestones)
     }
-    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
-        self.inner.milestones_for_project(slug)
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
+        self.inner.milestones_for_project(path)
     }
     fn milestones_between(
         &self,

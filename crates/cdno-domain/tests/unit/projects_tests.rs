@@ -3504,3 +3504,16 @@ fn add_milestone_replaces_an_indented_placeholder() {
         "indentation does not make it the user's own line:\n{raw}"
     );
 }
+
+#[test]
+fn open_milestones_unknown_slug_is_not_found() {
+    let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
+
+    let err = vault
+        .open_milestones("unknown_project")
+        .expect_err("open_milestones of unknown project should error");
+
+    // The error should be a NotFound error from the store.
+    // Check that it's indeed a NotFound error.
+    assert!(err.to_string().contains("projects/unknown_project.md"));
+}

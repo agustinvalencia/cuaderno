@@ -147,7 +147,7 @@ fn remove_note_cascades_all_facets() {
             .unwrap()
             .is_empty()
     );
-    assert!(idx.milestones_for_project("foo").unwrap().is_empty());
+    assert!(idx.milestones_for_project(&n.path).unwrap().is_empty());
 }
 
 #[test]
@@ -416,7 +416,7 @@ fn milestones_for_project_returns_in_source_order() {
     )
     .unwrap();
 
-    let got = idx.milestones_for_project("foo").unwrap();
+    let got = idx.milestones_for_project(&vp("projects/foo.md")).unwrap();
     let names: Vec<&str> = got.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, vec!["kickoff", "submission", "someday"]);
     assert!(got[1].is_hard && !got[1].completed);
@@ -424,7 +424,7 @@ fn milestones_for_project_returns_in_source_order() {
 }
 
 #[test]
-fn milestones_for_project_resolves_parked_location() {
+fn milestones_for_project_reads_the_given_path() {
     let (_d, idx) = store();
     idx.upsert_note(&sample_note("projects/_parked/dormant.md", "project"))
         .unwrap();
@@ -434,11 +434,20 @@ fn milestones_for_project_resolves_parked_location() {
     )
     .unwrap();
 
-    let got = idx.milestones_for_project("dormant").unwrap();
+    // Passing the parked path returns the milestone.
+    let got = idx
+        .milestones_for_project(&vp("projects/_parked/dormant.md"))
+        .unwrap();
     assert_eq!(
         got,
         vec![milestone("revisit", Some("2026-09-01"), false, false)]
     );
+
+    // Passing the active path returns none (the milestone is only at parked).
+    let got = idx
+        .milestones_for_project(&vp("projects/dormant.md"))
+        .unwrap();
+    assert!(got.is_empty());
 }
 
 #[test]
@@ -457,7 +466,7 @@ fn replace_milestones_overwrites_prior_set() {
     )
     .unwrap();
 
-    let got = idx.milestones_for_project("foo").unwrap();
+    let got = idx.milestones_for_project(&vp("projects/foo.md")).unwrap();
     assert_eq!(
         got,
         vec![milestone("second", Some("2026-06-01"), true, false)]

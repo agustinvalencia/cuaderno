@@ -628,8 +628,8 @@ impl VaultIndex for FailingIndex {
         }
         self.inner.replace_milestones(path, milestones)
     }
-    fn milestones_for_project(&self, slug: &str) -> Result<Vec<MilestoneEntry>, IndexError> {
-        self.inner.milestones_for_project(slug)
+    fn milestones_for_project(&self, path: &VaultPath) -> Result<Vec<MilestoneEntry>, IndexError> {
+        self.inner.milestones_for_project(path)
     }
     fn milestones_between(
         &self,
