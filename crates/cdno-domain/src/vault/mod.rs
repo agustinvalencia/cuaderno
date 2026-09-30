@@ -116,7 +116,7 @@ pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
 pub use projects::{
     ActionListEntry, AttachedAction, LinkedCommitment, OpenAction, OpenItems, OpenItemsHash,
-    OpenItemsReport, OpenMilestone, ProjectSummary, TopAction,
+    OpenItemsReport, OpenMilestone, ProjectClosureOutcome, ProjectSummary, TopAction,
 };
 pub use questions::QuestionSummary;
 pub use revise::{ReviseOutcome, Revision};

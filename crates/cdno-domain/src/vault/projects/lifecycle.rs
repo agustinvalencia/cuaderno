@@ -316,7 +316,11 @@ impl Vault {
 /// §5.5). A move rewrites only the frontmatter, so the section read
 /// before the move is the section written. An absent section stages
 /// empty rows, as reconcile does.
-fn stage_moved_milestone_rows(dest: &VaultPath, doc: &MarkdownDocument, tx: &mut VaultTransaction) {
+pub(super) fn stage_moved_milestone_rows(
+    dest: &VaultPath,
+    doc: &MarkdownDocument,
+    tx: &mut VaultTransaction,
+) {
     let section = doc.section(MILESTONES_SECTION).unwrap_or("");
     stage_milestone_index_rows(dest, section, tx);
 }

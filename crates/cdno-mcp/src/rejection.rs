@@ -171,7 +171,7 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             RejectionCode::StateTooLong,
             json!({ "slug": slug, "chars": chars, "max": max }),
         ),
-        DomainError::ProjectNotActive(slug) => {
+        DomainError::ProjectNotActive { slug, .. } => {
             (RejectionCode::ProjectNotActive, json!({ "slug": slug }))
         }
         DomainError::ProjectNotParked(slug) => {

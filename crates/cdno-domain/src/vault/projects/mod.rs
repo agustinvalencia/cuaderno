@@ -37,6 +37,7 @@ use crate::note_type::NoteType;
 use super::Vault;
 
 pub(in crate::vault) mod actions;
+mod closing;
 mod core_question;
 mod lifecycle;
 mod milestones;
@@ -46,6 +47,7 @@ mod summary;
 mod waiting;
 
 pub use actions::{ActionListEntry, AttachedAction};
+pub use closing::ProjectClosureOutcome;
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
 };
@@ -80,6 +82,15 @@ pub struct ProjectLocation {
     /// The text the locator read, so a caller that also needs the body
     /// parses the same bytes the frontmatter came from.
     pub(in crate::vault) raw: String,
+}
+
+/// The `ProjectNotActive` error for a located map.
+fn not_active(slug: &str, frontmatter: &ProjectFrontmatter) -> DomainError {
+    DomainError::ProjectNotActive {
+        slug: slug.to_owned(),
+        status: frontmatter.status,
+        closed: frontmatter.closed,
+    }
 }
 
 /// Whether a directory name is a 4-digit year, the shape of the
@@ -208,7 +219,34 @@ impl Vault {
         let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         if location.frontmatter.status != ProjectStatus::Active || location.path != active_path {
-            return Err(DomainError::ProjectNotActive(slug.to_owned()));
+            return Err(not_active(slug, &location.frontmatter));
+        }
+
+        let doc = MarkdownDocument::parse(location.raw)?;
+        Ok((location.path, doc))
+    }
+
+    /// Resolve a project slug to a map that may be closed: an active map at
+    /// `projects/<slug>.md` or a parked one at `projects/_parked/<slug>.md`,
+    /// folder and frontmatter agreeing (RFC 0004 §5.1). Anything else,
+    /// including a map already closed, is `ProjectNotActive` carrying its
+    /// status.
+    pub(super) fn resolve_closable_project(
+        &self,
+        slug: &str,
+    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+        let location = self.locate_project(slug)?;
+        let expected = match location.frontmatter.status {
+            ProjectStatus::Active => Some(cdno_core::paths::PROJECTS),
+            ProjectStatus::Parked => Some(cdno_core::paths::PROJECTS_PARKED),
+            ProjectStatus::Completed | ProjectStatus::Dropped => None,
+        };
+        let in_place = match expected {
+            Some(folder) => location.path == VaultPath::new(format!("{folder}/{slug}.md"))?,
+            None => false,
+        };
+        if !in_place {
+            return Err(not_active(slug, &location.frontmatter));
         }
 
         let doc = MarkdownDocument::parse(location.raw)?;

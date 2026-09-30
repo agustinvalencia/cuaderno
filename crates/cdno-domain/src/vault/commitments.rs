@@ -964,8 +964,20 @@ fn slug_link(link: Option<&str>) -> Option<String> {
 /// entry. Looks for the first `# ` heading; falls back to the slug
 /// if absent (shouldn't happen for templates we wrote, but the log
 /// shouldn't crash on a hand-edited oddity).
-fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
-    for line in content.lines() {
+///
+/// A leading frontmatter block is skipped first: a YAML comment such as
+/// `# owner: tbd` is not the note's title.
+pub(in crate::vault) fn body_title_or_slug<'a>(content: &'a str, slug: &'a str) -> &'a str {
+    let mut lines = content.lines().peekable();
+    if lines.peek().is_some_and(|line| line.trim_end() == "---") {
+        lines.next();
+        for line in lines.by_ref() {
+            if line.trim_end() == "---" {
+                break;
+            }
+        }
+    }
+    for line in lines {
         if let Some(rest) = line.strip_prefix("# ") {
             return rest.trim();
         }
