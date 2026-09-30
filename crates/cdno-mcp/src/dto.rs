@@ -656,6 +656,9 @@ pub struct ProjectFrontmatterDto {
     /// `"[[questions/research/surrogate-cost]]"`); `None` when the
     /// project has no `core_question:` frontmatter field.
     pub core_question: Option<String>,
+    /// The date the project was completed or dropped; `None` while it is
+    /// active or parked.
+    pub closed: Option<NaiveDate>,
 }
 
 impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDto {
@@ -665,6 +668,7 @@ impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDt
             status: fm.status.as_str().to_owned(),
             created: fm.created,
             core_question: fm.core_question,
+            closed: fm.closed,
         }
     }
 }

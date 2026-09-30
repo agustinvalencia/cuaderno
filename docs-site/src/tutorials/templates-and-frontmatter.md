@@ -52,6 +52,7 @@ context: {{context}}
 status: {{status}}
 created: {{created}}
 core_question: {{core_question}}
+closed: null
 ---
 
 # {{title}}
@@ -89,6 +90,7 @@ context: work
 status: active
 created: 2026-06-30
 core_question: null
+closed: null
 ---
 
 # Surrogate model
@@ -277,6 +279,7 @@ context: {{context}}
 status: {{status}}
 created: {{created}}
 core_question: {{core_question}}
+closed: null
 owner: unassigned
 ---
 ```

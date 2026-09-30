@@ -14,6 +14,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Project verbs now find a project wherever it lives, including `projects/_done/<year>/`, and
   refuse a project whose name exists in two folders with a message naming both paths (MCP code
   `ambiguous_project`) instead of reporting that the destination exists (RFC 0004, #672).
+- A new project map carries `closed: null` as its last frontmatter line, the date `complete` and
+  `drop` will stamp; `status: dropped` is accepted, and `cdno frontmatter set` (MCP `set_frontmatter`) refuses
+  `closed` on a project the way it refuses `status`. Existing maps need no edit: a missing `closed:` reads as open
+  (RFC 0004, #676).
 - Parking and reactivating a project keeps its milestones and hard deadlines. Before, `cdno
   project park` and `activate` lost them from the index, so a hard deadline stayed missing from
   `cdno commitments` after reactivation until the next `cdno reindex` (RFC 0004, #674).

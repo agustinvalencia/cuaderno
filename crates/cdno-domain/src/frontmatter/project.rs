@@ -13,13 +13,18 @@ use serde::{Deserialize, Serialize};
 use super::context::Context;
 
 /// Lifecycle state of a project. Park/activate transitions cap-check
-/// against `max_active_projects`; completion is terminal.
+/// against `max_active_projects`. `Completed` and `Dropped` are the two
+/// closed outcomes; neither is terminal. A closed project keeps its slug,
+/// so `activate` brings its map back rather than making it again, and a
+/// closed project may be closed again with the other outcome, each a new
+/// decision the log records (RFC 0004 §5.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProjectStatus {
     Active,
     Parked,
     Completed,
+    Dropped,
 }
 
 impl ProjectStatus {
@@ -31,6 +36,7 @@ impl ProjectStatus {
             ProjectStatus::Active => "active",
             ProjectStatus::Parked => "parked",
             ProjectStatus::Completed => "completed",
+            ProjectStatus::Dropped => "dropped",
         }
     }
 }
@@ -95,6 +101,10 @@ pub struct ProjectFrontmatter {
     pub status: ProjectStatus,
     pub created: NaiveDate,
     pub core_question: Option<String>,
+    /// The date the project was closed (completed or dropped). `None`
+    /// while it is active or parked, and on a map written before the
+    /// field existed.
+    pub closed: Option<NaiveDate>,
 }
 
 impl TryFrom<Frontmatter> for ProjectFrontmatter {
@@ -106,6 +116,7 @@ impl TryFrom<Frontmatter> for ProjectFrontmatter {
             status: fm.require_field::<ProjectStatus>("status")?,
             created: fm.require_field::<NaiveDate>("created")?,
             core_question: fm.optional_field::<String>("core_question")?,
+            closed: fm.optional_field::<NaiveDate>("closed")?,
         })
     }
 }
