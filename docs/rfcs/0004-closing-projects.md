@@ -17,6 +17,13 @@
 > monthly context), §5.7 (a direct switch between outcomes), §6 throughout, and §9. The text
 > below is the amended version; the record is on the PR.
 
+> **Amended by the maintainer, 2026-09-30** (during implementation, #701). Two decisions, §9
+> D11 and D12: **`complete` never cascades.** A project with an open action or milestone
+> refuses to be completed, with or without any flag; each item is completed or dropped first.
+> Only `drop` offers to let open items go with the project, still refusing by default. And the
+> cascade drops **every attached action note that is not already closed**, `blocked` included,
+> rather than only `active` ones. §1.1, §5.1, §5.3, §6.2 to §6.4 and §10 are amended in place.
+
 > **Authorship.** Drafted by Claude (Anthropic) from #667, which the maintainer filed on
 > 2026-09-29, and from a survey of every closing verb in the codebase, done for this RFC. The
 > problem statement and the expected behaviour in §2 are the maintainer's; the survey in §3, the
@@ -49,7 +56,8 @@ Three things make this more than "add a verb":
 - **A project is a container.** Its open actions, attached action notes and open milestones are
   what the register, the orientation and the wins list read. Closing the container while leaving
   them open is how a finished project keeps nagging. §5.3 makes closing refuse when open items
-  exist, list them, and cascade on explicit request — never silently.
+  exist and list them; a drop may then let them go on explicit request, never silently, and a
+  completion never does.
 - **Moving a project map loses its dates today.** Parking or activating a project deletes its
   milestone rows from the index and never writes them back, so a hard deadline vanishes from
   `cdno commitments` until the next `cdno reindex`. The review reproduced this with the real
@@ -68,19 +76,21 @@ surrogate-model has 3 open items:
   - [ ] [[actions/characterise-kan-ppo-sample-efficiency]] (deep)
   - [ ] ICML paper submitted — hard: 2026-05-22
 Still open, not touched: [[commitments/reviewer-report]] (due 2026-10-15)
-Tick any that are done, or add them to the project that now owns them, then run again.
---drop-open lets the rest go.
+Complete or drop each of them (or add it to the project that now owns it), then run again.
 ```
 
 You tick the milestone (`cdno project milestone done`), decide the two actions are not
-happening, and run the same command again. This time it asks `Let these 2 go and complete
-surrogate-model? [y/N]`. On `y` the map moves to `projects/_done/2026/surrogate-model.md` with
-`status: completed` and `closed: 2026-09-29`; the two actions are logged as dropped with
-`reason: project completed`, then the project as completed:
+happening and drop them (`cdno action drop`, each with its own reason), and run the same
+command again. Nothing is open now, so the map moves to
+`projects/_done/2026/surrogate-model.md` with `status: completed` and `closed: 2026-09-29`, and
+the project is logged as completed:
 
 ```
-Completed surrogate-model. 4 of 5 slots in use. Let go: 2 actions.
+Completed surrogate-model. 4 of 5 slots in use.
 ```
+
+A completion is a claim that the work is done, so it never lets open work go on its own (§9
+D11); `drop` is the verb that may.
 
 `cdno orient` no longer shows it, `cdno commitments` no longer lists its milestone, and Sunday's
 `get_weekly_context` carries it under `closed_projects` so the review can celebrate it.
@@ -91,7 +101,9 @@ brings it back from `_done/`, cap permitting, and the log says so.
 At the monthly review, with five projects active, you decide a parked project is not coming back.
 `cdno project drop --slug bayesian-opt-survey --reason "superseded by the ICML work"` closes it
 from `_parked/` directly: no slot is needed, and no `activated` line is written for a resumption
-that never happened.
+that never happened. If it still has open items, the drop lists them and asks
+`Let these N go and drop bayesian-opt-survey? [y/N]` (or takes `--drop-open`); each is logged as
+dropped with `reason: project dropped (superseded by the ICML work)`.
 
 ---
 
@@ -264,8 +276,8 @@ state — parking today, closing tomorrow — and the fix for them is the same f
 
 ### 5.1 Two verbs, from active or parked
 
-`Vault::complete_project(at, slug, open_items)` and `Vault::drop_project(at, slug, reason,
-open_items)`, surfaced as `cdno project complete` / `cdno project drop` and `complete_project` /
+`Vault::complete_project(at, slug)` and `Vault::drop_project(at, slug, reason, open_items)`,
+surfaced as `cdno project complete` / `cdno project drop` and `complete_project` /
 `drop_project`.
 
 Both accept a project whose status is `active` **or `parked`**, and neither checks the cap:
@@ -310,13 +322,15 @@ data, in the `ProjectCapReached` and `AmbiguousAction` tradition: the CLI render
 index-backed report on a parked map would see no milestones, pass the refusal, and archive open
 `- [ ]` lines unlisted.
 
-With `open_items = OpenItems::Drop { expected }` the same call closes the children first, in
-the same transaction, through the same section edits `drop_action` and `drop_milestone` make:
-each open bullet is removed, each attached note archived as `Closure::Dropped` (status
-`dropped`, `completed` cleared, snapshot recorded — the archived prefix is frozen for a drop
-exactly as for a completion), each open milestone removed with its continuation lines — each
-with its own log line and `reason: project completed`, or `reason: project dropped (<reason>)`
-when the user gave one, so a child line found by grep explains itself. Then the project's own
+`complete_project` stops there: a project with an open action or milestone is not completed
+until each is completed or dropped (D11). `drop_project` with `open_items = OpenItems::Drop {
+expected }` closes the children first, in the same transaction, through the same section edits
+`drop_action` and `drop_milestone` make: each open bullet is removed, each attached note that is
+not already closed (`blocked` included, D12) archived as `Closure::Dropped` (status `dropped`,
+`completed` cleared, snapshot recorded — the archived prefix is frozen for a drop exactly as for
+a completion), each open milestone removed with its continuation lines — each with its own log
+line and `reason: project dropped`, or `reason: project dropped (<reason>)` when the user gave
+one, so a child line found by grep explains itself. Then the project's own
 line. Children first so the daily log reads in the order things happened.
 
 `expected` is the `open_items_hash` the refusal returned, a hash of the report in source order.
@@ -328,9 +342,9 @@ the fresh report, and re-refuses with the fresh list on mismatch, the shape `rev
 confirm-and-retry; a scripted `--drop-open` is exempt, since a human typed the flag against a
 vault only they are writing to. The user never sees the hash.
 
-Children are dropped, never completed, by the cascade. A completion is a claim about work, and
-the cascade cannot know the work happened; if it did, the user ticks it first, which is what the
-refusal is for. `OpenItems::Refuse` is the default on every surface.
+Children are dropped, never completed, by the cascade, and only a drop cascades. A completion is
+a claim about work, and the cascade cannot know the work happened; if it did, the user ticks it
+first, which is what the refusal is for. `OpenItems::Refuse` is the default on every surface.
 
 ### 5.4 Where a closed project lives
 
@@ -457,12 +471,14 @@ write lock taken before any read:
 2. the open-items report from the document (§5.3): open bullets from `## Next Actions`, each
    attached note's existence and status read from `actions/<slug>.md`, open milestones from
    `extract_milestones_from_body`, linked commitments from `commitments_for_project` filtered to
-   `active`; hash it; if non-empty and `OpenItems::Refuse`, or `Drop { expected }` with a
-   mismatching or absent hash where the caller must supply one, return `ProjectHasOpenItems`;
-3. with `OpenItems::Drop`: check **every** `_done` destination (each attached note's, then the
+   `active`; hash it; if non-empty and completing, or dropping with `OpenItems::Refuse`, or
+   `Drop { expected }` with a mismatching or absent hash where the caller must supply one,
+   return `ProjectHasOpenItems`;
+3. dropping with `OpenItems::Drop`: check **every** `_done` destination (each attached note's, then the
    project's) before staging anything, so a collision writes nothing; dedupe attached slugs, since
    two bullets linking one note would stage two deletes and the commit would roll back; skip an
-   attached note whose status is not `active` rather than restamp a completed one as dropped;
+   attached note already `completed` or `dropped` rather than restamp it, and drop every other,
+   `blocked` included (D12);
    then, on the one `MarkdownDocument`, remove each open bullet and each open milestone with its
    continuation lines, using section helpers extracted from `drop_action` and `drop_milestone`
    (the public verbs open their own transaction, and the lock is not re-entrant), and
@@ -504,7 +520,7 @@ The message: "move the map to `projects/_done/<year>/` and set `closed: <date>`,
 ### 6.3 `cdno-cli` (flags-and-prompts, `docs/cli-ergonomics.md`)
 
 ```
-cdno project complete [--slug S] [--drop-open]
+cdno project complete [--slug S]
 cdno project drop     [--slug S] [--reason R] [--drop-open]
 ```
 
@@ -513,17 +529,18 @@ cdno project drop     [--slug S] [--reason R] [--drop-open]
 - `--slug` gathers through `gather_or_error` with a picker over active **and parked** projects,
   labelled; `--reason` is optional and never prompted for on `drop`, matching `cdno action drop`
   and `cdno commit drop`.
-- On `ProjectHasOpenItems` without `--drop-open`, the refusal leads with what is there, not with
-  an error (§1.1 shows the text): the items, hard milestones marked with their date, linked
-  commitments as "still open, not touched", then what to do. Interactive — after the domain
-  refusal, as `resolving_ambiguity` in `action.rs` already does for an ambiguous match — ask
-  "Let these N go and complete <slug>? [y/N]" through `prompt_confirm(…, false)`: pressing Enter
-  must never drop work. On `y`, retry with `OpenItems::Drop { expected: Some(hash) }`.
+- On `ProjectHasOpenItems`, the refusal leads with what is there, not with an error (§1.1
+  shows the text): the items, hard milestones marked with their date, linked commitments as
+  "still open, not touched", then what to do. `complete` stops there (D11). `drop` without
+  `--drop-open`, interactive — after the domain refusal, as `resolving_ambiguity` in `action.rs`
+  already does for an ambiguous match — asks "Let these N go and drop <slug>? [y/N]" through
+  `prompt_confirm(…, false)`: pressing Enter must never drop work. On `y`, retry with
+  `OpenItems::Drop { expected: Some(hash) }`.
   Non-interactive — print the list, exit non-zero, and under `--json` emit the same object the
   MCP rejection carries (§6.4) on stdout, following `config validate`. One shape for both
   surfaces.
-- Success leads with the outcome and the slot: "Completed <slug>. 4 of 5 slots in use. Let go:
-  2 actions, 1 milestone." A drop reads "Dropped <slug>. …". The word "abandoned" appears in no
+- Success leads with the outcome and the slot: "Completed <slug>. 4 of 5 slots in use." A drop
+  reads "Dropped <slug>. 4 of 5 slots in use. Let go: 2 actions, 1 milestone." when it cascaded. The word "abandoned" appears in no
   user-facing text.
 - Confirm only when something was prompted, per the convention.
 - `cdno project activate`'s picker and a new `complete_reactivatable_project` completion cover
@@ -534,10 +551,10 @@ cdno project drop     [--slug S] [--reason R] [--drop-open]
 
 ### 6.4 `cdno-mcp`
 
-- `complete_project { project, open_items?: "refuse" | "drop", expected_open_items?: string }`
-  and `drop_project { project, reason?, open_items?, expected_open_items? }` in `lifecycle.rs`,
-  `verified_write` with `WriteShape::Rewritten` on the destination path. Default `refuse`. The
-  result names what the cascade dropped.
+- `complete_project { project }` and `drop_project { project, reason?, open_items?: "refuse" |
+  "drop", expected_open_items?: string }` in `lifecycle.rs`, `verified_write` with
+  `WriteShape::Rewritten` on the destination path. Default `refuse`; `complete_project` always
+  refuses while items are open (D11). The result of a drop names what the cascade dropped.
 - The refusal is a `RejectionCode::ProjectHasOpenItems` classified in `rejection.rs`, which
   derives the wire code `project_has_open_items` from the variant name — `classify` has no
   wildcard arm, so the variant is added there:
@@ -566,8 +583,8 @@ cdno project drop     [--slug S] [--reason R] [--drop-open]
   `activate_project` ("Activate a parked project"), `list_projects` ("active and parked"),
   `get_project_context` ("Resolves the slug against both `projects/` and `projects/_parked/`"),
   `get_weekly_context` (which enumerates its slices), and `get_monthly_context`. The new tools'
-  descriptions state the rules: closing is refused while items are open; `drop` cascades as drops
-  with a recorded reason; a completion is a claim about work and a drop is not; closing accepts
+  descriptions state the rules: closing is refused while items are open; only `drop` may cascade
+  them, as drops with a recorded reason; a completion is a claim about work and a drop is not; closing accepts
   a parked project and never needs a slot.
 - The catalogue pins in `tests/server.rs` and `tests/e2e_stdio.rs` go to 60.
 
@@ -685,6 +702,18 @@ depend on it (§5.5).
 **D10 — An MCP cascade carries the hash of the list it was shown.** The user never sees it; what
 it prevents is an item added between the refusal and the cascade being dropped unseen (§5.3).
 
+**D11 — `complete` never cascades** (the maintainer, 2026-09-30). A project with an open action
+or milestone refuses to be completed, whatever the caller passes; each item is completed or
+dropped first, with its own verb and its own reason. `drop` keeps the refusal by default and the
+explicit cascade (`--drop-open`, the confirm, MCP `"drop"` with the hash). A completion that
+silently drops open work would record the project as done while its log says part of it was not.
+
+**D12 — The cascade drops every attached note that is not closed** (the maintainer,
+2026-09-30). Children that are not completed inherit the drop, so an attached action note in
+any status but `completed` or `dropped` — `blocked` included — is archived as dropped with the
+project. Skipping only non-`active` notes would leave a blocked note live in `actions/` under a
+closed project. Linked standalone commitments are still never touched (D4).
+
 **Q1 — Should `drop_action` / `drop_milestone` accept a parked project?** (#611, first
 candidate.) **No.** Once S1 lands a parked project's dates stop nagging, so the pruning case is
 gone, and D8 covers the ending case. The rule is one line: verbs that change a project's plan need
@@ -696,7 +725,7 @@ undone: the action is re-added on the project that now owns it, which the refusa
 **Not in this RFC**; open an issue if the `reason:` line proves insufficient as the pointer.
 
 **Q3 — `ActionStatus::Blocked`.** Same class of gap as G1, different concern. **A separate
-issue.**
+issue**, except for the cascade, which D12 settles.
 
 **Q4 — Closing a project that is already closed.** A same-outcome re-close is refused with
 "already completed on <date>" and `status` in the rejection's `details`; the other outcome is
@@ -720,12 +749,13 @@ style.
   `park_then_activate_keeps_milestones_in_register`;
   `complete_project_moves_stamps_and_logs`; `complete_project_restages_milestone_rows_at_destination`;
   `complete_project_refuses_with_open_items_listed`; `complete_project_lists_hard_milestones_and_untouched_commitments`;
-  `complete_project_drop_open_cascades_as_drops_with_reason`;
-  `complete_project_cascade_archives_attached_notes_as_dropped_and_frozen`;
-  `complete_project_cascade_dedupes_attached_note`; `complete_project_cascade_skips_non_active_attached_note`;
-  `complete_project_cascade_collision_writes_nothing`;
-  `complete_project_logs_children_then_project_in_one_write`;
-  `complete_project_refuses_stale_open_items_hash`; `drop_project_clears_nothing_and_stamps_closed`;
+  `drop_project_drop_open_cascades_as_drops_with_reason`;
+  `drop_project_cascade_archives_attached_notes_as_dropped_and_frozen`;
+  `drop_project_cascade_dedupes_attached_note`; `drop_project_cascade_skips_closed_attached_note`;
+  `drop_project_cascade_drops_blocked_attached_note`;
+  `drop_project_cascade_collision_writes_nothing`;
+  `drop_project_logs_children_then_project_in_one_write`;
+  `drop_project_refuses_stale_open_items_hash`; `drop_project_clears_nothing_and_stamps_closed`;
   `drop_project_closes_a_parked_project_at_cap`; `drop_project_at_cap_lists_open_milestone_of_parked_project`;
   `drop_project_carries_reason_to_children`; `complete_project_refuses_an_occupied_destination`;
   `complete_project_on_dropped_project_switches_outcome`; `complete_project_on_completed_project_is_refused`;
@@ -743,7 +773,7 @@ style.
   `lint_names_fix_for_closed_map_outside_done`; `lint_warns_on_closed_status_without_closed_date`;
   `lint_warns_on_active_project_with_closed_date`.
 - `cdno-cli` (`project.rs` target): `complete_non_interactive_lists_open_items_and_fails`;
-  `complete_json_refusal_matches_mcp_shape`; `complete_drop_open_succeeds_and_prints_destination`;
+  `complete_json_refusal_matches_mcp_shape`; `drop_drop_open_succeeds_and_prints_destination`;
   `drop_with_reason_writes_reason_line`; `drop_parked_project_needs_no_slot`;
   `list_closed_shows_outcome_and_date`; `activate_from_done_works`.
 - `cdno-mcp`: `complete_project_rejection_carries_open_items_and_hash`;

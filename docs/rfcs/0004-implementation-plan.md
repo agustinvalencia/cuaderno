@@ -431,11 +431,12 @@ transaction.
 
 ### T10 — `complete_project` and `drop_project`, refusing on open items
 
-**What.** In `projects/lifecycle.rs`: `Vault::complete_project(at, slug, open_items:
-OpenItems) -> Result<ProjectClosureOutcome, DomainError>` and `Vault::drop_project(at, slug,
-reason: Option<&str>, open_items)`. This task implements everything except the cascade: with
-`OpenItems::Drop` and a non-empty report it still returns `ProjectHasOpenItems` (T11 lifts
-that). One transaction, lock taken first. Steps: a new `resolve_closable_project` (status
+**What.** In `projects/lifecycle.rs`: `Vault::complete_project(at, slug) ->
+Result<ProjectClosureOutcome, DomainError>` and `Vault::drop_project(at, slug, reason:
+Option<&str>, open_items: OpenItems)`. `complete_project` takes no `OpenItems`: it refuses while
+any action or milestone is open, always (RFC D11). This task implements everything except the
+cascade: `drop_project` with `OpenItems::Drop` and a non-empty report still returns
+`ProjectHasOpenItems` (T11 lifts that). One transaction, lock taken first. Steps: a new `resolve_closable_project` (status
 `Active` or `Parked`, else `ProjectNotActive`, which gains the actual `status`); the T8 report,
 refused if non-empty; stamp `status` and `closed: <today>` **on the rendered document** through
 `merge_fields_into_frontmatter` (`frontmatter_edit.rs`), then pass the result through
@@ -488,13 +489,13 @@ and the log telling the same story, from active or parked, without a slot.
 
 ### T11 — The cascade
 
-**What.** In `complete_project` / `drop_project`, `OpenItems::Drop { expected }` with a non-empty
-report: refuse with `ProjectHasOpenItems` if `expected` is `None` **when the caller declares it
+**What.** In `drop_project` only (RFC D11: `complete_project` never cascades), `OpenItems::Drop {
+expected }` with a non-empty report: refuse with `ProjectHasOpenItems` if `expected` is `None` **when the caller declares it
 must be present** (a `bool` on the domain call, true for MCP, false for the CLI's scripted
 `--drop-open`) or differs from the fresh report's hash; else, in the same transaction: check every
 `_done` destination first (each attached note's, then the project's) and refuse on any
-collision before staging anything; dedupe attached slugs; skip an attached note whose status is
-not `Active`; remove each open bullet and each open milestone (with continuation lines) through
+collision before staging anything; dedupe attached slugs; skip an attached note already
+`Completed` or `Dropped` and drop every other, `Blocked` included (RFC D12); remove each open bullet and each open milestone (with continuation lines) through
 the T9 helpers on the one document, at the `line` index each report entry carries (the report
 picks lines with the verbs' own predicates, so the cascade removes exactly what was listed);
 work from the highest index down so earlier removals do not shift later ones, and treat an
@@ -503,7 +504,7 @@ line, not a second removal; `stage_action_archival(…, Closure::Dropped, …)` 
 distinct active attached note; then the T10 steps. The single `stage_daily_logs` call carries
 one line per dropped child, children first — `format_action_dropped_log_entry(slug, text,
 Some(reason))` and `format_milestone_dropped_log_entry(slug, title, Some(reason))` with reason
-`project completed` or `project dropped (<user reason>)` — then the project line. The outcome's
+`project dropped` or `project dropped (<user reason>)` — then the project line. The outcome's
 `dropped_*` vectors are filled.
 
 **Why.** RFC §5.3, §6.2 step 3, D2, D3, D10.
@@ -517,19 +518,22 @@ one transaction; each has a test that must be reasoned out from the RFC rather t
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::projects_tests` passes with:
-  `complete_project_drop_open_cascades_as_drops_with_reason` (two bullets, one milestone: map
-  sections emptied of them, three child lines with `reason: project completed` **before** the
+  `drop_project_drop_open_cascades_as_drops_with_reason` (two bullets, one milestone: map
+  sections emptied of them, three child lines with `reason: project dropped` **before** the
   project line, all in one daily note write); `drop_project_carries_reason_to_children`
-  (`reason: project dropped (superseded)`); `complete_project_cascade_archives_attached_notes_as_dropped_and_frozen`
+  (`reason: project dropped (superseded)`); `drop_project_cascade_archives_attached_notes_as_dropped_and_frozen`
   (note at `actions/_done/<year>/`, `status: dropped`, `completed: null`, an archival snapshot
-  recorded); `complete_project_cascade_dedupes_attached_note` (two bullets linking one note;
-  one archive, commit succeeds); `complete_project_cascade_skips_non_active_attached_note` (an
+  recorded); `drop_project_cascade_dedupes_attached_note` (two bullets linking one note;
+  one archive, commit succeeds); `drop_project_cascade_skips_closed_attached_note` (an
   attached note hand-edited to `status: completed` is left where it is, its bullet still removed);
-  `complete_project_cascade_collision_writes_nothing` (an occupied `_done` path for one attached
-  note; error, and every file and index row is as before); `complete_project_refuses_stale_open_items_hash`
-  (hash from a report, then add a bullet, then `Drop { expected: Some(old) }`; refused with the
-  fresh report); `complete_project_drop_without_hash_is_refused_when_required` and
-  `…_is_accepted_when_not_required`.
+  `drop_project_cascade_drops_blocked_attached_note` (a `status: blocked` note is archived as
+  dropped); `drop_project_cascade_collision_writes_nothing` (an occupied `_done` path for one
+  attached note; error, and every file and index row is as before);
+  `drop_project_refuses_stale_open_items_hash` (hash from a report, then add a bullet, then
+  `Drop { expected: Some(old) }`; refused with the fresh report);
+  `drop_project_without_hash_is_refused_when_required` and `…_is_accepted_when_not_required`;
+  `complete_project_never_cascades` (open items present; refused whatever is passed, no file
+  changed).
 - Mutation: remove the dedupe; the dedupe test fails at commit. Mutation: check the hash before
   taking the lock; no test can catch it, so the review of this PR must confirm by reading that
   the comparison sits after `self.transaction()`.
@@ -594,16 +598,17 @@ by `closed_on` then slug. New file `vault/projects/closed.rs`.
 
 ### T14 — `cdno project complete` and `cdno project drop`
 
-**What.** Two subcommands in `crates/cdno-cli/src/commands/project.rs`: `complete [--slug S]
-[--drop-open]`, `drop [--slug S] [--reason R] [--drop-open]`. `--slug` through `gather_or_error`
-with a picker over active and parked projects (labelled); `--reason` never prompted. On
-`ProjectHasOpenItems` without `--drop-open`: print the report in RFC §1.1's wording (hard
-milestones with their date, "Still open, not touched:" for linked commitments, the two
-sentences of advice); interactive — `prompt_confirm("Let these N go and complete <slug>?",
-false)`, on yes retry with `Drop { expected: Some(hash) }`; non-interactive — exit 1, and under
-`--json` print the same object the MCP rejection carries (T8's shape) on stdout. Success:
-"Completed <slug>. N of M slots in use." (+ " Let go: 2 actions, 1 milestone." when the cascade
-ran); "Dropped <slug>. …" for a drop. `--drop-open` calls with `expected: None` and the
+**What.** Two subcommands in `crates/cdno-cli/src/commands/project.rs`: `complete [--slug S]`
+and `drop [--slug S] [--reason R] [--drop-open]` (no `--drop-open` on `complete`, RFC D11).
+`--slug` through `gather_or_error` with a picker over active and parked projects (labelled);
+`--reason` never prompted. On `ProjectHasOpenItems`: print the report in RFC §1.1's wording (hard
+milestones with their date, "Still open, not touched:" for linked commitments, the advice to
+complete or drop each first). `complete` stops there with exit 1. `drop` without `--drop-open`:
+interactive — `prompt_confirm("Let these N go and drop <slug>?", false)`, on yes retry with
+`Drop { expected: Some(hash) }`; non-interactive — exit 1. Under `--json` either prints the same
+object the MCP rejection carries (T8's shape) on stdout. Success: "Completed <slug>. N of M
+slots in use."; "Dropped <slug>. …" (+ " Let go: 2 actions, 1 milestone." when the cascade
+ran). `--drop-open` calls with `expected: None` and the
 "required" flag false. The word "abandoned" appears nowhere.
 
 **Deliverable.** The subcommands, wired; `assert_cmd` tests only.
@@ -618,7 +623,8 @@ template; the refusal rendering and the retry-with-hash are the only new shapes.
   `complete_non_interactive_lists_open_items_and_fails` (exit 1, stdout lists the bullet text
   and the milestone with "hard"); `complete_json_refusal_matches_mcp_shape` (stdout parses as
   JSON with `code == "project_has_open_items"` and `details.open_items_hash` present);
-  `complete_drop_open_succeeds_and_prints_destination`; `drop_with_reason_writes_reason_line`
+  `drop_drop_open_succeeds_and_prints_destination`; `complete_rejects_drop_open_flag` (clap
+  refuses the unknown flag); `drop_with_reason_writes_reason_line`
   (the daily note contains `  reason: `); `drop_parked_project_needs_no_slot` (five active, drop
   the parked one, exit 0); `complete_missing_slug_non_interactive_errors_with_missing_flag`;
   `complete_in_vault_without_done_folder` (an existing vault predates T0: `cdno init`, then remove
@@ -679,13 +685,14 @@ message.
 
 ### T17 — `complete_project` and `drop_project` tools
 
-**What.** In `crates/cdno-mcp/src/lifecycle.rs`: `complete_project { project, open_items?:
-"refuse" | "drop", expected_open_items?: string }` and `drop_project { project, reason?,
-open_items?, expected_open_items? }`, both through `with_vault` and `verified_write(…,
+**What.** In `crates/cdno-mcp/src/lifecycle.rs`: `complete_project { project }` and
+`drop_project { project, reason?, open_items?: "refuse" | "drop", expected_open_items?: string
+}` (only a drop cascades, RFC D11), both through `with_vault` and `verified_write(…,
 WriteShape::Rewritten)` on the destination path, the result naming what the cascade dropped
 (`dropped_actions`, `dropped_milestones`, `untouched_commitments`). `"drop"` calls the domain
 with "hash required" true. Descriptions state: closing is refused while items are open and the
-rejection lists them; `"drop"` cascades them as drops with a recorded reason and must echo
+rejection lists them; completing needs each item completed or dropped first; `drop_project`
+with `"drop"` cascades them as drops with a recorded reason and must echo
 `open_items_hash` as `expected_open_items`; a completion is a claim about work and a drop is
 not; closing accepts a parked project and never needs a slot. The catalogue pins in
 `tests/server.rs` and `tests/e2e_stdio.rs` move 58 → 60.

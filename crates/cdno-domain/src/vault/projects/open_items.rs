@@ -134,7 +134,9 @@ impl std::fmt::Display for OpenItemsHash {
     }
 }
 
-/// What a closing verb does with open items.
+/// What `drop_project` does with open items. `complete_project` takes no
+/// such choice: it refuses while any action or milestone is open (RFC 0004
+/// D11).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum OpenItems {
     /// Refuse with [`DomainError::ProjectHasOpenItems`]. The default on
