@@ -2512,3 +2512,125 @@ fn lint_still_leaves_prose_alone_after_the_widened_stamp_peel() {
         report.issues
     );
 }
+
+// ---------------------------------------------------------------------
+// Project status against folder, and `closed:` (RFC 0004 §6.2)
+// ---------------------------------------------------------------------
+
+fn project_map(status: &str, closed: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: {status}\ncreated: 2026-01-01\ncore_question: null\nclosed: {closed}\n---\n\n# Map\n"
+    )
+}
+
+fn project_rows(
+    report: &cdno_domain::LintReport,
+) -> Vec<(String, cdno_domain::LintSeverity, String)> {
+    report
+        .issues
+        .iter()
+        .filter(|i| i.message.contains("project "))
+        .map(|i| (i.path.to_string(), i.severity, i.message.clone()))
+        .collect()
+}
+
+#[test]
+fn lint_errors_on_project_status_folder_mismatch() {
+    let vault = vault_with_notes(
+        &[
+            ("projects/_parked/live.md", &project_map("active", "null")),
+            ("projects/shelved.md", &project_map("parked", "null")),
+            (
+                "projects/_parked/done.md",
+                &project_map("completed", "2026-09-01"),
+            ),
+            // Each in its own place: no row.
+            ("projects/ok-active.md", &project_map("active", "null")),
+            (
+                "projects/_parked/ok-parked.md",
+                &project_map("parked", "null"),
+            ),
+            (
+                "projects/_done/2026/ok-closed.md",
+                &project_map("dropped", "2026-09-01"),
+            ),
+        ],
+        VaultConfig::default(),
+    );
+
+    let rows = project_rows(&vault.lint_all_notes().unwrap());
+
+    let errors: Vec<&str> = rows
+        .iter()
+        .filter(|(_, s, _)| *s == cdno_domain::LintSeverity::Error)
+        .map(|(p, _, _)| p.as_str())
+        .collect();
+    assert_eq!(
+        errors,
+        vec![
+            "projects/_parked/done.md",
+            "projects/_parked/live.md",
+            "projects/shelved.md",
+        ],
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().all(|(p, _, _)| !p.contains("ok-")),
+        "a map in its own folder lints clean: {rows:?}"
+    );
+}
+
+#[test]
+fn lint_names_fix_for_closed_map_outside_done() {
+    let vault = vault_with_notes(
+        &[("projects/hand.md", &project_map("completed", "2026-09-01"))],
+        VaultConfig::default(),
+    );
+
+    let rows = project_rows(&vault.lint_all_notes().unwrap());
+
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let (_, severity, message) = &rows[0];
+    assert_eq!(*severity, cdno_domain::LintSeverity::Error);
+    assert!(
+        message.contains(
+            "move the map to `projects/_done/<year>/` and set `closed: <date>`, or set \
+             `status: active` and close it with `cdno project complete`"
+        ),
+        "{message}"
+    );
+}
+
+#[test]
+fn lint_warns_on_closed_status_without_closed_date() {
+    let vault = vault_with_notes(
+        &[(
+            "projects/_done/2026/undated.md",
+            &project_map("completed", "null"),
+        )],
+        VaultConfig::default(),
+    );
+
+    let rows = project_rows(&vault.lint_all_notes().unwrap());
+
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].1, cdno_domain::LintSeverity::Warning);
+    assert!(rows[0].2.contains("no `closed:` date"), "{rows:?}");
+}
+
+#[test]
+fn lint_warns_on_active_project_with_closed_date() {
+    let vault = vault_with_notes(
+        &[("projects/back.md", &project_map("active", "2026-09-01"))],
+        VaultConfig::default(),
+    );
+
+    let rows = project_rows(&vault.lint_all_notes().unwrap());
+
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].1, cdno_domain::LintSeverity::Warning);
+    assert!(
+        rows[0].2.contains("carries `closed: 2026-09-01`"),
+        "{rows:?}"
+    );
+}

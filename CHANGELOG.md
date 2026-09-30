@@ -33,6 +33,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - MCP `get_weekly_context` carries `closed_projects`, the projects completed or dropped that
   week, and `get_monthly_context` carries them for its 30 days plus `parked_projects`, so a review
   sees what ended and what is on the shelf without reading the log (RFC 0004, #689).
+- `cdno lint` (MCP `lint`) checks each project's `status` against its folder: an `active` map
+  outside `projects/`, a `parked` one outside `projects/_parked/`, or a `completed` or `dropped`
+  one outside `projects/_done/<year>/` is an error, and the message names the manual fix. A closed
+  project without a `closed:` date, and an active or parked one with a date, are warnings
+  (RFC 0004, #690).
 
 ### Changed
 
