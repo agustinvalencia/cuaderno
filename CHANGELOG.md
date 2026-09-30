@@ -14,6 +14,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Project verbs now find a project wherever it lives, including `projects/_done/<year>/`, and
   refuse a project whose name exists in two folders with a message naming both paths (MCP code
   `ambiguous_project`) instead of reporting that the destination exists (RFC 0004, #672).
+- `cdno commitments`, `orient` and the MCP `get_commitments`, weekly and monthly contexts no
+  longer list the milestones or action due dates of a parked or closed project: a project's own dates surface only while it is active.
+  A standalone commitment linked to such a project keeps surfacing, since it is a promise to
+  someone else (RFC 0004, #675).
 - A malformed project map under `projects/_done/` no longer makes `cdno project create`,
   `activate`, `orient`, the project pickers or the MCP weekly context fail: the scans for
   active and parked projects now skip closed maps without reading them (RFC 0004, #673).

@@ -23,7 +23,7 @@ use cdno_core::template::VariableContext;
 use crate::error::DomainError;
 use crate::frontmatter::{
     ActionFrontmatter, ActionStatus, CommitmentFrontmatter, CommitmentStatus, Context,
-    ProjectFrontmatter, StewardshipFrontmatter,
+    ProjectFrontmatter, ProjectStatus, StewardshipFrontmatter,
 };
 use crate::note_type::NoteType;
 use crate::recurrence::Recurrence;
@@ -650,6 +650,13 @@ impl Vault {
     ///    `milestone:`. A milestone-pinned action is *not* duplicated
     ///    here — its milestone (source 1) owns the date.
     ///
+    /// Sources 1 and 4 ask the parent: a milestone or action date
+    /// surfaces only while its project's `status` is `active`, so a
+    /// parked or closed project's dates leave the register. Source 3
+    /// does not: a standalone commitment is a promise to someone else
+    /// and keeps surfacing whatever became of the project it names
+    /// (RFC 0004 §5.5).
+    ///
     /// Each entry is flagged `is_overdue` when its date is before
     /// `today`. Sources 3 and 4 read each note's file to parse the
     /// typed frontmatter (the established query pattern); a malformed
@@ -664,12 +671,14 @@ impl Vault {
 
         let mut entries = Vec::new();
 
-        // Per-project-file context cache. Sources 1 and 4 both resolve a
-        // commitment's context by reading the owning project map; caching
-        // by path means N milestones (or actions) on one project read and
-        // parse it once. `None` records a project file that failed to
-        // read or parse, so a broken map is retried zero times.
-        let mut project_context: HashMap<VaultPath, Option<Context>> = HashMap::new();
+        // Per-project-file cache of context and status. Sources 1 and 4
+        // both read the owning project map, for the context the entry
+        // inherits and the status that decides whether it surfaces;
+        // caching by path means N milestones (or actions) on one project
+        // read and parse it once. `None` records a project file that
+        // failed to read or parse, so a broken map is retried zero times.
+        let mut project_context: HashMap<VaultPath, Option<(Context, ProjectStatus)>> =
+            HashMap::new();
 
         // Slug-to-map-path lookup for source 4, filled lazily so each
         // distinct `action.project` is located on the disk once per call
@@ -690,10 +699,15 @@ impl Vault {
             };
             // A project map that fails to parse skips its milestones
             // silently — mirroring the source-2 tolerance, since a broken
-            // map is lint's problem, not the aggregator's.
-            let Some(context) = self.cached_project_context(&path, &mut project_context) else {
+            // map is lint's problem, not the aggregator's. A parked or
+            // closed project's milestones are not due while it is.
+            let Some((context, status)) = self.cached_project_context(&path, &mut project_context)
+            else {
                 continue;
             };
+            if status != ProjectStatus::Active {
+                continue;
+            }
             entries.push(CommitmentEntry {
                 date,
                 title: milestone.name,
@@ -787,7 +801,8 @@ impl Vault {
             // inherits the owning project's. Resolve the project slug to
             // its map (active, parked or closed) and read the context through the
             // same cache source 1 populated. A missing or unparseable
-            // project map drops the entry silently.
+            // project map drops the entry silently, and so does one that
+            // is not active.
             let project_path = match project_paths.get(&action.project) {
                 Some(cached) => cached.clone(),
                 None => {
@@ -799,10 +814,14 @@ impl Vault {
             let Some(project_path) = project_path else {
                 continue;
             };
-            let Some(context) = self.cached_project_context(&project_path, &mut project_context)
+            let Some((context, status)) =
+                self.cached_project_context(&project_path, &mut project_context)
             else {
                 continue;
             };
+            if status != ProjectStatus::Active {
+                continue;
+            }
             let slug = slug_of(&entry.path);
             entries.push(CommitmentEntry {
                 date: due,
@@ -864,15 +883,16 @@ impl Vault {
         Ok(matches)
     }
 
-    /// Read the life-domain context off a project map, memoised by path.
-    /// Returns `None` — and caches it — when the file can't be read or
-    /// its frontmatter won't parse, so a broken map short-circuits its
-    /// milestones and actions rather than failing the whole aggregation.
+    /// Read the life-domain context and the status off a project map,
+    /// memoised by path. Returns `None` — and caches it — when the file
+    /// can't be read or its frontmatter won't parse, so a broken map
+    /// short-circuits its milestones and actions rather than failing the
+    /// whole aggregation.
     fn cached_project_context(
         &self,
         path: &VaultPath,
-        cache: &mut HashMap<VaultPath, Option<Context>>,
-    ) -> Option<Context> {
+        cache: &mut HashMap<VaultPath, Option<(Context, ProjectStatus)>>,
+    ) -> Option<(Context, ProjectStatus)> {
         if let Some(cached) = cache.get(path) {
             return *cached;
         }
@@ -882,7 +902,7 @@ impl Vault {
             .ok()
             .and_then(|raw| Frontmatter::parse(&raw).ok().map(|(fm, _body)| fm))
             .and_then(|fm| ProjectFrontmatter::try_from(fm).ok())
-            .map(|project| project.context);
+            .map(|project| (project.context, project.status));
         cache.insert(path.clone(), context);
         context
     }
