@@ -22,8 +22,8 @@ pub use lint::{LintIssue, LintReport, LintSeverity};
 pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
-    ActionListEntry, AttachedAction, BacklinkRef, CommitmentEntry, CommitmentSource,
-    CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,
+    ActionListEntry, AttachedAction, BacklinkRef, ClosedProjectEntry, CommitmentEntry,
+    CommitmentSource, CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,
     ConfigValidationError, CurrentFocus, DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView,
     DailySection, InboxItem, LapsedHabit, LinkedCommitment, Miss, MonthlyNoteView, MonthlySection,
     NormaliseReport, NoteRef, NoteToDailyOutcome, OpenAction, OpenItems, OpenItemsHash,
