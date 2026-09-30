@@ -603,7 +603,10 @@ template; the refusal rendering and the retry-with-hash are the only new shapes.
   JSON with `code == "project_has_open_items"` and `details.open_items_hash` present);
   `complete_drop_open_succeeds_and_prints_destination`; `drop_with_reason_writes_reason_line`
   (the daily note contains `  reason: `); `drop_parked_project_needs_no_slot` (five active, drop
-  the parked one, exit 0); `complete_missing_slug_non_interactive_errors_with_missing_flag`.
+  the parked one, exit 0); `complete_missing_slug_non_interactive_errors_with_missing_flag`;
+  `complete_in_vault_without_done_folder` (an existing vault predates T0: `cdno init`, then remove
+  `projects/_done/` entirely, then `cdno project complete --slug <s>` exits 0 and the map lands
+  in a freshly created `projects/_done/<year>/`; no migration or re-init is needed).
 - Manual: with a TTY, the refusal is followed by `[y/N]` and a bare Enter aborts.
 
 **Correct means.** The refusal reads as a list of things, the confirm cannot drop work by
