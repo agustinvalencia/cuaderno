@@ -24,6 +24,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- The MCP `project_not_active` rejection now carries the project's `status` in `details`, and its
+  `closed` date when it has one, so an agent can tell a parked project from a closed one without
+  reading the message (RFC 0004, #686).
 - `cdno project milestone drop` (MCP `drop_milestone`) on a nested milestone now removes only
   that milestone and the lines indented beneath it; before, it also removed the sibling milestones
   that followed it at the same depth (RFC 0004, #681).
