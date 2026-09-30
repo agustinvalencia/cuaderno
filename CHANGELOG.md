@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- `cdno init` now also creates `projects/_done/<year>/`, the folder closed projects will move to (RFC 0004, #670).
+
 ## [0.40.0] - 2026-09-28
 
 ### Added

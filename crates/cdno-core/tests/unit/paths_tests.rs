@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 
 use cdno_core::paths;
 
@@ -83,6 +83,11 @@ fn actions_done_dir_partitions_by_year() {
 }
 
 #[test]
+fn projects_done_dir_is_year_partitioned() {
+    assert_eq!(paths::projects_done_dir(2026), "projects/_done/2026");
+}
+
+#[test]
 fn init_dirs_includes_year_partitions_and_static_folders() {
     let today = NaiveDate::from_ymd_opt(2026, 4, 25).unwrap();
     let dirs = paths::init_dirs(today);
@@ -96,4 +101,16 @@ fn init_dirs_includes_year_partitions_and_static_folders() {
     assert!(dirs.contains(&paths::PROJECTS.to_string()));
     assert!(dirs.contains(&paths::INBOX.to_string()));
     assert!(dirs.contains(&paths::CUADERNO_DIR.to_string()));
+}
+
+#[test]
+fn init_dirs_includes_projects_done_for_the_current_year() {
+    let today = NaiveDate::from_ymd_opt(2026, 4, 25).unwrap();
+    let dirs = paths::init_dirs(today);
+
+    let projects_done = paths::projects_done_dir(today.year());
+    assert!(dirs.contains(&projects_done));
+    // Verify it appears exactly once in the list
+    let count = dirs.iter().filter(|d| **d == projects_done).count();
+    assert_eq!(count, 1);
 }
