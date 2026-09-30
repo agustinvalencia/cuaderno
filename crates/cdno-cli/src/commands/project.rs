@@ -77,6 +77,33 @@ pub enum ProjectCommands {
         slug: Option<String>,
     },
 
+    /// Complete a project: the work is done. Moves the map to
+    /// projects/_done/<year>/. Refused while any action or milestone is
+    /// open: complete or drop each first. Works on a parked project too,
+    /// and never needs a slot.
+    Complete {
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        slug: Option<String>,
+    },
+
+    /// Drop a project: it is not going to happen. Moves the map to
+    /// projects/_done/<year>/. With open actions or milestones it lists
+    /// them and asks before letting them go (or takes --drop-open).
+    Drop {
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        slug: Option<String>,
+        /// Why it is being dropped; logged with the drop, and with each open
+        /// item it lets go. Never prompted for.
+        #[arg(long)]
+        reason: Option<String>,
+        /// Drop the project's open actions and milestones with it, each
+        /// logged as dropped, without asking.
+        #[arg(long)]
+        drop_open: bool,
+    },
+
     /// Bring a parked project back, enforcing the active-project cap.
     Activate {
         /// Project slug (parked).
@@ -212,6 +239,21 @@ pub fn run(
         } => core_question(&vault, at, slug, question, clear, interactive, json)?,
         ProjectCommands::Park { slug } => park(&vault, at, slug, interactive, json)?,
         ProjectCommands::Activate { slug } => activate(&vault, at, slug, interactive, json)?,
+        ProjectCommands::Complete { slug } => {
+            close(&vault, at, slug, Closing::Complete, interactive, json)?;
+        }
+        ProjectCommands::Drop {
+            slug,
+            reason,
+            drop_open,
+        } => close(
+            &vault,
+            at,
+            slug,
+            Closing::Drop { reason, drop_open },
+            interactive,
+            json,
+        )?,
         ProjectCommands::List => {
             // One pass for both branches: the summaries the card renderer
             // needs are exactly the ones `--json` serialises, so fetching
@@ -454,6 +496,267 @@ fn park(
     let path = vault.park_project(at, &slug).context("parking project")?;
     crate::output::emit_write_result(json, &path.to_string(), &format!("Parked at {path}"))?;
     Ok(())
+}
+
+/// Which closing verb `close` runs.
+enum Closing {
+    Complete,
+    Drop {
+        reason: Option<String>,
+        drop_open: bool,
+    },
+}
+
+/// `cdno project complete` and `cdno project drop` (RFC 0004 §6.3).
+///
+/// Open items refuse with the list, not an error: `complete` stops there
+/// (it never lets work go, D11); `drop` asks, defaulting to No, and on yes
+/// retries with the hash of the list it showed, so an item added in
+/// between is refused rather than dropped unseen. A script gets the same
+/// object an MCP agent does, on stdout, and a non-zero exit.
+fn close(
+    vault: &cdno_domain::Vault,
+    at: NaiveDateTime,
+    slug: Option<String>,
+    closing: Closing,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    use cdno_domain::OpenItems;
+    use cdno_domain::error::DomainError;
+
+    use crate::prompt;
+
+    let verb = match closing {
+        Closing::Complete => "complete",
+        Closing::Drop { .. } => "drop",
+    };
+    let mut prompted = false;
+    let slug = prompt::gather_or_error(slug, "slug", interactive, &mut prompted, || {
+        prompt::prompt_closable_project(vault)
+    })?;
+    if prompted && !prompt::confirm_preview(&format!("About to {verb} project '{slug}'"))? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    let first = match &closing {
+        Closing::Complete => vault.complete_project(at, &slug),
+        Closing::Drop { reason, drop_open } => {
+            let open_items = if *drop_open {
+                OpenItems::Drop {
+                    expected: None,
+                    hash_required: false,
+                }
+            } else {
+                OpenItems::Refuse
+            };
+            vault.drop_project(at, &slug, reason.as_deref(), open_items)
+        }
+    };
+    let outcome = match first {
+        Ok(outcome) => outcome,
+        Err(DomainError::ProjectHasOpenItems { slug, report }) => {
+            let err = DomainError::ProjectHasOpenItems {
+                slug: slug.clone(),
+                report: report.clone(),
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&open_items_rejection(&err, &slug, &report))?
+                );
+                // A script checking the exit code must not read the
+                // refusal as a pass.
+                std::process::exit(1);
+            }
+            let asks = interactive && matches!(closing, Closing::Drop { .. });
+            // When the confirm follows, it is the next step; otherwise the
+            // list ends with what to do.
+            let advice = match closing {
+                _ if asks => None,
+                Closing::Complete => Some(ADVICE_COMPLETE),
+                Closing::Drop { .. } => Some(ADVICE_DROP),
+            };
+            print!("{}", render_open_items(&slug, &report, advice));
+            let Closing::Drop { reason, .. } = &closing else {
+                std::process::exit(1);
+            };
+            if !asks {
+                std::process::exit(1);
+            }
+            let question = format!(
+                "Let {} go and drop {slug}?",
+                if report.open_count() == 1 {
+                    "this one".to_owned()
+                } else {
+                    format!("these {}", report.open_count())
+                }
+            );
+            // Enter must never drop work.
+            if !prompt::prompt_confirm(&question, false)? {
+                println!("Aborted.");
+                return Ok(());
+            }
+            match vault.drop_project(
+                at,
+                &slug,
+                reason.as_deref(),
+                OpenItems::Drop {
+                    expected: Some(report.hash()),
+                    hash_required: true,
+                },
+            ) {
+                Ok(outcome) => outcome,
+                Err(DomainError::ProjectHasOpenItems { slug, report }) => {
+                    // The map changed between the list and the answer: show
+                    // the new list and stop, rather than drop what was not
+                    // agreed to.
+                    println!("The open items changed since they were listed:");
+                    print!("{}", render_open_items(&slug, &report, Some(ADVICE_DROP)));
+                    std::process::exit(1);
+                }
+                Err(e) => return Err(e).context("dropping project"),
+            }
+        }
+        Err(e) => {
+            return Err(e).context(match closing {
+                Closing::Complete => "completing project",
+                Closing::Drop { .. } => "dropping project",
+            });
+        }
+    };
+
+    let in_use = vault.active_projects()?.len();
+    let cap = vault.config().vault.max_active_projects;
+    let mut message = match closing {
+        Closing::Complete => format!("Completed {slug}. {in_use} of {cap} slots in use."),
+        Closing::Drop { .. } => format!("Dropped {slug}. {in_use} of {cap} slots in use."),
+    };
+    let let_go = let_go_summary(&outcome);
+    if !let_go.is_empty() {
+        message.push_str(&format!(" Let go: {let_go}."));
+    }
+    if json {
+        let payload = serde_json::json!({
+            "path": outcome.outcome.primary.to_string(),
+            "message": message,
+            "dropped_actions": outcome.dropped_actions,
+            "dropped_milestones": outcome.dropped_milestones,
+            "untouched_commitments": outcome.untouched_commitments,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("{message}");
+        if let Some(line) = untouched_line(&outcome.untouched_commitments) {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+/// The `project_has_open_items` rejection object, the shape the MCP
+/// server returns for the same refusal (RFC 0004 §6.4).
+fn open_items_rejection(
+    err: &cdno_domain::error::DomainError,
+    slug: &str,
+    report: &cdno_domain::OpenItemsReport,
+) -> serde_json::Value {
+    serde_json::json!({
+        "code": "project_has_open_items",
+        "message": err.to_string(),
+        "details": {
+            "slug": slug,
+            "open_items_hash": report.hash().as_str(),
+            "actions": report.actions,
+            "milestones": report.milestones,
+            "untouched_commitments": report.untouched_commitments,
+        },
+    })
+}
+
+/// What a refused `complete` tells the user to do next.
+const ADVICE_COMPLETE: &str = "Complete or drop each of them (or add it to the project that now \
+                               owns it), then run again.";
+/// What a refused, non-interactive `drop` tells the user to do next.
+const ADVICE_DROP: &str = "Complete or drop each of them (or add it to the project that now owns \
+                           it), or run again with --drop-open to let them go with the project.";
+
+/// The refusal as a list of things (RFC 0004 §1.1): each open item as it
+/// reads on the map, hard milestones with their date, linked commitments
+/// as still open, then `advice`, what to do.
+fn render_open_items(
+    slug: &str,
+    report: &cdno_domain::OpenItemsReport,
+    advice: Option<&str>,
+) -> String {
+    let count = report.open_count();
+    let mut out = format!(
+        "{slug} has {count} open item{}:\n",
+        if count == 1 { "" } else { "s" }
+    );
+    for action in &report.actions {
+        out.push_str(&format!("  - [ ] {}\n", action.text));
+    }
+    for milestone in &report.milestones {
+        let date = milestone.date.map(|d| d.format("%Y-%m-%d").to_string());
+        let line = match date {
+            Some(date) if milestone.hard => format!("{} \u{2014} hard: {date}", milestone.title),
+            // A plain date is already part of the title the map shows.
+            Some(date) if !milestone.title.contains(&date) => {
+                format!("{} \u{2014} {date}", milestone.title)
+            }
+            _ => milestone.title.clone(),
+        };
+        out.push_str(&format!("  - [ ] {line}\n"));
+    }
+    if let Some(line) = untouched_line(&report.untouched_commitments) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if let Some(advice) = advice {
+        out.push_str(advice);
+        out.push('\n');
+    }
+    out
+}
+
+/// "Still open, not touched: …" for the linked commitments, or `None`.
+fn untouched_line(commitments: &[cdno_domain::LinkedCommitment]) -> Option<String> {
+    if commitments.is_empty() {
+        return None;
+    }
+    let listed: Vec<String> = commitments
+        .iter()
+        .map(|c| {
+            format!(
+                "[[commitments/{}]] (due {})",
+                c.slug,
+                c.due.format("%Y-%m-%d")
+            )
+        })
+        .collect();
+    Some(format!("Still open, not touched: {}", listed.join(", ")))
+}
+
+/// "2 actions, 1 milestone", or empty when the cascade did not run.
+fn let_go_summary(outcome: &cdno_domain::ProjectClosureOutcome) -> String {
+    let mut parts = Vec::new();
+    let actions = outcome.dropped_actions.len();
+    if actions > 0 {
+        parts.push(format!(
+            "{actions} action{}",
+            if actions == 1 { "" } else { "s" }
+        ));
+    }
+    let milestones = outcome.dropped_milestones.len();
+    if milestones > 0 {
+        parts.push(format!(
+            "{milestones} milestone{}",
+            if milestones == 1 { "" } else { "s" }
+        ));
+    }
+    parts.join(", ")
 }
 
 /// `cdno project activate` — fuzzy slug picker over *parked* projects.

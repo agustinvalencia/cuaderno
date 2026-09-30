@@ -320,6 +320,45 @@ pub fn prompt_optional_date(prompt: &str) -> Result<Option<NaiveDate>> {
     Ok(Some(prompt_date(prompt)?))
 }
 
+/// Fuzzy-pick a project that can be closed: active and parked projects,
+/// the parked ones labelled. Used by `cdno project complete` and `drop`,
+/// which accept either (RFC 0004 D8).
+pub fn prompt_closable_project(vault: &Vault) -> Result<String> {
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for (path, fm) in vault.active_projects()? {
+        let slug = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+        let label = format!("{slug} ({})", fm.context.as_str());
+        candidates.push((label, slug));
+    }
+    for (path, fm) in vault.parked_projects()? {
+        let slug = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_owned();
+        let label = format!("{slug} ({}, parked)", fm.context.as_str());
+        candidates.push((label, slug));
+    }
+    if candidates.is_empty() {
+        return Err(anyhow!(
+            "no active or parked projects — create one with `cdno project create`",
+        ));
+    }
+    let labels: Vec<String> = candidates.iter().map(|(l, _)| l.clone()).collect();
+    let pick = Select::new("Project", labels.clone()).prompt()?;
+    let idx = labels
+        .iter()
+        .position(|l| l == &pick)
+        .expect("picked label was in the offered list");
+    Ok(candidates.swap_remove(idx).1)
+}
+
 /// Fuzzy-pick a *parked* project. Returns the project slug.
 /// Mirrors [`prompt_project`] but limited to parked candidates — the
 /// only valid input set for `cdno project activate`.
