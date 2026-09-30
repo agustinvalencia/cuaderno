@@ -24,33 +24,8 @@ use crate::error::DomainError;
 use crate::frontmatter::{ActionStatus, EnergyLevel};
 use crate::note_type::NoteType;
 
-/// How an action note is being closed, and therefore what
-/// [`Vault::stage_action_archival`] stamps on it.
-///
-/// A named type rather than a bool because the two outcomes are not
-/// opposites of one degree — they are different claims about what
-/// happened, and #559 exists because the tooling could only make the
-/// first one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::vault) enum ActionClosure {
-    /// The work was performed. Stamps `status: completed` and dates it.
-    Completed,
-    /// The work was abandoned, superseded or reprioritised. Stamps
-    /// `status: dropped` and clears `completed`, so an archived drop
-    /// can never carry a completion date.
-    Dropped,
-}
-
-impl ActionClosure {
-    fn status(self) -> ActionStatus {
-        match self {
-            ActionClosure::Completed => ActionStatus::Completed,
-            ActionClosure::Dropped => ActionStatus::Dropped,
-        }
-    }
-}
-
 use super::Vault;
+use super::closure::Closure;
 use super::index_entry::build_index_entry_for;
 use super::projects::{NEXT_ACTIONS_SECTION, rewrite_field_in_frontmatter};
 use super::slug::slugify;
@@ -230,7 +205,7 @@ impl Vault {
         &self,
         at: NaiveDateTime,
         action_slug: &str,
-        outcome: ActionClosure,
+        outcome: Closure,
         tx: &mut VaultTransaction,
     ) -> Result<(), DomainError> {
         let active = Self::active_action_path(action_slug)?;
@@ -248,11 +223,12 @@ impl Vault {
         }
 
         let raw = self.store.read_file(&active)?;
-        let after_status = rewrite_field_in_frontmatter(&raw, "status", outcome.status().as_str())?;
+        let after_status =
+            rewrite_field_in_frontmatter(&raw, "status", outcome.action_status().as_str())?;
         let new_content = match outcome {
             // A completion dates itself; the drop arm below clears the
             // field instead, so nothing downstream reads a drop as work.
-            ActionClosure::Completed => rewrite_field_in_frontmatter(
+            Closure::Completed => rewrite_field_in_frontmatter(
                 &after_status,
                 "completed",
                 &completion.format("%Y-%m-%d").to_string(),
@@ -265,7 +241,7 @@ impl Vault {
             // today only because `completed_actions_between` checks
             // `status` first; that is a second guard, not a reason to
             // leave the first one unenforced.
-            ActionClosure::Dropped => {
+            Closure::Dropped => {
                 match rewrite_field_in_frontmatter(&after_status, "completed", "null") {
                     Ok(cleared) => cleared,
                     // A note carrying no `completed:` key at all already

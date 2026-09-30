@@ -15,7 +15,7 @@ use crate::note_type::NoteType;
 
 use super::super::Vault;
 use super::super::WriteOutcome;
-use super::super::actions::ActionClosure;
+use super::super::closure::Closure;
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -348,7 +348,7 @@ impl Vault {
         // this and behaves exactly as before. Still one daily-log line,
         // not two.
         if let Some(action_slug) = parse_attached_action_slug(&removed_full_text) {
-            self.stage_action_archival(at, action_slug, ActionClosure::Completed, &mut tx)?;
+            self.stage_action_archival(at, action_slug, Closure::Completed, &mut tx)?;
         }
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         let touched = tx.commit()?;
@@ -414,7 +414,7 @@ impl Vault {
         tx.write_file(path.clone(), new_content);
         tx.upsert_note(entry_meta);
         if let Some(action_slug) = parse_attached_action_slug(&removed_full_text) {
-            self.stage_action_archival(at, action_slug, ActionClosure::Dropped, &mut tx)?;
+            self.stage_action_archival(at, action_slug, Closure::Dropped, &mut tx)?;
         }
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         let touched = tx.commit()?;

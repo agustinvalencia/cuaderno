@@ -31,6 +31,7 @@ use crate::error::DomainError;
 
 mod actions;
 mod capture;
+mod closure;
 mod commitments;
 pub mod config;
 mod context;
