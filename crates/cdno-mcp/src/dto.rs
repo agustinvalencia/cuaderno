@@ -1344,6 +1344,39 @@ pub struct WriteResultDto {
     pub verification: WriteVerificationDto,
 }
 
+/// Result of `complete_project` / `drop_project` (RFC 0004): the write
+/// result plus what the close let go and what it left alone.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectClosureDto {
+    /// Where the map now lives: `projects/_done/<year>/<slug>.md`.
+    pub path: String,
+    pub message: String,
+    /// Open action bullets dropped with the project, as they read.
+    pub dropped_actions: Vec<String>,
+    /// Open milestones dropped with the project, by title.
+    pub dropped_milestones: Vec<String>,
+    /// Active standalone commitments that name the project. Never touched:
+    /// a promise to someone else does not end with the project.
+    pub untouched_commitments: Vec<LinkedCommitmentDto>,
+    pub verification: WriteVerificationDto,
+}
+
+/// An active standalone commitment linked to a project.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LinkedCommitmentDto {
+    pub slug: String,
+    pub due: NaiveDate,
+}
+
+impl From<cdno_domain::LinkedCommitment> for LinkedCommitmentDto {
+    fn from(c: cdno_domain::LinkedCommitment) -> Self {
+        Self {
+            slug: c.slug,
+            due: c.due,
+        }
+    }
+}
+
 impl WriteResultDto {
     pub fn new(
         path: impl Into<String>,

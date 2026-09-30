@@ -2,7 +2,7 @@
 //! cuaderno tools to MCP clients (Claude Desktop, Claude Code, any
 //! agent that speaks MCP).
 //!
-//! Status: all 58 tools are wired through to the domain — context
+//! Status: all 60 tools are wired through to the domain — context
 //! reads, daily/weekly/monthly note access, the write operations,
 //! structural creation, lifecycle transitions, and the generic
 //! frontmatter setter. No stubs remain.
