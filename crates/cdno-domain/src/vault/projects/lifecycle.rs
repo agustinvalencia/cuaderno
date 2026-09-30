@@ -11,8 +11,10 @@ use chrono::NaiveDateTime;
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
+use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
 use cdno_core::template::VariableContext;
+use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
 use crate::frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
@@ -21,7 +23,11 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
-use super::{is_under_projects_done, project_slug_from_path, rewrite_field_in_frontmatter};
+use super::milestones::stage_milestone_index_rows;
+use super::{
+    MILESTONES_SECTION, is_under_projects_done, project_slug_from_path,
+    rewrite_field_in_frontmatter,
+};
 
 impl Vault {
     /// Return every active project: pairs of `(path, frontmatter)`
@@ -198,7 +204,7 @@ impl Vault {
     ///   first).
     pub fn park_project(&self, at: NaiveDateTime, slug: &str) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (active_path, _doc) = self.resolve_active_project(slug)?;
+        let (active_path, doc) = self.resolve_active_project(slug)?;
         let parked_path =
             VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS_PARKED))?;
         if self.store.exists(&parked_path)? {
@@ -207,9 +213,8 @@ impl Vault {
             )));
         }
 
-        let raw = self.store.read_file(&active_path)?;
         let new_content =
-            rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Parked.as_str())?;
+            rewrite_field_in_frontmatter(doc.render(), "status", ProjectStatus::Parked.as_str())?;
         let entry_meta =
             build_index_entry_for(&parked_path, &new_content, NoteType::Project.as_str())?;
 
@@ -218,6 +223,7 @@ impl Vault {
         tx.write_file(parked_path.clone(), new_content);
         tx.delete_file(active_path.clone());
         tx.upsert_note(entry_meta);
+        stage_moved_milestone_rows(&parked_path, &doc, &mut tx);
         tx.remove_note(active_path);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
@@ -282,9 +288,9 @@ impl Vault {
             )));
         }
 
-        let raw = location.raw;
+        let doc = MarkdownDocument::parse(location.raw)?;
         let new_content =
-            rewrite_field_in_frontmatter(&raw, "status", ProjectStatus::Active.as_str())?;
+            rewrite_field_in_frontmatter(doc.render(), "status", ProjectStatus::Active.as_str())?;
         let entry_meta =
             build_index_entry_for(&active_path, &new_content, NoteType::Project.as_str())?;
 
@@ -293,10 +299,24 @@ impl Vault {
         tx.write_file(active_path.clone(), new_content);
         tx.delete_file(parked_path.clone());
         tx.upsert_note(entry_meta);
+        stage_moved_milestone_rows(&active_path, &doc, &mut tx);
         tx.remove_note(parked_path);
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
 
         Ok(active_path)
     }
+}
+
+/// Stage the milestone and deadline index rows of a project map that is
+/// moving to `dest`. Removing the old path's index entry cascades its
+/// rows (the foreign key in `migrations/001_initial.sql`), and
+/// reconcile's fast path never revisits the moved file, so every move
+/// restages them for the new path after `upsert_note(dest)` (RFC 0004
+/// §5.5). A move rewrites only the frontmatter, so the section read
+/// before the move is the section written. An absent section stages
+/// empty rows, as reconcile does.
+fn stage_moved_milestone_rows(dest: &VaultPath, doc: &MarkdownDocument, tx: &mut VaultTransaction) {
+    let section = doc.section(MILESTONES_SECTION).unwrap_or("");
+    stage_milestone_index_rows(dest, section, tx);
 }

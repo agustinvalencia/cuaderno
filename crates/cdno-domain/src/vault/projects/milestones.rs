@@ -312,7 +312,11 @@ impl Vault {
 ///
 /// `replace_*` is a whole-path replacement, so staging it from the new
 /// section also repairs whatever the previous verbs left behind.
-fn stage_milestone_index_rows(path: &VaultPath, new_section: &str, tx: &mut VaultTransaction) {
+pub(in crate::vault) fn stage_milestone_index_rows(
+    path: &VaultPath,
+    new_section: &str,
+    tx: &mut VaultTransaction,
+) {
     tx.replace_milestones(path.clone(), extract_milestones_from_body(new_section));
     tx.replace_deadlines(
         path.clone(),
