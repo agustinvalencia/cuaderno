@@ -16,6 +16,15 @@ covers malformed `## Active Habits` and `## Periodic Commitments` bullets on a s
 dashboard, and — in a daily note's `## Logs` — a start or close marker that
 [`cdno now`](now.md) will not see:
 
+It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key its
+built-in template has gained since you customised it:
+
+```text
+[warning] .cuaderno/templates/project.md: custom template `project` lacks `closed` (run `cdno templates sync project`)
+```
+
+[`cdno templates sync`](templates.md#cdno-templates-sync-type) adds it without touching your edits.
+
 ```text
 [warning] journal/2026/daily/2026-09-15.md: log line `- **09:30**: started [[alpha]] - Draft methods (deep)` reads as a `started` marker but `cdno now` will not see it -- found an ASCII hyphen (-) where an em-dash (—) separates the slug from the action
 ```

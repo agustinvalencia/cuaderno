@@ -21,7 +21,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   **On upgrade:** no migration. `projects/_done/` is created on first use. A customised
   `.cuaderno/templates/project.md` does not gain the new `closed: null` line by itself, and nothing
   breaks if it never does: closing writes the key whenever it is missing. Add it as the template's
-  last frontmatter line to have new maps carry it from the start.
+  last frontmatter line to have new maps carry it from the start, or run
+  `cdno templates sync project`.
 - `cdno project list --closed` lists completed and dropped projects, newest first, with the
   outcome and date (under `--json`, one row per project with `slug`, `title`, `context`,
   `outcome` and `closed_on`). The `cdno project activate` picker and its shell completion now
@@ -43,6 +44,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   one outside `projects/_done/<year>/` is an error, and the message names the manual fix. A closed
   project without a `closed:` date, and an active or parked one with a date, are warnings
   (RFC 0004, #690).
+- **`cdno templates sync [<type> | --all] [--check]` (#699).** A customised template
+  (`.cuaderno/templates/<type>.md`) never received frontmatter keys a later release added to the
+  built-in one, and the only ways to catch up were a hand edit or `eject --force`, which discards the
+  customisation. `sync` inserts each missing built-in line verbatim (`closed: null`,
+  `core_question: {{core_question}}`) right after its nearest built-in neighbour and changes nothing
+  else: the user's own keys, values, order and body stay byte for byte, and no key is removed. A
+  second run writes nothing; `--check` writes nothing and exits non-zero while an override is
+  behind. It writes through the same path as `templates save`. `cdno lint` warns on a stale override
+  ("custom template `project` lacks `closed` (run `cdno templates sync project`)"), and
+  `cdno templates list` flags it, with `missing_builtin_keys` under `--json`.
 
 ### Changed
 

@@ -124,9 +124,10 @@ created, but eject saves the guesswork.)
 > **`closed:` in a customised project template.** The built-in project template ends its
 > frontmatter with `closed: null`, the date a project is completed or dropped. A
 > `.cuaderno/templates/project.md` you ejected before that key existed does not gain it by itself,
-> and nothing breaks if it never does: closing a project writes the key, last, whenever it is
-> missing. To have new maps carry it from the start, add `closed: null` as the last frontmatter line
-> of your template by hand.
+> and nothing breaks if it never does: closing a project writes the key whenever it is missing.
+> `cdno lint` and `cdno templates list` say when your template lacks it, and
+> `cdno templates sync project` adds it after `core_question:` without touching anything else.
+> The same command covers any key a future release adds to a built-in template.
 
 ### Tracking variants
 

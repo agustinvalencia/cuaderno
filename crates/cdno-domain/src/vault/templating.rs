@@ -118,6 +118,10 @@ pub struct TemplateSummary {
     /// at — always resolved, so "Open in editor" works even before a file
     /// exists.
     pub path: String,
+    /// Frontmatter keys of the built-in template that this type's custom
+    /// override lacks (#699), in built-in order. Empty without an override,
+    /// for a config custom type, and once `cdno templates sync` has run.
+    pub missing_builtin_keys: Vec<String>,
 }
 
 /// The effective (resolved) content of a template plus its source rung,
@@ -151,7 +155,7 @@ const INBOX_TEMPLATE: &str = include_str!("../../templates/inbox.md");
 /// `.cuaderno/templates/tracking-<activity>.md`, which the resolver picks up
 /// (slugify the activity → look up `tracking-<slug>` → fall back to generic).
 /// See `examples/templates/tracking/` for ready-made variants.
-fn builtin_defaults() -> HashMap<String, &'static str> {
+pub(in crate::vault) fn builtin_defaults() -> HashMap<String, &'static str> {
     HashMap::from([
         ("project".to_owned(), PROJECT_TEMPLATE),
         ("action".to_owned(), ACTION_TEMPLATE),
@@ -510,6 +514,11 @@ impl Vault {
             } else {
                 TemplateSourceKind::BuiltinDefault
             });
+            let missing_builtin_keys = if has_custom_file {
+                self.stale_template_keys(nt)?
+            } else {
+                Vec::new()
+            };
             out.push(TemplateSummary {
                 note_type: key.to_owned(),
                 display_name: title_case(key),
@@ -517,6 +526,7 @@ impl Vault {
                 source,
                 has_custom_file,
                 path: path.to_string(),
+                missing_builtin_keys,
             });
         }
 
@@ -536,6 +546,7 @@ impl Vault {
                 source,
                 has_custom_file,
                 path: path.to_string(),
+                missing_builtin_keys: Vec::new(),
             });
         }
 
@@ -754,7 +765,7 @@ impl Vault {
 /// A [`VaultPath`] for `filename` under `.cuaderno/templates/`. Centralises
 /// the confinement so every template read/write goes through the same
 /// [`VaultPath`] guard (absolute paths and `..` escapes rejected).
-fn template_path(filename: &str) -> Result<VaultPath, DomainError> {
+pub(in crate::vault) fn template_path(filename: &str) -> Result<VaultPath, DomainError> {
     Ok(VaultPath::new(format!(
         "{}/{filename}",
         cdno_core::paths::TEMPLATES_DIR

@@ -11,6 +11,7 @@ without reading the source.
 | `list` | Every note type, which template is in effect, and where its override lives. |
 | `show <TYPE>` | Print a template's effective content verbatim. |
 | `eject <TYPE>` | Copy a built-in template into `.cuaderno/templates/` to customise. |
+| `sync <TYPE>` | Add frontmatter keys a release added to a built-in template to your customised copy, keeping your edits. |
 | `save` | Write a template, from a file, from stdin, or via `$EDITOR`. |
 | `new` | Scaffold a starter template for a config-defined custom type. |
 
@@ -101,17 +102,56 @@ cdno templates eject --all --force        # eject all, overwriting everything
 The written file is exactly the built-in default, so a note created straight
 after ejecting is byte-identical to before — customise from there.
 
+## `cdno templates sync <type>`
+
+Bring a customised template up to date with frontmatter keys a later release added to the built-in
+one, without losing your customisation. A file you ejected or saved never receives such keys by
+itself; nothing breaks without them (new notes from it just lack the key), but nothing else adds
+them either, and `eject --force` would throw your edits away.
+
+```text
+cdno templates sync [OPTIONS] <TYPE>
+cdno templates sync --all [--check]
+```
+
+| Argument / flag | Description |
+|---|---|
+| `<TYPE>` | Built-in note type whose override to sync. A [config-defined custom type](../custom-note-types.md) has no built-in to compare with and is refused; a bundled type such as `concept` is brought up to date with [`cdno config note-type install`](config.md). |
+| `--all` | Sync every built-in type that has a custom override. |
+| `--check` | Report what is missing and write nothing; exit non-zero if any override is behind. For CI and scripts. |
+
+For each key of the built-in template's frontmatter that your file lacks, `sync` inserts the built-in
+line verbatim: a literal such as `closed: null`, or a placeholder line such as
+`core_question: {{core_question}}`. It goes right after the nearest built-in key that precedes it
+and your file has. Nothing else changes: your own keys, their values, their order and the body stay
+byte for byte, and no key is ever removed. Running it again on an up-to-date file writes nothing.
+
+```bash
+cdno templates sync project
+# project: added `closed` to .cuaderno/templates/project.md; kept your `owner`
+cdno templates sync --all --check     # in CI: fails while any override is behind
+```
+
+`--json` emits one object per override with `note_type`, `path`, `status` (`synced`, `behind`,
+`up_to_date`, `not_customised` or `no_frontmatter`), `added` and `kept` (your own keys, listed so you
+can see nothing was dropped). It writes through the same path as `templates save`.
+
+[`cdno templates list`](#cdno-templates-list) and [`cdno lint`](lint.md) both say when an override
+has fallen behind.
+
 ## `cdno templates list`
 
 Every note type with the state of its template: whether a custom override exists, which source is in
-effect, and the path the override lives (or would live) at.
+effect, and the path the override lives (or would live) at. A custom override that lacks a key its
+built-in has gained shows `custom (lacks closed; …)` in the Template column.
 
 ```text
 cdno templates list [OPTIONS]
 ```
 
 `--json` reports `source` as a stable token — `builtin_default`, `builtin_variant`, `custom_base`,
-`custom_variant`, or `none` — rather than the human label in the table.
+`custom_variant`, or `none` — rather than the human label in the table, and lists the missing keys
+under `missing_builtin_keys` (empty when there are none).
 
 ## `cdno templates show <type>`
 
