@@ -113,9 +113,11 @@ New project. No work done yet.
 - Portfolio: (none yet)
 ```
 
-`cdno templates eject <type>` is the recommended way to get an editable base — it always matches the
-current built-in. (You could instead hand-write the file, or shape it from a note `cdno` already
-created, but eject saves the guesswork.)
+`cdno templates eject <type>` is the recommended way to get an editable base — it matches the
+built-in at the moment you eject. (You could instead hand-write the file, or shape it from a note
+`cdno` already created, but eject saves the guesswork.) If a later release adds a frontmatter key to
+the built-in, your copy does not gain it by itself: `cdno lint` and `cdno templates list` say so, and
+`cdno templates sync <type>` adds it without touching your edits.
 
 > Editing a template only affects notes created **afterwards** — existing notes are untouched. (And
 > `cdno normalise` only reorders frontmatter keys; it won't add a new section like `## Risks` to old
@@ -337,6 +339,7 @@ cdno templates list                         # every type, which template is in e
 cdno templates show project                 # the effective content, verbatim
 cdno templates eject project                # copy the built-in default into .cuaderno/templates/
 cdno templates save --note-type project     # write it: --file, --file - for stdin, or $EDITOR
+cdno templates sync --all                   # add keys a release added to the built-ins, keep your edits
 cdno templates new --note-type people       # scaffold a starter for a custom type
 ```
 
