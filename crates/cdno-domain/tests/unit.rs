@@ -29,6 +29,7 @@ mod unit {
     mod slug_tests;
     mod stewardships_tests;
     mod support;
+    mod template_sync_tests;
     mod templating_tests;
     mod tracking_tests;
     mod type_registry_tests;

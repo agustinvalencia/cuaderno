@@ -61,6 +61,9 @@ impl Vault {
     ///   back: a `started` / `action done on` / `action dropped on` line
     ///   whose `- **HH:MM**: ` stamp or em dash is wrong, the same class
     ///   of silent near-miss as the rule above (a `Warning`).
+    /// - a custom override of a built-in template that lacks a frontmatter
+    ///   key the built-in has gained since it was customised (a `Warning`
+    ///   naming `cdno templates sync`, #699).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -315,6 +318,7 @@ impl Vault {
         issues.extend(self.stewardship_dashboard_issues()?);
         issues.extend(self.tracking_record_order_issues()?);
         issues.extend(self.focus_marker_issues()?);
+        issues.extend(self.stale_template_issues()?);
 
         Ok(LintReport { issues })
     }
@@ -1177,4 +1181,47 @@ fn project_status_issues(path: &VaultPath, frontmatter: &serde_json::Value) -> V
         _ => {}
     }
     issues
+}
+
+impl Vault {
+    /// One `Warning` per custom override of a built-in template that lacks
+    /// built-in frontmatter keys (#699). Nothing breaks without them, but
+    /// nothing else says the override has fallen behind.
+    fn stale_template_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        use super::TemplateSyncStatus;
+        let mut issues = Vec::new();
+        for nt in NoteType::ALL {
+            let report = self.sync_template(nt.as_str(), false)?;
+            let path = VaultPath::new(report.path.clone())?;
+            match report.status {
+                // A broken template surfaces as one row; it never aborts
+                // the pass, as with notes above.
+                TemplateSyncStatus::Unreadable => issues.push(LintIssue::error(
+                    path,
+                    format!(
+                        "could not read custom template: {}",
+                        report.error.as_deref().unwrap_or("unknown error")
+                    ),
+                )),
+                TemplateSyncStatus::Behind => {
+                    let keys = report
+                        .added
+                        .iter()
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    issues.push(LintIssue::warning(
+                        path,
+                        format!(
+                            "custom template `{}` lacks {keys} (run `cdno templates sync {}`)",
+                            nt.as_str(),
+                            nt.as_str()
+                        ),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(issues)
+    }
 }

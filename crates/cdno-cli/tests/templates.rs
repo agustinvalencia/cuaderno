@@ -668,3 +668,205 @@ fn show_honours_json_without_losing_the_verbatim_guarantee() {
     // And the plain form still diffs clean against the file on disk.
     assert_eq!(run(&["templates", "show", "project"]), on_disk);
 }
+
+// ---------------------------------------------------------------------
+// templates sync (#699)
+// ---------------------------------------------------------------------
+
+/// A project override ejected before `closed:` existed.
+const STALE_PROJECT: &str = "---\ntype: project\ncontext: {{context}}\nstatus: {{status}}\ncreated: {{created}}\ncore_question: {{core_question}}\nowner: unassigned\n---\n\n# {{title}}\n";
+
+fn cdno(root: &Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").unwrap();
+    cmd.env_remove("CUADERNO_VAULT_PATH")
+        .arg("--vault")
+        .arg(root);
+    cmd
+}
+
+#[test]
+fn sync_adds_the_missing_key_and_reports_it() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let path = dir.path().join(".cuaderno/templates/project.md");
+    fs::write(&path, STALE_PROJECT).unwrap();
+
+    cdno(dir.path())
+        .args(["templates", "sync", "project"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            "project: added `closed` to .cuaderno/templates/project.md; kept your `owner`",
+        ));
+
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        STALE_PROJECT.replace(
+            "core_question: {{core_question}}\n",
+            "core_question: {{core_question}}\nclosed: null\n"
+        )
+    );
+}
+
+#[test]
+fn sync_check_fails_on_a_stale_override_and_writes_nothing() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    let path = dir.path().join(".cuaderno/templates/project.md");
+    fs::write(&path, STALE_PROJECT).unwrap();
+
+    cdno(dir.path())
+        .args(["templates", "sync", "--all", "--check"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("project: lacks `closed`"));
+
+    assert_eq!(fs::read_to_string(&path).unwrap(), STALE_PROJECT);
+}
+
+#[test]
+fn sync_check_passes_once_synced() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::write(
+        dir.path().join(".cuaderno/templates/project.md"),
+        STALE_PROJECT,
+    )
+    .unwrap();
+    cdno(dir.path())
+        .args(["templates", "sync", "--all"])
+        .assert()
+        .success();
+
+    cdno(dir.path())
+        .args(["templates", "sync", "--all", "--check"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Nothing to add."));
+}
+
+#[test]
+fn sync_json_reports_each_override() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::write(
+        dir.path().join(".cuaderno/templates/project.md"),
+        STALE_PROJECT,
+    )
+    .unwrap();
+
+    let out = cdno(dir.path())
+        .args(["--json", "templates", "sync", "project"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let rows: serde_json::Value = serde_json::from_slice(&out).expect("JSON");
+    assert_eq!(rows[0]["note_type"], "project");
+    assert_eq!(rows[0]["status"], "synced");
+    assert_eq!(rows[0]["added"], serde_json::json!(["closed"]));
+    assert_eq!(rows[0]["kept"], serde_json::json!(["owner"]));
+}
+
+#[test]
+fn sync_refuses_a_custom_type_and_requires_a_type_or_all() {
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    cdno(dir.path())
+        .args(["templates", "sync", "person"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("no built-in template"));
+    cdno(dir.path())
+        .args(["templates", "sync"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn list_flags_a_stale_override() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    fs::write(
+        dir.path().join(".cuaderno/templates/project.md"),
+        STALE_PROJECT,
+    )
+    .unwrap();
+
+    let rows = templates::list_rows(&templates::summaries(dir.path()).unwrap());
+    let project = rows.iter().find(|r| r["note_type"] == "project").unwrap();
+    assert_eq!(
+        project["missing_builtin_keys"],
+        serde_json::json!(["closed"])
+    );
+    assert!(
+        templates::render_list(&templates::summaries(dir.path()).unwrap())
+            .contains("lacks closed; run `templates sync`")
+    );
+}
+
+#[test]
+fn an_unreadable_override_is_one_row_not_a_failed_command() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    // Latin-1, not UTF-8.
+    fs::write(
+        dir.path().join(".cuaderno/templates/action.md"),
+        b"---\ntype: action\nnota: n\xfacleo\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".cuaderno/templates/project.md"),
+        STALE_PROJECT,
+    )
+    .unwrap();
+
+    // lint reports both rows instead of stopping at the first.
+    cdno(dir.path())
+        .args(["lint"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains(
+            ".cuaderno/templates/action.md: could not read custom template",
+        ))
+        .stdout(predicates::str::contains(
+            "custom template `project` lacks `closed`",
+        ));
+    // list still lists, flagging the project override.
+    assert!(
+        templates::render_list(&templates::summaries(dir.path()).unwrap()).contains("lacks closed")
+    );
+    // --check names both failures, not only the first.
+    cdno(dir.path())
+        .args(["templates", "sync", "--all", "--check"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "1 custom template(s) lack built-in keys",
+        ))
+        .stderr(predicates::str::contains(
+            "1 custom template(s) could not be read",
+        ));
+    // sync --all syncs the readable override and reports the other.
+    cdno(dir.path())
+        .args(["templates", "sync", "--all"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("action: could not read"))
+        .stdout(predicates::str::contains("project: added `closed`"));
+}
+
+#[test]
+fn sync_on_a_custom_type_says_it_is_kept_by_hand() {
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    cdno(dir.path())
+        .args(["templates", "sync", "person"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("kept up to date by hand"));
+}

@@ -21,7 +21,7 @@ anything. Inputs marked optional may be omitted.
 | `read_monthly_note` | `date?` (default this month) | The monthly note for a calendar month. |
 | `read_note` | `note` (path, slug, `type:slug` or journal date) | Any note, whole: `path`, `note_type`, `frontmatter`, `body` (uncapped), `content_hash`, `backlinks` and `headings`. Takes the references [`cdno open`](../cli/open.md) takes, plus a path without its `.md`. |
 | `search_notes` | `query`, `note_type?`, `from?`, `to?`, `portfolio?`, `limit?` (default 20) | Ranked full-text hits. The MCP form of [`cdno search`](../cli/search.md). |
-| `lint` | — | Vault-wide problems: frontmatter, broken wikilinks, attachment pairing, a project whose status disagrees with its folder, and lines the canonical parsers silently skip — malformed stewardship-dashboard bullets and daily-log focus markers [`cdno now`](../cli/now.md) will not read back. |
+| `lint` | — | Vault-wide problems: frontmatter, broken wikilinks, attachment pairing, a project whose status disagrees with its folder, a custom template that lacks a key its built-in has gained, and lines the canonical parsers silently skip — malformed stewardship-dashboard bullets and daily-log focus markers [`cdno now`](../cli/now.md) will not read back. |
 | `triage_inbox` | — | Pending inbox captures awaiting triage. |
 
 ## Notes

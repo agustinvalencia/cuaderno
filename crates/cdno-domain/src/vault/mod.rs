@@ -58,6 +58,7 @@ mod set_frontmatter;
 pub(crate) mod slug;
 mod slug_hint;
 mod stewardships;
+mod template_sync;
 mod templating;
 mod tracking;
 mod weekly;
@@ -123,6 +124,7 @@ pub use questions::QuestionSummary;
 pub use revise::{ReviseOutcome, Revision};
 pub use search::{SearchFilters, SearchResultEntry};
 pub use stewardships::{StewardshipSummary, StewardshipVariant};
+pub use template_sync::{TemplateSyncReport, TemplateSyncStatus};
 pub use templating::{
     PlaceholderSource, TemplateContent, TemplatePlaceholder, TemplateSourceKind, TemplateSummary,
 };

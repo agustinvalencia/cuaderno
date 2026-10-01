@@ -92,7 +92,7 @@ new file there rather than growing `mod.rs`.
   run after all file writes succeed, and an index failure surfaces as `IndexStale` (files are
   correct, next startup reconciles). Not crash-safe by design. **Known exceptions that bypass the
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
-  eject/save, and `save_config_raw` — these call `store.write_file` directly, so the cross-process
+  eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
   matches the filesystem on entry.

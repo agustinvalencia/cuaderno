@@ -28,6 +28,18 @@ deliberately narrow — the marker has to open the entry and be followed immedia
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
 note mid-sentence, is never flagged.
 
+It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key that
+the built-in template has, typically one a release added after you customised it, and reports a
+customised template it cannot read (for instance one that is not UTF-8) as an error:
+
+```text
+[warning] .cuaderno/templates/project.md: custom template `project` lacks `closed` (run `cdno templates sync project`)
+```
+
+[`cdno templates sync`](templates.md#cdno-templates-sync-type) adds the key without touching your
+edits. Lint cannot tell a new key from one you removed on purpose, so a built-in key you deleted from
+your template is reported too.
+
 ```text
 cdno lint [OPTIONS]
 ```

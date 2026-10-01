@@ -76,6 +76,29 @@ pub enum TemplatesCommands {
         force: bool,
     },
 
+    /// Add frontmatter keys a later release gave a built-in template to
+    /// your custom override of it, without touching anything you wrote.
+    /// Each missing line is inserted verbatim next to its built-in
+    /// neighbour; your own keys, values, order and body stay as they are,
+    /// and no key is removed. `--check` writes nothing and fails when an
+    /// override is behind.
+    Sync {
+        /// Built-in note type whose override to sync. Omit with `--all`.
+        #[arg(
+            add = ArgValueCompleter::new(completions::complete_note_type),
+            required_unless_present = "all",
+            conflicts_with = "all",
+        )]
+        note_type: Option<String>,
+        /// Sync every built-in type that has a custom override.
+        #[arg(long)]
+        all: bool,
+        /// Report what is missing without writing; exit non-zero if any
+        /// override is behind.
+        #[arg(long)]
+        check: bool,
+    },
+
     /// List every note type and the state of its template: whether a
     /// custom override exists, which source is in effect, and the path
     /// the override lives (or would live) at.
@@ -157,6 +180,35 @@ pub fn run(
                     &format!("Ejected template to {path}"),
                 )
             }
+        }
+        TemplatesCommands::Sync {
+            note_type,
+            all,
+            check,
+        } => {
+            let reports = sync(root, note_type.as_deref(), all, check)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&reports)?);
+            } else {
+                print!("{}", render_sync(&reports, check));
+            }
+            let count = |status| reports.iter().filter(|r| r.status == status).count();
+            let behind = count(cdno_domain::TemplateSyncStatus::Behind);
+            let unreadable = count(cdno_domain::TemplateSyncStatus::Unreadable);
+            let mut failures = Vec::new();
+            if behind > 0 {
+                failures.push(format!(
+                    "{behind} custom template(s) lack built-in keys; run `cdno templates sync` \
+                     without --check to add them"
+                ));
+            }
+            if unreadable > 0 {
+                failures.push(format!("{unreadable} custom template(s) could not be read"));
+            }
+            if !failures.is_empty() {
+                bail!("{}", failures.join("; "));
+            }
+            Ok(())
         }
         TemplatesCommands::List => {
             let rows = summaries(root)?;
@@ -330,6 +382,86 @@ pub fn eject(root: &Path, note_type: &str, force: bool) -> Result<String> {
     Ok(path.to_string())
 }
 
+/// Write seam for `sync`: bring one built-in type's override (or, with
+/// `all`, every override) up to date with its built-in's frontmatter keys.
+/// Writes nothing when `check`.
+pub fn sync(
+    root: &Path,
+    note_type: Option<&str>,
+    all: bool,
+    check: bool,
+) -> Result<Vec<cdno_domain::TemplateSyncReport>> {
+    let (vault, _report) = bootstrap::open_vault(root)?;
+    if all {
+        return Ok(vault.sync_all_templates(!check)?);
+    }
+    // `required_unless_present = "all"` guarantees Some here.
+    let note_type = note_type.expect("clap requires <type> without --all");
+    validate_known_type(&vault, note_type)?;
+    if vault
+        .type_registry()
+        .resolve(note_type)
+        .is_some_and(|d| d.is_custom())
+    {
+        bail!(
+            "`{note_type}` is a config-defined custom type — it has no built-in template \
+             to sync against, so its template is kept up to date by hand. (That includes \
+             a bundled type such as `concept`: `cdno config note-type install` never \
+             touches a template file that already exists.)"
+        );
+    }
+    Ok(vec![vault.sync_template(note_type, !check)?])
+}
+
+/// Text seam: one line per override, saying what `sync` did or would do.
+pub fn render_sync(reports: &[cdno_domain::TemplateSyncReport], check: bool) -> String {
+    use cdno_domain::TemplateSyncStatus::*;
+    if reports.is_empty() {
+        return "No custom templates of built-in types; nothing to sync.\n".to_owned();
+    }
+    let keys = |ks: &[String]| {
+        ks.iter()
+            .map(|k| format!("`{k}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut out = String::new();
+    for r in reports {
+        let line = match r.status {
+            NotCustomised => format!(
+                "{}: not customised; the built-in template is in effect",
+                r.note_type
+            ),
+            UpToDate => format!("{}: up to date", r.note_type),
+            Behind => format!("{}: lacks {} ({})", r.note_type, keys(&r.added), r.path),
+            Synced => format!("{}: added {} to {}", r.note_type, keys(&r.added), r.path),
+            NoFrontmatter => format!(
+                "{}: {} has no frontmatter block; left as it is",
+                r.note_type, r.path
+            ),
+            // The store error already names the file.
+            Unreadable => format!(
+                "{}: could not read it: {}",
+                r.note_type,
+                r.error.as_deref().unwrap_or("unknown error")
+            ),
+        };
+        out.push_str(&line);
+        if !r.kept.is_empty() && matches!(r.status, Synced | Behind | UpToDate) {
+            out.push_str(&format!("; kept your {}", keys(&r.kept)));
+        }
+        out.push('\n');
+    }
+    if check
+        && reports
+            .iter()
+            .all(|r| matches!(r.status, UpToDate | NotCustomised))
+    {
+        out.push_str("Nothing to add.\n");
+    }
+    out
+}
+
 /// Data seam: validate the type, open the vault, and gather the supported
 /// placeholders. Tests assert on this `Vec` directly (house pattern, cf.
 /// `search::search_hits`).
@@ -491,7 +623,15 @@ pub fn render_list(rows: &[cdno_domain::TemplateSummary]) -> String {
             } else {
                 "built-in".to_owned()
             },
-            source_label(row.source).to_owned(),
+            if row.missing_builtin_keys.is_empty() {
+                source_label(row.source).to_owned()
+            } else {
+                format!(
+                    "{} (lacks {}; run `templates sync`)",
+                    source_label(row.source),
+                    row.missing_builtin_keys.join(", ")
+                )
+            },
             row.path.clone(),
         ]);
     }
@@ -510,6 +650,7 @@ pub fn list_rows(rows: &[cdno_domain::TemplateSummary]) -> Vec<serde_json::Value
                 "source": source_token(row.source),
                 "has_custom_file": row.has_custom_file,
                 "path": row.path,
+                "missing_builtin_keys": row.missing_builtin_keys,
             })
         })
         .collect()
