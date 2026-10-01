@@ -779,7 +779,7 @@ fn sync_refuses_a_custom_type_and_requires_a_type_or_all() {
         .args(["templates", "sync", "person"])
         .assert()
         .failure()
-        .stderr(predicates::str::contains("config note-type install"));
+        .stderr(predicates::str::contains("no built-in template"));
     cdno(dir.path())
         .args(["templates", "sync"])
         .assert()
@@ -806,4 +806,56 @@ fn list_flags_a_stale_override() {
         templates::render_list(&templates::summaries(dir.path()).unwrap())
             .contains("lacks closed; run `templates sync`")
     );
+}
+
+#[test]
+fn an_unreadable_override_is_one_row_not_a_failed_command() {
+    let dir = tempdir().unwrap();
+    seed(dir.path());
+    // Latin-1, not UTF-8.
+    fs::write(
+        dir.path().join(".cuaderno/templates/action.md"),
+        b"---\ntype: action\nnota: n\xfacleo\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join(".cuaderno/templates/project.md"),
+        STALE_PROJECT,
+    )
+    .unwrap();
+
+    // lint reports both rows instead of stopping at the first.
+    cdno(dir.path())
+        .args(["lint"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains(
+            ".cuaderno/templates/action.md: could not read custom template",
+        ))
+        .stdout(predicates::str::contains(
+            "custom template `project` lacks `closed`",
+        ));
+    // list still lists, flagging the project override.
+    assert!(
+        templates::render_list(&templates::summaries(dir.path()).unwrap()).contains("lacks closed")
+    );
+    // sync --all syncs the readable override and reports the other.
+    cdno(dir.path())
+        .args(["templates", "sync", "--all"])
+        .assert()
+        .failure()
+        .stdout(predicates::str::contains("action: could not read"))
+        .stdout(predicates::str::contains("project: added `closed`"));
+}
+
+#[test]
+fn sync_on_a_custom_type_says_it_is_kept_by_hand() {
+    let dir = tempdir().unwrap();
+    seed_with_person(dir.path());
+
+    cdno(dir.path())
+        .args(["templates", "sync", "person"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("kept up to date by hand"));
 }

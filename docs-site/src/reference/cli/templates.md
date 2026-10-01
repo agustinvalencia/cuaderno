@@ -116,14 +116,17 @@ cdno templates sync --all [--check]
 
 | Argument / flag | Description |
 |---|---|
-| `<TYPE>` | Built-in note type whose override to sync. A [config-defined custom type](../custom-note-types.md) has no built-in to compare with and is refused; a bundled type such as `concept` is brought up to date with [`cdno config note-type install`](config.md). |
+| `<TYPE>` | Built-in note type whose override to sync. A [config-defined custom type](../custom-note-types.md), including a bundled one such as `concept`, has no built-in to compare with and is refused: its template is kept up to date by hand. |
 | `--all` | Sync every built-in type that has a custom override. |
 | `--check` | Report what is missing and write nothing; exit non-zero if any override is behind. For CI and scripts. |
 
 For each key of the built-in template's frontmatter that your file lacks, `sync` inserts the built-in
 line verbatim: a literal such as `closed: null`, or a placeholder line such as
 `core_question: {{core_question}}`. It goes right after the nearest built-in key that precedes it
-and your file has. Nothing else changes: your own keys, their values, their order and the body stay
+and your file has (before any comment or blank lines that close that key's block); failing that,
+right before the nearest built-in key that follows it; failing that, last in the frontmatter. A key
+your file already has, quoted (`"closed": null`) or with a space before the colon, counts as
+present. Nothing else changes: your own keys, their values, their order and the body stay
 byte for byte, and no key is ever removed. Running it again on an up-to-date file writes nothing.
 
 ```bash
@@ -132,9 +135,12 @@ cdno templates sync project
 cdno templates sync --all --check     # in CI: fails while any override is behind
 ```
 
-`--json` emits one object per override with `note_type`, `path`, `status` (`synced`, `behind`,
-`up_to_date`, `not_customised` or `no_frontmatter`), `added` and `kept` (your own keys, listed so you
-can see nothing was dropped). It writes through the same path as `templates save`.
+`--json` emits an array with one object per override (with `<TYPE>` and no override, one
+`not_customised` object), each with `note_type`, `path`, `status` (`synced`, `behind`, `up_to_date`,
+`not_customised`, `no_frontmatter` or `unreadable`, the last with an `error`), `added` and `kept`
+(your own keys, listed so you can see nothing was dropped). A file with no `---` frontmatter block,
+or one that cannot be read, is reported and left alone; `--check` also fails on an unreadable one.
+It writes through the same path as `templates save`.
 
 [`cdno templates list`](#cdno-templates-list) and [`cdno lint`](lint.md) both say when an override
 has fallen behind.

@@ -1188,30 +1188,39 @@ impl Vault {
     /// built-in frontmatter keys (#699). Nothing breaks without them, but
     /// nothing else says the override has fallen behind.
     fn stale_template_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        use super::TemplateSyncStatus;
         let mut issues = Vec::new();
         for nt in NoteType::ALL {
-            let missing = self.stale_template_keys(nt)?;
-            if missing.is_empty() {
-                continue;
+            let report = self.sync_template(nt.as_str(), false)?;
+            let path = VaultPath::new(report.path.clone())?;
+            match report.status {
+                // A broken template surfaces as one row; it never aborts
+                // the pass, as with notes above.
+                TemplateSyncStatus::Unreadable => issues.push(LintIssue::error(
+                    path,
+                    format!(
+                        "could not read custom template: {}",
+                        report.error.as_deref().unwrap_or("unknown error")
+                    ),
+                )),
+                TemplateSyncStatus::Behind => {
+                    let keys = report
+                        .added
+                        .iter()
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    issues.push(LintIssue::warning(
+                        path,
+                        format!(
+                            "custom template `{}` lacks {keys} (run `cdno templates sync {}`)",
+                            nt.as_str(),
+                            nt.as_str()
+                        ),
+                    ));
+                }
+                _ => {}
             }
-            let keys = missing
-                .iter()
-                .map(|k| format!("`{k}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let path = VaultPath::new(format!(
-                "{}/{}.md",
-                cdno_core::paths::TEMPLATES_DIR,
-                nt.as_str()
-            ))?;
-            issues.push(LintIssue::warning(
-                path,
-                format!(
-                    "custom template `{}` lacks {keys} (run `cdno templates sync {}`)",
-                    nt.as_str(),
-                    nt.as_str()
-                ),
-            ));
         }
         Ok(issues)
     }

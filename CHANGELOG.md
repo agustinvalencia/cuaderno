@@ -51,7 +51,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `core_question: {{core_question}}`) right after its nearest built-in neighbour and changes nothing
   else: the user's own keys, values, order and body stay byte for byte, and no key is removed. A
   second run writes nothing; `--check` writes nothing and exits non-zero while an override is
-  behind. It writes through the same path as `templates save`. `cdno lint` warns on a stale override
+  behind. It writes through the same path as `templates save`. A key the override already has,
+  quoted or with a space before the colon, counts as present; an override that cannot be read is
+  reported (`unreadable`) and never stops `--all`, lint or `templates list` for the other types. `cdno lint` warns on a stale override
   ("custom template `project` lacks `closed` (run `cdno templates sync project`)"), and
   `cdno templates list` flags it, with `missing_builtin_keys` under `--json`.
 

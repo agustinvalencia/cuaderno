@@ -16,15 +16,6 @@ covers malformed `## Active Habits` and `## Periodic Commitments` bullets on a s
 dashboard, and — in a daily note's `## Logs` — a start or close marker that
 [`cdno now`](now.md) will not see:
 
-It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key its
-built-in template has gained since you customised it:
-
-```text
-[warning] .cuaderno/templates/project.md: custom template `project` lacks `closed` (run `cdno templates sync project`)
-```
-
-[`cdno templates sync`](templates.md#cdno-templates-sync-type) adds it without touching your edits.
-
 ```text
 [warning] journal/2026/daily/2026-09-15.md: log line `- **09:30**: started [[alpha]] - Draft methods (deep)` reads as a `started` marker but `cdno now` will not see it -- found an ASCII hyphen (-) where an em-dash (—) separates the slug from the action
 ```
@@ -36,6 +27,18 @@ range, `- **09:40**` with no colon — is caught too, not only one that is missi
 deliberately narrow — the marker has to open the entry and be followed immediately by `[[` — so
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
 note mid-sentence, is never flagged.
+
+It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key that
+the built-in template has, typically one a release added after you customised it, and reports a
+customised template it cannot read (for instance one that is not UTF-8) as an error:
+
+```text
+[warning] .cuaderno/templates/project.md: custom template `project` lacks `closed` (run `cdno templates sync project`)
+```
+
+[`cdno templates sync`](templates.md#cdno-templates-sync-type) adds the key without touching your
+edits. Lint cannot tell a new key from one you removed on purpose, so a built-in key you deleted from
+your template is reported too.
 
 ```text
 cdno lint [OPTIONS]

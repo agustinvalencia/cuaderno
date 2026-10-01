@@ -128,7 +128,8 @@ the built-in, your copy does not gain it by itself: `cdno lint` and `cdno templa
 > `.cuaderno/templates/project.md` you ejected before that key existed does not gain it by itself,
 > and nothing breaks if it never does: closing a project writes the key whenever it is missing.
 > `cdno lint` and `cdno templates list` say when your template lacks it, and
-> `cdno templates sync project` adds it after `core_question:` without touching anything else.
+> `cdno templates sync project` adds it next to its built-in neighbour (after `core_question:`
+> when you kept that) without touching anything else.
 > The same command covers any key a future release adds to a built-in template.
 
 ### Tracking variants

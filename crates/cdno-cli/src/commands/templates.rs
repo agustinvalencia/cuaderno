@@ -202,6 +202,13 @@ pub fn run(
                      without --check to add them"
                 );
             }
+            let unreadable = reports
+                .iter()
+                .filter(|r| r.status == cdno_domain::TemplateSyncStatus::Unreadable)
+                .count();
+            if unreadable > 0 {
+                bail!("{unreadable} custom template(s) could not be read");
+            }
             Ok(())
         }
         TemplatesCommands::List => {
@@ -399,8 +406,9 @@ pub fn sync(
     {
         bail!(
             "`{note_type}` is a config-defined custom type — it has no built-in template \
-             to sync against. A bundled type such as `concept` is brought up to date with \
-             `cdno config note-type install`."
+             to sync against, so its template is kept up to date by hand. (That includes \
+             a bundled type such as `concept`: `cdno config note-type install` never \
+             touches a template file that already exists.)"
         );
     }
     Ok(vec![vault.sync_template(note_type, !check)?])
@@ -432,6 +440,12 @@ pub fn render_sync(reports: &[cdno_domain::TemplateSyncReport], check: bool) -> 
                 "{}: {} has no frontmatter block; left as it is",
                 r.note_type, r.path
             ),
+            Unreadable => format!(
+                "{}: could not read {}: {}",
+                r.note_type,
+                r.path,
+                r.error.as_deref().unwrap_or("unknown error")
+            ),
         };
         out.push_str(&line);
         if !r.kept.is_empty() && matches!(r.status, Synced | Behind | UpToDate) {
@@ -439,7 +453,11 @@ pub fn render_sync(reports: &[cdno_domain::TemplateSyncReport], check: bool) -> 
         }
         out.push('\n');
     }
-    if check && reports.iter().all(|r| r.status != Behind) {
+    if check
+        && reports
+            .iter()
+            .all(|r| matches!(r.status, UpToDate | NotCustomised))
+    {
         out.push_str("Nothing to add.\n");
     }
     out

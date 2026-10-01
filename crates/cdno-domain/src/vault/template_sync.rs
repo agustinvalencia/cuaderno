@@ -39,6 +39,10 @@ pub enum TemplateSyncStatus {
     /// The override has no `---` frontmatter block, so there is nowhere to
     /// put a key. Reported, never rewritten.
     NoFrontmatter,
+    /// The override could not be read (for instance it is not UTF-8).
+    /// Reported with the error, never rewritten, and never allowed to stop
+    /// `--all`, `templates list` or lint for the other types.
+    Unreadable,
 }
 
 /// The outcome of syncing one built-in type's custom override.
@@ -54,6 +58,9 @@ pub struct TemplateSyncReport {
     /// The override's own keys that the built-in does not have. Kept as
     /// they are; listed so a reader sees nothing was dropped.
     pub kept: Vec<String>,
+    /// Why the override could not be read, when `status` is `Unreadable`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl Vault {
@@ -85,11 +92,19 @@ impl Vault {
             status: TemplateSyncStatus::NotCustomised,
             added: Vec::new(),
             kept: Vec::new(),
+            error: None,
         };
         if !self.store.exists(&path)? {
             return Ok(report);
         }
-        let custom = self.store.read_file(&path)?;
+        let custom = match self.store.read_file(&path) {
+            Ok(text) => text,
+            Err(e) => {
+                report.status = TemplateSyncStatus::Unreadable;
+                report.error = Some(e.to_string());
+                return Ok(report);
+            }
+        };
         let builtin = builtin_template(nt);
         let Some(outcome) = sync_text(builtin, &custom) else {
             report.status = TemplateSyncStatus::NoFrontmatter;
@@ -125,8 +140,8 @@ impl Vault {
     }
 
     /// The built-in keys the custom override of `nt` lacks, in built-in
-    /// order; empty when there is no override, it is up to date, or it has
-    /// no frontmatter. Read-only, for `templates list` and lint.
+    /// order; empty when there is no override, it is up to date, it has no
+    /// frontmatter, or it cannot be read. Read-only, for `templates list`.
     pub(in crate::vault) fn stale_template_keys(
         &self,
         nt: NoteType,
@@ -162,7 +177,8 @@ pub(crate) fn sync_text(builtin: &str, custom: &str) -> Option<SyncedText> {
     let builtin_fm = FrontmatterLines::parse(builtin)?;
     let mut lines: Vec<String> = custom.split_inclusive('\n').map(str::to_owned).collect();
     let mut fm = FrontmatterLines::parse(custom)?;
-    let crlf = custom.contains("\r\n");
+    // Line endings follow the frontmatter itself, not the body.
+    let crlf = lines[..=fm.close].iter().any(|l| l.ends_with("\r\n"));
 
     let builtin_keys = builtin_fm.keys();
     let kept: Vec<String> = fm
@@ -181,7 +197,10 @@ pub(crate) fn sync_text(builtin: &str, custom: &str) -> Option<SyncedText> {
         let insert_at = builtin_keys[..i]
             .iter()
             .rev()
-            .find_map(|k| fm.block_end_of(k))
+            .find_map(|k| {
+                fm.block_end_of(k)
+                    .map(|end| fm.trim_trailing_notes(&lines, end))
+            })
             .or_else(|| {
                 builtin_keys[i + 1..]
                     .iter()
@@ -223,17 +242,20 @@ impl FrontmatterLines {
     /// `None` when either is missing.
     fn parse(text: &str) -> Option<Self> {
         let lines: Vec<String> = text.split_inclusive('\n').map(str::to_owned).collect();
-        if lines.first().map(|l| l.trim_end()) != Some("---") {
+        // Exactly `---`, as `cdno_core::frontmatter` reads it: trailing
+        // spaces or a BOM make it not a delimiter there, so not here either.
+        let is_delim = |l: &String| l.trim_end_matches(['\r', '\n']) == "---";
+        if !lines.first().is_some_and(is_delim) {
             return None;
         }
         let close = lines
             .iter()
             .enumerate()
             .skip(1)
-            .find(|(_, l)| l.trim_end() == "---")
+            .find(|(_, l)| is_delim(l))
             .map(|(i, _)| i)?;
         let keys = (1..close)
-            .filter_map(|i| top_level_key(&lines[i]).map(|k| (k.to_owned(), i)))
+            .filter_map(|i| top_level_key(&lines[i]).map(|k| (k, i)))
             .collect();
         Some(Self { lines, close, keys })
     }
@@ -261,6 +283,22 @@ impl FrontmatterLines {
                 .map(|(_, line)| *line)
                 .unwrap_or(self.close),
         )
+    }
+
+    /// Step back from `end` over blank and comment lines, so a key inserted
+    /// after a block does not land between a comment and the key it
+    /// describes.
+    fn trim_trailing_notes(&self, lines: &[String], end: usize) -> usize {
+        let mut at = end;
+        while at > 1 {
+            let prev = lines[at - 1].trim();
+            if prev.is_empty() || prev.starts_with('#') {
+                at -= 1;
+            } else {
+                break;
+            }
+        }
+        at
     }
 
     /// `key`'s block, line by line, with line endings matched to the target
@@ -301,14 +339,34 @@ impl FrontmatterLines {
 }
 
 /// The key of a top-level frontmatter line (`key: value` at column 0), or
-/// `None` for an indented, list, comment or blank line.
-fn top_level_key(line: &str) -> Option<&str> {
+/// `None` for an indented, list, comment or blank line, or a plain scalar
+/// that merely contains a colon (`https://example.com`). Accepts what YAML
+/// accepts for a mapping key in practice: a space before the colon and a
+/// key in matching single or double quotes, so `"closed": null` counts as
+/// `closed` and is never added a second time.
+fn top_level_key(line: &str) -> Option<String> {
     let first = line.chars().next()?;
-    if !(first.is_ascii_alphanumeric() || first == '_') {
+    if first.is_whitespace()
+        || matches!(
+            first,
+            '#' | '-' | '[' | '{' | '?' | '&' | '*' | '!' | '|' | '>'
+        )
+    {
         return None;
     }
-    let (key, _) = line.split_once(':')?;
-    key.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        .then_some(key)
+    let (raw, rest) = line.split_once(':')?;
+    // A mapping key's colon is followed by whitespace or the line end.
+    if !rest.is_empty() && !rest.starts_with([' ', '\t', '\r', '\n']) {
+        return None;
+    }
+    let raw = raw.trim_end();
+    let key = match raw.chars().next() {
+        Some(q @ ('"' | '\'')) => raw.strip_prefix(q)?.strip_suffix(q)?,
+        _ => raw,
+    };
+    (!key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')))
+    .then(|| key.to_owned())
 }

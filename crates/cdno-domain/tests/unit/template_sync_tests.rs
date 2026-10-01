@@ -220,3 +220,75 @@ fn every_built_in_ejected_unchanged_is_up_to_date() {
         assert_eq!(report.status, TemplateSyncStatus::UpToDate, "{report:?}");
     }
 }
+
+// Review findings on #715.
+
+#[test]
+fn a_quoted_or_spaced_key_counts_as_present() {
+    for line in ["\"closed\": null", "'closed': null", "closed : null"] {
+        let text = STALE_PROJECT.replace("owner: unassigned", line);
+        let (vault, store) = vault_with(&[(OVERRIDE_PATH, &text)]);
+
+        let report = vault.sync_template("project", true).expect("sync");
+
+        assert_eq!(report.status, TemplateSyncStatus::UpToDate, "{line}");
+        assert_eq!(store.read_file(&vp(OVERRIDE_PATH)).unwrap(), text, "{line}");
+    }
+}
+
+#[test]
+fn a_new_key_is_not_wedged_between_a_comment_and_its_key() {
+    let stale = STALE_PROJECT.replace(
+        "owner: unassigned",
+        "# who answers for it\nowner: unassigned",
+    );
+    let (vault, store) = vault_with(&[(OVERRIDE_PATH, &stale)]);
+
+    vault.sync_template("project", true).expect("sync");
+
+    assert!(store.read_file(&vp(OVERRIDE_PATH)).unwrap().contains(
+        "core_question: {{core_question}}\nclosed: null\n# who answers for it\nowner: unassigned\n"
+    ));
+}
+
+#[test]
+fn line_endings_follow_the_frontmatter_not_the_body() {
+    // Split after the closing `---` line, so only the body turns CRLF.
+    let (fm, body) = STALE_PROJECT.split_at(STALE_PROJECT.find("---\n\n# ").unwrap() + 4);
+    let mixed = format!("{fm}{}", body.replace('\n', "\r\n"));
+    let (vault, store) = vault_with(&[(OVERRIDE_PATH, &mixed)]);
+
+    vault.sync_template("project", true).expect("sync");
+
+    assert!(
+        store
+            .read_file(&vp(OVERRIDE_PATH))
+            .unwrap()
+            .contains("core_question: {{core_question}}\nclosed: null\nowner")
+    );
+}
+
+#[test]
+fn a_delimiter_with_trailing_spaces_is_not_frontmatter() {
+    // `cdno_core::frontmatter` does not accept it either, so sync must not
+    // call such a file current.
+    let broken = STALE_PROJECT.replacen("---\n", "---   \n", 1);
+    let (vault, _store) = vault_with(&[(OVERRIDE_PATH, &broken)]);
+
+    let report = vault.sync_template("project", false).expect("check");
+
+    assert_eq!(report.status, TemplateSyncStatus::NoFrontmatter);
+}
+
+#[test]
+fn a_url_at_column_zero_is_not_a_key() {
+    let text = STALE_PROJECT.replace(
+        "owner: unassigned",
+        "owner: unassigned\nhttps://example.com",
+    );
+    let (vault, _store) = vault_with(&[(OVERRIDE_PATH, &text)]);
+
+    let report = vault.sync_template("project", false).expect("check");
+
+    assert_eq!(report.kept, vec!["owner".to_owned()]);
+}
