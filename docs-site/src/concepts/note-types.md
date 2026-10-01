@@ -8,7 +8,7 @@ typed structure — if it parses, it's valid. There are **twelve** note types.
 | `daily` | `journal/<year>/daily/` | Append-only | One day's chronological log |
 | `weekly` | `journal/<year>/weekly/` | Append-only | Weekly review (Wins, Challenges, One Improvement, This Week's Goal) |
 | `monthly` | `journal/<year>/monthly/` | Append-only | Monthly review (Wins, Themes, Next Month's Focus) + links to the month's weeks |
-| `project` | `projects/` (+ `_parked/`) | **Mutable** | Project map: state, next actions, milestones, waiting-on |
+| `project` | `projects/` (+ `_parked/`, `_done/<year>/`) | **Mutable** | Project map: state, next actions, milestones, waiting-on |
 | `action` | `actions/` → `actions/_done/<year>/` | Mutable while open, then archived | Manifest note for an action-as-investigation |
 | `portfolio` | `portfolios/<slug>/_index.md` | Occasionally edited | Index/summary of an evidence dossier |
 | `evidence` | `portfolios/<slug>/` | Append-only | A single piece of evidence (paper, result, note) |
@@ -35,7 +35,8 @@ Projects are the only freely-mutable note type. A project carries a **Current St
 **next actions** (inline bullets by default), **milestones**, and **waiting-on** items. When you
 update the Current State, the previous state is auto-logged to today's daily note first, so history
 is never lost (see [Business rules](business-rules.md)). At most **five** projects are active at
-once; the rest live parked in `projects/_parked/`.
+once; the rest live parked in `projects/_parked/`, and a completed or dropped project moves to
+`projects/_done/<year>/`.
 
 ## `action` — inline by default, a note when it grows
 

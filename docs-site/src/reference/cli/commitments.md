@@ -1,8 +1,8 @@
 # `cdno commitments`
 
-List aggregated commitments across the vault — project hard milestones, standalone commitment notes,
-stewardship periodic commitments, and self-imposed action-note deadlines — sorted by date, with
-overdue items flagged.
+List aggregated commitments across the vault — the hard milestones of active projects, standalone
+commitment notes, stewardship periodic commitments, and self-imposed action-note deadlines — sorted
+by date, with overdue items flagged.
 
 ```text
 cdno commitments [OPTIONS]
@@ -30,7 +30,7 @@ cdno commitments --json | jq '.[] | select(.overdue)'
 This is a derived view, not a single file. It merges four sources (see
 [Business rules](../../concepts/business-rules.md#commitments-are-aggregated-not-stored-in-one-place)):
 project milestones marked `--hard`, stewardship periodic commitments, standalone
-[`commit`](commit.md) notes, and action notes with a self-imposed `due:`.
+[`commit`](commit.md) notes, and action notes with a self-imposed `due:`. A project's own dates count only while the project is active: parking, completing or dropping it takes its milestones and action due dates out of the view until it is activated again. A standalone commitment that names a parked or closed project keeps surfacing, since it is a promise to someone else.
 
 ## Related MCP tool
 

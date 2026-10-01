@@ -39,10 +39,17 @@ date_end: 2026-04-30
 ```yaml
 type: project
 context: work          # work | side-project | university | family | household | legal | personal
-status: active         # active | parked
+status: active         # active | parked | completed | dropped
 created: 2026-04-25
 core_question?: "[[questions/research/surrogate-cost]]"
+closed: null           # set by complete/drop, cleared by activate
 ```
+
+`status` and `closed` are owned by the lifecycle verbs (`park`, `activate`, `complete`, `drop`), so
+`cdno frontmatter set` refuses both. `status` has to match the folder the map lives in: `projects/`
+for `active`, `projects/_parked/` for `parked`, and `projects/_done/<year>/` for `completed` or
+`dropped`. A map written before `closed:` existed needs no edit, since a missing `closed:` reads as
+open.
 
 ## `action`
 

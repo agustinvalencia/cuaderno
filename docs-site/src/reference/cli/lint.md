@@ -28,6 +28,20 @@ deliberately narrow — the marker has to open the entry and be followed immedia
 ordinary prose in `## Logs`, including a sentence that merely mentions starting something or names a
 note mid-sentence, is never flagged.
 
+It checks each project map's `status` against the folder the map sits in and against its `closed:`
+date. A status its folder contradicts is an error, since the project verbs find a map by its folder
+and act on it by its status; the message says which way to repair it:
+
+```text
+[error] projects/_parked/alpha.md: project says `status: active` but is not at `projects/<slug>.md`; move it there, or set the status its folder stands for
+```
+
+A `completed` or `dropped` map outside `projects/_done/<year>/` is told to move there and set
+`closed: <date>`, or to set `status: active` and close it with
+[`cdno project complete`](project.md). A `closed:` date that disagrees with the status is a
+warning: a completed or dropped map without one cannot be placed by the reviews, and an active or
+parked map carrying one should have `closed: null`.
+
 It also warns when a customised template (`.cuaderno/templates/<type>.md`) lacks a frontmatter key that
 the built-in template has, typically one a release added after you customised it, and reports a
 customised template it cannot read (for instance one that is not UTF-8) as an error:

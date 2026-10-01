@@ -229,7 +229,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "The four-source aggregated commitments timeline: project milestones with hard deadlines, stewardship periodic commitments, standalone commitment notes, and action notes with a self-imposed due date. `lookahead_weeks` (default 2) sets the forward window; overdue commitments are always included. Mirrors `cdno commitments --weeks N`."
+        description = "The four-source aggregated commitments timeline: hard-deadline milestones of active projects, stewardship periodic commitments, standalone commitment notes, and action notes with a self-imposed due date whose project is active. A parked, completed or dropped project's own dates are left out until it is activated again; a standalone commitment naming such a project still appears, being a promise to someone else. `lookahead_weeks` (default 2) sets the forward window; overdue commitments are always included. Mirrors `cdno commitments --weeks N`."
     )]
     pub async fn get_commitments(
         &self,

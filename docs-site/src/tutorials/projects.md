@@ -113,8 +113,8 @@ Tick what was done, drop what is not happening (each with its own reason), and r
 again. A `drop` can instead let the open items go with the project: it asks first, or takes
 `--drop-open` in a script. Commitments you made to other people are never touched by either.
 
-`cdno project list --closed` shows what has ended, newest first, and the weekly and monthly reviews
-list the projects that closed in their window. A closed project can come back with
+`cdno project list --closed` shows what has ended, newest first, and the MCP weekly and monthly
+contexts (`get_weekly_context`, `get_monthly_context`) list the projects that closed in their window. A closed project can come back with
 `cdno project activate`, or take the other outcome later if the first one was wrong.
 
 Next: [Research and evidence](research-and-evidence.md).

@@ -169,7 +169,8 @@ why and version control keeps what (`vault/revise.rs`); and `<type> created [[<p
 records a creation (`build_created_line` in `vault/log.rs`; a commitment links its bare slug).
 RFC 0004 adds the project closures: `project completed [[<slug>]] — <title>` and
 `project dropped on [[<slug>]] — <title>` (with an indented `reason:` line when one is given), and
-the child lines a drop cascade writes carry `reason: project dropped (<reason>)`.
+the child lines a drop cascade writes carry `reason: project dropped`, followed by ` (<reason>)` when
+the drop was given one.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

@@ -80,11 +80,11 @@ isn't a TTY (it's piped or redirected). See [CLI overview](cli/overview.md#inter
 
 ## Can't create a sixth project
 
-That's the [five-project cap](../concepts/business-rules.md#the-five-project-cap). Park an active
-project first:
+That's the [five-project cap](../concepts/business-rules.md#the-five-project-cap). Free a slot first:
+park an active project, or close one that has finished or is not going to happen.
 
 ```bash
-cdno project park --slug some-active-project
+cdno project park --slug some-active-project       # or: project complete / project drop
 cdno project activate --slug the-one-you-want
 ```
 

@@ -94,7 +94,7 @@ the content.
 | `drop_action` | `project`, `query`, `reason?` | Close an action **without** recording it as done (superseded, abandoned, reprioritised); archives its note as `status: dropped`. |
 | `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |
 | `complete_milestone` | `project`, `query` | Complete a milestone (substring match). |
-| `drop_milestone` | `project`, `query`, `reason?` | Remove a milestone **without** recording it as met (superseded, mis-typed, not happening); logs `milestone dropped on`. Completed bullets are never matched. |
+| `drop_milestone` | `project`, `query`, `reason?` | Remove a milestone, with the lines indented beneath it, **without** recording it as met (superseded, mis-typed, not happening); logs `milestone dropped on`. Completed bullets are never matched. |
 | `add_waiting_on` | `project`, `description` | Add a waiting-on blocker. |
 | `resolve_waiting_on` | `project`, `query` | Resolve a waiting-on item (substring match). |
 
@@ -150,7 +150,7 @@ the field.
 
 | Tool | Inputs | Effect |
 |------|--------|--------|
-| `set_frontmatter` | `note`, `key`, `value` | Set a declared, `settable = true` typed frontmatter field through the index (no desync). `note` is `today`, a `YYYY-MM-DD` date, or a vault-relative path. Engine-owned keys (`type`, `status`, a period key) are rejected; the value is type-checked; `log_on_change` fields stamp a daily-log line. ([`cdno frontmatter set`](../cli/frontmatter.md)) |
+| `set_frontmatter` | `note`, `key`, `value` | Set a declared, `settable = true` typed frontmatter field through the index (no desync). `note` is `today`, a `YYYY-MM-DD` date, or a vault-relative path. Engine-owned keys (`type`, `status`, a period key, and a project's `closed`, owned by `complete_project` / `drop_project` / `activate_project`) are rejected; the value is type-checked; `log_on_change` fields stamp a daily-log line. ([`cdno frontmatter set`](../cli/frontmatter.md)) |
 
 ## Daily, weekly, and monthly sections
 

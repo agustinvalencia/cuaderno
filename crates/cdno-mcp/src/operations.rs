@@ -125,7 +125,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Drop an open milestone from an active project: removes the bullet from `## Milestones` and logs `milestone dropped on [[slug]]` to today's daily note, with an optional `reason` on a continuation line. `query` matches exactly as `complete_milestone`'s does. Use this for a milestone that was superseded, mis-typed or is not going to happen -- it is the only way to be rid of one without either claiming it was met or hand-editing the file, which desyncs the index. Completed bullets are never matched: those are a record of what happened."
+        description = "Drop an open milestone from an active project: removes the bullet from `## Milestones`, with the lines indented beneath it (notes and nested milestones go with it), and logs `milestone dropped on [[slug]]` to today's daily note, with an optional `reason` on a continuation line. `query` matches exactly as `complete_milestone`'s does. Use this for a milestone that was superseded, mis-typed or is not going to happen -- it is the only way to be rid of one without either claiming it was met or hand-editing the file, which desyncs the index. Completed bullets are never matched: those are a record of what happened."
     )]
     pub async fn drop_milestone(
         &self,
@@ -410,7 +410,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Set a declared, settable typed frontmatter field on a note, writing through the index so it never desyncs. `note` is `today`, a `YYYY-MM-DD` date (daily note), or a vault-relative path. `key` must be declared `settable = true` under `[schemas.<type>.fields.<key>]`; `value` is coerced to the declared type. Engine-owned keys (`type`, `status`, the calendar period key) are rejected -- use the lifecycle tools for those. Toggles daily flags like `meds`/`workout`/`closed` without a hand-edit."
+        description = "Set a declared, settable typed frontmatter field on a note, writing through the index so it never desyncs. `note` is `today`, a `YYYY-MM-DD` date (daily note), or a vault-relative path. `key` must be declared `settable = true` under `[schemas.<type>.fields.<key>]`; `value` is coerced to the declared type. Engine-owned keys (`type`, `status`, the calendar period key, and a project's `closed`, which `complete_project` / `drop_project` / `activate_project` own) are rejected -- use the lifecycle tools for those; a project is never closed by setting `closed`. Toggles daily flags like `meds`/`workout` without a hand-edit."
     )]
     pub async fn set_frontmatter(
         &self,

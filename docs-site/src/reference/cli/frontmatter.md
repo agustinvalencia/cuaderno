@@ -35,10 +35,10 @@ emits the `{ path, message }` write result.
   declared field without `settable = true` (absent or `false`) is rejected.
 - **Type-checked.** A value that doesn't parse as the declared type — or isn't
   one of a `string` field's `values` — is rejected and nothing is written.
-- **Reserved keys are blocked.** `type`, `status`, and a calendar type's period
-  key (`date`/`week`/`month`) are engine-owned regardless of config — use the
-  lifecycle commands (`cdno project park/activate`, `cdno question set-status`,
-  …) for those, so their auto-logging and index invariants are never bypassed.
+- **Reserved keys are blocked.** `type`, `status`, a calendar type's period
+  key (`date`/`week`/`month`), and a project's `closed` date are engine-owned
+  regardless of config — use the lifecycle commands (`cdno project
+  park/activate/complete/drop`, `cdno question set-status`, …) for those, so their auto-logging and index invariants are never bypassed.
 - **No-op on no change.** Setting a field to the value it already holds writes
   nothing and logs nothing.
 - **Optional auto-log.** When the field declares `log_on_change = true`, a real
