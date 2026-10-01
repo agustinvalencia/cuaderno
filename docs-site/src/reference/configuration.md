@@ -141,7 +141,7 @@ required = false                 # optional; default false
 | `default` | matching `type` | — | A static default value, type-checked at load. **Populated at create** when a custom template references `{{<name>}}`. A `date` is a quoted `"YYYY-MM-DD"`. |
 | `required` | bool | `false` | Reserved for create-time enforcement (a later release); parsed now, but inert — it does not yet block creation. |
 | `values` | list of strings | — | An allowed-value constraint. Valid only on a `string` field. |
-| `settable` | bool | `false` | Whether `set_frontmatter` (`cdno frontmatter set`, MCP `set_frontmatter`) may write this field. **Default-deny**: absent or `false` means not settable. Never overrides an engine-owned key (`type`, `status`, a period key) — those stay blocked regardless. |
+| `settable` | bool | `false` | Whether `set_frontmatter` (`cdno frontmatter set`, MCP `set_frontmatter`) may write this field. **Default-deny**: absent or `false` means not settable. Never overrides an engine-owned key (`type`, `status`, a period key, and a project's `closed`) — those stay blocked regardless. |
 | `log_on_change` | bool | `false` | When a `settable` field's value actually changes, stamp a `key: old → new` line into today's daily note in the same commit. |
 
 Notes and limits:

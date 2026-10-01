@@ -82,7 +82,7 @@ pub enum ProjectCommands {
     /// open: complete or drop each first. Works on a parked project too,
     /// and never needs a slot.
     Complete {
-        /// Project slug (active or parked).
+        /// Project slug (active, parked, or dropped to complete it instead).
         #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
     },
@@ -91,7 +91,7 @@ pub enum ProjectCommands {
     /// projects/_done/<year>/. With open actions or milestones it lists
     /// them and asks before letting them go (or takes --drop-open).
     Drop {
-        /// Project slug (active or parked).
+        /// Project slug (active, parked, or completed to drop it instead).
         #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         slug: Option<String>,
         /// Why it is being dropped; logged with the drop, and with each open
@@ -174,8 +174,8 @@ pub enum MilestoneCommands {
         query: Option<String>,
     },
     /// Remove a milestone that is not going to happen, by substring
-    /// match. Use this rather than `done` when the work was not
-    /// performed: `done` records a completion.
+    /// match, with the lines indented beneath it. Use this rather than
+    /// `done` when the work was not performed: `done` records a completion.
     Drop {
         /// Project slug.
         #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]

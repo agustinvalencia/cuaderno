@@ -58,7 +58,7 @@ The tool has four consumers:
 
 **Append-only**: daily, weekly, monthly, evidence, tracking. Once written, these notes only grow. They are the historical record.
 
-**Mutable dashboard**: project. The current state section is rewritten regularly. Previous states are auto-logged to the daily entry before being overwritten, preserving full history in the chronological log.
+**Mutable dashboard**: project. The current state section is rewritten regularly. Previous states are auto-logged to the daily entry before being overwritten, preserving full history in the chronological log. A project is parked to `projects/_parked/` and closes, completed or dropped, into `projects/_done/<year>/` with a `closed:` date; `activate` brings either back (§5.3).
 
 **Stable reference**: portfolio (index), stewardship, question. Updated occasionally during reviews, not during daily work.
 
@@ -298,6 +298,7 @@ context: work
 status: active
 created: 2026-01-15
 core_question: "[[questions/research/surrogate-cost-reduction]]"
+closed: null
 ---
 
 # Surrogate Model for Turbulence Simulations
@@ -345,9 +346,9 @@ Milestones are extracted into a first-class `milestones(project_id, name, date, 
 
 **5-project cap**: maximum 5 active projects across all contexts. Parked projects move to `projects/_parked/`. Enforced by the tool — creating a 6th active project prompts parking one first.
 
-**Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed outcomes. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped (<reason>)`) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again with the other outcome as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
+**Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed outcomes. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped`, or `reason: project dropped (<reason>)` when a reason was given) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again with the other outcome as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
 
-**Milestones with hard deadlines** are picked up by the commitments aggregation query.
+**Milestones with hard deadlines** are picked up by the commitments aggregation query while the project is active; a parked or closed project's milestones leave the register until it is activated again.
 
 ### 5.4 Portfolio Index
 
@@ -719,10 +720,12 @@ A benchmark result is evidence; what the benchmark taught you about the techniqu
 
 The commitments register is **not a static file**. It is a query assembled by the indexer from four sources:
 
-1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`, surfaced via the `milestones` index table)
+1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`, surfaced via the `milestones` index table), of an active project
 2. **Stewardship periodic commitments** (parsed from `## Periodic Commitments` sections, with recurrence logic)
 3. **Standalone commitment notes** in `commitments/` (read from the `due` frontmatter field)
-4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth.
+4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth. Like source 1, only an active project's action notes count.
+
+Sources 1 and 4 ask the parent project's `status`: a parked, completed or dropped project's own dates leave the register until it is activated again. Source 3 does not: a standalone commitment is a promise to someone else and keeps surfacing whatever became of the project it names (RFC 0004 §5.5).
 
 A periodic commitment line is `- {title} — {recurrence} — next: YYYY-MM-DD`, optionally followed by
 a free-text annotation after the date (`(overdue)`, `— moved from April`). It is parsed by anchoring
@@ -785,7 +788,7 @@ The project map is the primary mutable note. To prevent loss of historical conte
 
 This ensures no information is lost while keeping the project map clean and focused on the present.
 
-**Exceptions to the `was:`/`now:` shape.** Two further line families record changes without copying the old text:
+**Exceptions to the `was:`/`now:` shape.** Three further line families record changes without copying the old text:
 
 - **Revisions of mutable custom notes** such as concepts (§5.12). `revise_note` and `cdno note revise` write, in the same transaction as the note, `revised [[<path>]] — <reason>` for a whole-body revision or `revised [[<path>#<Heading>]] — <reason>` for a one-section upsert; the path has no `.md`, the anchor is the raw heading text, and the reason is required and flattened to one line. A revision that leaves the text unchanged writes and logs nothing.
 
@@ -797,6 +800,13 @@ This ensures no information is lost while keeping the project map clean and focu
 
   ```markdown
   - **15:05**: concept created [[concepts/sherman-morrison]] — Sherman–Morrison formula
+  ```
+
+- **Project closures.** `complete_project` and `drop_project` (`cdno project complete` / `drop`) write `project completed [[<slug>]] — <title>` or `project dropped on [[<slug>]] — <title>`, the drop followed by an indented `reason:` line when one is given. When a drop takes open items with it, each writes its own `action dropped on` / `milestone dropped on` line with `reason: project dropped`, or `reason: project dropped (<reason>)` when the drop has a reason.
+
+  ```markdown
+  - **17:20**: project dropped on [[surrogate-model]] — Surrogate Model for Turbulence Simulations
+    reason: funding moved to the coupled solver
   ```
 
 **The trade-off.** A project's Current State is a small snapshot, so copying the old text into the log is cheap and makes the log self-contained. A concept's body can be pages long and is revised often, so copying it would bury the daily sequence under prose. Mutable custom notes therefore keep their history through the daily log line, which records *when* and *why*, not through a diff of *what*: the old text is left to version control, when the vault is kept under it, rather than copied into the log. Edits made outside cuaderno, in an editor, are legitimate because markdown is the source of truth, but they leave no log line; that is a limit of the invariant, not something lint enforces.
@@ -1337,6 +1347,30 @@ upsert_daily_section(section, content, date?, append?)
   → the append-only ## Logs / ## Notes are unreachable here
 ```
 
+Project lifecycle (RFC 0004):
+
+```
+park_project(project)
+  → moves the map to projects/_parked/, frees a slot
+
+activate_project(project)
+  → from parked or closed (projects/_done/<year>/), under the cap
+  → clears closed: on a closed map
+
+complete_project(project)
+  → refused with the open actions and milestones while any is open
+  → moves the map to projects/_done/<year>/, status: completed, closed: today
+
+drop_project(project, reason?, open_items?, expected_open_items?)
+  → refused like complete_project by default (open_items: "refuse")
+  → open_items: "drop" with the refusal's open_items_hash drops the
+    open items with it; a changed list is refused again
+  → linked standalone commitments are never touched
+
+list_projects(include_closed?)
+  → active and parked maps; closed ones on request
+```
+
 The optional `vars?` parameter (a `name -> value` map) supplies values for a template's
 `[variables.prompt]` placeholders (§9 Tier 3) — the MCP analogue of the CLI's repeatable
 `--var name=value`. It is accepted on every create tool that gathers prompted variables
@@ -1364,9 +1398,9 @@ remove.
 |Skill                              |Changes                                                                                                                                                                                                                 |
 |-----------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |**start-day → daily-orientation**  |Gather from `get_orientation` instead of task-focused queries. Show commitments (48h), one project to start with, energy prompt. Remove meetings/agenda step. Keep emotional architecture.                              |
-|**weekly-review**                  |Add stewardship scan step. Use `get_weekly_context` for wins pre-population. Add commitments 2-week lookahead. Keep celebration-first structure.                                                                        |
-|**monthly-report → monthly-review**|Restructure as interactive strategic scan using `get_monthly_context`. Walk through: wins patterns, questions review, portfolio staleness, project stuck-check, stewardship habits, 6-week commitments, slot allocation.|
-|**create-project**                 |Generate project map template. Add `core_question` linking. Enforce 5-project cap. Prompt to park if at cap.                                                                                                            |
+|**weekly-review**                  |Add stewardship scan step. Use `get_weekly_context` for wins pre-population, including `closed_projects` (a completion is a win; a drop is a decision worth naming). Add commitments 2-week lookahead. Keep celebration-first structure.|
+|**monthly-report → monthly-review**|Restructure as interactive strategic scan using `get_monthly_context`. Walk through: wins patterns, questions review, portfolio staleness, project stuck-check (complete, drop or park), `closed_projects` and the `parked_projects` shelf, stewardship habits, 6-week commitments, slot allocation.|
+|**create-project**                 |Generate project map template. Add `core_question` linking. Enforce 5-project cap. At the cap, offer to park, complete or drop an active project to free a slot.                                                       |
 |**create-task → add-action**       |Default: append inline next action to project map via `add_action`. Set `with_note=true` only for action-as-investigation cases (§5.11) — the heavier form is exceptional, not default.                                  |
 |**read-paper**                     |Add final step: “Which portfolio should this go into?” File annotation via `file_to_portfolio`.                                                                                                                         |
 |**brain-dump**                     |Add post-capture step: suggest which portfolios/projects items belong to. Route via triage.                                                                                                                             |

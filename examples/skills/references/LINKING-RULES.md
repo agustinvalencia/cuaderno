@@ -8,7 +8,7 @@ Cuaderno slugs are unique across the vault, so the **bare form** `[[<slug>]]` re
 
 | Note type | On disk | Wikilink |
 |-----------|---------|----------|
-| Project map | `projects/<slug>.md` (or `projects/_parked/<slug>.md`) | `[[<slug>]]` or `[[projects/<slug>]]` |
+| Project map | `projects/<slug>.md` (or `projects/_parked/<slug>.md`, or `projects/_done/<year>/<slug>.md` once completed or dropped) | `[[<slug>]]` or `[[projects/<slug>]]` |
 | Action note | `actions/<slug>.md` | `[[<slug>]]` |
 | Question | `questions/<domain>/<slug>.md` (`domain` = `research` \| `life`) | `[[questions/<domain>/<slug>]]` |
 | Portfolio | `portfolios/<slug>/_index.md` | `[[portfolios/<slug>]]` or `[[<slug>]]` |

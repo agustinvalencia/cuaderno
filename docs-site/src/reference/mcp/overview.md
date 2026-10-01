@@ -23,7 +23,7 @@ The server advertises **60 tools**. This reference groups them by purpose:
 |-------|------|--------------|
 | Context-gathering reads | [Context-gathering tools](reads.md) | Orientation, project/portfolio/weekly context, search, reads, lint, triage list |
 | Writes | [Write tools](writes.md) | Log, capture, file evidence, project/action/milestone/waiting edits, note revision, commitments, tracking, daily/weekly sections |
-| Creation & lifecycle | [Creation and lifecycle tools](creation-and-lifecycle.md) | Create projects/portfolios/questions/stewardships, link portfolios, park/activate, status transitions |
+| Creation & lifecycle | [Creation and lifecycle tools](creation-and-lifecycle.md) | Create projects/portfolios/questions/stewardships, link portfolios, park/activate/complete/drop, status transitions |
 
 Every tool returns typed JSON; the shapes mirror the CLI's [`--json`](../json-output.md) output, so a
 client gets the same structures whichever surface it uses.
@@ -77,6 +77,13 @@ Three fields, and each has a job:
 
 `details` is the part that matters for automation. An ambiguous query hands back its **candidates as
 an array**, so a client picks from a list rather than parsing them out of a sentence.
+
+Two project codes carry details a client is likely to branch on:
+
+| Code | `details` | When |
+|---|---|---|
+| `project_not_active` | `slug`, `status` (`parked`, `completed` or `dropped`), and `closed` when the map carries a date | Any verb that edits a project's body (`add_action`, `update_project_state`, `drop_milestone`, …) on a parked or closed project, and a close repeating the outcome a project already has. A `parked` status means `activate_project` first; a closed one means the project is finished, unless the user wants it back. |
+| `ambiguous_project` | `slug`, `candidates: [{path, note_type}]` | The slug names maps in more than one of `projects/`, `projects/_parked/` and `projects/_done/<year>/`. Nothing can pick for you: keep one of the files by hand. |
 
 The test is simply **whether a different argument would change the outcome**. A slug that matches no
 note is a rejection (`not_found`), and its message carries the list of slugs that *do* exist. A note

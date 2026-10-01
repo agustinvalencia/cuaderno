@@ -678,7 +678,8 @@ pub enum OpenItemsChoice {
 /// Input for `drop_project` (RFC 0004).
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DropProjectInput {
-    /// Slug of an active or parked project.
+    /// Slug of an active or parked project, or of a completed one being
+    /// dropped as a new decision.
     pub project: String,
     /// Why the project is being dropped, e.g. "superseded by the ICML
     /// work". Optional, but strongly wanted: it is logged with the drop and

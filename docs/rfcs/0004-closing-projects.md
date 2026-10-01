@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft, amended after review — 2026-09-29 (three-seat review, three rounds, on the RFC PR; all seats approve for amendment; §9 D7 is the maintainer's to confirm) |
+| **Status** | Draft, amended after review — 2026-09-29 (three-seat review, three rounds, on the RFC PR; all seats approve for amendment; §9 D7 is the maintainer's to confirm). Implementation shipped: #692 (T0), #693 (T1), #694 (T2), #695 (T3), #697 (T4), #696 (T5), #698 (T6), #700 (T7), #701 (T8), #702 (T9), #703 (T10), #704 (T11), #705 (T12), #706 (T13), #707 (T14), #708 (T15), #709 (T16), #710 (T17), #711 (T18), #712 (T19), #713 (T20), #714 (T21). Follow-up shipped: #715 (`cdno templates sync`, #699). The status moves to Accepted once D7 is confirmed. |
 | **Tracked by** | #667 (a project can only be parked, never completed); #611 (a parked project's milestones and the commitments register) |
 | **Affects** | `cdno-core` (`paths.rs`, one index query), `cdno-domain` (project lifecycle, register, reviews, lint), `cdno-cli` (`cdno project`), `cdno-mcp` (two tools, one rejection code, four payloads), `docs/design.md`, `docs-site` |
 | **Related** | #559 (`drop_action`), #522 (`drop_milestone`), #573 (`drop_commitment`), #564 (the `reason:` continuation line), #560 (caller-actionable rejections over MCP), #225 (globally unique stems), #215 (last-segment wikilink resolution), #111 (append-only lint for archived actions), #481 (record sequences in frontmatter) |

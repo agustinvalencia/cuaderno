@@ -59,6 +59,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- The MCP tool descriptions an agent reads now state what RFC 0004 changed. `get_commitments` says
+  a parked or closed project's own dates are left out, `set_frontmatter` lists a project's `closed`
+  among the engine-owned keys (and no longer offers `closed` as an example daily flag),
+  `drop_milestone` says the lines indented beneath a milestone go with it, and `drop_project` gives
+  the cascade's plain `reason: project dropped` line for a drop without a reason. The user guide,
+  `docs/design.md`, the README and STATUS were brought up to date with the closing work: the
+  60-tool count, the `closed:` key and the four project statuses, the active-only commitments
+  register, lint's status/folder rows, the `project_not_active` and `ambiguous_project` rejection
+  details, and the `--json` shapes of `project complete`, `drop` and `list --closed` (RFC 0004).
+
 - The MCP `project_not_active` rejection now carries the project's `status` in `details`, and its
   `closed` date when it has one, so an agent can tell a parked project from a closed one without
   reading the message (RFC 0004, #686).

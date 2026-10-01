@@ -39,7 +39,7 @@ Tools that create new notes or move existing ones through their lifecycle.
   `open_items_hash`. `complete_project` stays refused until each item is completed or dropped: a
   completion is a claim that the work was done. `drop_project` with `open_items: "drop"` and
   `expected_open_items` set to that hash drops every listed item with the project, each logged with
-  `reason: project dropped (<reason>)`; if the list has changed since, it is refused again with the
+  `reason: project dropped (<reason>)` (plain `reason: project dropped` when no `reason` was given); if the list has changed since, it is refused again with the
   new list and hash. The result names `dropped_actions`, `dropped_milestones` and
   `untouched_commitments`.
 - A closed project can take the other outcome later (`complete_project` on a dropped one, and the

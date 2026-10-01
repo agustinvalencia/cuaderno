@@ -1,12 +1,13 @@
 # JSON output
 
 Adding `--json` to a supported verb swaps the formatted table for machine-readable JSON. These shapes
-match the [MCP server](mcp/overview.md) DTOs, so you get the same structures from the CLI and from an
+match the [MCP server](mcp/overview.md) DTOs, with the exceptions noted below, so you get the same structures from the CLI and from an
 AI client. (Which verbs support `--json` is covered in the [CLI overview](cli/overview.md#json-output).)
 
 ## Write verbs → a result object
 
-Every write verb emits the same small object and runs non-interactively:
+Every write verb emits the same small object and runs non-interactively (`project complete` and
+`project drop` add to it; see [below](#project-complete--drop---json--a-result-or-a-refusal)):
 
 ```json
 {
@@ -17,6 +18,38 @@ Every write verb emits the same small object and runs non-interactively:
 
 `path` is the vault-relative file written or updated; `message` is the human-readable line. For the
 two-file cases (e.g. `action add --note`), `path` is the file the verb considers primary.
+
+## `project complete` / `drop --json` → a result or a refusal
+
+A close that goes ahead emits the result object with three more arrays: what the drop let go, and
+the linked standalone commitments, which no close ever touches.
+
+```json
+{
+  "path": "projects/_done/2026/alpha-study.md",
+  "message": "Dropped alpha-study. 0 of 5 slots in use. Let go: 1 action, 1 milestone.",
+  "dropped_actions": ["Define first concrete step (light)"],
+  "dropped_milestones": ["Submit"],
+  "untouched_commitments": []
+}
+```
+
+A close refused because actions or milestones are open prints the rejection object the MCP server
+returns, on stdout, and exits `1`:
+
+```json
+{
+  "code": "project_has_open_items",
+  "message": "project 'alpha-study' has 2 open item(s) — tick the ones that are done, or let them go explicitly",
+  "details": {
+    "slug": "alpha-study",
+    "actions": [{ "text": "Define first concrete step (light)", "note": null, "note_status": null }],
+    "milestones": [{ "title": "Submit", "date": "2026-12-01", "hard": false }],
+    "untouched_commitments": [],
+    "open_items_hash": "76d0efb83a540bf9"
+  }
+}
+```
 
 ## `search --json` → an array of hits
 
@@ -81,6 +114,9 @@ cdno project list --json
 ]
 ```
 
+- **`project list --closed`** → `[{ "slug", "title", "context", "outcome", "closed_on" }]`, most
+  recently closed first; `outcome` is `completed` or `dropped`. This row is the CLI's own: MCP
+  `list_projects` with `include_closed` returns closed maps as `{ "slug", "frontmatter" }`.
 - **`portfolio list`** → `[{ "slug", "question", "evidence_count", "last_updated", "staleness_days" }]`
 - **`stewardship list`** → `[{ "slug", "name", "context", "variant", "tracking_count" }]`
 - **`action list`** → `[{ "text", "energy", "attached": { "slug", "status" } | null }]`
@@ -116,6 +152,6 @@ cdno portfolio show --portfolio sparse-vs-dense-attention-ood --json
 ## Casing
 
 Enumerations serialise in their canonical lowercase/kebab form, matching the MCP DTOs:
-`status` → `active`/`parked`/`completed`, `energy` → `deep`/`medium`/`light`, stewardship `variant` →
+`status` → `active`/`parked`/`completed`/`dropped`, `energy` → `deep`/`medium`/`light`, stewardship `variant` →
 `flat`/`expanded`, `context` → `work`/`side-project`/`household`/… So a value is identical whether you
 read it from `cdno --json` or over MCP.

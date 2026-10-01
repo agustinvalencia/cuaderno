@@ -44,8 +44,8 @@ A simple routine, ~15 minutes:
 4. `cdno review weekly` — capture Wins / Challenges / One Improvement, set next week's goal.
 
 The point isn't a perfect record; it's a regular moment to look up from the work, acknowledge what
-you did, and choose one direction. Parking a project or retiring a question here is a *good* outcome,
-not a failure.
+you did, and choose one direction. Parking, completing or dropping a project here, or retiring a
+question, is a *good* outcome, not a failure.
 
 ## With Claude
 

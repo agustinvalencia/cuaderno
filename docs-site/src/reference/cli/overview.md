@@ -57,6 +57,8 @@ and `--json` all behave exactly as they did before. See
 - **Write verbs** (`log`, `capture`, `file`, `track`, and the create/update verbs of `project`,
   `action`, `portfolio`, `stewardship`, `question`, `commit`) emit a `{ "path": ..., "message": ... }`
   result, and **run non-interactively** (so prompts can't corrupt the JSON on a terminal).
+  `project complete` and `drop` add what was let go, and print a refusal object and exit `1` while
+  items are open (see [JSON output](../json-output.md)).
 - **Maintenance / interactive / bootstrap commands** (`init`, `lint`, `reindex`, `normalise`,
   `triage`, `review`, `weekly`, `monthly`) ignore `--json`.
 

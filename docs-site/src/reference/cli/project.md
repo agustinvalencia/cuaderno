@@ -142,7 +142,8 @@ does not bring it back first.
 With open actions or milestones, `drop` lists them as `complete` does. In a terminal it then asks
 `Let these N go and drop <slug>? [y/N]`, and pressing Enter keeps everything. On `y` each open item
 is dropped with the project, logged as its own `action dropped on` / `milestone dropped on` line
-with `reason: project dropped (<your reason>)`, and an attached action note is archived as dropped.
+with `reason: project dropped (<your reason>)` (or plain `reason: project dropped` without
+`--reason`), and an attached action note is archived as dropped.
 If the list changed while you were answering, nothing is dropped and the new list is shown.
 Non-interactively the list is printed and the command exits 1, unless you pass `--drop-open`.
 
