@@ -6,6 +6,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-10-01
+
 ### Added
 
 - **Close a project: `cdno project complete` and `cdno project drop` (RFC 0004, #684).** Both
