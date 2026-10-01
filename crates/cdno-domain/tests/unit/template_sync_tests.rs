@@ -292,3 +292,33 @@ fn a_url_at_column_zero_is_not_a_key() {
 
     assert_eq!(report.kept, vec!["owner".to_owned()]);
 }
+
+#[test]
+fn a_hash_or_blank_line_inside_a_multi_line_value_stays_in_it() {
+    // In a quoted or block scalar, or a nested mapping holding one, a
+    // trailing `#` or blank line belongs to the value: `closed` goes after
+    // the whole block, never inside it.
+    for value in [
+        "\"Default question\n  # see the guide\"",
+        "'Default question\n# see the guide'",
+        "|\n  Line one\n  # heading",
+        ">\n  Line one\n  # heading",
+        "|+\n  Line one\n",
+        "\n  note: |\n    text\n    # heading",
+    ] {
+        let block = format!("core_question: {value}\n");
+        let stale = STALE_PROJECT.replace("core_question: {{core_question}}\n", &block);
+        let (vault, store) = vault_with(&[(OVERRIDE_PATH, &stale)]);
+
+        let report = vault.sync_template("project", true).expect("sync");
+
+        assert_eq!(report.added, vec!["closed".to_owned()], "{value}");
+        assert!(
+            store
+                .read_file(&vp(OVERRIDE_PATH))
+                .unwrap()
+                .contains(&format!("{block}closed: null\nowner: unassigned\n")),
+            "{value}"
+        );
+    }
+}

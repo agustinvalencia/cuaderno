@@ -197,10 +197,7 @@ pub(crate) fn sync_text(builtin: &str, custom: &str) -> Option<SyncedText> {
         let insert_at = builtin_keys[..i]
             .iter()
             .rev()
-            .find_map(|k| {
-                fm.block_end_of(k)
-                    .map(|end| fm.trim_trailing_notes(&lines, end))
-            })
+            .find_map(|k| fm.insert_point_after(&lines, k))
             .or_else(|| {
                 builtin_keys[i + 1..]
                     .iter()
@@ -285,20 +282,29 @@ impl FrontmatterLines {
         )
     }
 
-    /// Step back from `end` over blank and comment lines, so a key inserted
-    /// after a block does not land between a comment and the key it
-    /// describes.
-    fn trim_trailing_notes(&self, lines: &[String], end: usize) -> usize {
-        let mut at = end;
-        while at > 1 {
-            let prev = lines[at - 1].trim();
-            if prev.is_empty() || prev.starts_with('#') {
-                at -= 1;
-            } else {
-                break;
-            }
-        }
-        at
+    /// Where a key goes when it follows `key`: the end of `key`'s block,
+    /// except that a one-line plain value followed only by blank and
+    /// comment lines takes the key straight after it, so the new key does
+    /// not land between a comment and the key it describes. Any other
+    /// value keeps the whole block: inside a quoted or block scalar, or a
+    /// nested mapping that may hold one, a `#` or blank line can be part
+    /// of the value.
+    fn insert_point_after(&self, lines: &[String], key: &str) -> Option<usize> {
+        let (start, _) = self.position_of(key)?;
+        let end = self.block_end_of(key)?;
+        let value = lines[start]
+            .split_once(':')
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or_default();
+        // A `{{variable}}` is filled in before the YAML is read, so it is
+        // plain here despite the brace.
+        let plain = value.starts_with("{{")
+            || !value.starts_with(['|', '>', '"', '\'', '[', '{', '!', '&']);
+        let only_notes = lines[start + 1..end].iter().all(|l| {
+            let l = l.trim();
+            l.is_empty() || l.starts_with('#')
+        });
+        Some(if plain && only_notes { start + 1 } else { end })
     }
 
     /// `key`'s block, line by line, with line endings matched to the target

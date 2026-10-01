@@ -192,22 +192,21 @@ pub fn run(
             } else {
                 print!("{}", render_sync(&reports, check));
             }
-            let behind = reports
-                .iter()
-                .filter(|r| r.status == cdno_domain::TemplateSyncStatus::Behind)
-                .count();
+            let count = |status| reports.iter().filter(|r| r.status == status).count();
+            let behind = count(cdno_domain::TemplateSyncStatus::Behind);
+            let unreadable = count(cdno_domain::TemplateSyncStatus::Unreadable);
+            let mut failures = Vec::new();
             if behind > 0 {
-                bail!(
+                failures.push(format!(
                     "{behind} custom template(s) lack built-in keys; run `cdno templates sync` \
                      without --check to add them"
-                );
+                ));
             }
-            let unreadable = reports
-                .iter()
-                .filter(|r| r.status == cdno_domain::TemplateSyncStatus::Unreadable)
-                .count();
             if unreadable > 0 {
-                bail!("{unreadable} custom template(s) could not be read");
+                failures.push(format!("{unreadable} custom template(s) could not be read"));
+            }
+            if !failures.is_empty() {
+                bail!("{}", failures.join("; "));
             }
             Ok(())
         }
@@ -440,10 +439,10 @@ pub fn render_sync(reports: &[cdno_domain::TemplateSyncReport], check: bool) -> 
                 "{}: {} has no frontmatter block; left as it is",
                 r.note_type, r.path
             ),
+            // The store error already names the file.
             Unreadable => format!(
-                "{}: could not read {}: {}",
+                "{}: could not read it: {}",
                 r.note_type,
-                r.path,
                 r.error.as_deref().unwrap_or("unknown error")
             ),
         };

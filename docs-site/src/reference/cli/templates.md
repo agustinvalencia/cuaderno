@@ -123,7 +123,8 @@ cdno templates sync --all [--check]
 For each key of the built-in template's frontmatter that your file lacks, `sync` inserts the built-in
 line verbatim: a literal such as `closed: null`, or a placeholder line such as
 `core_question: {{core_question}}`. It goes right after the nearest built-in key that precedes it
-and your file has (before any comment or blank lines that close that key's block); failing that,
+and your file has: after that key's whole block, or, when that key has a one-line plain value,
+straight after its line, so a comment above your next key stays with it; failing that,
 right before the nearest built-in key that follows it; failing that, last in the frontmatter. A key
 your file already has, quoted (`"closed": null`) or with a space before the colon, counts as
 present. Nothing else changes: your own keys, their values, their order and the body stay
@@ -139,7 +140,8 @@ cdno templates sync --all --check     # in CI: fails while any override is behin
 `not_customised` object), each with `note_type`, `path`, `status` (`synced`, `behind`, `up_to_date`,
 `not_customised`, `no_frontmatter` or `unreadable`, the last with an `error`), `added` and `kept`
 (your own keys, listed so you can see nothing was dropped). A file with no `---` frontmatter block,
-or one that cannot be read, is reported and left alone; `--check` also fails on an unreadable one.
+or one that cannot be read, is reported and left alone; an unreadable one makes the command exit
+non-zero, with or without `--check`.
 It writes through the same path as `templates save`.
 
 [`cdno templates list`](#cdno-templates-list) and [`cdno lint`](lint.md) both say when an override

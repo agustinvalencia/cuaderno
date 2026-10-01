@@ -839,6 +839,17 @@ fn an_unreadable_override_is_one_row_not_a_failed_command() {
     assert!(
         templates::render_list(&templates::summaries(dir.path()).unwrap()).contains("lacks closed")
     );
+    // --check names both failures, not only the first.
+    cdno(dir.path())
+        .args(["templates", "sync", "--all", "--check"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "1 custom template(s) lack built-in keys",
+        ))
+        .stderr(predicates::str::contains(
+            "1 custom template(s) could not be read",
+        ));
     // sync --all syncs the readable override and reports the other.
     cdno(dir.path())
         .args(["templates", "sync", "--all"])
