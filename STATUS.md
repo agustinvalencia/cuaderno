@@ -109,12 +109,14 @@ Alongside, the vault says out loud something that was already true: **`cdno sear
 | `create_question` | Wired (#162) |
 | `create_stewardship` | Wired (#162; `expanded` flag = flat vs folder) |
 | `park_project` | Wired (#166) |
-| `activate_project` | Wired (#166; errors at the active cap) |
+| `activate_project` | Wired (#166; errors at the active cap; also brings back a closed project, RFC 0004) |
+| `complete_project` | Wired (RFC 0004; refused with `project_has_open_items` while anything is open) |
+| `drop_project` | Wired (RFC 0004; `open_items: "drop"` with the refusal's `open_items_hash` cascades) |
 | `set_question_status` | Wired (#166; `active`/`parked`/`answered`/`retired`) |
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
 | `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 58 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 58 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 60 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 58 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 
@@ -122,7 +124,7 @@ Reachable from the terminal via `cdno`:
 
 - `init` — scaffold a vault
 - `log` / `lint` / `capture` — daily-log writes, validation, inbox capture; `log note` writes a dated, headed entry into the daily `## Notes` section and points at it from `## Logs` (RFC 0002, #654)
-- `project create / state / core-question / park / activate / list / show / milestone {add,done,drop} / waiting {add,resolve}`
+- `project create / state / core-question / park / activate / complete / drop / list [--closed] / show / milestone {add,done,drop} / waiting {add,resolve}` — closing a project moves it to `projects/_done/<year>/` and is refused while an action or milestone is open; `drop` can let them go with it (RFC 0004)
 - `action add / start / promote / complete / drop / list` (bullet form + manifest note form)
 - `commit create / complete / drop / reschedule` and `commitments` aggregated view
 - `orient` / `status` / `now` — morning views and the current focus
@@ -144,7 +146,7 @@ Reachable from Claude via MCP (`cdno-mcp` binary):
 - **Context reads (10)** — `get_orientation`, `get_active_questions` (optional domain filter), `get_portfolio_contents`, `get_weekly_context` (ISO-week logs + completed actions + state changes + 2-week commitments), `get_monthly_context` (30-day wins + active questions + portfolios + stuck projects + stewardships + 6-week commitments + project slot allocation), `get_project_context` (project map + 30-day daily-log mentions + body backlinks + resolved core_question), `get_stewardship_tracking` (per-stewardship per-activity tracking notes in a configurable window like `30d`/`6m`/`1y`), `read_daily_note` (a day's markdown, or `exists: false` when none yet), `search_notes` (#172 — FTS5 full-text search over title + body, ranked best-first, with optional note-type / date-window / portfolio filters), `read_note` (one note by path or slug with its content hash, frontmatter, headings and backlinks, RFC 0002 #650)
 - **Operations** — `append_to_log`, `file_to_portfolio`, `update_project_state`, `add_action` (with optional `with_note`), `promote_action`, `complete_action`, `create_commitment`, `complete_commitment`, `create_tracking_entry` (with optional `routine`), `upsert_daily_section` (write a `{Standup, Intention, Agenda, Meeting}` section — replace, or `append` for live meeting notes; `Notes` is append-only), `note_to_daily` (a headed entry into the daily `## Notes` section with a `noted [[…#Heading]]` pointer in `## Logs`, #652), `revise_note` (hash-guarded whole-body or section revision of a custom note, logging `revised [[…]] — reason`, #651)
 - **Structural creation (#162)** — `create_project` (active below the cap, parked at/above it), `create_portfolio`, `create_question` (research/life), `create_stewardship` (flat or expanded)
-- **Lifecycle (#166)** — `park_project`, `activate_project` (cap-enforced), `set_question_status` (active/parked/answered/retired), `add_periodic_commitment` (recurrence + next date)
+- **Lifecycle (#166, RFC 0004)** — `park_project`, `activate_project` (cap-enforced; from parked or closed), `complete_project` and `drop_project` (refused while items are open; a drop cascades only with the hash of the list it was shown), `list_projects` with `include_closed`, `set_question_status` (active/parked/answered/retired), `add_periodic_commitment` (recurrence + next date)
 
 Each operation returns a `WriteResultDto { path, message }` so clients can chain on the touched file path.
 

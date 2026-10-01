@@ -90,4 +90,31 @@ cdno project park --slug surrogate-model        # -> projects/_parked/, frees a 
 cdno project activate --slug surrogate-model     # bring it back (must be under the cap)
 ```
 
+## Close a project
+
+A project ends one of two ways, and the log records which:
+
+```bash
+cdno project complete --slug surrogate-model                               # the work is done
+cdno project drop --slug bayesian-opt --reason "superseded by the ICML work"  # it is not happening
+```
+
+Both move the map to `projects/_done/<year>/`, stamp `closed:` with today's date and free the slot;
+both work on a parked project too. If anything is still open, the command stops and lists it:
+
+```text
+surrogate-model has 2 open items:
+  - [ ] Draft methods section with ablation figures (medium)
+  - [ ] ICML paper submitted — hard: 2026-05-22
+Complete or drop each of them (or add it to the project that now owns it), then run again.
+```
+
+Tick what was done, drop what is not happening (each with its own reason), and run `complete`
+again. A `drop` can instead let the open items go with the project: it asks first, or takes
+`--drop-open` in a script. Commitments you made to other people are never touched by either.
+
+`cdno project list --closed` shows what has ended, newest first, and the weekly and monthly reviews
+list the projects that closed in their window. A closed project can come back with
+`cdno project activate`, or take the other outcome later if the first one was wrong.
+
 Next: [Research and evidence](research-and-evidence.md).

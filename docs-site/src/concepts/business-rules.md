@@ -22,7 +22,10 @@ are picked up without a manual reindex.
 
 At most **five** projects are active at once. Try to create or activate a sixth and the command
 stops you — you must [park](../reference/cli/project.md) one first. Parked projects live in
-`projects/_parked/` and don't count toward the cap. The limit is configurable via `config.toml`
+`projects/_parked/` and don't count toward the cap, and neither do closed ones: a project that is
+finished is [completed](../reference/cli/project.md#cdno-project-complete), and one that is not
+going to happen is [dropped](../reference/cli/project.md#cdno-project-drop), both into
+`projects/_done/<year>/`. Closing never needs a slot, and a parked project can be closed directly. The limit is configurable via `config.toml`
 (see [Configuration](configuration.md)); five is the default because it's the point past which
 "active" stops meaning anything.
 

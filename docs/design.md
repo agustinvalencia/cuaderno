@@ -41,7 +41,7 @@ The tool has four consumers:
 |`daily`      |Chronological log entry for a single day                     |Append-only                       |`journal/<year>/daily/`                   |
 |`weekly`     |Weekly review artefact                                       |Append-only                       |`journal/<iso-year>/weekly/`              |
 |`monthly`    |Monthly review artefact (links its weeks)                    |Append-only                       |`journal/<year>/monthly/`                 |
-|`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/`                               |
+|`project`    |Mutable project dashboard (one screen)                       |Yes (state, actions)              |`projects/` (parked in `_parked/`, closed in `_done/<year>/`) |
 |`action`     |Manifest note for an action-as-investigation (heavier form)  |Yes while attached, append-only after completion |`actions/` (archived to `actions/_done/<year>/`) |
 |`portfolio`  |Index note for an evidence folder                            |Rarely (summary)                  |`portfolios/*/`                           |
 |`evidence`   |Individual capture inside a portfolio                        |No                                |`portfolios/*/`                           |
@@ -92,8 +92,11 @@ vault/
 │   ├── surrogate-model.md
 │   ├── icml-paper.md
 │   ├── apartment-renovation.md
-│   └── _parked/
-│       └── bayesian-opt-survey.md
+│   ├── _parked/
+│   │   └── bayesian-opt-survey.md
+│   └── _done/
+│       └── 2025/
+│           └── thesis-chapter-2.md
 │
 ├── actions/
 │   ├── characterise-kan-ppo-sample-efficiency.md  ← type: action
@@ -169,6 +172,7 @@ vault/
 ### Structural conventions
 
 - **`_parked/`** inside `projects/`: inactive projects, not deleted. Revisited at monthly review.
+- **`_done/<year>/`** inside `projects/`: closed projects, completed or dropped, partitioned by the year they closed. Year subfolders are created on demand.
 - **`_done/`** inside `commitments/`: fulfilled commitments, kept for record.
 - **`_done/<year>/`** inside `actions/`: completed action notes, partitioned by year so the active set stays scannable. Year subfolders are created on demand at completion time.
 - **`_index.md`** inside portfolio and expanded stewardship folders: the folder’s identity note.
@@ -340,6 +344,8 @@ Milestones are extracted into a first-class `milestones(project_id, name, date, 
 ```
 
 **5-project cap**: maximum 5 active projects across all contexts. Parked projects move to `projects/_parked/`. Enforced by the tool — creating a 6th active project prompts parking one first.
+
+**Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed outcomes. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped (<reason>)`) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again with the other outcome as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
 
 **Milestones with hard deadlines** are picked up by the commitments aggregation query.
 
@@ -1097,8 +1103,14 @@ cdno project state surrogate-model \
 cdno project park bayesian-opt-survey
                          # Move to _parked/
 cdno project activate bayesian-opt-survey
-                         # Move back (enforces 5-cap)
+                         # Move back from _parked/ or _done/ (enforces 5-cap)
+cdno project complete --slug surrogate-model
+                         # Close as done: -> _done/<year>/; refused while items are open
+cdno project drop --slug bayesian-opt-survey --reason "superseded"
+                         # Close as not happening; --drop-open lets open items go too
 cdno project list        # Show active projects with states
+cdno project list --closed
+                         # Completed and dropped projects, newest first
 cdno project milestone add surrogate-model \
   "Full geometry evaluation" --target 2026-04-30
                          # Add a milestone (event marker)
@@ -1244,12 +1256,15 @@ get_orientation
 get_weekly_context
   → this week's daily log entries
   → tasks/actions completed (for wins list)
+  → projects completed or dropped this week
   → project states that changed
   → stewardship status
   → commitments for next 2 weeks
 
 get_monthly_context
   → weekly wins from past month
+  → projects completed or dropped in the past 30 days
+  → parked projects (the shelf)
   → active questions with status
   → portfolio list with note counts and last-updated
   → project maps with stuck detection (unchanged >2 weeks)
@@ -1258,7 +1273,7 @@ get_monthly_context
   → active project count vs cap
 
 get_project_context(project)
-  → full project map content
+  → full project map content (active, parked or closed)
   → recent daily log entries mentioning this project
   → linked portfolio summaries
   → linked question

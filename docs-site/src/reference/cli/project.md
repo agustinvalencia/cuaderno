@@ -1,7 +1,7 @@
 # `cdno project`
 
 Manage project maps: create, update state, set the core question, add/complete/drop milestones, manage
-waiting-on items, park/activate, and list/show. Next actions have their own verb, [`cdno action`](action.md).
+waiting-on items, park/activate, complete/drop the project itself, and list/show. Next actions have their own verb, [`cdno action`](action.md).
 
 ```text
 cdno project [OPTIONS] <COMMAND>
@@ -15,8 +15,10 @@ cdno project [OPTIONS] <COMMAND>
 | [`state`](#cdno-project-state) | Update the Current State (auto-logs the previous) |
 | [`core-question`](#cdno-project-core-question) | Set or clear the core question (auto-logs the previous) |
 | [`park`](#cdno-project-park) | Move a project to `_parked/` |
-| [`activate`](#cdno-project-activate) | Bring a parked project back (enforces the cap) |
-| [`list`](#cdno-project-list) | List active projects |
+| [`complete`](#cdno-project-complete) | Close a project whose work is done (moves it to `_done/<year>/`) |
+| [`drop`](#cdno-project-drop) | Close a project that is not going to happen (moves it to `_done/<year>/`) |
+| [`activate`](#cdno-project-activate) | Bring a parked or closed project back (enforces the cap) |
+| [`list`](#cdno-project-list) | List active projects, or closed ones with `--closed` |
 | [`show`](#cdno-project-show) | Show one project |
 | [`milestone`](#cdno-project-milestone) | Add / complete / drop milestones |
 | [`waiting`](#cdno-project-waiting) | Add / resolve waiting-on items |
@@ -88,13 +90,90 @@ Move an active project to `projects/_parked/`, freeing a slot against the five-p
 cdno project park --slug surrogate-model
 ```
 
-## `cdno project activate`
+## `cdno project complete`
 
-Bring a parked project back. Fails if it would exceed the active cap — park another first.
+Close a project because its work is done. The map moves to `projects/_done/<year>/<slug>.md` with
+`status: completed` and `closed:` set to today, and the daily log gets
+`project completed [[<slug>]] — <title>`. It works on an active or a parked project and never needs a
+slot, since closing adds nothing to the active count.
 
 | Flag | Description |
 |------|-------------|
-| `--slug <SLUG>` | Parked project slug. |
+| `--slug <SLUG>` | Active or parked project slug. |
+
+A completion is a claim that the work was done, so it is **refused while any action or milestone is
+still open**, and there is no flag to force it. The refusal lists what is open:
+
+```text
+surrogate-model has 3 open items:
+  - [ ] Run feature set B on full geometry mesh (deep)
+  - [ ] [[actions/characterise-kan-ppo-sample-efficiency]] (deep)
+  - [ ] ICML paper submitted — hard: 2026-05-22
+Still open, not touched: [[commitments/reviewer-report]] (due 2026-10-15)
+Complete or drop each of them (or add it to the project that now owns it), then run again.
+```
+
+Tick what was done ([`cdno action done`](action.md), [`milestone done`](#cdno-project-milestone)), drop
+what is not happening ([`cdno action drop`](action.md), [`milestone drop`](#cdno-project-milestone),
+each with its own reason), and run the command again:
+
+```bash
+cdno project complete --slug surrogate-model
+# Completed surrogate-model. 4 of 5 slots in use.
+```
+
+Standalone commitments linked to the project are never touched: a promise to someone else does not
+end with the project. The success message names any that are still open.
+
+## `cdno project drop`
+
+Close a project that is not going to happen. The map moves to `projects/_done/<year>/<slug>.md` with
+`status: dropped` and `closed:` set to today, and the daily log gets
+`project dropped on [[<slug>]] — <title>`, with the reason on an indented `reason:` line. Like
+`complete`, it works on an active or a parked project and never needs a slot: ending a shelved plan
+does not bring it back first.
+
+| Flag | Description |
+|------|-------------|
+| `--slug <SLUG>` | Active or parked project slug. |
+| `--reason <REASON>` | Why it is being dropped. Optional and never prompted for, but worth giving. |
+| `--drop-open` | Drop the project's open actions and milestones with it, without asking. |
+
+With open actions or milestones, `drop` lists them as `complete` does. In a terminal it then asks
+`Let these N go and drop <slug>? [y/N]`, and pressing Enter keeps everything. On `y` each open item
+is dropped with the project, logged as its own `action dropped on` / `milestone dropped on` line
+with `reason: project dropped (<your reason>)`, and an attached action note is archived as dropped.
+If the list changed while you were answering, nothing is dropped and the new list is shown.
+Non-interactively the list is printed and the command exits 1, unless you pass `--drop-open`.
+
+```bash
+cdno project drop --slug bayesian-opt-survey --reason "superseded by the ICML work"
+cdno project drop --slug bayesian-opt-survey --reason "superseded" --drop-open
+# Dropped bayesian-opt-survey. 4 of 5 slots in use. Let go: 2 actions, 1 milestone.
+```
+
+Items that were in fact done should be ticked first: a drop records that work was let go, not that
+it was finished.
+
+Under `--json` a refusal from either verb prints the same `project_has_open_items` object the MCP
+server returns (the items plus an `open_items_hash`) and exits 1; a success prints `path`,
+`message`, `dropped_actions`, `dropped_milestones` and `untouched_commitments`.
+
+A closed project can be closed again with the other outcome, as a new decision: a dropped project
+that turns out to have been finished can be completed, and the reverse. It is re-filed under this
+year's folder with today's `closed:` date and a new log line. Closing it again with the same outcome
+is refused, naming the date it already has.
+
+## `cdno project activate`
+
+Bring a parked, completed or dropped project back to `projects/`. A closed project also has its
+`closed:` date cleared, so it can be closed again later with a fresh one. The log says
+`project [[<slug>]] activated`. Fails if it would exceed the active cap — park another first. The
+interactive picker and shell completion offer parked and closed projects, labelled.
+
+| Flag | Description |
+|------|-------------|
+| `--slug <SLUG>` | Parked or closed project slug. |
 
 ```bash
 cdno project activate --slug surrogate-model
@@ -109,10 +188,15 @@ In a terminal this then offers to open one of the projects it just listed, print
 `cdno project show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
 `--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
 
+With `--closed` it lists completed and dropped projects instead, newest first, each with its outcome
+and closing date. Under `--json` each row carries `slug`, `title`, `context`, `outcome` and
+`closed_on`.
+
 ```bash
 cdno project list
 cdno project list --json | jq '.[].slug'
 cdno project list --no-interactive     # listing only, never a prompt
+cdno project list --closed
 ```
 
 ## `cdno project show`
@@ -179,6 +263,8 @@ cdno project waiting resolve --slug surrogate-model --query "cluster quota"
 
 [`create_project`](../mcp/creation-and-lifecycle.md), [`update_project_state`](../mcp/writes.md),
 [`park_project`](../mcp/creation-and-lifecycle.md),
+[`complete_project`](../mcp/creation-and-lifecycle.md),
+[`drop_project`](../mcp/creation-and-lifecycle.md),
 [`activate_project`](../mcp/creation-and-lifecycle.md), [`list_projects`](../mcp/reads.md),
 [`get_project_context`](../mcp/reads.md), [`add_milestone`](../mcp/writes.md),
 [`complete_milestone`](../mcp/writes.md), [`set_core_question`](../mcp/writes.md),

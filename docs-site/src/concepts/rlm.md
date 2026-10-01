@@ -82,8 +82,8 @@ keeps the friction of capturing the next step near zero. See [Actions](../tutori
 The method is deliberately shaped to be sustainable when executive function is unreliable:
 
 - **Leads with what is there**, not what is missing — no guilt engine, no red overdue counts.
-- **Permission to park or drop.** Projects park, questions retire, actions and milestones drop,
-  commitments get fulfilled or dropped — all first-class, and none of it is a failure state.
+- **Permission to park or drop.** Projects park, complete or drop, questions retire, actions and
+  milestones drop, commitments get fulfilled or dropped — all first-class, and none of it is a failure state.
 
   "Reversible" is worth stating precisely, because it means less than it might sound like. Parking is
   genuinely two-way: a parked project activates again, and a retired question does too. Dropping is
@@ -91,6 +91,11 @@ The method is deliberately shaped to be sustainable when executive function is u
   is *re-decided* rather than undone: if a dropped thing turns out to matter, make it again, and the
   record honestly shows two decisions rather than pretending the first never happened. That is the
   same reason a drop is logged as a drop and not as a completion.
+
+  Projects are the one named exception. A dropped project keeps its slug, its map and its history,
+  so [`cdno project activate`](../reference/cli/project.md#cdno-project-activate) brings it back,
+  and a project dropped in error can later be completed, or the reverse. Each is still a new
+  decision with its own log line, never an erasure of the first.
 
   What a drop does preserve is the **note**. A dropped action or commitment keeps its file, its body
   and its `created` date, archived under `_done/<year>/` — so the context you wrote survives even
