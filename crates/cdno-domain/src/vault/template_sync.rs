@@ -296,10 +296,19 @@ impl FrontmatterLines {
             .split_once(':')
             .map(|(_, rest)| rest.trim())
             .unwrap_or_default();
-        // A `{{variable}}` is filled in before the YAML is read, so it is
-        // plain here despite the brace.
-        let plain = value.starts_with("{{")
-            || !value.starts_with(['|', '>', '"', '\'', '[', '{', '!', '&']);
+        // A lone `{{variable}}` is filled in before the YAML is read, so it
+        // is plain here despite the brace; any other `{` opens a flow
+        // collection that may run on.
+        let placeholder = value
+            .strip_prefix("{{")
+            .and_then(|v| v.strip_suffix("}}"))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            });
+        let plain = placeholder || !value.starts_with(['|', '>', '"', '\'', '[', '{', '!', '&']);
         let only_notes = lines[start + 1..end].iter().all(|l| {
             let l = l.trim();
             l.is_empty() || l.starts_with('#')

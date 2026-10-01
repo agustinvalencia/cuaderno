@@ -305,6 +305,7 @@ fn a_hash_or_blank_line_inside_a_multi_line_value_stays_in_it() {
         ">\n  Line one\n  # heading",
         "|+\n  Line one\n",
         "\n  note: |\n    text\n    # heading",
+        "{{a: \"x\n  # y\"}}",
     ] {
         let block = format!("core_question: {value}\n");
         let stale = STALE_PROJECT.replace("core_question: {{core_question}}\n", &block);
