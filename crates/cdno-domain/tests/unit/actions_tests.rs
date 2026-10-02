@@ -2001,3 +2001,171 @@ fn a_parked_project_is_reported_even_with_a_focus_open() {
         "{err:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// Switch: switch_action / switch_unplanned_action (RFC 0005 §5.1, D4)
+// ---------------------------------------------------------------------
+
+const SWITCH_DAILY: &str = "journal/2026/daily/2026-05-26.md";
+
+#[test]
+fn switch_writes_pause_then_start_in_one_entry_set() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let outcome = vault
+        .switch_action(
+            dt(2026, 5, 26, 10, 0),
+            "foo",
+            "badge",
+            Some("finish the intro"),
+            Some("review came in"),
+        )
+        .unwrap();
+
+    assert_eq!(
+        outcome.paused.as_ref().unwrap().action,
+        "Draft methods (deep)"
+    );
+    assert_eq!(outcome.started.action, "Fix the badge (light)");
+    assert_eq!(outcome.primary, vp(SWITCH_DAILY));
+    let content = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+    let paused = content
+        .find("- **10:00**: action paused on [[foo]] \u{2014} Draft methods (deep)")
+        .unwrap_or_else(|| panic!("paused line missing: {content}"));
+    assert!(content.contains("next: finish the intro"), "{content}");
+    assert!(content.contains("reason: review came in"), "{content}");
+    let started = content
+        .find("- **10:00**: started [[foo]] \u{2014} Fix the badge (light)")
+        .unwrap_or_else(|| panic!("started line missing: {content}"));
+    assert!(paused < started, "pause precedes start: {content}");
+
+    let now = vault
+        .current_focus(dt(2026, 5, 26, 10, 0).date())
+        .unwrap()
+        .unwrap();
+    assert_eq!(now.action, "Fix the badge (light)");
+    assert_eq!(now, outcome.started);
+}
+
+#[test]
+fn switch_with_nothing_open_is_a_plain_start_and_reports_no_pause() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+
+    let outcome = vault
+        .switch_action(dt(2026, 5, 26, 9, 0), "foo", "badge", Some("ignored"), None)
+        .unwrap();
+
+    assert!(outcome.paused.is_none());
+    assert_eq!(outcome.started.action, "Fix the badge (light)");
+    let content = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+    assert!(content.contains("started [[foo]]"), "{content}");
+    assert!(!content.contains("paused"), "{content}");
+    assert!(!content.contains("ignored"), "{content}");
+}
+
+#[test]
+fn switch_to_a_missing_bullet_leaves_no_pause_line() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    let before = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+
+    let err = vault
+        .switch_action(dt(2026, 5, 26, 10, 0), "foo", "no such bullet", None, None)
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::ActionNotFound { .. }), "{err:?}");
+    assert_eq!(store.read_file(&vp(SWITCH_DAILY)).unwrap(), before);
+}
+
+#[test]
+fn switch_unplanned_adds_the_bullet_and_three_lines() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let outcome = vault
+        .switch_unplanned_action(
+            dt(2026, 5, 26, 10, 0),
+            "foo",
+            "Chase the build",
+            EnergyLevel::Light,
+            None,
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(outcome.primary, vp("projects/foo.md"));
+    assert!(outcome.paths.contains(&vp(SWITCH_DAILY)));
+    assert_eq!(
+        outcome.paused.as_ref().unwrap().action,
+        "Draft methods (deep)"
+    );
+    assert_eq!(outcome.started.action, "Chase the build (light)");
+    let map = store.read_file(&vp("projects/foo.md")).unwrap();
+    assert!(map.contains("- [ ] Chase the build (light)"), "{map}");
+    let content = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+    let p = content.find("action paused on [[foo]]").expect("paused");
+    let a = content
+        .find("action added to [[foo]] \u{2014} Chase the build (light)")
+        .expect("added");
+    let s = content
+        .find("started [[foo]] \u{2014} Chase the build (light)")
+        .expect("started");
+    assert!(p < a && a < s, "order paused, added, started: {content}");
+}
+
+#[test]
+fn switch_to_the_focused_bullet_is_focus_open_same_action() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    let before = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+
+    let err = vault
+        .switch_action(dt(2026, 5, 26, 10, 0), "foo", "draft", None, None)
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+
+    let err = vault
+        .switch_unplanned_action(
+            dt(2026, 5, 26, 10, 0),
+            "foo",
+            "Draft methods",
+            EnergyLevel::Deep,
+            None,
+            None,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(store.read_file(&vp(SWITCH_DAILY)).unwrap(), before);
+}

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDateTime, Timelike};
 
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
@@ -61,6 +61,67 @@ pub struct PauseOutcome {
     pub path: VaultPath,
 }
 
+/// What [`Vault::switch_action`] and [`Vault::switch_unplanned_action`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchOutcome {
+    /// The focus that was paused, or `None` when nothing was open and the
+    /// switch was a plain start.
+    pub paused: Option<CurrentFocus>,
+    /// The new focus.
+    pub started: CurrentFocus,
+    /// The note the operation is about (see each verb).
+    pub primary: VaultPath,
+    /// Every path the commit wrote.
+    pub paths: Vec<VaultPath>,
+}
+
+/// Everything `start_unplanned_action` writes, built but not yet staged.
+struct UnplannedStart {
+    path: VaultPath,
+    new_content: String,
+    entry_meta: cdno_core::index::NoteEntry,
+    started_text: String,
+    added_entry: String,
+    started_entry: String,
+}
+
+impl UnplannedStart {
+    /// Stage the map write and its index upsert.
+    fn stage(&self, tx: &mut cdno_core::transaction::VaultTransaction) {
+        tx.write_file(self.path.clone(), self.new_content.clone());
+        tx.upsert_note(self.entry_meta.clone());
+    }
+}
+
+/// The log lines of a switch, in order: `paused` [, `added`...], `started`.
+fn switch_entries(
+    open: Option<&CurrentFocus>,
+    next: Option<&str>,
+    reason: Option<&str>,
+    added: &[String],
+    started: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(f) = open {
+        out.push(format_action_paused_log_entry(
+            &f.project, &f.action, next, reason,
+        ));
+    }
+    out.extend(added.iter().cloned());
+    out.push(started.to_owned());
+    out
+}
+
+/// The focus a start at `at` opens; the stamp is the log line's `HH:MM`.
+fn focus_started(at: NaiveDateTime, slug: &str, action: &str) -> CurrentFocus {
+    CurrentFocus {
+        project: slug.to_owned(),
+        action: action.to_owned(),
+        started: chrono::NaiveTime::from_hms_opt(at.hour(), at.minute(), 0)
+            .expect("a valid time truncated to the minute"),
+    }
+}
+
 impl Vault {
     /// Refuse a start while something is in focus. `slug`/`target` are the
     /// resolved project and bullet text, so `same_action` is a plain equality.
@@ -78,6 +139,166 @@ impl Vault {
                 // T6 sets this from the focus's date.
                 carried: false,
             }),
+        }
+    }
+
+    /// Resolve `query` against the project's `## Next Actions` exactly as the
+    /// start verbs do and return the matched bullet's text. Shared by
+    /// `start_action` and `switch_action` so the two cannot disagree (#568).
+    fn resolve_start_target(&self, slug: &str, query: &str) -> Result<String, DomainError> {
+        let (_path, doc) = self.resolve_active_project(slug)?;
+        let section = doc.section(NEXT_ACTIONS_SECTION)?;
+        let lines: Vec<&str> = section.split('\n').collect();
+        let idx = resolve_open_action(&lines, slug, query)?;
+        Ok(parse_open_action_text(lines[idx])
+            .expect("matched line was previously parseable")
+            .to_owned())
+    }
+
+    /// Build, without staging, everything `start_unplanned_action` writes: the
+    /// project map with the new bullet appended and the two log entries. Shared
+    /// with `switch_unplanned_action`.
+    fn plan_unplanned_start(
+        &self,
+        slug: &str,
+        action_text: &str,
+        energy: EnergyLevel,
+    ) -> Result<UnplannedStart, DomainError> {
+        let (path, mut doc) = self.resolve_active_project(slug)?;
+
+        let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
+        // Read the started text back out of the bullet we are about to build,
+        // exactly as `start_action` reads it out of one already on the
+        // map — so the energy suffix and spacing match what the close
+        // verbs will log, without this path knowing the format itself.
+        let started_text = parse_open_action_text(&bullet)
+            .expect("bullet was just formatted as `- [ ] …`")
+            .to_owned();
+
+        doc.ensure_section(NEXT_ACTIONS_SECTION)?;
+        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
+        let new_section = if existing.is_empty() {
+            format!("{bullet}\n\n")
+        } else {
+            format!("{existing}\n{bullet}\n\n")
+        };
+        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
+
+        let new_content = doc.render().to_owned();
+        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
+        Ok(UnplannedStart {
+            added_entry: format_action_added_log_entry(slug, action_text, energy),
+            started_entry: format_action_started_log_entry(slug, &started_text),
+            started_text,
+            path,
+            new_content,
+            entry_meta,
+        })
+    }
+
+    /// Switch focus to `query` in one commit: pause what is open (if anything),
+    /// then start the target.
+    ///
+    /// The target is resolved first and the paused entry is built from the
+    /// focus read in the same transaction; every line goes through one
+    /// `stage_daily_logs` call (`paused`, `started`), so a failed resolution
+    /// leaves no pause line behind. It composes the staging helpers rather than
+    /// calling [`Vault::pause_action`] and [`Vault::start_action`], because the
+    /// write lock is not re-entrant.
+    ///
+    /// With nothing open it is a plain start: `next` and `reason` are ignored
+    /// and `paused` is `None`. Switching to the bullet already in focus is
+    /// [`DomainError::FocusOpen`] with `same_action` set, and writes nothing.
+    /// `primary` is the daily note, the only file written.
+    pub fn switch_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        query: &str,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<SwitchOutcome, DomainError> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Err(DomainError::EmptyField { field: "action" });
+        }
+        let mut tx = self.transaction()?;
+        let action_text = self.resolve_start_target(slug, query)?;
+        let open = self.focus_to_switch_from(at, slug, &action_text)?;
+
+        let started_entry = format_action_started_log_entry(slug, &action_text);
+        let entries = switch_entries(open.as_ref(), next, reason, &[], &started_entry);
+        let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
+        let daily = self.stage_daily_logs(at, &refs, &mut tx)?;
+        tx.commit()?;
+        Ok(SwitchOutcome {
+            paused: open,
+            started: focus_started(at, slug, &action_text),
+            primary: daily.clone(),
+            paths: vec![daily],
+        })
+    }
+
+    /// [`Vault::switch_action`] for work that was never planned: the bullet is
+    /// added to the map as `start_unplanned_action` does, and the log gets
+    /// `paused` [, `action added to`], `started` in one staged write.
+    /// `primary` is the project map, as for `start_unplanned_action`.
+    pub fn switch_unplanned_action(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        title: &str,
+        energy: EnergyLevel,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<SwitchOutcome, DomainError> {
+        let action_text = flatten_reason(title);
+        if action_text.is_empty() {
+            return Err(DomainError::EmptyField { field: "action" });
+        }
+        let mut tx = self.transaction()?;
+        let plan = self.plan_unplanned_start(slug, &action_text, energy)?;
+        let open = self.focus_to_switch_from(at, slug, &plan.started_text)?;
+
+        let entries = switch_entries(
+            open.as_ref(),
+            next,
+            reason,
+            std::slice::from_ref(&plan.added_entry),
+            &plan.started_entry,
+        );
+        let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
+        let started = focus_started(at, slug, &plan.started_text);
+        let path = plan.path.clone();
+        plan.stage(&mut tx);
+        self.stage_daily_logs(at, &refs, &mut tx)?;
+        let paths = tx.commit()?;
+        Ok(SwitchOutcome {
+            paused: open,
+            started,
+            primary: path,
+            paths,
+        })
+    }
+
+    /// The focus a switch to `slug`/`target` pauses, if any. Switching to the
+    /// bullet that is already in focus is refused as [`DomainError::FocusOpen`].
+    fn focus_to_switch_from(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        target: &str,
+    ) -> Result<Option<CurrentFocus>, DomainError> {
+        match self.current_focus(at.date())? {
+            Some(open) if open.project == slug && open.action == target => {
+                Err(DomainError::FocusOpen {
+                    focus: open,
+                    same_action: true,
+                    // T6 sets this from the focus's date.
+                    carried: false,
+                })
+            }
+            other => Ok(other),
         }
     }
 
@@ -156,20 +377,8 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (_path, doc) = self.resolve_active_project(slug)?;
-
-        // Resolve against the map rather than logging what we were
-        // handed. `current_focus` pairs this entry with the closing one
-        // by exact text equality, and the close verbs log the *resolved*
-        // bullet text — so a start logged verbatim is closable only
-        // while the caller happens to pass exactly what they will later
-        // write. Sharing `resolve_open_action` makes the three verbs
-        // agree by construction instead (#568).
-        let section = doc.section(NEXT_ACTIONS_SECTION)?;
-        let lines: Vec<&str> = section.split('\n').collect();
-        let idx = resolve_open_action(&lines, slug, query)?;
-        let action_text =
-            parse_open_action_text(lines[idx]).expect("matched line was previously parseable");
+        let action_text = self.resolve_start_target(slug, query)?;
+        let action_text = action_text.as_str();
         // After resolution, so a typo is still a typo (RFC 0005 §5.1).
         self.refuse_if_focus_open(at, slug, action_text)?;
 
@@ -258,38 +467,15 @@ impl Vault {
             return Err(DomainError::EmptyField { field: "action" });
         }
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let plan = self.plan_unplanned_start(slug, action_text, energy)?;
+        // Before anything is staged: a refused start creates nothing.
+        self.refuse_if_focus_open(at, slug, &plan.started_text)?;
 
-        let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
-        // Read the started text back out of the bullet we are about to build,
-        // exactly as `start_action` reads it out of one already on the
-        // map — so the energy suffix and spacing match what the close
-        // verbs will log, without this path knowing the format itself.
-        let started_text =
-            parse_open_action_text(&bullet).expect("bullet was just formatted as `- [ ] …`");
-        // Before anything is appended: a refused start creates nothing.
-        self.refuse_if_focus_open(at, slug, started_text)?;
-
-        doc.ensure_section(NEXT_ACTIONS_SECTION)?;
-        let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
-        let new_section = if existing.is_empty() {
-            format!("{bullet}\n\n")
-        } else {
-            format!("{existing}\n{bullet}\n\n")
-        };
-        doc.replace_section(NEXT_ACTIONS_SECTION, &new_section)?;
-
-        let new_content = doc.render().to_owned();
-        let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
-
-        let added_entry = format_action_added_log_entry(slug, action_text, energy);
-        let started_entry = format_action_started_log_entry(slug, started_text);
-
-        tx.write_file(path.clone(), new_content);
-        tx.upsert_note(entry_meta);
+        let path = plan.path.clone();
+        plan.stage(&mut tx);
         // One staged write for both lines — see `stage_daily_logs`;
         // staging them separately would drop the first.
-        self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
+        self.stage_daily_logs(at, &[&plan.added_entry, &plan.started_entry], &mut tx)?;
         let touched = tx.commit()?;
 
         Ok(WriteOutcome::written(path, touched))

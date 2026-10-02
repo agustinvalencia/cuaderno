@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`Vault::switch_action` and `Vault::switch_unplanned_action` (RFC 0005, #724).** Move focus in
+  one commit: the open focus is paused and the target started, all log lines (`paused`, [`action
+  added to`,] `started`) staged in a single write, so a target that does not resolve leaves nothing
+  behind. With nothing open it is a plain start and reports `paused: None`; switching to the bullet
+  already in focus is `FocusOpen` with `same_action`. Domain verbs only; no CLI or MCP verb calls
+  them yet.
+
 - **`Vault::pause_action` (RFC 0005, #721).** Pauses the open focus by logging one
   `action paused on [[project]] — text` entry with optional `next:` and `reason:` lines, using the
   focus's own text read back from the log. It resolves nothing against the project map, so a focus
