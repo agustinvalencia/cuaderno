@@ -575,3 +575,43 @@ fn line_does_not_panic_when_stdout_is_closed() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn text_output_is_sanitised() {
+    // The plain `cdno now` renderings, each piece of note-derived text
+    // carrying an ESC sequence and a C1 control (U+0085): the focus line
+    // (project, title) and the Nothing-started / Last-paused line
+    // (project, title, next).
+    let dir = vault_with_action();
+    write_daily(
+        dir.path(),
+        day(),
+        &[
+            "- **08:00**: started [[al\u{1b}[42m\u{85}pha]] \u{2014} Draft \u{1b}[31m\u{85}red (deep)",
+        ],
+    );
+    let out = build_now(dir.path(), at(day(), 10, 0)).expect("builds");
+    assert!(
+        !out.chars().any(|c| c.is_control() && c != '\n'),
+        "no control character in the focus line: {out:?}"
+    );
+    assert!(out.contains("pha") && out.contains("red"), "{out}");
+
+    write_daily(
+        dir.path(),
+        day(),
+        &[
+            "- **09:00**: action paused on [[al\u{1b}[42m\u{85}pha]] \u{2014} Draft \u{1b}[31m\u{85}red (deep)\n  next: back \u{1b}[31m\u{85}here",
+        ],
+    );
+    let out = build_now(dir.path(), at(day(), 10, 0)).expect("builds");
+    assert!(out.contains("Nothing started."), "{out}");
+    assert!(
+        !out.chars().any(|c| c.is_control() && c != '\n'),
+        "no control character in the last-paused line: {out:?}"
+    );
+    assert!(
+        out.contains("pha") && out.contains("red") && out.contains("here"),
+        "{out}"
+    );
+}
