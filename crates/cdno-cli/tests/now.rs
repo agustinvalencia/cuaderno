@@ -415,30 +415,65 @@ fn json_carries_date_carried_and_origin() {
     assert_eq!(v["date"], "2026-05-25");
     assert_eq!(v["carried"], true);
     assert!(v["origin"].is_null());
+    // 14:05 yesterday to 09:00 today.
+    assert_eq!(v["elapsed_minutes"], 18 * 60 + 55);
 }
 
 #[test]
 fn line_is_sanitised_and_capped() {
+    // Every piece of note-derived text in the line must go through
+    // `sanitise`: the project and the started title (the focus form), and
+    // the paused project, title and `next:` (the none form). Each carries
+    // an ESC sequence and a C1 control (U+0085), so removing the call
+    // from any one of them leaves a control character in the line.
     let dir = vault_with_action();
-    let long = "x".repeat(300);
     write_daily(
         dir.path(),
         day(),
         &[
-            "- **08:00**: started [[alpha]] \u{2014} Draft \u{1b}[31mred (deep)",
-            &format!(
-                "- **09:00**: action paused on [[alpha]] \u{2014} Draft \u{1b}[31mred (deep)\n  next: {long}"
-            ),
+            "- **08:00**: started [[al\u{1b}[42m\u{85}pha]] \u{2014} Draft \u{1b}[31m\u{85}red (deep)",
         ],
     );
-    let line = build_line(dir.path(), at(day(), 10, 0)).expect("builds");
-    assert!(!line.contains('\u{1b}'), "no ESC: {line:?}");
-    assert!(!line.contains('\n'), "one line: {line:?}");
-    assert_eq!(line.chars().count(), 160, "capped: {line:?}");
-    assert!(line.ends_with('\u{2026}'), "with an ellipsis: {line:?}");
+    let focus_line = build_line(dir.path(), at(day(), 10, 0)).expect("builds");
     assert!(
-        line.starts_with("Focus: none (last paused: alpha"),
-        "{line}"
+        !focus_line.chars().any(char::is_control),
+        "no control character survives in the focus form: {focus_line:?}"
+    );
+    assert!(focus_line.starts_with("Focus: al"), "{focus_line}");
+    assert!(
+        focus_line.contains("pha") && focus_line.contains("red"),
+        "the readable halves survive: {focus_line}"
+    );
+
+    // 300 multi-byte characters in `next:`, so a byte-index cut would
+    // split one.
+    let long = "\u{e9}\u{1f642}".repeat(150);
+    assert_eq!(long.chars().count(), 300);
+    write_daily(
+        dir.path(),
+        day(),
+        &[&format!(
+            "- **09:00**: action paused on [[al\u{1b}[42m\u{85}pha]] \u{2014} Draft \u{1b}[31m\u{85}red (deep)\n  next: \u{1b}[31m\u{85}{long}"
+        )],
+    );
+    let none_line = build_line(dir.path(), at(day(), 10, 0)).expect("builds");
+    assert!(
+        !none_line.chars().any(char::is_control),
+        "no control character survives in the none form: {none_line:?}"
+    );
+    assert!(
+        none_line.starts_with("Focus: none (last paused: al"),
+        "{none_line}"
+    );
+    assert!(none_line.contains("pha"), "{none_line}");
+    assert_eq!(none_line.chars().count(), 160, "capped: {none_line:?}");
+    assert!(
+        none_line.ends_with('\u{2026}'),
+        "with an ellipsis: {none_line:?}"
+    );
+    assert!(
+        none_line.contains('\u{1f642}'),
+        "multi-byte text is cut on a character boundary, not mangled: {none_line:?}"
     );
 
     // A short one is untouched and has the RFC's shape.
@@ -495,5 +530,48 @@ fn nothing_started_shows_the_last_pause_with_its_next() {
     assert_eq!(
         line,
         "Focus: none (last paused: alpha \u{2014} Draft methods, next: pick up at \"Prior approaches\")"
+    );
+}
+
+#[test]
+fn line_prints_nothing_and_exits_zero_on_a_broken_vault() {
+    // A vault that is found but whose daily note is unreadable: the
+    // failure comes after vault resolution, from the read itself.
+    let dir = vault_with_action();
+    let today = chrono::Local::now().date_naive();
+    let path = dir
+        .path()
+        .join(format!("journal/{}/daily/{today}.md", today.format("%Y")));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "---\n: [unclosed\n  - {\n---\n\n## Logs\n").unwrap();
+    assert_cmd::Command::cargo_bin("cdno")
+        .unwrap()
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[cfg(unix)]
+#[test]
+fn line_does_not_panic_when_stdout_is_closed() {
+    use std::process::{Command, Stdio};
+    let dir = vault_with_action();
+    let bin = assert_cmd::cargo::cargo_bin("cdno");
+    let mut child = Command::new(bin)
+        .env_remove("CUADERNO_VAULT_PATH")
+        .args(["--vault", dir.path().to_str().unwrap(), "now", "--line"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "exit 0, not a panic's 101");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("panicked"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
     );
 }

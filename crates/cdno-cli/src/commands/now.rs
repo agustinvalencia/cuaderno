@@ -33,9 +33,11 @@
 //!
 //! `--line` is the same truth squeezed into one sanitised line of at most
 //! 160 characters for prompt segments and hooks. It is the one mode that
-//! never fails: no vault, an unreadable log or a locked index all print
-//! nothing and exit 0, because a status line that breaks the prompt it is
-//! embedded in is worse than a missing one.
+//! never fails: no vault or an unreadable log prints nothing and exits 0,
+//! because a status line that breaks the prompt it is embedded in is worse
+//! than a missing one. It does not return instantly under contention: with
+//! the write lock held elsewhere and a stale index, it waits out the 5 s
+//! lock timeout and then prints. It wins over `--json` when both are given.
 //!
 //! Rendering is split from I/O the way `orient` and `status` split it:
 //! [`build_now`] returns the text so tests assert on a string without

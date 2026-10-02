@@ -4,6 +4,7 @@
 //! the vault root from CWD, and delegates to a library handler. All
 //! real work lives in [`cdno_cli`].
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -187,7 +188,7 @@ enum Commands {
     Now {
         /// Print one sanitised line of at most 160 characters for a prompt
         /// segment or hook. Prints nothing and exits 0 when no vault is
-        /// found or anything fails.
+        /// found or anything fails. Wins over `--json` when both are given.
         #[arg(long)]
         line: bool,
     },
@@ -550,7 +551,8 @@ fn main() -> Result<()> {
                     bootstrap::resolve_vault_root(cli.vault.as_deref(), &cwd, env_value.as_deref())
                     && let Ok(text) = commands::now::build_line(&root, Local::now().naive_local())
                 {
-                    println!("{text}");
+                    // A closed pipe must not panic: ignore the write result.
+                    let _ = writeln!(std::io::stdout(), "{text}");
                 }
             }
             Ok(())
