@@ -555,8 +555,9 @@ it).
 **Correct means.** Where attention went during a focus is recorded once, survives triage, and
 changes no aggregate. The one visible side effect is accepted (review of #757, decision (a)): the
 tag's `[[slug]]` makes the day's daily note a backlink of the project (`get_project_context`,
-`read_note`) when a carried focus is tagged or a tagged capture is discarded on a later day — true
-links, since the day's attention was on the project.
+`read_note`) when a carried focus is tagged — the day's attention was on the project — or when a
+capture tagged during that focus is discarded on a later day, where the link records what the
+discarded thought arose from.
 
 ---
 

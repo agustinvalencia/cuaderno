@@ -12,7 +12,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   (a carried one included), `cdno capture` and MCP `capture` write `captured_during: <project-slug>`
   into the new inbox item, and `cdno log`, `cdno log note`, MCP `append_to_log` and MCP
   `note_to_daily` append an indented `during: [[<slug>]]` continuation to the log line they write.
-  `cdno triage` and MCP `triage_inbox` (the discard) copy the tag from the item onto their own log
+  `cdno triage` and MCP `discard_inbox_item` copy the tag from the item onto their own log
   line, so it outlives the file. With no focus open nothing is written differently, and a focus
   window that cannot be read writes untagged rather than failing. Visible effects: the `log_line`
   that `note_to_daily` returns echoes the tag on a second line; and today's daily note becomes a
