@@ -2412,6 +2412,50 @@ fn a_promotion_line_with_a_missing_stamp_is_reported() {
 }
 
 #[test]
+fn a_promotion_line_without_quotes_is_reported() {
+    // Stamp and em dash are right, the title is unquoted: the reader skips
+    // it, so lint must say so and name the promotion shape.
+    let body = daily_log(
+        "- **10:00**: action promoted on [[alpha]] \u{2014} Draft methods -> [[actions/draft-methods]]\n",
+    );
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0]
+            .message
+            .contains("action promoted on [[project]]"),
+        "hint should name the promotion shape: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
+fn a_promotion_line_with_a_target_missing_its_link_is_reported() {
+    let body = daily_log(
+        "- **10:00**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> actions/draft-methods\n",
+    );
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0]
+            .message
+            .contains("action promoted on [[project]]")
+    );
+}
+
+#[test]
 fn lint_accepts_the_shape_the_writers_emit() {
     // The exact bytes `start_action` produces must never be flagged.
     let body = daily_log("- **09:30**: started [[alpha]] \u{2014} Draft methods (deep)\n");

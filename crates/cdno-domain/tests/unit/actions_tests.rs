@@ -1617,6 +1617,32 @@ fn a_promotion_between_start_and_close_moves_the_focus_to_the_note() {
 }
 
 #[test]
+fn a_promotion_line_written_by_promote_action_is_not_flagged_by_lint() {
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap();
+    vault
+        .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
+        .unwrap();
+
+    let report = vault.lint_all_notes().unwrap();
+    assert!(
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("`cdno now` will not see it")),
+        "the real promotion line must read back: {:?}",
+        report.issues
+    );
+}
+
+#[test]
 fn paused_entry_carries_next_then_reason_as_continuations() {
     use cdno_domain::vault::format_action_paused_log_entry;
 

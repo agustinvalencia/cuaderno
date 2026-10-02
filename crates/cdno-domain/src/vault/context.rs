@@ -1187,7 +1187,7 @@ pub(super) fn parse_focus_marker(text: &str, prefix: &str) -> Option<(String, St
 /// `(project, title, "actions/x")`. The title is split off on the
 /// **last** `" -> [[`, so a title containing an arrow survives. `None`
 /// for anything else, with the same strictness as [`parse_focus_marker`].
-pub(super) fn parse_promotion_marker(text: &str) -> Option<(String, String, String)> {
+pub(in crate::vault) fn parse_promotion_marker(text: &str) -> Option<(String, String, String)> {
     let (project, rest) = text
         .strip_prefix(LOG_ACTION_PROMOTED_PREFIX)?
         .strip_prefix("[[")?

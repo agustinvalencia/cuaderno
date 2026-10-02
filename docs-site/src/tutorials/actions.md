@@ -68,11 +68,10 @@ That is deliberately a separate flag rather than a fallback when `--query` match
 fallback would turn every typo into a new action, silently.
 
 Promoting an action between starting it and closing it is fine: promotion *rewrites* the bullet,
-and `cdno now` follows it to the new note, keeping the original start time. One limit is worth
-knowing and easy to trip over:
+and `cdno now` follows it to the new note, keeping the original start time.
 
-- **Two open bullets with identical text cannot be told apart** by a substring query — neither can
-  be closed until one is edited. This is not specific to starting; `action add` twice does the same.
+Two open bullets with identical text cannot be told apart by a substring query, so neither can be
+closed until one is edited. This is not specific to starting; `action add` twice does the same.
 
 ## Complete an action
 
