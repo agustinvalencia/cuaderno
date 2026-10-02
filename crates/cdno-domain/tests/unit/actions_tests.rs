@@ -1755,6 +1755,8 @@ fn pause_does_not_touch_the_map_or_require_an_active_project() {
     store
         .write_file(&vp("projects/_parked/foo.md"), &parked)
         .unwrap();
+    // Reopen over a fresh index so reconciliation sees the map in
+    // `_parked/`; the old index would still place it under `projects/`.
     let (vault, _report) = Vault::new(
         Arc::clone(&store),
         Arc::new(MemoryIndex::new()),
