@@ -394,13 +394,13 @@ impl Vault {
     }
 
     /// The pause a resume would reopen: `project`'s newest open pause, or the
-    /// newest across projects when `None` (one [`Vault::last_pauses`] scan).
+    /// newest across projects when `None` (one [`Vault::open_pauses`] scan).
     fn resumable_pause(
         &self,
         today: NaiveDate,
         project: Option<&str>,
     ) -> Result<Option<LastPause>, DomainError> {
-        let pauses = self.last_pauses(today)?;
+        let pauses = self.open_pauses(today)?;
         Ok(match project {
             Some(slug) => pauses.by_project.get(slug).cloned(),
             None => pauses.latest,

@@ -3044,7 +3044,7 @@ fn last_paused_returns_the_continuations() {
     let p = pauses.get("alpha").expect("a pause");
     assert_eq!(p.action, "Draft the methods section (deep)");
     assert_eq!(p.at, focus_day().and_hms_opt(10, 0, 0).unwrap());
-    assert_eq!(p.next.as_deref(), Some("  finish; then  review"));
+    assert_eq!(p.next.as_deref(), Some("finish; then  review"));
     assert_eq!(p.reason.as_deref(), Some("waiting on data"));
 }
 
@@ -3103,7 +3103,7 @@ fn one_pass_yields_every_project() {
             &["**09:00**: action paused on [[beta]] \u{2014} Chase the venue (light)"],
         ),
     ]);
-    let all = vault.last_pauses(focus_day()).unwrap();
+    let all = vault.open_pauses(focus_day()).unwrap();
     assert_eq!(all.by_project.keys().collect::<Vec<_>>(), ["alpha", "beta"]);
     assert_eq!(all.latest.as_ref().unwrap().project, "beta");
     assert_eq!(vault.last_paused(focus_day()).unwrap(), all.by_project);
@@ -3145,4 +3145,27 @@ fn a_pause_followed_by_done_drop_or_promotion_is_not_offered() {
             "{name}: consumed"
         );
     }
+}
+
+#[test]
+fn latest_follows_file_order_not_stamp_order() {
+    // The 09:00 line is written after the 15:00 one, so it is the later
+    // entry in the fold even though its stamp is earlier.
+    let body = "- **15:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n- **09:00**: action paused on [[beta]] \u{2014} Chase the venue (light)\n";
+    let (vault, _s) = vault_with(&[(
+        &daily_path(focus_day()),
+        &daily_with_logs(focus_day(), body),
+    )]);
+    let open = vault.open_pauses(focus_day()).unwrap();
+    assert_eq!(open.latest.as_ref().unwrap().project, "beta");
+
+    // Same project, two actions: the later line wins in `by_project`.
+    let body = "- **15:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n- **09:00**: action paused on [[alpha]] \u{2014} Fix the badge (light)\n";
+    let (vault, _s) = vault_with(&[(
+        &daily_path(focus_day()),
+        &daily_with_logs(focus_day(), body),
+    )]);
+    let open = vault.open_pauses(focus_day()).unwrap();
+    assert_eq!(open.by_project["alpha"].action, "Fix the badge (light)");
+    assert_eq!(open.latest.unwrap().action, "Fix the badge (light)");
 }

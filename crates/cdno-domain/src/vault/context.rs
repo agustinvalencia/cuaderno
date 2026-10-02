@@ -1075,17 +1075,17 @@ impl Vault {
     /// never a sort by stamp, as for [`Vault::current_focus`]. The entry's
     /// `next:` and `reason:` continuation lines are read back with it. For the
     /// most recent pause across projects as well, use
-    /// [`Vault::last_pauses`], which reads the same scan once.
+    /// [`Vault::open_pauses`], which reads the same scan once.
     pub fn last_paused(
         &self,
         today: NaiveDate,
     ) -> Result<BTreeMap<String, LastPause>, DomainError> {
-        Ok(self.last_pauses(today)?.by_project)
+        Ok(self.open_pauses(today)?.by_project)
     }
 
     /// [`Vault::last_paused`] together with the newest open pause across all
     /// projects, from one scan (RFC 0005 §5.3, §5.5).
-    pub fn last_pauses(&self, today: NaiveDate) -> Result<LastPauses, DomainError> {
+    pub fn open_pauses(&self, today: NaiveDate) -> Result<OpenPauses, DomainError> {
         let window = u64::from(self.config.focus.paused_lookback_days);
         // Every pause not yet followed by a reopen, oldest first.
         let mut open: Vec<LastPause> = Vec::new();
@@ -1102,7 +1102,8 @@ impl Vault {
                     let value_of = |key: &str| {
                         continuations
                             .iter()
-                            .find_map(|c| c.strip_prefix(key))
+                            .find_map(|c| c.strip_prefix(key.trim_end()))
+                            .map(str::trim)
                             .filter(|v| !v.is_empty())
                             .map(str::to_owned)
                     };
@@ -1130,7 +1131,7 @@ impl Vault {
         let latest = open.last().cloned();
         // Oldest first, so a later pause of a project replaces an earlier one.
         let by_project = open.into_iter().map(|p| (p.project.clone(), p)).collect();
-        Ok(LastPauses { by_project, latest })
+        Ok(OpenPauses { by_project, latest })
     }
 }
 
@@ -1138,18 +1139,27 @@ impl Vault {
 /// the continuations written with it, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastPause {
+    /// The project slug the paused action belongs to.
     pub project: String,
+    /// The action text as logged, energy suffix and all.
     pub action: String,
+    /// When it was paused: the log line's stamp on the date of its daily note.
     pub at: NaiveDateTime,
+    /// The `next:` continuation, trimmed (interior spacing kept); `None` when
+    /// absent or blank.
     pub next: Option<String>,
+    /// The `reason:` continuation, trimmed likewise.
     pub reason: Option<String>,
 }
 
-/// What one [`Vault::last_pauses`] scan found: each project's newest open
+/// What one [`Vault::open_pauses`] scan found: each project's newest open
 /// pause, and the newest across projects (fold order).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct LastPauses {
+pub struct OpenPauses {
+    /// Each project's newest open pause, keyed by project slug.
     pub by_project: BTreeMap<String, LastPause>,
+    /// The newest open pause across projects, in fold order (file order, not
+    /// stamp order); always one of `by_project`'s values.
     pub latest: Option<LastPause>,
 }
 
