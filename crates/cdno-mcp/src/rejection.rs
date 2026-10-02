@@ -476,13 +476,13 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::Path(_)
         | DomainError::Template(_)
         | DomainError::Config(_)
-        // No MCP verb can raise this yet (pause arrives with RFC 0005's T14,
-        // which gives it a proper rejection code); until then it stays a
-        // plain protocol error carrying the domain's own message.
+        // No MCP verb can raise NoFocus yet (pause arrives with RFC 0005's
+        // T14, which gives it a proper rejection code); until then it stays
+        // a plain protocol error carrying the domain's own message.
         | DomainError::NoFocus
-        // Likewise FocusOpen: its proper `focus_open` rejection code and
-        // details arrive with T14 (#734); until then it is a plain protocol
-        // error carrying the domain message.
+        // FocusOpen is raised by start_action and start_unplanned_action
+        // today and reaches MCP clients as a plain error carrying the domain
+        // message, until T14 (#734) gives it the `focus_open` code.
         | DomainError::FocusOpen { .. } => return None,
     };
 

@@ -74,8 +74,7 @@ impl Vault {
             None => Ok(()),
             Some(open) => Err(DomainError::FocusOpen {
                 same_action: open.project == slug && open.action == target,
-                project: open.project,
-                action: open.action,
+                focus: open,
                 // T6 sets this from the focus's date.
                 carried: false,
             }),
@@ -143,7 +142,9 @@ impl Vault {
     /// `Store(NotFound)`, whitespace-only action → `EmptyField`,
     /// missing section → `Manipulation`, no match →
     /// [`DomainError::ActionNotFound`], several matches →
-    /// [`DomainError::AmbiguousAction`] carrying the candidates.
+    /// [`DomainError::AmbiguousAction`] carrying the candidates, and
+    /// [`DomainError::FocusOpen`] when an action is already in focus (checked
+    /// last, so the errors above win).
     pub fn start_action(
         &self,
         at: NaiveDateTime,
@@ -232,7 +233,8 @@ impl Vault {
     /// none and will write `- [ ]  (deep)` — this mirrors `start_action`,
     /// since starting nameless work is the failure #568 is about. There
     /// is no not-found or ambiguity error here: the action is being
-    /// created, so there is nothing to match against.
+    /// created, so there is nothing to match against. An action already in
+    /// focus → [`DomainError::FocusOpen`], checked before anything is written.
     ///
     /// Whitespace inside `action` is flattened, as [`flatten_reason`]
     /// does for a drop reason and for the same reason: an interior

@@ -1822,19 +1822,22 @@ fn a_second_start_is_refused_naming_the_open_focus() {
         .unwrap_err();
     match &err {
         DomainError::FocusOpen {
-            project,
-            action,
+            focus,
             same_action,
             carried,
         } => {
-            assert_eq!(project, "foo");
-            assert_eq!(action, "Draft methods (deep)");
+            assert_eq!(focus.project, "foo");
+            assert_eq!(focus.action, "Draft methods (deep)");
             assert!(!same_action);
             assert!(!carried);
         }
         other => panic!("expected FocusOpen, got {other:?}"),
     }
-    assert!(err.to_string().contains("Draft methods (deep)"), "{err}");
+    assert_eq!(
+        err.to_string(),
+        "an action is already in focus \u{2014} foo: Draft methods (deep). Switch to the new \
+         action, or pause or complete this one first"
+    );
     assert_eq!(store.read_file(&daily_path).unwrap(), before);
 }
 
@@ -1906,6 +1909,11 @@ fn starting_the_focused_bullet_sets_same_action() {
         ),
         "{err:?}"
     );
+    // No switch advice: switching to the focused action is refused too.
+    assert_eq!(
+        err.to_string(),
+        "that action is already in focus \u{2014} foo: Draft methods (deep)"
+    );
 
     // An unplanned start that names the focused text is the same action too.
     let err = vault
@@ -1947,4 +1955,49 @@ fn a_paused_focus_does_not_block_a_start() {
         .unwrap()
         .unwrap();
     assert_eq!(focus.action, "Fix the badge (light)");
+}
+
+#[test]
+fn an_ambiguous_query_is_reported_even_with_a_focus_open() {
+    let map = project_with_bullets("- [ ] Draft methods (deep)\n- [ ] Draft results (deep)\n");
+    let (vault, _store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "methods")
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 10, 0), "foo", "draft")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::AmbiguousAction { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_parked_project_is_reported_even_with_a_focus_open() {
+    const PARKED: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nOn ice.\n\n## Next Actions\n- [ ] Thaw (light)\n";
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, _store) = vault_with(&[
+        ("projects/foo.md", &map),
+        ("projects/_parked/beta.md", PARKED),
+    ]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 10, 0), "beta", "thaw")
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive { .. }),
+        "{err:?}"
+    );
+    let err = vault
+        .start_unplanned_action(dt(2026, 5, 26, 10, 0), "beta", "New", EnergyLevel::Light)
+        .unwrap_err();
+    assert!(
+        matches!(err, DomainError::ProjectNotActive { .. }),
+        "{err:?}"
+    );
 }
