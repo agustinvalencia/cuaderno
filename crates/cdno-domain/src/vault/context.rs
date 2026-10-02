@@ -40,7 +40,8 @@ use cdno_core::path::VaultPath;
 
 use crate::error::DomainError;
 use crate::frontmatter::{
-    ActionFrontmatter, ActionStatus, ProjectFrontmatter, ProjectStatus, TrackingFrontmatter,
+    ActionFrontmatter, ActionStatus, EnergyLevel, ProjectFrontmatter, ProjectStatus,
+    TrackingFrontmatter,
 };
 use crate::note_type::NoteType;
 
@@ -1325,6 +1326,37 @@ pub struct CurrentFocus {
     /// for a plain start, and for a resume after a pause or over an empty
     /// or different slot. `started` and `date` are the resume's own.
     pub origin: Option<NaiveDateTime>,
+}
+
+impl CurrentFocus {
+    /// The action as a person reads it: the energy suffix dropped and a
+    /// wikilink reduced to its label or last path segment. The raw
+    /// [`action`](Self::action) stays what `complete_action` matches on.
+    pub fn title(&self) -> String {
+        action_display_title(&self.action)
+    }
+
+    /// The attached action note's path (`actions/<slug>`), or `None` for a
+    /// plain bullet.
+    pub fn note(&self) -> Option<String> {
+        parse_attached_action_slug(&self.action).map(|s| format!("actions/{s}"))
+    }
+
+    /// The bullet's `(deep|medium|light)` suffix, if it carries one.
+    pub fn energy(&self) -> Option<EnergyLevel> {
+        parse_bullet_energy(&self.action)
+    }
+}
+
+impl LastPause {
+    /// The paused action as a person reads it; see [`CurrentFocus::title`].
+    pub fn title(&self) -> String {
+        action_display_title(&self.action)
+    }
+}
+
+fn action_display_title(action: &str) -> String {
+    bullet_display_title(strip_energy_suffix(action))
 }
 
 /// The `## Logs` entries as their **first physical lines** — `(time,
