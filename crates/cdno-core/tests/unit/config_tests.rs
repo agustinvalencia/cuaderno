@@ -1160,11 +1160,16 @@ carry_over_day = 1
     assert!(result.is_err(), "Expected error but got success");
     let err = result.unwrap_err();
     // The error includes the source (toml::de::Error) which names the field.
-    // Check for the complete error message chain.
-    let err_chain = format!("{:?}", err);
-    assert!(
-        err_chain.contains("carry_over_day"),
-        "Error should name the typo 'carry_over_day', got: {}",
-        err_chain
-    );
+    // Walk the error chain to find it.
+    use std::error::Error;
+    let mut found = false;
+    let mut current: Option<&dyn Error> = Some(&err);
+    while let Some(e) = current {
+        if e.to_string().contains("carry_over_day") {
+            found = true;
+            break;
+        }
+        current = e.source();
+    }
+    assert!(found, "Error chain should name the typo 'carry_over_day'");
 }

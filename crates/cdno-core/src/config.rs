@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::error::ConfigError;
 
-/// Per-field default functions for FocusConfig.
+// Per-field default functions for FocusConfig.
 fn default_carry_over_days() -> u32 {
     1
 }
@@ -14,18 +14,16 @@ fn default_paused_lookback_days() -> u32 {
     14
 }
 
-/// The `[focus]` section — configuration for the focus feature.
+/// The `[focus]` section: the windows the focus reader uses (RFC 0005).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct FocusConfig {
-    /// Number of days to look back when reading focus from earlier days.
-    /// A closed focus (paused/done/dropped) on `today - carry_over_days` may
-    /// still carry an open start into today; `carry_over_days = 0` reads only
-    /// today's log. Default 1.
+    /// How many days before today the focus reader also reads: with 1, a start
+    /// left open yesterday is still the focus today; 0 reads today only.
+    /// Default 1.
     #[serde(default = "default_carry_over_days")]
     pub carry_over_days: u32,
-    /// Number of days to look back when searching for paused actions to resume.
-    /// A pause older than this window is not offered as a resumption candidate.
+    /// How many days back a paused action is still offered for resuming.
     /// Default 14.
     #[serde(default = "default_paused_lookback_days")]
     pub paused_lookback_days: u32,
@@ -84,7 +82,7 @@ pub struct VaultConfig {
     /// stewardship in the path).
     #[serde(default)]
     pub tracking: BTreeMap<String, TrackingSpec>,
-    /// Focus configuration for activity tracking (RFC 0005).
+    /// The focus reader's windows (RFC 0005).
     #[serde(default)]
     pub focus: FocusConfig,
 }

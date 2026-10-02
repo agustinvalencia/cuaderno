@@ -38,16 +38,15 @@ max_active_projects = 5
 # [variables.prompt]
 # subject = "What is this note about?"
 
-# [focus] — configuration for activity tracking (RFC 0005).
+# [focus] — the focus: what you are on (RFC 0005).
 #
-# carry_over_days — number of days to look back when reading focus from
-# earlier days. A closed focus on `today - carry_over_days` may still carry
-# an open start into today; `carry_over_days = 0` reads today's log only.
-# Default 1.
+# carry_over_days — how many days before today the focus reader also reads.
+# A start left open yesterday is still your focus this morning with the
+# default 1; 0 reads today's log only (the behaviour before RFC 0005).
 #
-# paused_lookback_days — number of days to look back when searching for
-# paused actions to resume. A pause older than this window is not offered as
-# a resumption candidate. Default 14.
+# paused_lookback_days — how many days back a paused action is still offered
+# for resuming (orientation, project context, `cdno action resume`).
+# Default 14, which covers a weekend and most holidays.
 #
 # [focus]
 # carry_over_days = 1
