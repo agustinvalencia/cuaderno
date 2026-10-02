@@ -214,8 +214,8 @@ reads (there is none today; `Vault::new` always reconciles), not a cache.
   displaces an older one, which is never the focus again, so at most one focus exists at a
   time both by construction (§5.1) and on reading.
 - **Close** — any of `action done on`, `action dropped on`, `action paused on` whose
-  `[[slug]] — text` pairs with an open marker.
-- **Window** — how many days back from today the reader walks before giving up; `0` means
+  `[[slug]] — text` names what is in the slot.
+- **Window** — how many days back from today the reader reads; `0` means
   today only (the current behaviour), `1` means today and yesterday (the new default).
 - **Carried** — a focus whose open marker is dated before today.
 - **Detour** — a request to an agent that does not belong to the focus's project. An internal
@@ -320,12 +320,14 @@ the older one become the focus again — a focus nobody chose (H2).
 
 The rule, precisely: **the focus is the newest open marker among the daily notes from
 `today - carry_over_days` to `today`, unless a matching close follows it.** An open marker older
-than the window is not a focus, whatever its state. The walk reads newest first and **stops at
-the first note that contains an open marker**, then folds that note and every newer one; with
-no open marker in the window there is no focus. The stop is sound because everything older can
-only fill the slot with a marker that the newer one displaces. It must be an *open* marker that
-stops the walk, not any focus line: today's note holding only an unrelated close must not hide
-yesterday's start.
+than the window is not a focus, whatever its state. The reader **folds every daily note in the
+window, oldest to newest, through the one slot** — there is no early stop. At most
+`carry_over_days + 1` notes (two by default) are read, which §3.3 measures as negligible next to
+startup reconciliation. An early stop was considered and rejected: stopping at the newest note
+with an open marker is sound for the slot's project, action and date, but not for a `resumed`
+marker's `origin` (§5.3), which is inherited from the marker it displaces in an older note. Note
+also that today's note holding only an unrelated close must not hide yesterday's start; the
+whole-window fold gets that right by construction.
 
 The adversarial cases the review walked, all handled by the slot once it spans days: a start
 yesterday closed today pairs; two starts yesterday and a close today of the later leave
@@ -357,13 +359,16 @@ removed. `project` is optional and never prompted.
   within the paused look-back (§5.5).
 - With `project`: resumes that project's most recent pause — the one `get_orientation` shows
   beside its `top_action`, so an agent resumes what the person said yes to.
-- Nothing resumable → `NoFocus`. A different focus open today → `FocusOpen` (no auto-switch,
+- Nothing resumable → `NoFocus`. A different focus in the slot — open today or carried —
+  → `FocusOpen` (no auto-switch,
   D5). The focus already resumed today → `FocusOpen`, `remedy: already_focused`.
 
 It writes one entry, `resumed [[slug]] — <text>`, a new **open** marker
 (`LOG_RESUMED_PREFIX`) the fold treats as **close-plus-reopen at the resume stamp**: it takes
 the slot at this line's time and date, and when the slot already held the same `(project, text)`
-the new marker keeps that marker's origin. That re-stamp is what fixes the Thursday expiry: the window counts from the resume. A
+the new marker keeps that marker's origin. An origin is only as old as the window lets the
+reader see: on Thursday with the default window, a Tuesday start resumed on Wednesday is read
+from Wednesday's `resumed` line alone, so it carries no origin. That re-stamp is what fixes the Thursday expiry: the window counts from the resume. A
 hand-written `resumed` with no open marker reads as a plain start. Pause then resume therefore
 round-trips without a second verb — and, because the pause emptied the slot, the resumed focus
 has no `origin`; `resumed_from.date` carries the pause's date instead, and `last_paused` (§5.5) treats a pause followed by a
@@ -381,9 +386,9 @@ so the agent can read the `next:` hint back to the person on re-entry without a 
 `promote_action` already logs `action promoted on [[slug]] — "title" -> [[actions/<new-slug>]]`
 in the same transaction as the rewrite. The fold learns to read that line as a **rename**:
 
-- On an `action promoted on [[p]] — "title" -> [[actions/x]]` head, find the open marker
-  `(p, a)` with `strip_energy_suffix(a).trim() == title`.
-- Replace its text with `[[actions/x]] (energy)`, where the energy comes from the open marker's
+- On an `action promoted on [[p]] — "title" -> [[actions/x]]` head, if the slot holds
+  `(p, a)` with `strip_energy_suffix(a).trim() == title` (D11),
+- replace its text with `[[actions/x]] (energy)`, where the energy comes from the open marker's
   own suffix (`parse_bullet_energy(a)`), never from the map — promotion refuses a bullet without
   one (`BulletMissingEnergy`), so an open marker lacking it cannot be the subject. The new text
   is exactly what `complete_action` later logs, since that is `parse_open_action_text` of the
@@ -661,7 +666,7 @@ Each stage is one PR, green on its own, each adding to `CHANGELOG.md`.
 | T0 | `paused` marker: constants, formatter, reader close-arm, lint prefix, `pause_action` domain verb (resolves nothing against the map) + tests | — |
 | T1 | Promotion read as a rename (§5.4): `parse_promotion_marker`, fold arm, lint prefix, test inverted, stranding paragraphs deleted everywhere | — |
 | T2 | `switch_action` (+ unplanned), `FocusOpen` refusal on `start` with precedence, `NoFocus` on pause; composed from `stage_*` helpers | T0 |
-| T3 | Window: `[focus] carry_over_days`, the walk with the stated stopping rule, `CurrentFocus.date`, date-aware `elapsed_since` | T0 |
+| T3 | Window: `[focus] carry_over_days`, the one-slot fold (D11) over the whole window, `CurrentFocus.date`, date-aware `elapsed_since` | T0 |
 | T4 | `resumed` marker, `resume_action`, `CurrentFocus.origin`; `paused_lookback_days`, `last_paused` one-pass | T2, T3 |
 | T5 | CLI (`action pause/switch/resume`, `now` shapes, `--line`, skippable `next:` prompt + cli-ergonomics exception) and MCP (four tools, rejection codes, `focus` on write payloads, `get_orientation` / `get_project_context` fields, `resumed_from`) | T4 |
 | T6 | Server instructions and tool descriptions (§5.6), the hook example, `captured_during` / `during:` on `capture`, `note_to_daily`, `append_to_log` and the triage verbs, the two skills and ADHD-PRINCIPLES | T5 |
@@ -693,11 +698,6 @@ T0, T1 and T3 can land in parallel.
   "deliberate" requirement made concrete, and it is only a speed bump by design: `complete` then
   `start` gets through, and `switch_action` is callable on the person's word. D7 and D5 are
   consistent because starting is a focus verb.
-- **D11 — One slot, also on reading.** Maintainer's decision (2026-10-02): focus is a
-  one-spot buffer, never a stack. `start` refuses while the slot is taken; `switch` pauses what
-  is in it and puts the new action there; and the reader displaces an older open marker with a
-  newer one rather than remembering it, so closing the newer never brings the older back. Old
-  logs that stacked starts before this RFC read the same way.
 - **D6 — Project-level focus (a start with no bullet) is out of scope.** `start_unplanned`
   makes a bullet cheaply, and a focus without a bullet has no close verb.
 - **D7 — The server never refuses an out-of-focus write.** §5.6. Not up for a flag.
@@ -711,6 +711,11 @@ T0, T1 and T3 can land in parallel.
   fold arm, a lint prefix, a verb and a tool.
 - **D10 — `detour_budget` (suggest a pause after N captures during one focus) is deferred** to
   T8's RFC, with the metrics that would justify a number.
+- **D11 — One slot, also on reading.** Maintainer's decision (2026-10-02): focus is a
+  one-spot buffer, never a stack. `start` refuses while the slot is taken; `switch` pauses what
+  is in it and puts the new action there; and the reader displaces an older open marker with a
+  newer one rather than remembering it, so closing the newer never brings the older back. Old
+  logs that stacked starts before this RFC read the same way.
 - **Open: the hook's placement.** `examples/hooks/` is new. **The maintainer confirms**, or
   prefers it under `examples/skills/` beside the skills it serves.
 - **Open: `paused_lookback_days` default.** 14 covers a weekend and most holidays; 30 covers

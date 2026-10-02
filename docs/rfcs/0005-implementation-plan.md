@@ -1,7 +1,7 @@
 # RFC 0005 — Implementation plan
 
 Companion to [RFC 0005 — Focus](0005-focus.md) (merged as #718); tracked by #719, with T0–T21
-filed as #720–#741 in order. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
+filed as #720–#741 in order and T3a (added by D11) as #746. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from the
 RFC 0002 and 0004 plans: a green suite is not a probe (a probe asserts the specific new behaviour,
 and where it guards a regression the breaking mutation is shown to fail), and no-regression probes
@@ -270,11 +270,15 @@ T7 adds it) replaces the slot; a close (`done`, `dropped`, `paused`) empties it 
 `(project, action)` is the slot's; a promotion head (T2's arm) renames the slot only when its
 title is the slot's text; anything else leaves the slot alone. Invert
 `completing_one_action_leaves_an_earlier_start_standing` in `context_tests.rs` to
-`completing_the_newer_start_leaves_nothing_open`, and rewrite the `current_focus` doc comment's
-"several starts in a day … the last one standing" paragraph to say a newer start displaces an
-older one.
+`completing_the_newer_start_leaves_nothing_open`, reword the stack phrasing in the comment of
+`the_most_recent_open_start_wins` (it passes unchanged), and rewrite the `current_focus` doc
+comment's "several starts in a day … the last one standing" paragraph to say a newer start
+displaces an older one. A trial slot fold run against the whole workspace on `main` broke only
+the inverted test.
 
-**Deliverable.** The slot fold, the inverted test, the new tests, the doc comment.
+**Deliverable.** The slot fold, the inverted test, the new tests, the doc comment, and a
+`CHANGELOG.md` line naming the visible change: a log with *start X, start Y, done Y* now reports
+no focus where it reported X.
 
 **Depends on.** T2 (its rename arm is converted here), T3 (the refusal that stops new stacks
 being written).
@@ -353,25 +357,25 @@ disable either.
 ### T6 — The cross-day walk
 
 **What.** In `context.rs`, `current_focus(date)` becomes: read the daily notes for
-`date - carry_over_days ..= date` **newest first**, **stop at the first note that contains an
-open marker** (`started`, later `resumed`), then run T3a's one-slot fold over that note and every
-newer one, oldest to newest; `None` when the window holds no open marker. Factor the per-note head
+`date - carry_over_days ..= date` (skipping missing ones) and run T3a's one-slot fold over all of
+their heads, oldest to newest; **no early stop** (RFC §5.2 — a stop is unsound for `resumed`'s
+inherited origin, and the window is at most `carry_over_days + 1` notes). Factor the per-note head
 extraction into `focus_heads(date) -> Vec<(NaiveDateTime, String)>` so the fold compares
 timestamps across days. `CurrentFocus` gains `date: NaiveDate`; `FocusOpen.carried` (T3) is set
 from `date != at.date()`. `carry_over_days = 0` must reproduce the pre-T6 behaviour exactly.
 
-**Why.** RFC §5.2 and D11: the walk must stop at an open marker, not at any focus line — a
-note holding only an unrelated close must not hide an older start — and with one slot nothing
-older than the newest open marker can matter.
+**Why.** RFC §5.2 and D11: closes pair across days, a note holding only an unrelated close must
+not hide an older start, and T7's `resumed` inherits its origin from a marker that may sit in an
+older note — the whole-window fold gets all three right by construction.
 
 **Deliverable.** The walk, the field, tests.
 
 **Depends on.** T0, T2, T3a, T5.
 
 **Complexity.** R. This is the one place where the slot meets "closes can pair with earlier
-days", and the stopping rule's soundness argument (everything older than the newest open marker
-can only fill the slot with something that marker displaces) must hold for every arm, including
-T2's rename and T7's reopen that lands next.
+days": timestamps must order across notes, every arm (including T2's rename and T7's reopen that
+lands next) must see the older notes, and `carry_over_days = 0` must reproduce today-only
+reading exactly.
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::context_tests` passes with a new
@@ -383,8 +387,9 @@ T2's rename and T7's reopen that lands next.
   `two_starts_yesterday_closing_the_later_today_leaves_nothing`;
   `an_unrelated_close_today_does_not_hide_yesterdays_start`;
   `window_zero_reads_today_only` (yesterday's open start is ignored).
-- Mutation: stop the walk at the first note with any focus line instead of an open marker; the
-  unrelated-close test fails.
+- Mutation: fold only today's note; `a_start_yesterday_left_open_is_the_focus_with_yesterdays_date`
+  fails. Mutation: stop at the newest note holding any focus line; the unrelated-close test
+  fails.
 - Differential: capture `cdno now --json` on `main` against a fixture vault with ten days of
   logs and `carry_over_days = 0`; identical on the branch.
 
@@ -397,15 +402,16 @@ later day is ever lost by stopping early.
 fold arm in `context.rs`: on a `resumed` head, the slot (T3a) takes a new `CurrentFocus` at
 this head's time and date, carrying `origin: Option<NaiveDateTime>` = the displaced marker's
 original stamp when the slot held the same `(project, action)` (or that marker's own origin, so
-a chain keeps the first start). Otherwise — an empty slot, or a different action in it — it is
+a chain keeps the earliest start the window still shows). Otherwise — an empty slot, or a different action in it — it is
 a plain start (`origin: None`). A resume after a pause therefore has `origin: None` (the pause
 emptied the slot); `ResumedFrom.date` carries the pause's date. `CurrentFocus` gains `origin`. Lint's `FOCUS_MARKER_PREFIXES` becomes
 `[&str; 6]`. `Vault::resume_action(at, project: Option<&str>) -> Result<ResumeOutcome, DomainError>`:
 with no `project`, resume the carried focus (`current_focus` with `date != today`) if any, else
 the most recent pause (a minimal `last_paused` is written here as a private helper and
 generalised in T8); with `project`, that project's most recent pause. `NoFocus` when nothing
-qualifies; `FocusOpen` when a different focus is open today, or `same_action` when it is already
-today's. `ResumeOutcome { resumed: CurrentFocus, from: ResumedFrom { kind: Carried | Paused, date, next, reason }, path }`.
+qualifies; `FocusOpen` when a different focus is in the slot — open today **or carried** (D11:
+resuming over a carried X would displace it with no pause line, and `last_paused` would never
+offer it again) — or `same_action` when it is already today's. `ResumeOutcome { resumed: CurrentFocus, from: ResumedFrom { kind: Carried | Paused, date, next, reason }, path }`.
 
 **Deliverable.** The marker, the fold arm, the verb, the outcome type, tests.
 
@@ -429,9 +435,11 @@ every other arm: a `resumed` after a `paused` of the same text is a reopen, a `d
   `resume_prefers_the_carried_focus_over_an_older_pause`;
   `resume_with_project_picks_that_projects_last_pause_and_returns_its_next`;
   `resume_while_a_different_focus_is_open_today_is_focus_open`;
+  `resume_of_a_pause_while_a_different_focus_is_carried_is_focus_open`;
   `resume_of_todays_focus_is_focus_open_same_action`.
 - Mutation: keep the original stamp instead of re-stamping; the Thursday test fails.
 - Mutation: drop `origin`; the first test fails.
+- Mutation: check `FocusOpen` against today's open markers only; the carried test fails.
 
 **Correct means.** Work that continues keeps its focus from day to day by one explicit line, and
 the origin is never lost.
