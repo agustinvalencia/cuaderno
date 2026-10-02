@@ -1651,3 +1651,33 @@ fn paused_entry_carries_next_then_reason_as_continuations() {
         "action paused on [[alpha]] \u{2014} Draft methods\n  next: Pick up from where we left off"
     );
 }
+
+#[test]
+fn paused_entry_drops_blank_continuations() {
+    use cdno_domain::vault::format_action_paused_log_entry;
+
+    // A continuation that is blank after flatten_reason is dropped.
+    // Both blank: the head alone.
+    let entry = format_action_paused_log_entry("alpha", "Draft methods", Some("   "), Some(""));
+    assert_eq!(entry, "action paused on [[alpha]] \u{2014} Draft methods");
+
+    // Blank next, reason given: the head and the reason line only.
+    let entry = format_action_paused_log_entry(
+        "alpha",
+        "Draft methods",
+        Some("   "),
+        Some("Waiting for feedback"),
+    );
+    assert_eq!(
+        entry,
+        "action paused on [[alpha]] \u{2014} Draft methods\n  reason: Waiting for feedback"
+    );
+
+    // Blank reason: head + next only.
+    let entry =
+        format_action_paused_log_entry("alpha", "Draft methods", Some("Review the work"), Some(""));
+    assert_eq!(
+        entry,
+        "action paused on [[alpha]] \u{2014} Draft methods\n  next: Review the work"
+    );
+}

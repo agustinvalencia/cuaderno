@@ -973,17 +973,18 @@ impl Vault {
     /// What you are in the middle of, according to today's log.
     ///
     /// Starting an action writes `- **HH:MM**: started [[slug]] — text`
-    /// into the daily note and completing it writes
-    /// `- **HH:MM**: action done on [[slug]] — text`, so
-    /// "what am I on" is already recorded. This reads it back rather than
-    /// keeping a parallel piece of state that could disagree with the
-    /// vault — which also means it sees a start made from the CLI or by an
-    /// agent over MCP, not only one clicked in the app.
+    /// into the daily note. A done, dropped or paused head of the same
+    /// (project, action) closes it: `- **HH:MM**: action done on [[slug]] — text`,
+    /// `- **HH:MM**: action dropped on [[slug]] — text`, or
+    /// `- **HH:MM**: action paused on [[slug]] — text`. "What am I on" is
+    /// already recorded. This reads it back rather than keeping a parallel
+    /// piece of state that could disagree with the vault — which also means
+    /// it sees a start made from the CLI or by an agent over MCP, not only
+    /// one clicked in the app.
     ///
-    /// The most recent start with no matching completion wins. Several
-    /// starts in a day are normal — you pick something up, put it down,
-    /// pick up something else — and the last one standing is what you are
-    /// on.
+    /// The most recent unclosed start wins. Several starts in a day are
+    /// normal — you pick something up, put it down, pick up something else —
+    /// and the last one standing is what you are on.
     pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
         let view = self.read_daily_note(date)?;
         if !view.exists {

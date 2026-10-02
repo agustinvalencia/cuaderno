@@ -668,7 +668,10 @@ pub(in crate::vault) fn format_action_dropped_log_entry(
 /// than a fresh literal.
 pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 
-/// The marker for the line recording that action being paused.
+/// The marker for the line recording that action being paused. Shared with
+/// [`Vault::current_focus`], which must clear an open start on a pause as
+/// well as on a completion or drop, or a paused action stays "what you are
+/// on" for ever. Also shared with lint so a malformed marker is reported.
 pub(in crate::vault) const LOG_ACTION_PAUSED_PREFIX: &str = "action paused on ";
 
 /// Key introducing the next-action hint on a paused entry's continuation line.

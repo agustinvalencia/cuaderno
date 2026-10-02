@@ -58,9 +58,9 @@ impl Vault {
     ///   the near-misses that would otherwise vanish silently from the
     ///   lapse scan and the commitments aggregation (a `Warning`, #312).
     /// - daily-log focus markers [`Vault::current_focus`] will not read
-    ///   back: a `started` / `action done on` / `action dropped on` line
-    ///   whose `- **HH:MM**: ` stamp or em dash is wrong, the same class
-    ///   of silent near-miss as the rule above (a `Warning`).
+    ///   back: a `started` / `action done on` / `action dropped on` /
+    ///   `action paused on` line whose `- **HH:MM**: ` stamp or em dash is wrong,
+    ///   the same class of silent near-miss as the rule above (a `Warning`).
     /// - a custom override of a built-in template that lacks a frontmatter
     ///   key the built-in has gained since it was customised (a `Warning`
     ///   naming `cdno templates sync`, #699).

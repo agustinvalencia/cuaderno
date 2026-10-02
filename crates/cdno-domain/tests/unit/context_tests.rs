@@ -1949,6 +1949,24 @@ fn a_paused_action_of_different_text_does_not_clear_the_start() {
     assert_eq!(focus.action, "Draft the methods section");
 }
 
+#[test]
+fn a_paused_head_with_continuations_still_clears_the_start() {
+    // The paused marker's continuations (next, reason) live on indented lines.
+    // They must not perturb the match: a pause of the same text still closes.
+    let vault = focus_vault_raw(
+        "- **09:30**: started [[alpha]] \u{2014} Draft the methods section\n\
+         - **11:00**: action paused on [[alpha]] \u{2014} Draft the methods section\n\
+         \x20 next: Review the existing work\n\
+         \x20 reason: Waiting for feedback",
+    );
+
+    assert_eq!(
+        vault.current_focus(focus_day()).unwrap(),
+        None,
+        "a paused action with continuations is no longer what you are on"
+    );
+}
+
 // ---------------------------------------------------------------------
 // completed_actions_between: bullet completions (#586)
 // ---------------------------------------------------------------------
