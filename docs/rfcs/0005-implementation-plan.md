@@ -477,7 +477,8 @@ helper is replaced by this.
 **Depends on.** T0, T5, T7.
 
 **Complexity.** S. The scan shape is `weekly_logs` / `daily_log_mentions`; the one rule
-("not followed by a start or resume of the same text") is stated.
+("not followed by a start, resume, done, drop or promotion of the same text") is stated, and T7's
+private helper already implements it.
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::context_tests` passes with:
@@ -486,7 +487,8 @@ helper is replaced by this.
   `a_pause_followed_by_a_start_of_the_same_text_is_not_offered`;
   `a_friday_pause_is_offered_on_monday` (three-day gap, default look-back);
   `a_pause_outside_the_lookback_is_not_offered` (15 days, default);
-  `one_pass_yields_every_project` (two projects paused on different days, both present).
+  `one_pass_yields_every_project` (two projects paused on different days, both present);
+  `a_pause_followed_by_done_drop_or_promotion_is_not_offered` (one table, through verbs).
 - Mutation: read heads instead of folded lines; the continuations test fails.
 
 **Correct means.** The re-entry hint survives a weekend and is found in one scan.
@@ -692,7 +694,9 @@ The `attempted` block is filled by the handler (T15), since the domain error doe
 `resume_action {project?}`, each through `with_vault` and `verified_write_with`, each
 description opening with the "acts on the CURRENT focus; takes no project or query" sentence
 where that applies. `CurrentFocusDto` gains `date`, `carried`, `origin`; new `LastPauseDto`,
-`ResumedFromDto`; `resume_action`'s payload carries `resumed_from`. The `start_action` handler
+`ResumedFromDto`; `resume_action`'s payload carries `resumed_from`, and its description tells the
+agent to read `resumed_from.kind` and `resumed.action` back (with `project`, a carried focus on
+that project wins over the pause orientation showed — RFC §5.3). The `start_action` handler
 fills `attempted` into a `focus_open` rejection. The catalogue pins in `tests/server.rs:141`
 and `tests/e2e_stdio.rs:226` move 60 → 64.
 

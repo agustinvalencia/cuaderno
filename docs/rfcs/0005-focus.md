@@ -359,11 +359,13 @@ removed. `project` is optional and never prompted.
 
 - With no `project`: resumes the carried focus if there is one, else the most recent pause
   within the paused look-back (§5.5).
-- With `project`: resumes that project's most recent pause — the one `get_orientation` shows
-  beside its `top_action`, so an agent resumes what the person said yes to.
+- With `project`: the bare form restricted to that project — its carried focus if the slot
+  holds one, else its most recent pause, the one `get_orientation` shows beside its
+  `top_action`. When the project also carries a focus, that focus wins, so an agent reads
+  `resumed_from.kind` and `resumed.action` back rather than assuming the pause it showed.
 - Nothing resumable → `NoFocus`. A different focus in the slot — open today or carried —
-  → `FocusOpen` (no auto-switch,
-  D5). The focus already resumed today → `FocusOpen`, `remedy: already_focused`.
+  → `FocusOpen` (no auto-switch, D5). The focus already open today on the asked-for project
+  (any, without `project`) → `FocusOpen`, `remedy: already_focused`.
 
 It writes one entry, `resumed [[slug]] — <text>`, a new **open** marker
 (`LOG_RESUMED_PREFIX`) the fold treats as **close-plus-reopen at the resume stamp**: it takes
@@ -375,7 +377,9 @@ Wednesday's `resumed` line alone, so it carries no origin. A
 hand-written `resumed` with no open marker reads as a plain start. Pause then resume therefore
 round-trips without a second verb — and, because the pause emptied the slot, the resumed focus
 has no `origin`; `resumed_from.date` carries the pause's date instead, and `last_paused` (§5.5) treats a pause followed by a
-`resumed` or `started` of the same text as resumed.
+`resumed`, `started`, `action done on` or `action dropped on` of the same text, or by a promotion of
+it, as no longer resumable — a finished or promoted action is never offered (amended in review of
+#754).
 
 `cdno now` shows today's anchor and keeps the origin:
 `On thesis — Draft methods section (deep), picked up 08:50 today (started Tuesday 14:05).` The
