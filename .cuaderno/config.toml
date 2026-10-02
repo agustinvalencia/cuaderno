@@ -38,6 +38,21 @@ max_active_projects = 5
 # [variables.prompt]
 # subject = "What is this note about?"
 
+# [focus] — configuration for activity tracking (RFC 0005).
+#
+# carry_over_days — number of days to look back when reading focus from
+# earlier days. A closed focus on `today - carry_over_days` may still carry
+# an open start into today; `carry_over_days = 0` reads today's log only.
+# Default 1.
+#
+# paused_lookback_days — number of days to look back when searching for
+# paused actions to resume. A pause older than this window is not offered as
+# a resumption candidate. Default 14.
+#
+# [focus]
+# carry_over_days = 1
+# paused_lookback_days = 14
+
 # A declared custom type: the concept library (RFC 0002). Delete this block if you
 # do not want one; nothing else depends on it.
 [note_types.concept]

@@ -8,6 +8,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Focus configuration block (RFC 0005, #725).** The `[focus]` section in `.cuaderno/config.toml`
+  declares two look-back windows: `carry_over_days` (default 1) for reading focus across days, and
+  `paused_lookback_days` (default 14) for searching resumable pauses. An unknown key in the section is
+  a hard parse error so a typo cannot silently disable either window.
+
 - **`Vault::switch_action` and `Vault::switch_unplanned_action` (RFC 0005, #724).** Move focus in
   one commit: the open focus is paused and the target started, all log lines (`paused`, [`action
   added to`,] `started`) staged in a single write, so a target that does not resolve leaves nothing
