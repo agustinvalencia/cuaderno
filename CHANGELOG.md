@@ -20,6 +20,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   clear an open start just as `action done on` and `action dropped on` do. Lint reports a
   malformed marker. No verb writes it yet (`cdno action pause` arrives later in RFC 0005, #732).
 
+### Fixed
+
+- **The focus follows a promoted bullet (RFC 0005, #722).** `cdno now` and `current_focus` read
+  the `action promoted on [[project]] — "title" -> [[actions/slug]]` line promotion already writes
+  as a rename of the open start: the focus becomes `[[actions/slug]] (energy)`, with the energy
+  taken from the start's own suffix and the original start time kept, so `action complete` and
+  `action drop` still close it. Before, promoting between a start and its close left the focus
+  pinned to the old bullet text for the rest of the day. Lint now reports a near-miss
+  `action promoted on` line, and the help text, tool descriptions and docs no longer describe the
+  old limitation.
+
 ## [0.41.0] - 2026-10-01
 
 ### Added

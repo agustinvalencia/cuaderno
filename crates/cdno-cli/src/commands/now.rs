@@ -5,11 +5,11 @@
 //! from an agent over MCP, or by hand in an editor all count, and a
 //! completion or a drop clears it. Nothing to keep in sync.
 //!
-//! `action promote` is the exception: it rewrites the bullet it
-//! matched, so a promotion between a start and its close leaves the
-//! focus pinned to the old text until the day rolls over, and the close
-//! verbs match nothing. The domain pins that in
-//! `a_promotion_between_start_and_close_strands_the_focus`.
+//! `action promote` rewrites the bullet it matched, and the focus
+//! follows it: the `action promoted on` line promotion logs renames the
+//! open start to the new note, keeping its start time, so the close
+//! verbs still pair. The domain pins that in
+//! `a_promotion_between_start_and_close_moves_the_focus_to_the_note`.
 //!
 //! A hand-written line has to be in the shape the writers emit:
 //! `- **HH:MM**: started [[slug]] — text`, separated by an em dash

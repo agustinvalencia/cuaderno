@@ -61,10 +61,12 @@ yesterday and never closed does not carry over.
 
 ## `cdno now` names the wrong action
 
-You probably ran [`cdno action promote`](cli/action.md#cdno-action-promote) between starting the
-action and closing it. Promotion *rewrites* the bullet, so the start can no longer be paired with it:
-`cdno now` keeps naming the old text for the rest of the day, and `action complete` and `action drop`
-both match nothing. Close an action before promoting it, or re-run the start afterwards.
+After a [`cdno action promote`](cli/action.md#cdno-action-promote), `cdno now` follows the bullet to
+its new note (`[[actions/<slug>]] (deep)`) by reading the `action promoted on` line promotion logs.
+If it still names the old bullet text, that line is missing or not in the writers' shape (a
+`- **HH:MM**: ` stamp, an em dash U+2014, `"title" -> [[actions/<slug>]]`), or the started bullet
+carried no `(deep)`/`(medium)`/`(light)` suffix. `cdno lint` reports a near-miss line and names the
+cause. Otherwise a start with a different action text than the promoted title is a different action.
 
 ## A prompt appears when I wanted automation (or vice versa)
 

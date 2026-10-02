@@ -182,9 +182,9 @@ impl From<OrientationContext> for OrientationContextDto {
 /// An action started and not yet closed, as replayed from today's
 /// `## Logs`. There is no state behind this: a start written by the
 /// CLI, by an agent, or by hand in an editor all count, and a
-/// completion or a drop clears it — except across a
-/// [`Vault::promote_action`], which rewrites the bullet and leaves the
-/// focus pinned to the old text until the day rolls over.
+/// completion or a drop clears it, and a [`Vault::promote_action`],
+/// which rewrites the bullet, renames it to the new note with the
+/// start time kept.
 ///
 /// A hand-written start only counts in the writers' own shape,
 /// `- **HH:MM**: started [[slug]] — text`. The domain's parser

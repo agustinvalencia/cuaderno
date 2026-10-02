@@ -46,9 +46,12 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::actions::{
-    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_STARTED_PREFIX,
 };
-use super::projects::actions::{parse_attached_action_slug, strip_energy_suffix};
+use super::projects::actions::{
+    parse_attached_action_slug, parse_bullet_energy, strip_energy_suffix,
+};
 use super::projects::{ProjectSummary, is_under_projects_done};
 
 // ---------------------------------------------------------------------
@@ -1030,6 +1033,22 @@ impl Vault {
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_PAUSED_PREFIX))
             {
                 open.retain(|f| !(f.project == project && f.action == action));
+            } else if let Some((project, title, new_slug)) = parse_promotion_marker(&text) {
+                // A promotion rewrites the bullet into a link to its new
+                // note; the person never stopped, so the open start is
+                // renamed in place and keeps its `started`. The energy
+                // comes from the start's own suffix, never from the map:
+                // promotion refuses a bullet without one, so a start
+                // lacking it cannot be the subject.
+                if let Some((f, energy)) = open.iter_mut().rev().find_map(|f| {
+                    if f.project != project || strip_energy_suffix(&f.action).trim() != title {
+                        return None;
+                    }
+                    let energy = parse_bullet_energy(&f.action)?;
+                    Some((f, energy))
+                }) {
+                    f.action = format!("[[{new_slug}]] ({})", energy.as_str());
+                }
             }
         }
         Ok(open.pop())
@@ -1161,6 +1180,26 @@ pub(super) fn parse_focus_marker(text: &str, prefix: &str) -> Option<(String, St
         return None;
     }
     Some((project.to_owned(), action.to_owned()))
+}
+
+/// Parse the head `promote_action_with_vars` writes,
+/// `action promoted on [[p]] — "title" -> [[actions/x]]`, into
+/// `(project, title, "actions/x")`. The title is split off on the
+/// **last** `" -> [[`, so a title containing an arrow survives. `None`
+/// for anything else, with the same strictness as [`parse_focus_marker`].
+pub(super) fn parse_promotion_marker(text: &str) -> Option<(String, String, String)> {
+    let (project, rest) = text
+        .strip_prefix(LOG_ACTION_PROMOTED_PREFIX)?
+        .strip_prefix("[[")?
+        .split_once("]]")?;
+    let rest = rest.trim_start().strip_prefix('\u{2014}')?.trim();
+    let rest = rest.strip_prefix('"')?;
+    let (title, link) = rest.rsplit_once("\" -> [[")?;
+    let new_slug = link.trim_end().strip_suffix("]]")?;
+    if project.is_empty() || title.is_empty() || new_slug.is_empty() || new_slug.contains("]]") {
+        return None;
+    }
+    Some((project.to_owned(), title.to_owned(), new_slug.to_owned()))
 }
 
 // ---------------------------------------------------------------------

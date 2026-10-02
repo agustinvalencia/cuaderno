@@ -67,11 +67,10 @@ cdno action start --project surrogate-model --unplanned \
 That is deliberately a separate flag rather than a fallback when `--query` matches nothing. A
 fallback would turn every typo into a new action, silently.
 
-Two limits worth knowing, both pre-existing and both easy to trip over:
+Promoting an action between starting it and closing it is fine: promotion *rewrites* the bullet,
+and `cdno now` follows it to the new note, keeping the original start time. One limit is worth
+knowing and easy to trip over:
 
-- **Do not promote an action between starting it and closing it.** Promotion *rewrites* the bullet,
-  so the start can no longer be paired with it: `cdno now` keeps naming the old text for the rest of
-  the day, and `complete` and `drop` both match nothing. Close it first, or re-run the start after.
 - **Two open bullets with identical text cannot be told apart** by a substring query — neither can
   be closed until one is edited. This is not specific to starting; `action add` twice does the same.
 

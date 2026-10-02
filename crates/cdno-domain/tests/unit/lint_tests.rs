@@ -2392,6 +2392,26 @@ fn a_paused_line_with_an_ascii_hyphen_is_reported() {
 }
 
 #[test]
+fn a_promotion_line_with_a_missing_stamp_is_reported() {
+    let body = daily_log(
+        "- action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]\n",
+    );
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    assert!(
+        warnings[0].message.contains("timestamp"),
+        "hint should name the stamp: {}",
+        warnings[0].message
+    );
+}
+
+#[test]
 fn lint_accepts_the_shape_the_writers_emit() {
     // The exact bytes `start_action` produces must never be flagged.
     let body = daily_log("- **09:30**: started [[alpha]] \u{2014} Draft methods (deep)\n");
