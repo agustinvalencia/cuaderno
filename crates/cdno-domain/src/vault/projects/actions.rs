@@ -16,7 +16,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::closure::Closure;
-use super::super::context::CurrentFocus;
+use super::super::context::{CurrentFocus, resumed_focus};
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -75,6 +75,39 @@ pub struct SwitchOutcome {
     pub paths: Vec<VaultPath>,
 }
 
+/// What [`Vault::resume_action`] did: the focus it reopened, where that
+/// focus came from, and the daily note that now records the resume.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeOutcome {
+    /// The focus as the reader now sees it: stamped at the resume, with an
+    /// `origin` only when a carried focus was continued.
+    pub resumed: CurrentFocus,
+    /// What was resumed.
+    pub from: ResumedFrom,
+    /// The daily note the `resumed` line was written to.
+    pub path: VaultPath,
+}
+
+/// Where a resumed focus came from (RFC 0005 §5.3, `resumed_from`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumedFrom {
+    pub kind: ResumedKind,
+    /// The date of the carried focus's open marker, or of the pause.
+    pub date: chrono::NaiveDate,
+    /// The pause's `next:` hint, as written. Always `None` for a carried focus.
+    pub next: Option<String>,
+    /// The pause's `reason:`, as written. Always `None` for a carried focus.
+    pub reason: Option<String>,
+}
+
+/// Whether [`Vault::resume_action`] continued a focus carried over from an
+/// earlier day or reopened a paused one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumedKind {
+    Carried,
+    Paused,
+}
+
 /// Everything `start_unplanned_action` writes, built but not yet staged.
 struct UnplannedStart {
     path: VaultPath,
@@ -130,14 +163,22 @@ fn focus_open_error(
     }
 }
 
+/// `at` as the log line written at `at` records it: truncated to `HH:MM`.
+fn log_stamp(at: NaiveDateTime) -> NaiveDateTime {
+    at.date().and_time(
+        chrono::NaiveTime::from_hms_opt(at.hour(), at.minute(), 0)
+            .expect("a valid time truncated to the minute"),
+    )
+}
+
 /// The focus a start at `at` opens; the stamp is the log line's `HH:MM`.
 fn started_focus(at: NaiveDateTime, slug: &str, action: &str) -> CurrentFocus {
     CurrentFocus {
         project: slug.to_owned(),
         action: action.to_owned(),
-        started: chrono::NaiveTime::from_hms_opt(at.hour(), at.minute(), 0)
-            .expect("a valid time truncated to the minute"),
+        started: log_stamp(at).time(),
         date: at.date(),
+        origin: None,
     }
 }
 
@@ -349,6 +390,96 @@ impl Vault {
         let path = self.stage_daily_log(at, &entry, &mut tx)?;
         tx.commit()?;
         Ok(PauseOutcome { paused, path })
+    }
+
+    /// Resume work: one `resumed [[slug]] — <text>` line in the daily log,
+    /// which re-anchors the focus at `at` (RFC 0005 §5.3, D9).
+    ///
+    /// The text comes from the log, never from the map, so this resolves
+    /// nothing against the project map, like [`Vault::pause_action`]. What is
+    /// resumed:
+    ///
+    /// - With no `project`: the carried focus — [`Vault::current_focus`]
+    ///   dated before `at`'s day — if there is one, else the most recent
+    ///   pause within `[focus] paused_lookback_days` that no later `started`
+    ///   or `resumed` of the same text follows.
+    /// - With `project`: that project's most recent such pause.
+    ///
+    /// Resuming the carried focus continues it, so the result keeps its
+    /// `origin`; resuming a pause is a fresh open with no `origin`, and
+    /// `from` carries the pause's date and its `next:` / `reason:` lines.
+    /// `resumed` is the focus [`Vault::current_focus`] reads back after the
+    /// commit, built by the same function the reader's fold uses.
+    ///
+    /// Errors, every one leaving the vault untouched: nothing resumable →
+    /// [`DomainError::NoFocus`]; a pause chosen while a different focus is in
+    /// the slot, open today or carried → [`DomainError::FocusOpen`] (resuming
+    /// over a carried focus would displace it with no pause line, so it is
+    /// refused like one open today); with no `project`, nothing to resume but
+    /// a focus already anchored today → [`DomainError::FocusOpen`] with
+    /// `same_action` (already focused).
+    pub fn resume_action(
+        &self,
+        at: NaiveDateTime,
+        project: Option<&str>,
+    ) -> Result<ResumeOutcome, DomainError> {
+        let mut tx = self.transaction()?;
+        let today = at.date();
+        let open = self.current_focus(today)?;
+        let project = project.map(str::trim);
+
+        let ((slug, action), from) = match (&open, project) {
+            // A carried focus, resumed by the bare verb: continue it.
+            (Some(carried), None) if carried.date != today => (
+                (carried.project.clone(), carried.action.clone()),
+                ResumedFrom {
+                    kind: ResumedKind::Carried,
+                    date: carried.date,
+                    next: None,
+                    reason: None,
+                },
+            ),
+            _ => match self.last_resumable_pause(today, project)? {
+                Some(pause) => {
+                    // The slot is taken — today or carried — so reopening the
+                    // pause would displace it with no pause line.
+                    if let Some(open) = open {
+                        return Err(focus_open_error(open, at, &pause.project, &pause.action));
+                    }
+                    let from = ResumedFrom {
+                        kind: ResumedKind::Paused,
+                        date: pause.at.date(),
+                        next: pause.next,
+                        reason: pause.reason,
+                    };
+                    ((pause.project, pause.action), from)
+                }
+                None => {
+                    return Err(match (open, project) {
+                        // Nothing to resume, and the bare verb already finds
+                        // today's focus in the slot: it is already focused.
+                        (Some(open), None) => {
+                            let (slug, action) = (open.project.clone(), open.action.clone());
+                            focus_open_error(open, at, &slug, &action)
+                        }
+                        _ => DomainError::NoFocus,
+                    });
+                }
+            },
+        };
+
+        let entry = format_resumed_log_entry(&slug, &action);
+        let path = self.stage_daily_log(at, &entry, &mut tx)?;
+        tx.commit()?;
+        // Exactly what the fold reads back from the line just written: the
+        // slot it displaces is `open`, which is the carried focus itself or,
+        // for a pause, empty.
+        let resumed = resumed_focus(open.as_ref(), log_stamp(at), &slug, &action);
+        Ok(ResumeOutcome {
+            resumed,
+            from,
+            path,
+        })
     }
 
     /// Record that work on an action is starting: one line in today's
@@ -880,6 +1011,20 @@ pub(in crate::vault) const LOG_ACTION_DROPPED_PREFIX: &str = "action dropped on 
 /// [`Vault::current_focus`], which reads it as a **rename** of the open
 /// start, so the focus follows the bullet to its note.
 pub(in crate::vault) const LOG_ACTION_PROMOTED_PREFIX: &str = "action promoted on ";
+
+/// The marker for the line recording that work on an action is resumed
+/// (RFC 0005 §5.3). An **open** marker: [`Vault::current_focus`] reads it as
+/// close-plus-reopen at its own stamp, keeping the origin when it continues
+/// the action already in the slot. Shared with lint so a malformed marker is
+/// reported.
+pub(in crate::vault) const LOG_RESUMED_PREFIX: &str = "resumed ";
+
+/// Build the daily-log entry recording an action being resumed:
+/// `resumed [[slug]] — <text>`, the text exactly as the focus or pause
+/// logged it, so later closes pair with it by equality.
+pub(in crate::vault) fn format_resumed_log_entry(slug: &str, action_text: &str) -> String {
+    format!("{LOG_RESUMED_PREFIX}[[{slug}]] \u{2014} {action_text}")
+}
 
 /// Build the daily-log entry recording an action being started.
 fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {

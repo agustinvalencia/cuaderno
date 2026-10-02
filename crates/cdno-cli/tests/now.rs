@@ -194,6 +194,7 @@ fn json_carries_the_logged_text_and_a_hh_mm_stamp() {
         action: "Draft methods (deep)".to_owned(),
         started: t(9, 5),
         date: NaiveDate::from_ymd_opt(2026, 7, 13).unwrap(),
+        origin: None,
     };
     let v = now_json(Some(&focus));
     assert_eq!(v["project"], "alpha");
