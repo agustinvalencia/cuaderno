@@ -46,7 +46,7 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::actions::{
-    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::projects::actions::{parse_attached_action_slug, strip_energy_suffix};
 use super::projects::{ProjectSummary, is_under_projects_done};
@@ -1023,6 +1023,10 @@ impl Vault {
                     // action would stay "what you are on" for ever,
                     // since nothing else ever clears an open start.
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
+                    // A pause also closes the action: it is work stopped,
+                    // not work finished, but the result is the same — no
+                    // focus is open until a resume or a new start.
+                    .or_else(|| parse_focus_marker(&text, LOG_ACTION_PAUSED_PREFIX))
             {
                 open.retain(|f| !(f.project == project && f.action == action));
             }

@@ -115,6 +115,9 @@ pub use notes::NoteView;
 pub use notes_section::NoteToDailyOutcome;
 pub use orient::{LapsedHabit, OrientationContext};
 pub use portfolios::PortfolioSummary;
+// Exported for the unit suite, which pins the paused entry's exact shape.
+#[doc(hidden)]
+pub use projects::actions::format_action_paused_log_entry;
 pub use projects::{
     ActionListEntry, AttachedAction, ClosedProjectEntry, LinkedCommitment, OpenAction, OpenItems,
     OpenItemsHash, OpenItemsReport, OpenMilestone, ProjectClosureOutcome, ProjectSummary,

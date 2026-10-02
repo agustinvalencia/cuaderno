@@ -1615,3 +1615,39 @@ fn a_promotion_between_start_and_close_strands_the_focus() {
          with no bullet left that could ever close it"
     );
 }
+
+#[test]
+fn paused_entry_carries_next_then_reason_as_continuations() {
+    use cdno_domain::vault::format_action_paused_log_entry;
+
+    // Both given: three lines in that order, two-space indent
+    let entry = format_action_paused_log_entry(
+        "alpha",
+        "Draft methods (deep)",
+        Some("Review the existing work"),
+        Some("Waiting for feedback"),
+    );
+    assert_eq!(
+        entry,
+        "action paused on [[alpha]] \u{2014} Draft methods (deep)\n  next: Review the existing work\n  reason: Waiting for feedback"
+    );
+
+    // Neither given: just one line
+    let entry = format_action_paused_log_entry("alpha", "Draft methods", None, None);
+    assert_eq!(
+        entry, "action paused on [[alpha]] \u{2014} Draft methods",
+        "bare entry should have no continuations"
+    );
+
+    // Next with interior newline is flattened
+    let entry = format_action_paused_log_entry(
+        "alpha",
+        "Draft methods",
+        Some("Pick up from\nwhere we left off"),
+        None,
+    );
+    assert_eq!(
+        entry,
+        "action paused on [[alpha]] \u{2014} Draft methods\n  next: Pick up from where we left off"
+    );
+}
