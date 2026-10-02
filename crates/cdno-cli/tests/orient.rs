@@ -140,3 +140,48 @@ fn orient_renders_each_project_as_a_card_with_its_next_action() {
         "the commitments section must not grow a gutter:\n{out}"
     );
 }
+
+#[test]
+fn orient_json_does_not_leak_focus_or_last_paused() {
+    // RFC 0005 T9 adds focus and last_paused to domain types, but they are
+    // internal and should not appear in CLI JSON until T17 designs their MCP
+    // DTOs and T21 decides whether to surface them (#737, #741). This test
+    // pins that no leaked output, even with a focus open and a pause logged.
+    use cdno_cli::bootstrap;
+
+    let dir = tempdir().unwrap();
+    seed_alpha_vault(dir.path());
+    // Add a paused action and a started focus to the daily log.
+    let daily = format!("{}/journal/2026/daily/2026-05-27.md", dir.path().display());
+    fs::write(
+        &daily,
+        "---\ndate: 2026-05-27\ntype: daily\n---\n\n# 2026-05-27\n\n## Logs\n\
+         - **14:15**: action paused on [[alpha]] — Draft the methods section (deep)\n  \
+         next: Polish abstract\n\
+         - **14:30**: started [[alpha]] — Draft the methods section (deep)\n",
+    )
+    .unwrap();
+
+    let (vault, _report) = bootstrap::open_vault(dir.path()).expect("vault opens");
+    let ctx = vault
+        .orientation_context(today())
+        .expect("orientation builds");
+    let json_str = serde_json::to_string_pretty(&ctx).expect("context serializes to JSON");
+    let json: serde_json::Value = serde_json::from_str(&json_str).expect("output is valid JSON");
+
+    // Check OrientationContext: no focus key.
+    assert!(
+        !json.get("focus").is_some(),
+        "OrientationContext.focus leaked to JSON: {json}"
+    );
+
+    // Check each ProjectSummary: no last_paused key.
+    if let Some(projects) = json.get("projects").and_then(|p| p.as_array()) {
+        for proj in projects {
+            assert!(
+                !proj.get("last_paused").is_some(),
+                "ProjectSummary.last_paused leaked to JSON on {proj}"
+            );
+        }
+    }
+}

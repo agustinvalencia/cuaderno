@@ -1139,7 +1139,7 @@ impl Vault {
 
 /// A `paused` entry [`Vault::last_paused`] found: what was paused, when, and
 /// the continuations written with it, as written.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LastPause {
     /// The project slug the paused action belongs to.
     pub project: String,
@@ -1290,7 +1290,7 @@ pub(in crate::vault) fn resumed_focus(
 }
 
 /// An action started and not yet finished, as recorded in a daily log.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurrentFocus {
     /// The project slug the action belongs to.
     pub project: String,

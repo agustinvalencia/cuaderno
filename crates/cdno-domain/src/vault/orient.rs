@@ -37,6 +37,8 @@ pub struct OrientationContext {
     pub lapsed_habits: Vec<LapsedHabit>,
     /// The action currently in focus, if any. Carried so the morning
     /// view shows the current work without a second call.
+    /// CLI/JSON exposure decided in RFC 0005's docs task (#741) and MCP DTOs (#737).
+    #[serde(skip)]
     pub focus: Option<CurrentFocus>,
 }
 

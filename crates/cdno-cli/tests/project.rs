@@ -1436,3 +1436,46 @@ fn activate_from_done_works() {
     assert!(raw.contains("closed: null"), "{raw}");
     assert!(!dir.path().join("projects/_done/2025/old.md").exists());
 }
+
+#[test]
+fn project_list_json_does_not_leak_last_paused() {
+    // RFC 0005 T9 adds last_paused to ProjectSummary, but it is internal
+    // and should not appear in CLI JSON until T17 designs the MCP DTOs
+    // and T21 decides whether to surface them (#737, #741). This test pins
+    // that no leaked output even when a project has a logged pause.
+    let dir = vault();
+    fs::write(
+        dir.path().join("projects/test-proj.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Test\n\n## Current State\nActive.\n",
+    )
+    .unwrap();
+    // Add a paused action to the daily log to ensure last_paused has something.
+    let daily = format!("{}/journal/2026/daily/2026-09-29.md", dir.path().display());
+    fs::write(
+        &daily,
+        "---\ndate: 2026-09-29\ntype: daily\n---\n\n# 2026-09-29\n\n## Logs\n\
+         - **14:15**: action paused on [[test-proj]] — Some task\n  \
+         next: Resume later\n",
+    )
+    .unwrap();
+
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let rows: serde_json::Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    if let Some(arr) = rows.as_array() {
+        for proj in arr {
+            assert!(
+                !proj.get("last_paused").is_some(),
+                "ProjectSummary.last_paused leaked to JSON: {proj}"
+            );
+        }
+    }
+}

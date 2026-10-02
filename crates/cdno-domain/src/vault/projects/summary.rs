@@ -38,6 +38,8 @@ pub struct ProjectSummary {
     /// The most recent paused action for this project, when one exists
     /// within `paused_lookback_days`. Carried here so orientation
     /// consumers get it in the same pass that reads the log.
+    /// CLI/JSON exposure decided in RFC 0005's docs task (#741) and MCP DTOs (#737).
+    #[serde(skip)]
     pub last_paused: Option<LastPause>,
 }
 
