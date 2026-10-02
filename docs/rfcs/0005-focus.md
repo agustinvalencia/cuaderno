@@ -581,7 +581,8 @@ start Y") and shows the typed `next:`; the picker never offers the bullet that i
   does not need `today` after all (no cache to compare), so its signature is unchanged.
 - `orient.rs`: `orientation_context` carries `focus` and per-project `last_paused`;
   `get_project_full` carries `last_paused`.
-- `DomainError`: `NoFocus`, `FocusOpen { project, action, same_action, carried }`.
+- `DomainError`: `NoFocus`, `FocusOpen { focus: CurrentFocus, same_action, carried }` (the whole
+  focus, so the rejection's `details.focus` needs no second read).
 - Tests (`tests/unit/context_tests.rs`, `actions_tests.rs`, `lint_tests.rs`,
   `orient_tests.rs`): the walk across a window boundary and the D-2/D-1/D0 case with window 2;
   `carry_over_days = 0` reproduces today's behaviour exactly; a paused start is not a focus;

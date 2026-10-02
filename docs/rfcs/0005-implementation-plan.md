@@ -233,8 +233,10 @@ focus, and nothing else is logged.
 
 ### T3 — `FocusOpen` and `NoFocus` in the start verbs
 
-**What.** `DomainError::FocusOpen { project, action, same_action: bool, carried: bool }` (message
-names the open focus and the remedy). In `start_action` and `start_unplanned_action`, after the
+**What.** `DomainError::FocusOpen { focus: CurrentFocus, same_action: bool, carried: bool }`
+(message names the open focus and the remedy; with `same_action` it gives no switch advice).
+The variant carries the whole `CurrentFocus`, so T6's `date` and T7's `origin` reach T14's
+`details.focus` without changing the error (amended in review of #748). In `start_action` and `start_unplanned_action`, after the
 transaction is open and **after** project and bullet resolution (so `ActionNotFound`,
 `AmbiguousAction`, `ProjectNotActive` keep winning), and in `start_unplanned_action` **before**
 the bullet is appended: read `current_focus(at.date())`; if `Some`, fail with `FocusOpen`,
