@@ -3,7 +3,8 @@
 //! A read verb over `Vault::current_focus`, which replays today's
 //! `## Logs` rather than holding state — so a start made from the CLI,
 //! from an agent over MCP, or by hand in an editor all count, and a
-//! completion or a drop clears it. Nothing to keep in sync.
+//! completion, a drop or a pause clears it. Focus is one slot: a newer
+//! start displaces an older one for good. Nothing to keep in sync.
 //!
 //! `action promote` rewrites the bullet it matched, and the focus
 //! follows it: the `action promoted on` line promotion logs renames the

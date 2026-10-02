@@ -22,8 +22,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
-- **Focus is one slot (RFC 0005, D11, #746).** `current_focus` now holds a single slot instead of
-  a stack of open starts. A newer start displaces an older one for good, and a close, pause or
+- **Focus is one slot (RFC 0005, D11, #746).** `cdno now` and `current_focus` now read a single
+  slot instead of a stack of open starts. A newer start displaces an older one for good, and a close, pause or
   promotion only acts when it names the slot's own action. A log with start X, start Y, done Y
   now reports no focus where it reported X.
 

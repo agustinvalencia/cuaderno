@@ -1026,7 +1026,7 @@ impl Vault {
                     // completion does; only the claim about what
                     // happened differs. Without this arm an abandoned
                     // action would stay "what you are on" for ever,
-                    // since nothing else ever clears an open start.
+                    // since nothing else clears the slot short of a newer start.
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
                     // A pause also closes the action: it is work stopped,
                     // not work finished, but the result is the same — no

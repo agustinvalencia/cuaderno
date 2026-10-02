@@ -179,10 +179,11 @@ impl From<OrientationContext> for OrientationContextDto {
     }
 }
 
-/// An action started and not yet closed, as replayed from today's
-/// `## Logs`. There is no state behind this: a start written by the
-/// CLI, by an agent, or by hand in an editor all count, and a
-/// completion or a drop clears it, and a [`Vault::promote_action`],
+/// The action in the focus slot, as replayed from today's `## Logs`:
+/// the most recent start, unless it has since been completed, dropped
+/// or paused (one slot, RFC 0005 D11). There is no state behind this: a
+/// start written by the CLI, by an agent, or by hand in an editor all
+/// count, a completion, a drop or a pause clears it, and a [`Vault::promote_action`],
 /// which rewrites the bullet, renames it to the new note with the
 /// start time kept.
 ///
