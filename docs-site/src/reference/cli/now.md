@@ -1,6 +1,8 @@
 # `cdno now`
 
-What you are in the middle of: the most recent action started and not yet closed.
+What you are in the middle of: the action most recently started, unless it has since been completed,
+dropped or paused. Focus is one slot: starting something new displaces the old start, which never
+comes back.
 
 ```text
 cdno now [OPTIONS]
