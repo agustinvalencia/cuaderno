@@ -2559,3 +2559,27 @@ fn a_promotion_of_another_bullet_does_not_consume_a_pause() {
     assert_eq!(outcome.resumed.action, "Draft methods (deep)");
     assert_eq!(outcome.from.kind, ResumedKind::Paused);
 }
+
+#[test]
+fn a_promotion_on_another_project_does_not_consume_a_pause() {
+    // Hand-written: foo's "Draft methods (deep)" is paused, then bar promotes
+    // a bullet whose title happens to be the same. Only a promotion on foo
+    // could consume foo's pause.
+    let monday = "---\ndate: 2026-05-25\ntype: daily\n---\n\n# 2026-05-25\n\n## Logs\n\
+        - **09:00**: started [[foo]] \u{2014} Draft methods (deep)\n\
+        - **10:00**: action paused on [[foo]] \u{2014} Draft methods (deep)\n  \
+        next: section 2\n\
+        - **11:00**: action promoted on [[bar]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]\n";
+    let foo_map = project_with_bullets("- [ ] Draft methods (deep)\n");
+    let (vault, _store) = vault_with(&[
+        ("projects/foo.md", &foo_map),
+        ("journal/2026/daily/2026-05-25.md", monday),
+    ]);
+
+    let outcome = vault.resume_action(dt(2026, 5, 26, 9, 0), None).unwrap();
+
+    assert_eq!(outcome.resumed.project, "foo");
+    assert_eq!(outcome.resumed.action, "Draft methods (deep)");
+    assert_eq!(outcome.from.kind, ResumedKind::Paused);
+    assert_eq!(outcome.from.next.as_deref(), Some("section 2"));
+}
