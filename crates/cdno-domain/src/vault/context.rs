@@ -1061,31 +1061,34 @@ impl Vault {
         Ok(doc.section(DAILY_LOGS_SECTION).ok().map(str::to_owned))
     }
 
-    /// The most recent pause a resume may reopen: the newest `paused` entry
-    /// among the daily notes from `today - [focus] paused_lookback_days` to
-    /// `today` that no later line in any of those notes consumed. A pause is
-    /// consumed by a `started`, `resumed`, `action done on` or `action
-    /// dropped on` of the same `(project, action)`, and by a promotion of its
-    /// bullet, matched as the fold's rename arm matches one (same project,
-    /// the energy-stripped text equal to the promoted title) — otherwise a
-    /// finished or promoted action would be offered for resume. With
-    /// `project`, only that project's pauses count.
+    /// Per project, the most recent pause nothing has reopened: the newest
+    /// `paused` entry among the daily notes from `today - [focus]
+    /// paused_lookback_days` to `today` that no later line in any of those
+    /// notes consumed. A pause is consumed by a `started`, `resumed`,
+    /// `action done on` or `action dropped on` of the same `(project,
+    /// action)`, and by a promotion of its bullet, matched as the fold's
+    /// rename arm matches one (same project, the energy-stripped text equal
+    /// to the promoted title) — otherwise a finished or promoted action would
+    /// be offered for resume. Missing notes are skipped.
     ///
     /// "Newest" is fold order — note order, then line order within a note —
     /// never a sort by stamp, as for [`Vault::current_focus`]. The entry's
-    /// `next:` and `reason:` continuation lines are read back with it.
-    ///
-    /// A deliberately minimal reader for `resume_action` (RFC 0005 §5.3);
-    /// RFC 0005's `last_paused` (§5.5) generalises it to every project in
-    /// one pass.
-    pub(in crate::vault) fn last_resumable_pause(
+    /// `next:` and `reason:` continuation lines are read back with it. For the
+    /// most recent pause across projects as well, use
+    /// [`Vault::last_pauses`], which reads the same scan once.
+    pub fn last_paused(
         &self,
         today: NaiveDate,
-        project: Option<&str>,
-    ) -> Result<Option<ResumablePause>, DomainError> {
+    ) -> Result<BTreeMap<String, LastPause>, DomainError> {
+        Ok(self.last_pauses(today)?.by_project)
+    }
+
+    /// [`Vault::last_paused`] together with the newest open pause across all
+    /// projects, from one scan (RFC 0005 §5.3, §5.5).
+    pub fn last_pauses(&self, today: NaiveDate) -> Result<LastPauses, DomainError> {
         let window = u64::from(self.config.focus.paused_lookback_days);
         // Every pause not yet followed by a reopen, oldest first.
-        let mut open: Vec<ResumablePause> = Vec::new();
+        let mut open: Vec<LastPause> = Vec::new();
         for back in (0..=window).rev() {
             let Some(day) = today.checked_sub_days(Days::new(back)) else {
                 continue;
@@ -1103,7 +1106,7 @@ impl Vault {
                             .filter(|v| !v.is_empty())
                             .map(str::to_owned)
                     };
-                    open.push(ResumablePause {
+                    open.push(LastPause {
                         next: value_of(LOG_NEXT_KEY),
                         reason: value_of(LOG_REASON_KEY),
                         project,
@@ -1124,22 +1127,30 @@ impl Vault {
                 }
             }
         }
-        Ok(open
-            .into_iter()
-            .rev()
-            .find(|p| project.is_none_or(|slug| p.project == slug)))
+        let latest = open.last().cloned();
+        // Oldest first, so a later pause of a project replaces an earlier one.
+        let by_project = open.into_iter().map(|p| (p.project.clone(), p)).collect();
+        Ok(LastPauses { by_project, latest })
     }
 }
 
-/// A `paused` entry [`Vault::last_resumable_pause`] found: what was paused,
-/// when, and the continuations written with it.
+/// A `paused` entry [`Vault::last_paused`] found: what was paused, when, and
+/// the continuations written with it, as written.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::vault) struct ResumablePause {
+pub struct LastPause {
     pub project: String,
     pub action: String,
     pub at: NaiveDateTime,
     pub next: Option<String>,
     pub reason: Option<String>,
+}
+
+/// What one [`Vault::last_pauses`] scan found: each project's newest open
+/// pause, and the newest across projects (fold order).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LastPauses {
+    pub by_project: BTreeMap<String, LastPause>,
+    pub latest: Option<LastPause>,
 }
 
 /// The `## Logs` entries as `(time, head, continuations)`: the head is the

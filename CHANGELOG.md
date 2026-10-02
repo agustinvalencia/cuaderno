@@ -8,6 +8,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`Vault::last_paused` (RFC 0005, #728).** One pass over the daily notes from `today -
+  paused_lookback_days` to `today` returns, per project, the most recent `paused` entry that no later
+  line consumed (a start, resume, completion or drop of the same text, or a promotion of its
+  bullet), with its `next:` / `reason:` lines read back as written, including a hint that contains
+  `"; "`. `Vault::last_pauses` returns the same map plus the newest pause across projects from the
+  same scan. `resume_action` now reads these instead of its private helper, with no change in
+  behaviour. Domain reader only; orientation and project context (T9/T11/T17) surface it.
+
 - **`Vault::resume_action` and the `resumed` marker (RFC 0005, #727).** `resumed [[project]] — text`
   is a new open marker: the focus reader takes it as close-plus-reopen at the line's own stamp, so
   a focus resumed each morning stays inside the `carry_over_days` window, and `CurrentFocus` gains

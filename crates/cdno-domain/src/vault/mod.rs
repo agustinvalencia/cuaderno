@@ -99,8 +99,8 @@ pub use commitments::{CommitmentEntry, CommitmentSource};
 pub use config::{ConfigDocument, ConfigSaveError, ConfigValidationError, validate_config_str};
 pub use context::{
     BacklinkRef, CompletedActionEntry, CompletedActionSource, CurrentFocus, DailyLogLine,
-    ProjectBacklinks, ProjectStateChange, QuestionBacklinks, TrackingEntry, TrackingPoint,
-    TrackingSeries,
+    LastPause, LastPauses, ProjectBacklinks, ProjectStateChange, QuestionBacklinks, TrackingEntry,
+    TrackingPoint, TrackingSeries,
 };
 // Timezone-injected staleness helpers, hidden from the public API but
 // reachable by the deterministic staleness test (#380).
