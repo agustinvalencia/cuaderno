@@ -3237,6 +3237,16 @@ fn a_during_continuation_does_not_perturb_the_focus() {
     assert_eq!(focus.project, "alpha");
     assert_eq!(focus.action, "Draft the methods section");
     assert_eq!(focus.started, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+
+    // A line whose head is a genuine close, written during the focus: the tag
+    // becomes its continuation, so the head still matches and the focus closes.
+    vault
+        .log_to_daily_note(
+            at,
+            "action done on [[alpha]] \u{2014} Draft the methods section",
+        )
+        .unwrap();
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
 }
 
 #[test]

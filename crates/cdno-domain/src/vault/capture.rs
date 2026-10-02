@@ -13,7 +13,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::log::{during_continuation, flatten_for_log};
+use super::log::{during_continuation, flatten_for_log, normalise_project_slug};
 use super::slug::slugify;
 
 /// One uncategorised capture under `inbox/` awaiting triage.
@@ -175,12 +175,6 @@ impl Vault {
 
 /// Frontmatter key recording the project in focus when an item was captured.
 const CAPTURED_DURING: &str = "captured_during";
-
-/// The bare project slug: a `projects/` prefix and `.md` suffix dropped.
-fn normalise_project_slug(slug: &str) -> &str {
-    let slug = slug.strip_prefix("projects/").unwrap_or(slug);
-    slug.strip_suffix(".md").unwrap_or(slug)
-}
 
 /// Insert `captured_during: <slug>` as the last frontmatter line of
 /// `content`. Content without a frontmatter block is returned unchanged.
