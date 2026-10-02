@@ -1800,3 +1800,151 @@ fn pause_does_not_touch_the_map_or_require_an_active_project() {
         "the map is byte-identical"
     );
 }
+
+// ---------------------------------------------------------------------
+// Start refused while a focus is open (RFC 0005 §5.1, D5)
+// ---------------------------------------------------------------------
+
+const TWO_BULLETS: &str = "- [ ] Draft methods (deep)\n- [ ] Fix the badge (light)\n";
+
+#[test]
+fn a_second_start_is_refused_naming_the_open_focus() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    let daily_path = vp("journal/2026/daily/2026-05-26.md");
+    let before = store.read_file(&daily_path).unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 10, 0), "foo", "badge")
+        .unwrap_err();
+    match &err {
+        DomainError::FocusOpen {
+            project,
+            action,
+            same_action,
+            carried,
+        } => {
+            assert_eq!(project, "foo");
+            assert_eq!(action, "Draft methods (deep)");
+            assert!(!same_action);
+            assert!(!carried);
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert!(err.to_string().contains("Draft methods (deep)"), "{err}");
+    assert_eq!(store.read_file(&daily_path).unwrap(), before);
+}
+
+#[test]
+fn a_typo_is_reported_as_not_found_even_with_a_focus_open() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, _store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 10, 0), "foo", "no such bullet")
+        .unwrap_err();
+    assert!(matches!(err, DomainError::ActionNotFound { .. }), "{err:?}");
+}
+
+#[test]
+fn an_unplanned_start_refused_by_focus_open_adds_no_bullet() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    let daily_path = vp("journal/2026/daily/2026-05-26.md");
+    let map_before = store.read_file(&vp("projects/foo.md")).unwrap();
+    let daily_before = store.read_file(&daily_path).unwrap();
+
+    let err = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 10, 0),
+            "foo",
+            "Something new",
+            EnergyLevel::Light,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert_eq!(store.read_file(&vp("projects/foo.md")).unwrap(), map_before);
+    assert_eq!(store.read_file(&daily_path).unwrap(), daily_before);
+}
+
+#[test]
+fn starting_the_focused_bullet_sets_same_action() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, _store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let err = vault
+        .start_action(dt(2026, 5, 26, 10, 0), "foo", "draft")
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+
+    // An unplanned start that names the focused text is the same action too.
+    let err = vault
+        .start_unplanned_action(
+            dt(2026, 5, 26, 10, 5),
+            "foo",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: true,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_paused_focus_does_not_block_a_start() {
+    let map = project_with_bullets(TWO_BULLETS);
+    let (vault, _store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 26, 10, 0), None, None)
+        .unwrap();
+
+    vault
+        .start_action(dt(2026, 5, 26, 10, 5), "foo", "badge")
+        .expect("nothing is in focus after a pause");
+    let focus = vault
+        .current_focus(dt(2026, 5, 26, 10, 5).date())
+        .unwrap()
+        .unwrap();
+    assert_eq!(focus.action, "Fix the badge (light)");
+}

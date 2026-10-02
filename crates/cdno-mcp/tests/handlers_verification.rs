@@ -22,8 +22,8 @@ use cdno_core::store::{MemoryVaultStore, VaultStore, VaultWriteLock};
 use cdno_domain::Vault;
 use cdno_mcp::CuadernoServer;
 use cdno_mcp::server::{
-    AppendToLogInput, CaptureInput, CreateProjectInput, DiscardInboxItemInput, StartActionInput,
-    StartUnplannedActionInput,
+    AddActionInput, AppendToLogInput, CaptureInput, CreateProjectInput, DiscardInboxItemInput,
+    StartActionInput, StartUnplannedActionInput,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, RawContent};
@@ -404,11 +404,15 @@ async fn server_with_a_started_bullet() -> CuadernoServer {
 #[tokio::test]
 async fn start_action_is_append_shaped_and_shows_the_log_line_that_landed() {
     let server = server_with_a_started_bullet().await;
+    // Seeded with `add_action`, not an unplanned start: that would leave the
+    // bullet in focus, and the start under test is now refused while one is.
     server
-        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+        .add_action(Parameters(AddActionInput {
             project: "alpha".to_owned(),
             title: "Draft methods".to_owned(),
             energy: "deep".to_owned(),
+            with_note: false,
+            vars: None,
         }))
         .await
         .expect("seed a bullet to start");

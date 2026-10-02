@@ -62,6 +62,22 @@ pub enum DomainError {
     #[error("nothing is started \u{2014} nothing to pause")]
     NoFocus,
 
+    /// A start was attempted while an action is already in focus (RFC 0005
+    /// §5.1, D5): focus is one slot, and starting never displaces it.
+    /// `project` and `action` name the open focus; `same_action` is true when
+    /// the refused start targeted that very action; `carried` is true when
+    /// the focus was started on an earlier day.
+    #[error(
+        "{} \u{2014} {project}: {action}. Switch to the new action, or pause or complete this one first",
+        if *.same_action { "that action is already in focus" } else { "an action is already in focus" }
+    )]
+    FocusOpen {
+        project: String,
+        action: String,
+        same_action: bool,
+        carried: bool,
+    },
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 

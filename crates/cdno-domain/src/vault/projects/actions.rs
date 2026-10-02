@@ -62,6 +62,26 @@ pub struct PauseOutcome {
 }
 
 impl Vault {
+    /// Refuse a start while something is in focus. `slug`/`target` are the
+    /// resolved project and bullet text, so `same_action` is a plain equality.
+    fn refuse_if_focus_open(
+        &self,
+        at: NaiveDateTime,
+        slug: &str,
+        target: &str,
+    ) -> Result<(), DomainError> {
+        match self.current_focus(at.date())? {
+            None => Ok(()),
+            Some(open) => Err(DomainError::FocusOpen {
+                same_action: open.project == slug && open.action == target,
+                project: open.project,
+                action: open.action,
+                // T6 sets this from the focus's date.
+                carried: false,
+            }),
+        }
+    }
+
     /// Pause the open focus: one `action paused on [[slug]] — <text>` line in
     /// the daily log, with optional `next:` and `reason:` continuations.
     ///
@@ -149,6 +169,8 @@ impl Vault {
         let idx = resolve_open_action(&lines, slug, query)?;
         let action_text =
             parse_open_action_text(lines[idx]).expect("matched line was previously parseable");
+        // After resolution, so a typo is still a typo (RFC 0005 §5.1).
+        self.refuse_if_focus_open(at, slug, action_text)?;
 
         let log_entry = format_action_started_log_entry(slug, action_text);
         let daily_path = self.stage_daily_log(at, &log_entry, &mut tx)?;
@@ -237,6 +259,15 @@ impl Vault {
         let (path, mut doc) = self.resolve_active_project(slug)?;
 
         let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
+        // Read the started text back out of the bullet we are about to build,
+        // exactly as `start_action` reads it out of one already on the
+        // map — so the energy suffix and spacing match what the close
+        // verbs will log, without this path knowing the format itself.
+        let started_text =
+            parse_open_action_text(&bullet).expect("bullet was just formatted as `- [ ] …`");
+        // Before anything is appended: a refused start creates nothing.
+        self.refuse_if_focus_open(at, slug, started_text)?;
+
         doc.ensure_section(NEXT_ACTIONS_SECTION)?;
         let existing = doc.section(NEXT_ACTIONS_SECTION)?.trim_end();
         let new_section = if existing.is_empty() {
@@ -248,13 +279,6 @@ impl Vault {
 
         let new_content = doc.render().to_owned();
         let entry_meta = build_index_entry_for(&path, &new_content, NoteType::Project.as_str())?;
-
-        // Read the started text back out of the bullet we just built,
-        // exactly as `start_action` reads it out of one already on the
-        // map — so the energy suffix and spacing match what the close
-        // verbs will log, without this path knowing the format itself.
-        let started_text =
-            parse_open_action_text(&bullet).expect("bullet was just formatted as `- [ ] …`");
 
         let added_entry = format_action_added_log_entry(slug, action_text, energy);
         let started_entry = format_action_started_log_entry(slug, started_text);

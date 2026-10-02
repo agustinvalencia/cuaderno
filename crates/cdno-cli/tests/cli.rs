@@ -2398,6 +2398,35 @@ fn action_start_json_emits_a_write_result() {
         "and carries a message: {v}"
     );
 
+    // A start is refused while one is open, so close the first and plan a
+    // fresh bullet for the --query form to start.
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "action",
+            "complete",
+            "--project",
+            "alpha",
+            "--query",
+            "Fix the CI badge",
+        ])
+        .assert()
+        .success();
+    cdno()
+        .current_dir(dir.path())
+        .args([
+            "action",
+            "add",
+            "--project",
+            "alpha",
+            "--title",
+            "Tidy the README",
+            "--energy",
+            "light",
+        ])
+        .assert()
+        .success();
+
     // --query reports the daily note it logged to.
     let v = json_stdout(
         dir.path(),
@@ -2407,7 +2436,7 @@ fn action_start_json_emits_a_write_result() {
             "--project",
             "alpha",
             "--query",
-            "Fix the CI badge",
+            "Tidy the README",
             "--json",
         ],
     );

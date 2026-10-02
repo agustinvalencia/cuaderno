@@ -479,7 +479,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         // No MCP verb can raise this yet (pause arrives with RFC 0005's T14,
         // which gives it a proper rejection code); until then it stays a
         // plain protocol error carrying the domain's own message.
-        | DomainError::NoFocus => return None,
+        | DomainError::NoFocus
+        // Likewise FocusOpen: its proper `focus_open` rejection code and
+        // details arrive with T14 (#734); until then it is a plain protocol
+        // error carrying the domain message.
+        | DomainError::FocusOpen { .. } => return None,
     };
 
     // `message` is the domain's own `Display` output, carried inside the
