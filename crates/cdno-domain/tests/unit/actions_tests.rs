@@ -2132,6 +2132,7 @@ fn switch_to_the_focused_bullet_is_focus_open_same_action() {
         .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
         .unwrap();
     let before = store.read_file(&vp(SWITCH_DAILY)).unwrap();
+    let map_before = store.read_file(&vp("projects/foo.md")).unwrap();
 
     let err = vault
         .switch_action(dt(2026, 5, 26, 10, 0), "foo", "draft", None, None)
@@ -2168,4 +2169,9 @@ fn switch_to_the_focused_bullet_is_focus_open_same_action() {
         "{err:?}"
     );
     assert_eq!(store.read_file(&vp(SWITCH_DAILY)).unwrap(), before);
+    assert_eq!(
+        store.read_file(&vp("projects/foo.md")).unwrap(),
+        map_before,
+        "the refused unplanned switch left the map byte-identical"
+    );
 }

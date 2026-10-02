@@ -86,10 +86,12 @@ struct UnplannedStart {
 }
 
 impl UnplannedStart {
-    /// Stage the map write and its index upsert.
-    fn stage(&self, tx: &mut cdno_core::transaction::VaultTransaction) {
-        tx.write_file(self.path.clone(), self.new_content.clone());
-        tx.upsert_note(self.entry_meta.clone());
+    /// Stage the map write and its index upsert, handing back the
+    /// `(added, started)` log entries for the caller's daily-log write.
+    fn stage(self, tx: &mut cdno_core::transaction::VaultTransaction) -> (String, String) {
+        tx.write_file(self.path, self.new_content);
+        tx.upsert_note(self.entry_meta);
+        (self.added_entry, self.started_entry)
     }
 }
 
@@ -112,8 +114,19 @@ fn switch_entries(
     out
 }
 
+/// The one place a [`DomainError::FocusOpen`] is built: `same_action` is a plain
+/// equality against the resolved project and bullet text.
+fn focus_open_error(open: CurrentFocus, slug: &str, target: &str) -> DomainError {
+    DomainError::FocusOpen {
+        same_action: open.project == slug && open.action == target,
+        focus: open,
+        // T6 sets this from the focus's date.
+        carried: false,
+    }
+}
+
 /// The focus a start at `at` opens; the stamp is the log line's `HH:MM`.
-fn focus_started(at: NaiveDateTime, slug: &str, action: &str) -> CurrentFocus {
+fn started_focus(at: NaiveDateTime, slug: &str, action: &str) -> CurrentFocus {
     CurrentFocus {
         project: slug.to_owned(),
         action: action.to_owned(),
@@ -133,12 +146,7 @@ impl Vault {
     ) -> Result<(), DomainError> {
         match self.current_focus(at.date())? {
             None => Ok(()),
-            Some(open) => Err(DomainError::FocusOpen {
-                same_action: open.project == slug && open.action == target,
-                focus: open,
-                // T6 sets this from the focus's date.
-                carried: false,
-            }),
+            Some(open) => Err(focus_open_error(open, slug, target)),
         }
     }
 
@@ -210,6 +218,14 @@ impl Vault {
     /// and `paused` is `None`. Switching to the bullet already in focus is
     /// [`DomainError::FocusOpen`] with `same_action` set, and writes nothing.
     /// `primary` is the daily note, the only file written.
+    ///
+    /// Errors: blank `query` → `EmptyField`; parked → `ProjectNotActive`;
+    /// missing project → `Store(NotFound)`; missing section → `Manipulation`;
+    /// no match → [`DomainError::ActionNotFound`]; several matches →
+    /// [`DomainError::AmbiguousAction`] with the candidates; the target is
+    /// already the focus → [`DomainError::FocusOpen`] with `same_action: true`.
+    /// Resolution errors win over `FocusOpen`, and every error leaves the vault
+    /// untouched.
     pub fn switch_action(
         &self,
         at: NaiveDateTime,
@@ -230,12 +246,12 @@ impl Vault {
         let entries = switch_entries(open.as_ref(), next, reason, &[], &started_entry);
         let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
         let daily = self.stage_daily_logs(at, &refs, &mut tx)?;
-        tx.commit()?;
+        let paths = tx.commit()?;
         Ok(SwitchOutcome {
             paused: open,
-            started: focus_started(at, slug, &action_text),
-            primary: daily.clone(),
-            paths: vec![daily],
+            started: started_focus(at, slug, &action_text),
+            primary: daily,
+            paths,
         })
     }
 
@@ -243,6 +259,14 @@ impl Vault {
     /// added to the map as `start_unplanned_action` does, and the log gets
     /// `paused` [, `action added to`], `started` in one staged write.
     /// `primary` is the project map, as for `start_unplanned_action`.
+    ///
+    /// Errors: blank `title` → `EmptyField`; parked → `ProjectNotActive`;
+    /// missing project → `Store(NotFound)`; a malformed map (for example two
+    /// `## Next Actions` headings) → `Manipulation`; the new bullet's text equals
+    /// the focused one → [`DomainError::FocusOpen`] with `same_action: true`.
+    /// There is no not-found or ambiguity error: the action is being created.
+    /// Map errors win over `FocusOpen`, and every error leaves the vault
+    /// untouched.
     pub fn switch_unplanned_action(
         &self,
         at: NaiveDateTime,
@@ -268,9 +292,9 @@ impl Vault {
             &plan.started_entry,
         );
         let refs: Vec<&str> = entries.iter().map(String::as_str).collect();
-        let started = focus_started(at, slug, &plan.started_text);
+        let started = started_focus(at, slug, &plan.started_text);
         let path = plan.path.clone();
-        plan.stage(&mut tx);
+        let _ = plan.stage(&mut tx);
         self.stage_daily_logs(at, &refs, &mut tx)?;
         let paths = tx.commit()?;
         Ok(SwitchOutcome {
@@ -291,12 +315,7 @@ impl Vault {
     ) -> Result<Option<CurrentFocus>, DomainError> {
         match self.current_focus(at.date())? {
             Some(open) if open.project == slug && open.action == target => {
-                Err(DomainError::FocusOpen {
-                    focus: open,
-                    same_action: true,
-                    // T6 sets this from the focus's date.
-                    carried: false,
-                })
+                Err(focus_open_error(open, slug, target))
             }
             other => Ok(other),
         }
@@ -472,10 +491,10 @@ impl Vault {
         self.refuse_if_focus_open(at, slug, &plan.started_text)?;
 
         let path = plan.path.clone();
-        plan.stage(&mut tx);
+        let (added_entry, started_entry) = plan.stage(&mut tx);
         // One staged write for both lines — see `stage_daily_logs`;
         // staging them separately would drop the first.
-        self.stage_daily_logs(at, &[&plan.added_entry, &plan.started_entry], &mut tx)?;
+        self.stage_daily_logs(at, &[&added_entry, &started_entry], &mut tx)?;
         let touched = tx.commit()?;
 
         Ok(WriteOutcome::written(path, touched))
