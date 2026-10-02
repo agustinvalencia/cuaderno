@@ -58,7 +58,8 @@ state_overflow = "reject"
 #
 # carry_over_days — how many days before today the focus reader also reads.
 # A start left open yesterday is still your focus this morning with the
-# default 1; 0 reads today's log only (the behaviour before RFC 0005).
+# default 1, unless a newer start or a matching close follows it; 0 reads
+# today's log only (the behaviour before RFC 0005).
 #
 # paused_lookback_days — how many days back a paused action is still offered
 # for resuming (orientation, project context, `cdno action resume`).

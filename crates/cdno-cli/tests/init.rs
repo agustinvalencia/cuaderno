@@ -84,11 +84,11 @@ fn run_writes_focus_config_with_both_keys_documented() {
     );
     // Both keys should be documented.
     assert!(
-        config.contains("carry_over_days"),
+        config.contains("# carry_over_days = 1"),
         "config should document carry_over_days"
     );
     assert!(
-        config.contains("paused_lookback_days"),
+        config.contains("# paused_lookback_days = 14"),
         "config should document paused_lookback_days"
     );
 }
