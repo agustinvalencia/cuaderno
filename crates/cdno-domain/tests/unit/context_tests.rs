@@ -784,7 +784,7 @@ fn a_completed_action_is_no_longer_the_focus() {
 #[test]
 fn the_most_recent_open_start_wins() {
     // A day interleaves several: pick something up, put it down, pick up
-    // something else. The one still standing is what you are on.
+    // something else. The newest start is what you are on.
     let vault = focus_vault(&[
         "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
         "**10:15**: started [[beta]] \u{2014} Chase the venue",
@@ -799,17 +799,67 @@ fn the_most_recent_open_start_wins() {
 }
 
 #[test]
-fn completing_one_action_leaves_an_earlier_start_standing() {
-    // The completion clears its own start, not simply the latest.
+fn completing_the_newer_start_leaves_nothing_open() {
+    // Focus is one slot (RFC 0005 D11): the newer start displaced the
+    // older, so closing it does not bring the older back.
     let vault = focus_vault(&[
         "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
         "**10:15**: started [[beta]] \u{2014} Chase the venue",
         "**11:00**: action done on [[beta]] \u{2014} Chase the venue",
     ]);
 
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn a_newer_start_displaces_the_older() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:15**: started [[beta]] \u{2014} Chase the venue",
+    ]);
+
     let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
 
-    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.project, "beta");
+    assert_eq!(focus.action, "Chase the venue");
+}
+
+#[test]
+fn pausing_the_newer_start_does_not_bring_back_the_older() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:15**: started [[beta]] \u{2014} Chase the venue",
+        "**11:00**: action paused on [[beta]] \u{2014} Chase the venue",
+    ]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn a_close_of_a_displaced_start_does_nothing() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**10:15**: started [[beta]] \u{2014} Chase the venue",
+        "**11:00**: action done on [[alpha]] \u{2014} Draft the methods section",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "beta");
+    assert_eq!(focus.action, "Chase the venue");
+}
+
+#[test]
+fn a_promotion_of_a_displaced_start_does_not_rename_the_slot() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft methods (deep)",
+        "**10:15**: started [[alpha]] \u{2014} Chase the venue (light)",
+        "**10:30**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Chase the venue (light)");
 }
 
 #[test]
