@@ -360,8 +360,9 @@ disable either.
 `date - carry_over_days ..= date` (skipping missing ones) and run T3a's one-slot fold over all of
 their heads, oldest to newest; **no early stop** (RFC §5.2 — a stop is unsound for `resumed`'s
 inherited origin, and the window is at most `carry_over_days + 1` notes). Factor the per-note head
-extraction into `focus_heads(date) -> Vec<(NaiveDateTime, String)>` so the fold compares
-timestamps across days. `CurrentFocus` gains `date: NaiveDate`; `FocusOpen.carried` (T3) is set
+extraction into `focus_heads(date) -> Vec<(NaiveDateTime, String)>` so each open marker carries
+its date. The fold's order is note order, then line order within a note — **never a sort by
+stamp**, which would reorder a hand-edited line and break the `carry_over_days = 0` differential. `CurrentFocus` gains `date: NaiveDate`; `FocusOpen.carried` (T3) is set
 from `date != at.date()`. `carry_over_days = 0` must reproduce the pre-T6 behaviour exactly.
 
 **Why.** RFC §5.2 and D11: closes pair across days, a note holding only an unrelated close must
@@ -373,7 +374,7 @@ older note — the whole-window fold gets all three right by construction.
 **Depends on.** T0, T2, T3a, T5.
 
 **Complexity.** R. This is the one place where the slot meets "closes can pair with earlier
-days": timestamps must order across notes, every arm (including T2's rename and T7's reopen that
+days": the fold must run in note-then-line order, every arm (including T2's rename and T7's reopen that
 lands next) must see the older notes, and `carry_over_days = 0` must reproduce today-only
 reading exactly.
 
@@ -393,8 +394,8 @@ reading exactly.
 - Differential: capture `cdno now --json` on `main` against a fixture vault with ten days of
   logs and `carry_over_days = 0`; identical on the branch.
 
-**Correct means.** The focus is the most recent open marker inside the window, and no close in a
-later day is ever lost by stopping early.
+**Correct means.** The focus is the newest open marker inside the window unless a later close
+names it, and no close or origin is ever lost by reading too little of the window.
 
 ### T7 — The `resumed` marker and `resume_action`
 
@@ -442,7 +443,7 @@ every other arm: a `resumed` after a `paused` of the same text is a reopen, a `d
 - Mutation: check `FocusOpen` against today's open markers only; the carried test fails.
 
 **Correct means.** Work that continues keeps its focus from day to day by one explicit line, and
-the origin is never lost.
+the origin is kept for as long as the window can see it.
 
 ### T8 — `last_paused`, one pass
 

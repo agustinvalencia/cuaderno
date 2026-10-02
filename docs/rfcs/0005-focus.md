@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft, amended after review — 2026-10-02 (three-seat review, three rounds, on PR #718; all seats approve for amendment; §9 names what the maintainer still confirms) |
+| **Status** | Draft, amended after review — 2026-10-02 (three-seat review, three rounds, on PR #718; all seats approve for amendment; amended again on PR #745 for D11, one slot; §9 names what the maintainer still confirms) |
 | **Tracked by** | PR #718 |
 | **Affects** | `cdno-domain` (`vault/context.rs`, `vault/projects/actions.rs`, `vault/projects/closing.rs`, `vault/orient.rs`, `vault/lint.rs`, config), `cdno-cli` (`cdno action`, `cdno now`), `cdno-mcp` (four tools, server instructions, one field on write results, two rejection codes), `docs/cli-ergonomics.md`, `examples/` (skills, a Claude Code hook), `docs-site` |
 | **Related** | #568 (`start_unplanned_action`, the typo-becomes-an-action failure), `a_promotion_between_start_and_close_strands_the_focus` (the known stranding), #564 (the `reason:` continuation line), #560 (caller-actionable rejections), #196 (the write lock), RFC 0004 (closure recipe, rejection shapes) |
@@ -16,8 +16,10 @@
 > skippable prompt (§5.1, D8), moved `last_paused` onto `get_orientation` and
 > `get_project_context` with its own look-back (§5.5), rewrote the detour protocol with a
 > "do it as an aside" path, once-per-topic, exemptions and a consent rule (§5.6), and
-> restated the cross-day stopping rule (§5.2). The text below is the amended version; the
-> record is on the PR.
+> restated the cross-day stopping rule (§5.2). A second amendment (PR #745) made focus one
+> slot also on reading (D11), replaced the stopping rule with a whole-window fold, and refused
+> `resume` over a carried focus (§5.3). The text below is the amended version; the record is on
+> the PRs.
 
 > **Authorship.** Drafted by Claude (Anthropic) from a design conversation with the maintainer on
 > 2026-10-01/02. The goal in §2, the decision that setting and unsetting a focus must be
@@ -304,7 +306,7 @@ existing line; `park_project` closes nothing, and the focus stays until paused.
 
 ### 5.2 The focus survives midnight, within a window
 
-The reader stops replaying one day and walks back from today:
+The reader stops replaying one day and reads a window of days back from today:
 
 ```toml
 [focus]
@@ -366,9 +368,10 @@ removed. `project` is optional and never prompted.
 It writes one entry, `resumed [[slug]] — <text>`, a new **open** marker
 (`LOG_RESUMED_PREFIX`) the fold treats as **close-plus-reopen at the resume stamp**: it takes
 the slot at this line's time and date, and when the slot already held the same `(project, text)`
-the new marker keeps that marker's origin. An origin is only as old as the window lets the
-reader see: on Thursday with the default window, a Tuesday start resumed on Wednesday is read
-from Wednesday's `resumed` line alone, so it carries no origin. That re-stamp is what fixes the Thursday expiry: the window counts from the resume. A
+the new marker keeps that marker's origin. That re-stamp is what fixes the Thursday expiry:
+the window counts from the resume. An origin is only as old as the window lets the reader see:
+on Thursday with the default window, a Tuesday start resumed on Wednesday is read from
+Wednesday's `resumed` line alone, so it carries no origin. A
 hand-written `resumed` with no open marker reads as a plain start. Pause then resume therefore
 round-trips without a second verb — and, because the pause emptied the slot, the resumed focus
 has no `origin`; `resumed_from.date` carries the pause's date instead, and `last_paused` (§5.5) treats a pause followed by a
@@ -570,7 +573,7 @@ start Y") and shows the typed `next:`; the picker never offers the bullet that i
   `switch_unplanned_action`, `resume_action`, each composed from `stage_*` helpers in one
   transaction; the `FocusOpen` check in `start_action` / `start_unplanned_action`, placed after
   resolution and before any add. `promote_action_with_vars` is unchanged.
-- `context.rs`: the walk (§5.2) with the stated stopping rule; the fold gains three arms —
+- `context.rs`: the whole-window one-slot fold (§5.2, D11); the fold gains three arms —
   `paused` as a close, `resumed` as close-plus-reopen, `promoted` as a rename;
   `CurrentFocus { date, origin }`; `last_paused(window)` as one pass; `parse_focus_marker`
   unchanged; a `parse_promotion_marker` beside it.
