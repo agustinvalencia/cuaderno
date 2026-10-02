@@ -186,7 +186,12 @@ impl Vault {
 
 /// The `\n  during: [[<slug>]]` continuation line, two-space indented like
 /// `reason:` and `next:`.
+///
+/// The slug is normalised to the bare project slug the rest of the vault
+/// links by: a `projects/` prefix and `.md` suffix are dropped.
 pub(in crate::vault) fn during_continuation(slug: &str) -> String {
+    let slug = slug.strip_prefix("projects/").unwrap_or(slug);
+    let slug = slug.strip_suffix(".md").unwrap_or(slug);
     format!("\n  {LOG_DURING_KEY}[[{slug}]]")
 }
 

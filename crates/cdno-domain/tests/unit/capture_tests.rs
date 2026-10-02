@@ -380,3 +380,40 @@ fn a_capture_with_no_focus_has_no_tag() {
         .unwrap();
     assert!(!daily.contains("during"), "{daily}");
 }
+
+#[test]
+fn a_capture_without_a_focus_discarded_during_a_focus_stays_untagged() {
+    // The tag is copied from the item, never from the focus open at discard.
+    let (vault, store) = make_vault();
+    let path = vault.capture_to_inbox(moment(), "buy milk").unwrap();
+    let daily_path = VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    store.write_file(&daily_path, FOCUS_DAILY).unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+    let daily = store.read_file(&daily_path).unwrap();
+    assert!(daily.contains("discarded: buy milk"), "{daily}");
+    assert!(!daily.contains("during:"), "{daily}");
+}
+
+#[test]
+fn an_unreadable_focus_window_writes_untagged() {
+    let (vault, store) = focused_vault();
+    // Today holds an open start, so a readable window would tag; yesterday is
+    // inside the default one-day window and does not parse.
+    store
+        .write_file(
+            &VaultPath::new("journal/2026/daily/2026-04-25.md").unwrap(),
+            "---\nnot: [closed\n---\n",
+        )
+        .unwrap();
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    assert!(!store.read_file(&path).unwrap().contains("captured_during"));
+    let daily = vault.log_to_daily_note(moment(), "a line").unwrap();
+    assert!(!store.read_file(&daily).unwrap().contains("during:"));
+}

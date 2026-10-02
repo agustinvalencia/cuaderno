@@ -1239,7 +1239,8 @@ pub struct NoteToDailyResponse {
     pub target: String,
     /// The pointer line appended to `## Logs`, without its
     /// `- **HH:MM**: ` stamp: `noted [[<target>]]`, then ` (<links>)`
-    /// when the body links out.
+    /// when the body links out, then an indented `during: [[<project>]]`
+    /// continuation line when a focus was open.
     pub log_line: String,
     /// Short summary line.
     pub message: String,

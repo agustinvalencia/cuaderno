@@ -47,7 +47,9 @@ pub struct NoteToDailyOutcome {
     pub target: String,
     /// The pointer text appended to `## Logs`, without the
     /// `- **HH:MM**: ` prefix every log line carries:
-    /// `noted [[<target>]]`, then ` (<links>)` when the body links out.
+    /// `noted [[<target>]]`, then ` (<links>)` when the body links out, then
+    /// an indented `during: [[<project>]]` continuation line when a focus
+    /// was open (RFC 0005 §5.6), so the value may span two lines.
     pub log_line: String,
 }
 
@@ -81,6 +83,10 @@ impl Vault {
     /// folded into the same in-flight content as the entry, so the file
     /// is written once — two staged writes of the same file would have
     /// the second read the pre-change content back and drop the first.
+    ///
+    /// When a focus is open, the pointer line carries an indented
+    /// `during: [[<project>]]` continuation (RFC 0005 §5.6), and so does the
+    /// returned `log_line`.
     ///
     /// # The heading, and why it round-trips
     ///

@@ -57,7 +57,7 @@ impl Vault {
         // Tag the detour (RFC 0005 §5.6): while a focus is open the item
         // records which project it was captured during.
         if let Some(focus) = self.current_focus(at.date()).ok().flatten() {
-            content = add_captured_during(content, &focus.project);
+            content = add_captured_during(content, normalise_project_slug(&focus.project));
         }
 
         let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
@@ -176,18 +176,41 @@ impl Vault {
 /// Frontmatter key recording the project in focus when an item was captured.
 const CAPTURED_DURING: &str = "captured_during";
 
+/// The bare project slug: a `projects/` prefix and `.md` suffix dropped.
+fn normalise_project_slug(slug: &str) -> &str {
+    let slug = slug.strip_prefix("projects/").unwrap_or(slug);
+    slug.strip_suffix(".md").unwrap_or(slug)
+}
+
 /// Insert `captured_during: <slug>` as the last frontmatter line of
 /// `content`. Content without a frontmatter block is returned unchanged.
 fn add_captured_during(content: String, slug: &str) -> String {
-    let Some(rest) = content.strip_prefix("---\n") else {
+    // Frontmatter written by a custom template may use CRLF; the opening and
+    // closing fences are matched on either ending and the new line uses the
+    // ending the opening fence has.
+    let (open, nl) = if content.starts_with("---\r\n") {
+        ("---\r\n", "\r\n")
+    } else if content.starts_with("---\n") {
+        ("---\n", "\n")
+    } else {
         return content;
     };
-    let Some(end) = rest.find("\n---") else {
+    let rest = &content[open.len()..];
+    let Some(end) = rest.find(&format!("{nl}---")) else {
         return content;
     };
-    let at = 4 + end;
+    let block = &rest[..end];
+    // A template that already declares the key keeps it: a duplicate key
+    // would make the note unparseable.
+    if block
+        .lines()
+        .any(|l| l.trim_end().starts_with(&format!("{CAPTURED_DURING}:")))
+    {
+        return content;
+    }
+    let at = open.len() + end;
     format!(
-        "{}\n{CAPTURED_DURING}: {slug}{}",
+        "{}{nl}{CAPTURED_DURING}: {slug}{}",
         &content[..at],
         &content[at..]
     )

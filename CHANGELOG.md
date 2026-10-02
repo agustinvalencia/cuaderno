@@ -9,13 +9,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 ### Added
 
 - **Writes made during a focus are tagged (RFC 0005, #730).** When a focus is open at write time
-  (a carried one included), `capture_to_inbox` writes `captured_during: <project-slug>` into the
-  new inbox item, and `note_to_daily` and `log_to_daily_note` (behind `cdno log` and
-  `append_to_log`) append an indented `during: [[<slug>]]` continuation to the line they write.
-  `discard_inbox_item` copies the tag from the item's `captured_during` onto its own log line, so
-  it outlives the file. The key is `LOG_DURING_KEY`, beside `LOG_REASON_KEY`. With no focus open
-  nothing is written differently. The focus reader reads entry heads and is unaffected, and
-  `get_project_context.recent_mentions` ignores the tag rather than counting it as a mention.
+  (a carried one included), `cdno capture` and MCP `capture` write `captured_during: <project-slug>`
+  into the new inbox item, and `cdno log`, `cdno log note`, MCP `append_to_log` and MCP
+  `note_to_daily` append an indented `during: [[<slug>]]` continuation to the log line they write.
+  `cdno triage` and MCP `triage_inbox` (the discard) copy the tag from the item onto their own log
+  line, so it outlives the file. With no focus open nothing is written differently, and a focus
+  window that cannot be read writes untagged rather than failing. Visible effects: the `log_line`
+  that `note_to_daily` returns echoes the tag on a second line; and today's daily note becomes a
+  backlink of the project (in `get_project_context` and `read_note`) when a carried focus is
+  tagged, or when a tagged capture is discarded on a later day. `get_project_context.recent_mentions`
+  ignores the tag rather than counting it as a mention.
 
 - **`OrientationContext` and `ProjectSummary` carry focus and pause state (RFC 0005, #729).**
   `OrientationContext` gains `focus: Option<CurrentFocus>` so the morning read shows the current
