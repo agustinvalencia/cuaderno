@@ -62,7 +62,8 @@ surrogate-model since 09:30 · 1h 30m
   Profile the assembly step (medium)
 ```
 
-There is no state behind that — it replays today's journal, so a start made here,
+There is no state behind that — it replays today's journal and yesterday's (the
+`[focus] carry_over_days` window in `.cuaderno/config.toml`), so a start made here,
 or by an agent over MCP all count equally, and completing or dropping the action clears it. With
 nothing open it says so rather than printing an empty frame. See
 [`cdno now`](../reference/cli/now.md) for the full shape, including what a start typed by hand has to

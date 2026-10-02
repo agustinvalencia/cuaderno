@@ -115,13 +115,18 @@ fn switch_entries(
 }
 
 /// The one place a [`DomainError::FocusOpen`] is built: `same_action` is a plain
-/// equality against the resolved project and bullet text.
-fn focus_open_error(open: CurrentFocus, slug: &str, target: &str) -> DomainError {
+/// equality against the resolved project and bullet text, and `carried` says
+/// the focus's open marker sits in an earlier day's note than `at`'s.
+fn focus_open_error(
+    open: CurrentFocus,
+    at: NaiveDateTime,
+    slug: &str,
+    target: &str,
+) -> DomainError {
     DomainError::FocusOpen {
         same_action: open.project == slug && open.action == target,
+        carried: open.date != at.date(),
         focus: open,
-        // T6 sets this from the focus's date.
-        carried: false,
     }
 }
 
@@ -132,6 +137,7 @@ fn started_focus(at: NaiveDateTime, slug: &str, action: &str) -> CurrentFocus {
         action: action.to_owned(),
         started: chrono::NaiveTime::from_hms_opt(at.hour(), at.minute(), 0)
             .expect("a valid time truncated to the minute"),
+        date: at.date(),
     }
 }
 
@@ -146,7 +152,7 @@ impl Vault {
     ) -> Result<(), DomainError> {
         match self.current_focus(at.date())? {
             None => Ok(()),
-            Some(open) => Err(focus_open_error(open, slug, target)),
+            Some(open) => Err(focus_open_error(open, at, slug, target)),
         }
     }
 
@@ -315,7 +321,7 @@ impl Vault {
     ) -> Result<Option<CurrentFocus>, DomainError> {
         match self.current_focus(at.date())? {
             Some(open) if open.project == slug && open.action == target => {
-                Err(focus_open_error(open, slug, target))
+                Err(focus_open_error(open, at, slug, target))
             }
             other => Ok(other),
         }
@@ -329,7 +335,8 @@ impl Vault {
     /// project can still be paused, and the bullet is left untouched. It
     /// therefore never returns `ProjectNotActive` or `ActionNotFound`.
     ///
-    /// Errors: nothing started today → [`DomainError::NoFocus`].
+    /// Errors: nothing open within the focus window ([`Vault::current_focus`])
+    /// → [`DomainError::NoFocus`].
     pub fn pause_action(
         &self,
         at: NaiveDateTime,

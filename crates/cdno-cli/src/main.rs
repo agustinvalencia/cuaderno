@@ -177,7 +177,8 @@ enum Commands {
     },
 
     /// What you are in the middle of: the action most recently started,
-    /// unless it has since been completed, dropped or paused, read back from today's daily log — so a
+    /// unless it has since been completed, dropped or paused, read back from the daily log of today
+    /// and the `[focus] carry_over_days` days before it (default 1) — so a
     /// start made from an agent counts too, as does one written by hand
     /// in the log's own shape (`- **HH:MM**: started [[slug]] — text`,
     /// stamp and em dash both required).
