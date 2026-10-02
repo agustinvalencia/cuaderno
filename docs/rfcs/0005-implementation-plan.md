@@ -553,7 +553,10 @@ it).
   differs only in the daily note's bytes, not in any aggregated field.
 
 **Correct means.** Where attention went during a focus is recorded once, survives triage, and
-changes nothing else.
+changes no aggregate. The one visible side effect is accepted (review of #757, decision (a)): the
+tag's `[[slug]]` makes the day's daily note a backlink of the project (`get_project_context`,
+`read_note`) when a carried focus is tagged or a tagged capture is discarded on a later day — true
+links, since the day's attention was on the project.
 
 ---
 
@@ -776,7 +779,9 @@ successful write never reports as failed.
 `crates/cdno-mcp/src/server.rs`, verbatim in substance, under a heading `FOCUS`; one-line
 pointers in the `current_focus`, `start_action` and `switch_action` descriptions ("read the
 FOCUS section of the server instructions before acting on a request outside the focus");
-`lint`'s description lists `paused`, `resumed` and `promoted`; the `focus_open` message text
+`lint`'s description lists `paused`, `resumed` and `promoted`; the `capture`, `append_to_log` and
+`note_to_daily` descriptions say the `during:` / `captured_during` tag is written for them (so an
+agent never writes one by hand); the `focus_open` message text
 agrees with the instructions ("ask the person"). Apply the wording rule: no "drift",
 "distraction", "off-task", "leaked", "enforce" anywhere in `crates/cdno-mcp/src/`.
 
@@ -862,8 +867,10 @@ add "says I'm still on yesterday's thing"
 and "`action start` refuses with `focus_open`"), `reference/mcp/reads.md` and `writes.md` (four
 tools, `focus` on writes, `last_paused`), `concepts/contexts-and-energy.md` (a "Focus" section),
 `tutorials/daily-loop.md` and `actions.md`; `SUMMARY.md` if a page is added. `docs/design.md`:
-the marker family gains `paused` and `resumed`, and names `promoted` as read back. `CLAUDE.md`:
-the history-preservation paragraph lists the three. `STATUS.md`: the RFC 0005 row. Whether
+the marker family gains `paused` and `resumed`, names `promoted` as read back, and documents the
+`during: [[slug]]` continuation and the inbox `captured_during` field. `CLAUDE.md`: the
+history-preservation paragraph lists the three, and the `during:` continuation. The docs-site pages
+for `cdno log`, `cdno capture`, `cdno triage` and MCP writes mention the tag. `STATUS.md`: the RFC 0005 row. Whether
 `cdno orient` renders the focus and `last_paused` (T9 left it unrendered) is decided here and
 done in the same PR if yes.
 
