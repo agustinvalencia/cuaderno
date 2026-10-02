@@ -27,7 +27,7 @@ pub use vault::{
     ConfigValidationError, CurrentFocus, DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView,
     DailySection, InboxItem, LapsedHabit, LinkedCommitment, Miss, MonthlyNoteView, MonthlySection,
     NormaliseReport, NoteRef, NoteToDailyOutcome, OpenAction, OpenItems, OpenItemsHash,
-    OpenItemsReport, OpenMilestone, OrientationContext, PeriodRef, PlaceholderSource,
+    OpenItemsReport, OpenMilestone, OrientationContext, PauseOutcome, PeriodRef, PlaceholderSource,
     PortfolioSummary, ProjectBacklinks, ProjectClosureOutcome, ProjectStateChange, ProjectSummary,
     QuestionBacklinks, QuestionSummary, RefResolution, RelativeDay, SearchFilters,
     SearchResultEntry, StewardshipSummary, StewardshipVariant, TemplateContent,

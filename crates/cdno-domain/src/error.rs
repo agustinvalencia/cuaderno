@@ -55,6 +55,13 @@ pub enum DomainError {
         due: chrono::NaiveDate,
     },
 
+    /// A verb that acts on the open focus was called with none open. Raised
+    /// by `pause_action`; the message is pause's, so a later verb that
+    /// shares the variant (RFC 0005's resume) is rendered by its CLI and MCP
+    /// layers rather than through this `Display`.
+    #[error("nothing is started \u{2014} nothing to pause")]
+    NoFocus,
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 

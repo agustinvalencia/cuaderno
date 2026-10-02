@@ -16,6 +16,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::closure::Closure;
+use super::super::context::CurrentFocus;
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -52,7 +53,38 @@ pub struct AttachedAction {
     pub status: ActionStatus,
 }
 
+/// What [`Vault::pause_action`] did: the focus that was paused and the daily
+/// note that now records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PauseOutcome {
+    pub paused: CurrentFocus,
+    pub path: VaultPath,
+}
+
 impl Vault {
+    /// Pause the open focus: one `action paused on [[slug]] — <text>` line in
+    /// the daily log, with optional `next:` and `reason:` continuations.
+    ///
+    /// The text logged is the focus's own, read back from the log, so this
+    /// resolves nothing against the project map: a focus on a since-parked
+    /// project can still be paused, and the bullet is left untouched. It
+    /// therefore never returns `ProjectNotActive` or `ActionNotFound`.
+    ///
+    /// Errors: nothing started today → [`DomainError::NoFocus`].
+    pub fn pause_action(
+        &self,
+        at: NaiveDateTime,
+        next: Option<&str>,
+        reason: Option<&str>,
+    ) -> Result<PauseOutcome, DomainError> {
+        let mut tx = self.transaction()?;
+        let paused = self.current_focus(at.date())?.ok_or(DomainError::NoFocus)?;
+        let entry = format_action_paused_log_entry(&paused.project, &paused.action, next, reason);
+        let path = self.stage_daily_log(at, &entry, &mut tx)?;
+        tx.commit()?;
+        Ok(PauseOutcome { paused, path })
+    }
+
     /// Record that work on an action is starting: one line in today's
     /// daily log, `started [[<slug>]] — <action>`.
     ///
