@@ -310,7 +310,7 @@ pub fn run(
                 None => return Err(crate::prompt::missing_positional("slug")),
             };
             let summary = vault
-                .project_summary(&slug, None)
+                .project_summary(&slug)
                 .context("loading project summary")?;
             if json {
                 // Same ProjectSummary shape as `project list` elements.
@@ -1077,7 +1077,7 @@ fn active_summaries(vault: &cdno_domain::Vault) -> Result<Vec<cdno_domain::Proje
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
             vault
-                .project_summary(slug, None)
+                .project_summary(slug)
                 .with_context(|| format!("loading summary for {slug}"))
         })
         .collect()

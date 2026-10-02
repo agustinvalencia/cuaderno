@@ -8,12 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **`OrientationContext` and `ProjectSummary` carry focus and pause state (RFC 0005, #729).** 
-  `OrientationContext` gains `focus: Option<CurrentFocus>` so the morning read shows the current 
-  work without a second call. Each `ProjectSummary` gains `last_paused: Option<LastPause>` filled 
-  from one `last_paused(today)` scan, so orientation consumers see each project's resumable action 
-  in the same pass that reads its state. `get_project_full` similarly carries `last_paused` for 
-  the project it reads. These domain fields surface in MCP and CLI in later RFC 0005 work (T17).
+- **`OrientationContext` and `ProjectSummary` carry focus and pause state (RFC 0005, #729).**
+  `OrientationContext` gains `focus: Option<CurrentFocus>` so the morning read shows the current
+  work without a second call. Each `ProjectSummary` gains `last_paused: Option<LastPause>` filled
+  from one `last_paused(today)` scan, so orientation consumers see each project's resumable action
+  in the same pass that reads its state. `get_project_full` similarly carries `last_paused` for
+  the project it reads. These are domain-only fields, not exposed in `--json` output anywhere yet;
+  MCP exposure comes later (#737) and the CLI decision later (#741).
 
 - **`Vault::last_paused` (RFC 0005, #728).** One pass over the daily notes from `today -
   paused_lookback_days` to `today` returns, per project, the most recent `paused` entry that no later

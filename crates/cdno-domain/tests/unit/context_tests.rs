@@ -247,12 +247,12 @@ fn stuck_projects_returns_empty_when_threshold_far_in_future() {
 fn get_project_full_returns_frontmatter_and_body_for_active() {
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate model\n\n## Current State\nSweep B running.\n\n## Next Actions\n- [ ] Run sweep B (deep)\n";
     let (vault, _store) = vault_with(&[("projects/surrogate-model.md", body)]);
-    let (fm, body, _last_paused) = vault
+    let full = vault
         .get_project_full("surrogate-model", focus_day())
         .unwrap();
-    assert_eq!(fm.context, Context::Work);
-    assert!(body.contains("# Surrogate model"));
-    assert!(body.contains("## Current State"));
+    assert_eq!(full.frontmatter.context, Context::Work);
+    assert!(full.body.contains("# Surrogate model"));
+    assert!(full.body.contains("## Current State"));
 }
 
 #[test]
@@ -260,10 +260,10 @@ fn get_project_full_resolves_parked_projects() {
     let body =
         "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-05-01\n---\n\n# Parked\n";
     let (vault, _store) = vault_with(&[("projects/_parked/parked-thing.md", body)]);
-    let (fm, body, _last_paused) = vault.get_project_full("parked-thing", focus_day()).unwrap();
+    let full = vault.get_project_full("parked-thing", focus_day()).unwrap();
     use cdno_domain::frontmatter::ProjectStatus;
-    assert_eq!(fm.status, ProjectStatus::Parked);
-    assert!(body.contains("# Parked"));
+    assert_eq!(full.frontmatter.status, ProjectStatus::Parked);
+    assert!(full.body.contains("# Parked"));
 }
 
 #[test]
@@ -3186,6 +3186,10 @@ fn project_context_carries_its_last_pause() {
             "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nActive.\n",
         ),
         (
+            "projects/beta.md",
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nActive.\n",
+        ),
+        (
             &daily_path(today),
             &daily_with_logs(
                 today,
@@ -3194,12 +3198,16 @@ fn project_context_carries_its_last_pause() {
         ),
     ]);
 
-    let (_fm, _body, last_paused) = vault.get_project_full("alpha", today).unwrap();
-
-    assert!(last_paused.is_some());
-    let pause = last_paused.unwrap();
+    // Alpha has a logged pause; it should be returned.
+    let full_alpha = vault.get_project_full("alpha", today).unwrap();
+    assert!(full_alpha.last_paused.is_some());
+    let pause = full_alpha.last_paused.unwrap();
     assert_eq!(pause.project, "alpha");
     assert_eq!(pause.action, "Draft the methods section (deep)");
     assert_eq!(pause.next, Some("Polish abstract".to_owned()));
     assert_eq!(pause.reason, Some("Too tired".to_owned()));
+
+    // Beta has no pause logged; it should return None.
+    let full_beta = vault.get_project_full("beta", today).unwrap();
+    assert!(full_beta.last_paused.is_none(), "beta should have no pause");
 }

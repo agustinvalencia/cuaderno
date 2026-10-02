@@ -60,6 +60,21 @@ use super::projects::{ProjectSummary, is_under_projects_done};
 // Return types
 // ---------------------------------------------------------------------
 
+/// Typed frontmatter and raw body of a project map from [`Vault::get_project_full`],
+/// with the project's most recent paused action when one exists within
+/// `paused_lookback_days`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectFull {
+    /// The project's parsed frontmatter.
+    pub frontmatter: ProjectFrontmatter,
+    /// The raw markdown body.
+    pub body: String,
+    /// The most recent paused action for this project, when one exists
+    /// within `paused_lookback_days`. Exposed by the MCP DTOs and decided
+    /// for the CLI later in RFC 0005.
+    pub last_paused: Option<LastPause>,
+}
+
 /// One log line pulled from a daily note's `## Logs` section. The
 /// `text` field collapses any indented continuation lines into a
 /// single-line summary (separated by `; `) so downstream renderers
@@ -418,7 +433,7 @@ impl Vault {
             if entry.mtime_ns > threshold_ns {
                 continue;
             }
-            out.push(self.project_summary(&path_stem(&entry.path), None)?);
+            out.push(self.project_summary(&path_stem(&entry.path))?);
         }
         out.sort_by(|a, b| a.slug.cmp(&b.slug));
         Ok(out)
@@ -472,20 +487,22 @@ impl Vault {
     // get_project_full
     // -----------------------------------------------------------------
 
-    /// The typed frontmatter and the raw body of a project map.
-    /// Mirrors [`Vault::get_portfolio`](Self::get_portfolio) and
-    /// [`Vault::get_stewardship`](Self::get_stewardship). Resolves
-    /// the slug against `projects/`, `projects/_parked/` and
-    /// `projects/_done/<year>/`.
+    /// Typed frontmatter and raw body of a project map, with its most
+    /// recent paused action if one exists. Resolves the slug against
+    /// `projects/`, `projects/_parked/` and `projects/_done/<year>/`.
     pub fn get_project_full(
         &self,
         slug: &str,
         today: NaiveDate,
-    ) -> Result<(ProjectFrontmatter, String, Option<LastPause>), DomainError> {
+    ) -> Result<ProjectFull, DomainError> {
         let location = self.locate_project(slug)?;
         let (_fm, body) = Frontmatter::parse(&location.raw)?;
         let last_paused = self.last_paused(today)?.get(slug).cloned();
-        Ok((location.frontmatter, body.to_owned(), last_paused))
+        Ok(ProjectFull {
+            frontmatter: location.frontmatter,
+            body: body.to_owned(),
+            last_paused,
+        })
     }
 
     // -----------------------------------------------------------------

@@ -1438,18 +1438,20 @@ fn activate_from_done_works() {
 }
 
 #[test]
-fn project_list_json_does_not_leak_last_paused() {
+fn project_list_json_does_not_expose_last_paused() {
     // RFC 0005 T9 adds last_paused to ProjectSummary, but it is internal
-    // and should not appear in CLI JSON until T17 designs the MCP DTOs
-    // and T21 decides whether to surface them (#737, #741). This test pins
-    // that no leaked output even when a project has a logged pause.
+    // and should not appear in CLI JSON output. Exposure in MCP and CLI
+    // are decided later in RFC 0005. This test pins that last_paused is not
+    // in `cdno project list --json` output, even with a genuinely unconsumed
+    // pause logged.
     let dir = vault();
     fs::write(
         dir.path().join("projects/test-proj.md"),
         "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Test\n\n## Current State\nActive.\n",
     )
     .unwrap();
-    // Add a paused action to the daily log to ensure last_paused has something.
+    // Add a paused action to the daily log. No later start/resume/done/drop
+    // of the same text, so the pause remains genuinely unconsumed.
     let daily = format!("{}/journal/2026/daily/2026-09-29.md", dir.path().display());
     fs::write(
         &daily,
@@ -1474,7 +1476,7 @@ fn project_list_json_does_not_leak_last_paused() {
         for proj in arr {
             assert!(
                 !proj.get("last_paused").is_some(),
-                "ProjectSummary.last_paused leaked to JSON: {proj}"
+                "ProjectSummary.last_paused must not be in JSON: {proj}"
             );
         }
     }

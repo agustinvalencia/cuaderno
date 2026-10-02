@@ -36,8 +36,8 @@ pub struct OrientationContext {
     /// Stewardship habits whose dashboard line declares them lapsed.
     pub lapsed_habits: Vec<LapsedHabit>,
     /// The action currently in focus, if any. Carried so the morning
-    /// view shows the current work without a second call.
-    /// CLI/JSON exposure decided in RFC 0005's docs task (#741) and MCP DTOs (#737).
+    /// view shows the current work without a second call. Not exposed in
+    /// CLI JSON output; exposure in MCP and CLI are decided later in RFC 0005.
     #[serde(skip)]
     pub focus: Option<CurrentFocus>,
 }
@@ -76,9 +76,10 @@ impl Vault {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
+            let mut summary = self.project_summary(slug)?;
             // Look up this project's most recent pause in the map.
-            let pause = last_paused.get(slug).cloned();
-            projects.push(self.project_summary(slug, pause)?);
+            summary.last_paused = last_paused.get(slug).cloned();
+            projects.push(summary);
         }
 
         let lapsed_habits = self.lapsed_habits()?;

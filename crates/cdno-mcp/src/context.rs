@@ -286,9 +286,11 @@ impl CuadernoServer {
         let since = today - chrono::Duration::days(30);
 
         let project = input.project.clone();
-        let (fm, body, mentions, backlinks, core_question, _last_paused) = self
+        let (fm, body, mentions, backlinks, core_question) = self
             .with_vault(move |vault| {
-                let (fm, body, _last_paused) = vault.get_project_full(&project, today)?;
+                let project_full = vault.get_project_full(&project, today)?;
+                let fm = project_full.frontmatter;
+                let body = project_full.body;
                 let mentions = vault.daily_log_mentions(&project, since)?;
                 let backlinks = vault.project_backlinks(&project)?;
 
@@ -310,7 +312,7 @@ impl CuadernoServer {
                     None
                 };
 
-                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question, _last_paused))
+                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question))
             })
             .await?
             .map_err(into_mcp_error)?;
