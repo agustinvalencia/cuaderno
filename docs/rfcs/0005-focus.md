@@ -209,8 +209,10 @@ reads (there is none today; `Vault::new` always reconciles), not a cache.
 
 ## 4. Terminology
 
-- **Focus** — the most recent open marker (`started` or `resumed`), within the look-back
-  window, with no matching close. At most one at a time by construction (§5.1).
+- **Focus** — the newest open marker (`started` or `resumed`) within the look-back window,
+  provided no matching close follows it. **There is one slot** (D11): a newer open marker
+  displaces an older one, which is never the focus again, so at most one focus exists at a
+  time both by construction (§5.1) and on reading.
 - **Close** — any of `action done on`, `action dropped on`, `action paused on` whose
   `[[slug]] — text` pairs with an open marker.
 - **Window** — how many days back from today the reader walks before giving up; `0` means
@@ -309,21 +311,28 @@ The reader stops replaying one day and walks back from today:
 carry_over_days = 1   # 0 = today only (pre-RFC behaviour); default 1
 ```
 
-The rule, precisely: **the focus is the most recent open marker with no matching close, among
-the daily notes from `today - carry_over_days` to `today`.** An open marker older than the
-window is not a focus, whatever its state. The walk reads newest first, folding everything read
-so far oldest-to-newest exactly as the one-day reader does today, and **stops when that fold
-leaves an open marker standing, else reads the next older note** until the window ends. The
-stop is sound because an older note can only add *older* open markers, which the fold's
-"most recent wins" never returns while a newer one stands; judging a day in isolation is not
-sound (window 2: D-2 `started Z`, D-1 `started Y`, D0 `done Y` — stopping at D-1 misses Z). For
-the default window the two rules coincide, which is why the correct one is stated now.
+The fold holds **one slot** (D11). Replayed oldest to newest, an open marker (`started`, and
+`resumed` from §5.3) puts itself in the slot, displacing whatever was there; a close empties the
+slot only when its `(project, text)` is the slot's; any other close does nothing; a promotion
+renames the slot only when its title is the slot's text (§5.4). The focus is what is in the slot
+at the end. This replaces the pre-RFC stack, in which closing the newest of two open starts let
+the older one become the focus again — a focus nobody chose (H2).
 
-The adversarial cases the review walked, all handled by the existing fold once it spans days: a
-start yesterday closed today pairs; two starts yesterday and one close today leave the earlier
-standing (as `completing_one_action_leaves_an_earlier_start_standing` already pins within a
-day); a close with no open marker is dropped; a pause then a complete of the same text pairs the
-complete with nothing; the same text on two projects is keyed by `(project, action)`.
+The rule, precisely: **the focus is the newest open marker among the daily notes from
+`today - carry_over_days` to `today`, unless a matching close follows it.** An open marker older
+than the window is not a focus, whatever its state. The walk reads newest first and **stops at
+the first note that contains an open marker**, then folds that note and every newer one; with
+no open marker in the window there is no focus. The stop is sound because everything older can
+only fill the slot with a marker that the newer one displaces. It must be an *open* marker that
+stops the walk, not any focus line: today's note holding only an unrelated close must not hide
+yesterday's start.
+
+The adversarial cases the review walked, all handled by the slot once it spans days: a start
+yesterday closed today pairs; two starts yesterday and a close today of the later leave
+nothing, and a close today of the earlier leaves the later standing (the earlier was already
+displaced); window 2 with D-2 `started Z`, D-1 `started Y`, D0 `done Y` is no focus — Z was
+displaced by Y; a close with no open marker is dropped; a pause then a complete of the same text
+pairs the complete with nothing; the same text on two projects is keyed by `(project, action)`.
 
 `CurrentFocus` gains `date: NaiveDate`, and `cdno now`'s `elapsed_since` moves from two
 `NaiveTime`s to `NaiveDateTime`, so a start at 08:00 yesterday rendered at 10:00 reads 26 h, not
@@ -352,11 +361,12 @@ removed. `project` is optional and never prompted.
   D5). The focus already resumed today → `FocusOpen`, `remedy: already_focused`.
 
 It writes one entry, `resumed [[slug]] — <text>`, a new **open** marker
-(`LOG_RESUMED_PREFIX`) the fold treats as **close-plus-reopen at the resume stamp**: any open
-marker of the same `(project, text)` is cleared and a new one opened at this line's time and
-date. That re-stamp is what fixes the Thursday expiry: the window counts from the resume. A
+(`LOG_RESUMED_PREFIX`) the fold treats as **close-plus-reopen at the resume stamp**: it takes
+the slot at this line's time and date, and when the slot already held the same `(project, text)`
+the new marker keeps that marker's origin. That re-stamp is what fixes the Thursday expiry: the window counts from the resume. A
 hand-written `resumed` with no open marker reads as a plain start. Pause then resume therefore
-round-trips without a second verb, and `last_paused` (§5.5) treats a pause followed by a
+round-trips without a second verb — and, because the pause emptied the slot, the resumed focus
+has no `origin`; `resumed_from.date` carries the pause's date instead, and `last_paused` (§5.5) treats a pause followed by a
 `resumed` or `started` of the same text as resumed.
 
 `cdno now` shows today's anchor and keeps the origin:
@@ -632,6 +642,9 @@ start Y") and shows the typed `next:`; the picker never offers the bullet that i
   is refused with `focus_open` where it used to stack silently. The refusal names `switch`,
   `resume` or `pause`, and the troubleshooting entry covers it. Set `carry_over_days = 0` to
   keep the old behaviour.
+- **Stacked starts in existing logs read as one slot (D11).** A day with `started X`,
+  `started Y`, `action done on … Y` used to report X as the focus; it now reports none. X was
+  displaced the moment Y started, and nobody chose to go back to it. That is a correction.
 - `start_action` with a focus open was a silent second start; it is now a refusal. Any script
   or skill that relied on stacking must call `switch_action`. No shipped skill does.
 - `cdno now --json` adds fields and removes none; `current_focus`'s null contract is unchanged.
@@ -680,6 +693,11 @@ T0, T1 and T3 can land in parallel.
   "deliberate" requirement made concrete, and it is only a speed bump by design: `complete` then
   `start` gets through, and `switch_action` is callable on the person's word. D7 and D5 are
   consistent because starting is a focus verb.
+- **D11 — One slot, also on reading.** Maintainer's decision (2026-10-02): focus is a
+  one-spot buffer, never a stack. `start` refuses while the slot is taken; `switch` pauses what
+  is in it and puts the new action there; and the reader displaces an older open marker with a
+  newer one rather than remembering it, so closing the newer never brings the older back. Old
+  logs that stacked starts before this RFC read the same way.
 - **D6 — Project-level focus (a start with no bullet) is out of scope.** `start_unplanned`
   makes a bullet cheaply, and a focus without a bullet has no close verb.
 - **D7 — The server never refuses an out-of-focus write.** §5.6. Not up for a flag.
