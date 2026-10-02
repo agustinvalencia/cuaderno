@@ -120,8 +120,8 @@ pub use portfolios::PortfolioSummary;
 pub use projects::actions::format_action_paused_log_entry;
 pub use projects::{
     ActionListEntry, AttachedAction, ClosedProjectEntry, LinkedCommitment, OpenAction, OpenItems,
-    OpenItemsHash, OpenItemsReport, OpenMilestone, ProjectClosureOutcome, ProjectSummary,
-    TopAction,
+    OpenItemsHash, OpenItemsReport, OpenMilestone, PauseOutcome, ProjectClosureOutcome,
+    ProjectSummary, TopAction,
 };
 pub use questions::QuestionSummary;
 pub use revise::{ReviseOutcome, Revision};

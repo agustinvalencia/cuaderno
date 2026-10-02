@@ -475,7 +475,11 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::Transaction(_)
         | DomainError::Path(_)
         | DomainError::Template(_)
-        | DomainError::Config(_) => return None,
+        | DomainError::Config(_)
+        // No MCP verb can raise this yet (pause arrives with RFC 0005's T14,
+        // which gives it a proper rejection code); until then it stays a
+        // plain protocol error carrying the domain's own message.
+        | DomainError::NoFocus => return None,
     };
 
     // `message` is the domain's own `Display` output, carried inside the

@@ -55,6 +55,10 @@ pub enum DomainError {
         due: chrono::NaiveDate,
     },
 
+    /// A verb that acts on the open focus (pause) was called with none open.
+    #[error("nothing is started \u{2014} nothing to pause")]
+    NoFocus,
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 

@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`Vault::pause_action` (RFC 0005, #721).** Pauses the open focus by logging one
+  `action paused on [[project]] — text` entry with optional `next:` and `reason:` lines, using the
+  focus's own text read back from the log. It resolves nothing against the project map, so a focus
+  on a since-parked project can be paused and the map is never touched; with nothing started it
+  fails with the new `DomainError::NoFocus` (`nothing is started — nothing to pause`). No CLI or
+  MCP verb calls it yet.
+
 - **The `paused` marker for the daily log (RFC 0005, #720).** `action paused on [[project]] — text`
   with optional `next:` and `reason:` continuations, read by `cdno now` and `current_focus` to
   clear an open start just as `action done on` and `action dropped on` do. Lint reports a

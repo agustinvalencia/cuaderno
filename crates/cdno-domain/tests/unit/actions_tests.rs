@@ -1681,3 +1681,94 @@ fn paused_entry_drops_blank_continuations() {
         "action paused on [[alpha]] \u{2014} Draft methods\n  next: Review the work"
     );
 }
+
+// ---------------------------------------------------------------------
+// Pause: pause_action
+// ---------------------------------------------------------------------
+
+#[test]
+fn pause_logs_the_focus_text_verbatim() {
+    let map = project_with_bullets("- [ ] Draft methods (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    let outcome = vault
+        .pause_action(
+            dt(2026, 5, 26, 10, 30),
+            Some("Pick up at section 2"),
+            Some("Meeting"),
+        )
+        .unwrap();
+    assert_eq!(outcome.paused.project, "foo");
+    assert_eq!(outcome.paused.action, "Draft methods (deep)");
+    assert_eq!(outcome.path, vp("journal/2026/daily/2026-05-26.md"));
+
+    let daily = store.read_file(&outcome.path).unwrap();
+    let lines: Vec<&str> = daily.trim_end().lines().collect();
+    let tail = &lines[lines.len() - 3..];
+    assert_eq!(
+        tail,
+        [
+            "- **10:30**: action paused on [[foo]] \u{2014} Draft methods (deep)",
+            "  next: Pick up at section 2",
+            "  reason: Meeting",
+        ]
+    );
+    assert_eq!(
+        vault.current_focus(dt(2026, 5, 26, 11, 0).date()).unwrap(),
+        None
+    );
+}
+
+#[test]
+fn pause_with_nothing_started_is_no_focus() {
+    let (vault, store) = vault_with(&[("projects/foo.md", ACTIVE_PROJECT)]);
+    let err = vault
+        .pause_action(dt(2026, 5, 26, 10, 0), None, None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::NoFocus), "got {err:?}");
+    assert_eq!(
+        err.to_string(),
+        "nothing is started \u{2014} nothing to pause"
+    );
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-26.md"))
+            .unwrap()
+    );
+}
+
+#[test]
+fn pause_does_not_touch_the_map_or_require_an_active_project() {
+    let map = project_with_bullets("- [ ] Draft methods (deep)\n");
+    let (vault, store) = vault_with(&[("projects/foo.md", &map)]);
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+
+    // Park the project behind the vault's back: move the map, flip its
+    // status, write no log line.
+    let parked = map.replace("status: active", "status: parked");
+    store.delete_file(&vp("projects/foo.md")).unwrap();
+    store
+        .write_file(&vp("projects/_parked/foo.md"), &parked)
+        .unwrap();
+    let (vault, _report) = Vault::new(
+        Arc::clone(&store),
+        Arc::new(MemoryIndex::new()),
+        VaultConfig::default(),
+    )
+    .unwrap();
+
+    let outcome = vault
+        .pause_action(dt(2026, 5, 26, 10, 0), None, None)
+        .expect("a focus on a parked project can still be paused");
+    assert_eq!(outcome.paused.project, "foo");
+    assert_eq!(
+        store.read_file(&vp("projects/_parked/foo.md")).unwrap(),
+        parked,
+        "the map is byte-identical"
+    );
+}
