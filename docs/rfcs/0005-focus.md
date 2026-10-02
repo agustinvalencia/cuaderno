@@ -272,7 +272,7 @@ re-entrant, so `switch` is composed from the `stage_*` helpers inside one transa
 chaining `pause_action` and `start_action`; a failing start therefore leaves no pause line
 because the pause was only staged.
 
-**`start` with a focus already open is refused** with `FocusOpen { project, action }`, naming
+**`start` with a focus already open is refused** with `FocusOpen { focus, … }`, naming
 the open one and the remedy. This is the one new refusal, and it is the deliberate act the
 maintainer asked for: you can always switch, but you say so. Precedence: project and bullet
 resolution errors (`ActionNotFound`, `AmbiguousAction`) win over `FocusOpen`, so a typo is

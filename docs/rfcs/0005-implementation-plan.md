@@ -236,8 +236,8 @@ focus, and nothing else is logged.
 **What.** `DomainError::FocusOpen { focus: CurrentFocus, same_action: bool, carried: bool }`
 (message names the open focus and the remedy; with `same_action` it gives no switch advice).
 The variant carries the whole `CurrentFocus`, so T6's `date` and T7's `origin` reach T14's
-`details.focus` without changing the error (amended in review of #748). In `start_action` and `start_unplanned_action`, after the
-transaction is open and **after** project and bullet resolution (so `ActionNotFound`,
+`details.focus` without changing the error (amended in review of #748). In `start_action` and
+`start_unplanned_action`, after the transaction is open and **after** project and bullet resolution (so `ActionNotFound`,
 `AmbiguousAction`, `ProjectNotActive` keep winning), and in `start_unplanned_action` **before**
 the bullet is appended: read `current_focus(at.date())`; if `Some`, fail with `FocusOpen`,
 `same_action` true when `(project, action)` equals the resolved target, `carried` false for now
@@ -389,7 +389,9 @@ reading exactly.
   `window_two_d2_start_d1_start_d0_close_is_no_focus` (the review's case, under D11);
   `two_starts_yesterday_closing_the_later_today_leaves_nothing`;
   `an_unrelated_close_today_does_not_hide_yesterdays_start`;
-  `window_zero_reads_today_only` (yesterday's open start is ignored).
+  `window_zero_reads_today_only` (yesterday's open start is ignored);
+  `starting_a_carried_focus_again_says_to_resume_it` (the `FocusOpen` message for `same_action`
+  and `carried`, asserted by exact text — the branch T3 wrote but could not reach).
 - Mutation: fold only today's note; `a_start_yesterday_left_open_is_the_focus_with_yesterdays_date`
   fails. Mutation: stop at the newest note holding any focus line; the unrelated-close test
   fails.
