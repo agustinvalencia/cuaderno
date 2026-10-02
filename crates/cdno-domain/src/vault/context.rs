@@ -418,7 +418,7 @@ impl Vault {
             if entry.mtime_ns > threshold_ns {
                 continue;
             }
-            out.push(self.project_summary(&path_stem(&entry.path))?);
+            out.push(self.project_summary(&path_stem(&entry.path), None)?);
         }
         out.sort_by(|a, b| a.slug.cmp(&b.slug));
         Ok(out)
@@ -480,10 +480,12 @@ impl Vault {
     pub fn get_project_full(
         &self,
         slug: &str,
-    ) -> Result<(ProjectFrontmatter, String), DomainError> {
+        today: NaiveDate,
+    ) -> Result<(ProjectFrontmatter, String, Option<LastPause>), DomainError> {
         let location = self.locate_project(slug)?;
         let (_fm, body) = Frontmatter::parse(&location.raw)?;
-        Ok((location.frontmatter, body.to_owned()))
+        let last_paused = self.last_paused(today)?.get(slug).cloned();
+        Ok((location.frontmatter, body.to_owned(), last_paused))
     }
 
     // -----------------------------------------------------------------
@@ -1137,7 +1139,7 @@ impl Vault {
 
 /// A `paused` entry [`Vault::last_paused`] found: what was paused, when, and
 /// the continuations written with it, as written.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct LastPause {
     /// The project slug the paused action belongs to.
     pub project: String,
@@ -1288,7 +1290,7 @@ pub(in crate::vault) fn resumed_focus(
 }
 
 /// An action started and not yet finished, as recorded in a daily log.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CurrentFocus {
     /// The project slug the action belongs to.
     pub project: String,

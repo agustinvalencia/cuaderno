@@ -247,7 +247,9 @@ fn stuck_projects_returns_empty_when_threshold_far_in_future() {
 fn get_project_full_returns_frontmatter_and_body_for_active() {
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Surrogate model\n\n## Current State\nSweep B running.\n\n## Next Actions\n- [ ] Run sweep B (deep)\n";
     let (vault, _store) = vault_with(&[("projects/surrogate-model.md", body)]);
-    let (fm, body) = vault.get_project_full("surrogate-model").unwrap();
+    let (fm, body, _last_paused) = vault
+        .get_project_full("surrogate-model", focus_day())
+        .unwrap();
     assert_eq!(fm.context, Context::Work);
     assert!(body.contains("# Surrogate model"));
     assert!(body.contains("## Current State"));
@@ -258,7 +260,7 @@ fn get_project_full_resolves_parked_projects() {
     let body =
         "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-05-01\n---\n\n# Parked\n";
     let (vault, _store) = vault_with(&[("projects/_parked/parked-thing.md", body)]);
-    let (fm, body) = vault.get_project_full("parked-thing").unwrap();
+    let (fm, body, _last_paused) = vault.get_project_full("parked-thing", focus_day()).unwrap();
     use cdno_domain::frontmatter::ProjectStatus;
     assert_eq!(fm.status, ProjectStatus::Parked);
     assert!(body.contains("# Parked"));
@@ -267,7 +269,9 @@ fn get_project_full_resolves_parked_projects() {
 #[test]
 fn get_project_full_errors_on_missing_slug() {
     let (vault, _store) = vault_with(&[]);
-    let err = vault.get_project_full("nonexistent").unwrap_err();
+    let err = vault
+        .get_project_full("nonexistent", focus_day())
+        .unwrap_err();
     use cdno_core::error::StoreError;
     assert!(matches!(err, DomainError::Store(StoreError::NotFound(_))));
 }
@@ -3168,4 +3172,34 @@ fn latest_follows_file_order_not_stamp_order() {
     let open = vault.open_pauses(focus_day()).unwrap();
     assert_eq!(open.by_project["alpha"].action, "Fix the badge (light)");
     assert_eq!(open.latest.unwrap().action, "Fix the badge (light)");
+}
+
+// Tests for get_project_full last_paused (RFC 0005 T9)
+
+#[test]
+fn project_context_carries_its_last_pause() {
+    let today = focus_day();
+
+    let (vault, _s) = vault_with(&[
+        (
+            "projects/alpha.md",
+            "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Alpha\n\n## Current State\nActive.\n",
+        ),
+        (
+            &daily_path(today),
+            &daily_with_logs(
+                today,
+                "- **14:05**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n  next: Polish abstract\n  reason: Too tired\n",
+            ),
+        ),
+    ]);
+
+    let (_fm, _body, last_paused) = vault.get_project_full("alpha", today).unwrap();
+
+    assert!(last_paused.is_some());
+    let pause = last_paused.unwrap();
+    assert_eq!(pause.project, "alpha");
+    assert_eq!(pause.action, "Draft the methods section (deep)");
+    assert_eq!(pause.next, Some("Polish abstract".to_owned()));
+    assert_eq!(pause.reason, Some("Too tired".to_owned()));
 }

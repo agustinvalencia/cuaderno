@@ -10,6 +10,7 @@ use cdno_domain::TopAction;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
+use chrono::NaiveDate;
 
 use super::support::{FailingStore, RacingStore};
 
@@ -2677,7 +2678,9 @@ fn project_summary_returns_state_snippet_and_top_action() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/icml.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("icml").expect("summary succeeds");
+    let summary = vault
+        .project_summary("icml", None)
+        .expect("summary succeeds");
 
     assert_eq!(summary.slug, "icml");
     assert_eq!(summary.status, ProjectStatus::Active);
@@ -2704,7 +2707,7 @@ fn project_summary_truncates_state_to_first_two_non_blank_lines() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(summary.state_snippet, "Line one.\nLine two.");
 }
@@ -2719,7 +2722,7 @@ fn project_summary_skips_blank_leading_lines_in_state() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(
         summary.state_snippet,
@@ -2737,7 +2740,7 @@ fn project_summary_picks_first_open_action_skipping_closed() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(
         summary.top_action,
@@ -2758,7 +2761,7 @@ fn project_summary_top_action_has_none_energy_when_suffix_missing() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(
         summary.top_action,
@@ -2779,7 +2782,7 @@ fn project_summary_top_action_is_none_when_only_closed_actions() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", &body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert!(summary.top_action.is_none());
 }
@@ -2792,7 +2795,7 @@ fn project_summary_tolerates_missing_current_state_section() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(summary.state_snippet, "");
     assert!(summary.top_action.is_some());
@@ -2804,7 +2807,7 @@ fn project_summary_tolerates_missing_next_actions_section() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/x.md", body)], VaultConfig::default());
 
-    let summary = vault.project_summary("x").expect("summary succeeds");
+    let summary = vault.project_summary("x", None).expect("summary succeeds");
 
     assert_eq!(summary.state_snippet, "Foo.");
     assert!(summary.top_action.is_none());
@@ -2823,7 +2826,7 @@ fn project_summary_returns_summary_for_parked_project() {
     );
 
     let summary = vault
-        .project_summary("old")
+        .project_summary("old", None)
         .expect("summary works on parked projects");
 
     assert_eq!(summary.status, ProjectStatus::Parked);
@@ -2842,7 +2845,7 @@ fn project_summary_returns_summary_for_completed_project() {
         vault_with_seeded_store(&[("projects/done.md", &body)], VaultConfig::default());
 
     let summary = vault
-        .project_summary("done")
+        .project_summary("done", None)
         .expect("summary works on completed projects");
 
     assert_eq!(summary.status, ProjectStatus::Completed);
@@ -2852,7 +2855,7 @@ fn project_summary_returns_summary_for_completed_project() {
 fn project_summary_errors_when_project_not_found() {
     let (vault, _store) = vault_with_seeded_store(&[], VaultConfig::default());
 
-    let err = vault.project_summary("ghost").unwrap_err();
+    let err = vault.project_summary("ghost", None).unwrap_err();
     assert!(
         matches!(
             err,
@@ -2870,7 +2873,7 @@ fn project_summary_propagates_malformed_frontmatter() {
     let (vault, _store) =
         vault_with_seeded_store(&[("projects/bad.md", body)], VaultConfig::default());
 
-    let err = vault.project_summary("bad").unwrap_err();
+    let err = vault.project_summary("bad", None).unwrap_err();
     assert!(matches!(err, DomainError::Validation(_)), "got {err:?}");
 }
 
@@ -2920,7 +2923,7 @@ fn project_not_found_lists_available_projects_with_parked_flagged() {
         ("projects/_done/2025/delta.md", delta.as_str()),
     ]);
 
-    let err = vault.project_summary("missing").unwrap_err();
+    let err = vault.project_summary("missing", None).unwrap_err();
     let DomainError::Store(StoreError::NotFound(msg)) = err else {
         panic!("expected Store(NotFound), got {err:?}");
     };
@@ -3745,18 +3748,19 @@ fn locate_project_finds_active_parked_and_closed() {
     );
 
     assert_eq!(
-        vault.project_summary("a").unwrap().status,
+        vault.project_summary("a", None).unwrap().status,
         ProjectStatus::Active
     );
     assert_eq!(
-        vault.project_summary("b").unwrap().status,
+        vault.project_summary("b", None).unwrap().status,
         ProjectStatus::Parked
     );
     assert_eq!(
-        vault.project_summary("c").unwrap().status,
+        vault.project_summary("c", None).unwrap().status,
         ProjectStatus::Completed
     );
-    let (fm, body) = vault.get_project_full("c").unwrap();
+    let today = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+    let (fm, body, _last_paused) = vault.get_project_full("c", today).unwrap();
     assert_eq!(fm.status, ProjectStatus::Completed);
     assert!(body.contains("# C"), "body: {body}");
 }
@@ -3768,7 +3772,7 @@ fn locate_project_resolves_by_disk_when_index_is_stale() {
     let (vault, store) =
         vault_with_seeded_store(&[("projects/m.md", &active)], VaultConfig::default());
     assert_eq!(
-        vault.project_summary("m").unwrap().status,
+        vault.project_summary("m", None).unwrap().status,
         ProjectStatus::Active
     );
 
@@ -3780,7 +3784,7 @@ fn locate_project_resolves_by_disk_when_index_is_stale() {
     store.delete_file(&vp("projects/m.md")).unwrap();
 
     assert_eq!(
-        vault.project_summary("m").unwrap().status,
+        vault.project_summary("m", None).unwrap().status,
         ProjectStatus::Parked,
         "the locator must follow the file, not the index"
     );
@@ -3798,7 +3802,7 @@ fn locate_project_refuses_a_stem_at_two_locations_as_ambiguous_project() {
         VaultConfig::default(),
     );
 
-    let err = vault.project_summary("x").unwrap_err();
+    let err = vault.project_summary("x", None).unwrap_err();
 
     let DomainError::AmbiguousProject { slug, candidates } = err else {
         panic!("expected AmbiguousProject, got {err:?}");
@@ -3848,7 +3852,7 @@ fn locate_project_refuses_a_path_shaped_slug() {
     );
 
     for slug in ["_parked/x", "_parked\\x", "../projects/x"] {
-        let err = vault.project_summary(slug).unwrap_err();
+        let err = vault.project_summary(slug, None).unwrap_err();
         assert!(
             matches!(err, DomainError::Store(StoreError::NotFound(_))),
             "{slug}: got {err:?}"
@@ -3883,7 +3887,7 @@ fn locate_project_ignores_non_year_directories_under_done() {
     );
 
     assert_eq!(
-        vault.project_summary("x").unwrap().status,
+        vault.project_summary("x", None).unwrap().status,
         ProjectStatus::Active
     );
 }
@@ -3907,7 +3911,7 @@ fn locate_project_refuses_active_and_closed_namesakes() {
         VaultConfig::default(),
     );
 
-    let err = vault.project_summary("y").unwrap_err();
+    let err = vault.project_summary("y", None).unwrap_err();
     let DomainError::AmbiguousProject { slug, candidates } = err else {
         panic!("expected AmbiguousProject, got {err:?}");
     };
@@ -3936,7 +3940,7 @@ fn locate_project_refuses_two_closed_namesakes() {
         VaultConfig::default(),
     );
 
-    let err = vault.project_summary("z").unwrap_err();
+    let err = vault.project_summary("z", None).unwrap_err();
     let DomainError::AmbiguousProject { slug, candidates } = err else {
         panic!("expected AmbiguousProject, got {err:?}");
     };

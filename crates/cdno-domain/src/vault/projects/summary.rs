@@ -14,6 +14,7 @@ use crate::error::DomainError;
 use crate::frontmatter::{Context, EnergyLevel, ProjectStatus};
 
 use super::super::Vault;
+use super::super::context::LastPause;
 use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
 
 /// Compact view of a project for orientation displays and reviews.
@@ -34,6 +35,10 @@ pub struct ProjectSummary {
     pub context: Context,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
+    /// The most recent paused action for this project, when one exists
+    /// within `paused_lookback_days`. Carried here so orientation
+    /// consumers get it in the same pass that reads the log.
+    pub last_paused: Option<LastPause>,
 }
 
 /// One next-action line, with its energy bucket parsed when the
@@ -53,10 +58,18 @@ impl Vault {
     /// slug exists at more than one of them) or when the frontmatter
     /// is malformed; missing body sections degrade gracefully.
     ///
+    /// `last_paused` is the most recent paused action for this project
+    /// when one exists within `paused_lookback_days`. Pass `None` when
+    /// no cheap lookup is available; `orientation_context` supplies it.
+    ///
     /// [`AmbiguousProject`]: crate::error::DomainError::AmbiguousProject
     ///
     /// [`Store(NotFound)`]: cdno_core::error::StoreError::NotFound
-    pub fn project_summary(&self, slug: &str) -> Result<ProjectSummary, DomainError> {
+    pub fn project_summary(
+        &self,
+        slug: &str,
+        last_paused: Option<LastPause>,
+    ) -> Result<ProjectSummary, DomainError> {
         let (_path, doc, project) = self.resolve_any_project(slug)?;
 
         // Tolerate drift: a section being absent (or ambiguous) just
@@ -80,6 +93,7 @@ impl Vault {
             context: project.context,
             state_snippet,
             top_action,
+            last_paused,
         })
     }
 }

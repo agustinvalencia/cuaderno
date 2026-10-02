@@ -810,6 +810,7 @@ fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
         context,
         state_snippet: state.to_owned(),
         top_action: None,
+        last_paused: None,
     }
 }
 
