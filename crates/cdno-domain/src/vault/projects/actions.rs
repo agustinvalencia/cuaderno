@@ -91,6 +91,7 @@ pub struct ResumeOutcome {
 /// Where a resumed focus came from (RFC 0005 §5.3, `resumed_from`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResumedFrom {
+    /// Whether a carried focus was continued or a pause reopened.
     pub kind: ResumedKind,
     /// The date of the carried focus's open marker, or of the pause.
     pub date: chrono::NaiveDate,
@@ -399,11 +400,13 @@ impl Vault {
     /// nothing against the project map, like [`Vault::pause_action`]. What is
     /// resumed:
     ///
-    /// - With no `project`: the carried focus — [`Vault::current_focus`]
-    ///   dated before `at`'s day — if there is one, else the most recent
-    ///   pause within `[focus] paused_lookback_days` that no later `started`
-    ///   or `resumed` of the same text follows.
-    /// - With `project`: that project's most recent such pause.
+    /// - The carried focus — [`Vault::current_focus`] dated before `at`'s
+    ///   day — if there is one and it is on `project` (any project when
+    ///   `project` is `None`);
+    /// - else the most recent pause within `[focus] paused_lookback_days`
+    ///   (that project's, when one is given) that no later line of the same
+    ///   action consumed: a `started` or `resumed` of it, its `done` or
+    ///   `dropped`, or a promotion of its bullet.
     ///
     /// Resuming the carried focus continues it, so the result keeps its
     /// `origin`; resuming a pause is a fresh open with no `origin`, and
@@ -415,9 +418,9 @@ impl Vault {
     /// [`DomainError::NoFocus`]; a pause chosen while a different focus is in
     /// the slot, open today or carried → [`DomainError::FocusOpen`] (resuming
     /// over a carried focus would displace it with no pause line, so it is
-    /// refused like one open today); with no `project`, nothing to resume but
-    /// a focus already anchored today → [`DomainError::FocusOpen`] with
-    /// `same_action` (already focused).
+    /// refused like one open today); no pause to resume and a focus already
+    /// anchored today on `project` (any project when `project` is `None`) →
+    /// [`DomainError::FocusOpen`] with `same_action` (already focused).
     pub fn resume_action(
         &self,
         at: NaiveDateTime,
@@ -429,16 +432,21 @@ impl Vault {
         let project = project.map(str::trim);
 
         let ((slug, action), from) = match (&open, project) {
-            // A carried focus, resumed by the bare verb: continue it.
-            (Some(carried), None) if carried.date != today => (
-                (carried.project.clone(), carried.action.clone()),
-                ResumedFrom {
-                    kind: ResumedKind::Carried,
-                    date: carried.date,
-                    next: None,
-                    reason: None,
-                },
-            ),
+            // A carried focus on the asked-for project (any, for the bare
+            // verb): continue it.
+            (Some(carried), proj)
+                if carried.date != today && proj.is_none_or(|p| p == carried.project) =>
+            {
+                (
+                    (carried.project.clone(), carried.action.clone()),
+                    ResumedFrom {
+                        kind: ResumedKind::Carried,
+                        date: carried.date,
+                        next: None,
+                        reason: None,
+                    },
+                )
+            }
             _ => match self.last_resumable_pause(today, project)? {
                 Some(pause) => {
                     // The slot is taken — today or carried — so reopening the
@@ -456,9 +464,10 @@ impl Vault {
                 }
                 None => {
                     return Err(match (open, project) {
-                        // Nothing to resume, and the bare verb already finds
-                        // today's focus in the slot: it is already focused.
-                        (Some(open), None) => {
+                        // Nothing to resume, and today's focus in the slot is
+                        // the asked-for project's (any, for the bare verb):
+                        // it is already focused.
+                        (Some(open), proj) if proj.is_none_or(|p| p == open.project) => {
                             let (slug, action) = (open.project.clone(), open.action.clone());
                             focus_open_error(open, at, &slug, &action)
                         }

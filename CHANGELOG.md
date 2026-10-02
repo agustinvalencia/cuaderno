@@ -14,10 +14,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `origin`, the earlier start it continues when the slot held the same action (a resume after a
   pause, or over an empty or different slot, has none). `resume_action` resumes the focus carried
   over from an earlier day, else the most recent pause within `paused_lookback_days` that no later
-  start or resume of the same text follows; given a project, that project's most recent such
-  pause. It returns the pause's date and its `next:` / `reason:` lines. It refuses with `NoFocus`
-  when nothing is resumable, with `FocusOpen` when a different focus is in the slot, today's or
-  carried, and with `FocusOpen` (`same_action`) when the focus is already today's. Lint reports a
+  line consumed: a start or resume of the same text, its completion or drop, or a promotion of
+  its bullet. Given a project, both are restricted to that project. It returns the pause's date
+  and its `next:` / `reason:` lines. It refuses with `NoFocus` when nothing is resumable, with
+  `FocusOpen` when a different focus is in the slot, today's or carried, and with `FocusOpen`
+  (`same_action`) when there is no pause to resume and the focus, on the named project if one is
+  given, is already today's. Lint reports a
   malformed `resumed` line. `NoFocus`, now shared by pause and resume, reads `nothing is in focus or
   paused to act on`. Domain verb only; no CLI or MCP verb calls it yet.
 

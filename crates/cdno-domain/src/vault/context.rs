@@ -1063,9 +1063,13 @@ impl Vault {
 
     /// The most recent pause a resume may reopen: the newest `paused` entry
     /// among the daily notes from `today - [focus] paused_lookback_days` to
-    /// `today` that no later `started` or `resumed` of the same
-    /// `(project, action)` follows, in any of those notes. With `project`,
-    /// only that project's pauses count.
+    /// `today` that no later line in any of those notes consumed. A pause is
+    /// consumed by a `started`, `resumed`, `action done on` or `action
+    /// dropped on` of the same `(project, action)`, and by a promotion of its
+    /// bullet, matched as the fold's rename arm matches one (same project,
+    /// the energy-stripped text equal to the promoted title) — otherwise a
+    /// finished or promoted action would be offered for resume. With
+    /// `project`, only that project's pauses count.
     ///
     /// "Newest" is fold order — note order, then line order within a note —
     /// never a sort by stamp, as for [`Vault::current_focus`]. The entry's
@@ -1109,8 +1113,14 @@ impl Vault {
                 } else if let Some((project, action)) =
                     parse_focus_marker(&head, LOG_STARTED_PREFIX)
                         .or_else(|| parse_focus_marker(&head, LOG_RESUMED_PREFIX))
+                        .or_else(|| parse_focus_marker(&head, LOG_ACTION_DONE_PREFIX))
+                        .or_else(|| parse_focus_marker(&head, LOG_ACTION_DROPPED_PREFIX))
                 {
                     open.retain(|p| !(p.project == project && p.action == action));
+                } else if let Some((project, title, _)) = parse_promotion_marker(&head) {
+                    open.retain(|p| {
+                        !(p.project == project && strip_energy_suffix(&p.action).trim() == title)
+                    });
                 }
             }
         }
