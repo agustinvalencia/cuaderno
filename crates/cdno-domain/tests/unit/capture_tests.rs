@@ -417,3 +417,64 @@ fn an_unreadable_focus_window_writes_untagged() {
     let daily = vault.log_to_daily_note(moment(), "a line").unwrap();
     assert!(!store.read_file(&daily).unwrap().contains("during:"));
 }
+
+fn inbox_template(store: &Arc<dyn VaultStore>, content: &str) {
+    store
+        .write_file(
+            &VaultPath::new(".cuaderno/templates/inbox.md").unwrap(),
+            content,
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_template_that_already_declares_captured_during_is_not_duplicated() {
+    let (vault, store) = focused_vault();
+    inbox_template(
+        &store,
+        "---\ntype: inbox\ncreated: {{created}}\ncaptured_during: other-project\n---\n\n{{body}}\n",
+    );
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert_eq!(raw.matches("captured_during").count(), 1, "{raw}");
+    let items = vault.list_inbox().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].text, "a thought");
+}
+
+#[test]
+fn captured_during_is_added_to_crlf_frontmatter() {
+    let (vault, store) = focused_vault();
+    inbox_template(
+        &store,
+        "---\r\ntype: inbox\r\ncreated: {{created}}\r\n---\r\n\r\n{{body}}\r\n",
+    );
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("created: 2026-04-26T15:47:12\r\ncaptured_during: surrogate-model\r\n---"),
+        "{raw:?}"
+    );
+    assert_eq!(vault.list_inbox().unwrap().len(), 1);
+}
+
+#[test]
+fn during_tags_use_the_bare_project_slug() {
+    let (vault, store) = make_vault();
+    let daily_path = VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    store
+        .write_file(
+            &daily_path,
+            "---\ndate: 2026-04-26\ntype: daily\n---\n\n# 2026-04-26\n\n## Logs\n- **09:30**: started [[projects/surrogate-model]] \u{2014} Draft the methods section\n",
+        )
+        .unwrap();
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("captured_during: surrogate-model\n"), "{raw}");
+    vault.log_to_daily_note(moment(), "a line").unwrap();
+    let daily = store.read_file(&daily_path).unwrap();
+    assert!(
+        daily.contains("a line\n  during: [[surrogate-model]]\n"),
+        "{daily}"
+    );
+}
