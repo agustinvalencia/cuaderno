@@ -328,8 +328,11 @@ three. Atomicity falls out of staging.
   `switch_to_a_missing_bullet_leaves_no_pause_line` (the daily note is unchanged after
   `ActionNotFound`); `switch_unplanned_adds_the_bullet_and_three_lines`;
   `switch_to_the_focused_bullet_is_focus_open_same_action`.
-- Mutation: stage the paused line in its own `stage_daily_logs` call before resolution; the
-  missing-bullet test fails (a stray pause line remains).
+- Mutation: commit the pause before resolution (a separate transaction, as calling
+  `pause_action` first would); the missing-bullet test fails (a stray pause line remains).
+  Staging it in a second `stage_daily_logs` call of the same transaction instead fails
+  `switch_writes_pause_then_start_in_one_entry_set` (the second call rewrites the note from the
+  store and the pause is lost) — amended in review of #750.
 
 **Correct means.** A switch is one commit, and a failed switch is no commit.
 
