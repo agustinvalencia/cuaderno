@@ -66,7 +66,7 @@ its new note (`[[actions/<slug>]] (deep)`) by reading the `action promoted on` l
 If it still names the old bullet text, that line is missing or not in the writers' shape (a
 `- **HH:MM**: ` stamp, an em dash U+2014, `"title" -> [[actions/<slug>]]`), or the started bullet
 carried no `(deep)`/`(medium)`/`(light)` suffix. `cdno lint` reports a near-miss line and names the
-cause. If the promoted title differs from the started text, the two are different actions and the
+cause. If the promoted title differs from the started text without its `(energy)` suffix, the two are different actions and the
 focus stays where it was.
 
 ## A prompt appears when I wanted automation (or vice versa)
