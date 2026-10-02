@@ -33,6 +33,7 @@ use chrono::{Datelike, Days, Duration, NaiveDate, NaiveDateTime, NaiveTime};
 use std::collections::{BTreeMap, BTreeSet};
 
 use cdno_core::config::{Aggregate, PlotKind, TrackingSpec};
+use cdno_core::error::ParseError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::{MarkdownDocument, extract_first_table};
 use cdno_core::path::VaultPath;
@@ -1036,7 +1037,11 @@ impl Vault {
         if !view.exists {
             return Ok(Vec::new());
         }
-        let doc = MarkdownDocument::parse(view.markdown)?;
+        // A note that does not parse is an error, not an empty day: the
+        // window would otherwise read past it as if nothing were open. The
+        // error names the note, since it may not be today's.
+        let doc =
+            MarkdownDocument::parse(view.markdown).map_err(|e| parse_error_in(&view.path, e))?;
         let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
             return Ok(Vec::new());
         };
@@ -1045,6 +1050,16 @@ impl Vault {
             .map(|(time, text)| (date.and_time(time), text))
             .collect())
     }
+}
+
+/// `e` with the note it came from named in its message, keeping its variant.
+fn parse_error_in(path: &VaultPath, e: ParseError) -> DomainError {
+    let named = |msg: String| format!("{msg} (in {path})");
+    DomainError::Parse(match e {
+        ParseError::InvalidFrontmatter(msg) => ParseError::InvalidFrontmatter(named(msg)),
+        ParseError::MissingFrontmatter(msg) => ParseError::MissingFrontmatter(named(msg)),
+        ParseError::Yaml(msg) => ParseError::Yaml(named(msg)),
+    })
 }
 
 /// One step of the one-slot fold [`Vault::current_focus`] runs: a start

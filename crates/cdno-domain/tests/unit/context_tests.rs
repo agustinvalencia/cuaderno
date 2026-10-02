@@ -1128,6 +1128,30 @@ fn a_missing_note_inside_the_window_is_skipped() {
 }
 
 #[test]
+fn a_malformed_note_inside_the_window_is_an_error_naming_it() {
+    // Yesterday's note has an opening `---` and no closing one. Reading
+    // past it as an empty day could hide an open start, so it is an error,
+    // and the message says which note, since it is not today's.
+    let yesterday = days_ago(1);
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(focus_day(), &["**08:00**: an ordinary line"])],
+        &[(
+            &daily_path(yesterday),
+            "---\ndate: 2026-07-12\n\n## Logs\n- **09:00**: started [[alpha]] \u{2014} X (deep)\n",
+        )],
+    );
+
+    let err = vault.current_focus(focus_day()).unwrap_err();
+
+    assert!(matches!(err, DomainError::Parse(_)), "{err:?}");
+    assert!(
+        err.to_string().contains(&daily_path(yesterday)),
+        "the message names the note: {err}"
+    );
+}
+
+#[test]
 fn a_promotion_today_of_yesterdays_start_renames_it_and_keeps_its_date() {
     let vault = focus_days(&[
         (

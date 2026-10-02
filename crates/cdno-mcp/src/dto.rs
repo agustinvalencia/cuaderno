@@ -179,7 +179,8 @@ impl From<OrientationContext> for OrientationContextDto {
     }
 }
 
-/// The action in the focus slot, as replayed from today's `## Logs`:
+/// The action in the focus slot, as replayed from the `## Logs` of today
+/// and the `[focus] carry_over_days` days before it (RFC 0005 §5.2):
 /// the most recent start, unless it has since been completed, dropped
 /// or paused (one slot, RFC 0005 D11). There is no state behind this: a
 /// start written by the CLI, by an agent, or by hand in an editor all
