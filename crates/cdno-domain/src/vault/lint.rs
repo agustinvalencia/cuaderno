@@ -24,7 +24,7 @@ use super::context::{
 };
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
-    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 use super::{DAILY_LOGS_SECTION, Vault};
@@ -58,9 +58,9 @@ impl Vault {
     ///   the near-misses that would otherwise vanish silently from the
     ///   lapse scan and the commitments aggregation (a `Warning`, #312).
     /// - daily-log focus markers [`Vault::current_focus`] will not read
-    ///   back: a `started` / `action done on` / `action dropped on` line
-    ///   whose `- **HH:MM**: ` stamp or em dash is wrong, the same class
-    ///   of silent near-miss as the rule above (a `Warning`).
+    ///   back: a `started` / `action done on` / `action dropped on` /
+    ///   `action paused on` line whose `- **HH:MM**: ` stamp or em dash is wrong,
+    ///   the same class of silent near-miss as the rule above (a `Warning`).
     /// - a custom override of a built-in template that lacks a frontmatter
     ///   key the built-in has gained since it was customised (a `Warning`
     ///   naming `cdno templates sync`, #699).
@@ -606,11 +606,12 @@ struct FocusClaim<'a> {
     text: &'a str,
 }
 
-/// The three markers [`Vault::current_focus`] is built from.
-const FOCUS_MARKER_PREFIXES: [&str; 3] = [
+/// The four markers [`Vault::current_focus`] is built from.
+const FOCUS_MARKER_PREFIXES: [&str; 4] = [
     LOG_STARTED_PREFIX,
     LOG_ACTION_DONE_PREFIX,
     LOG_ACTION_DROPPED_PREFIX,
+    LOG_ACTION_PAUSED_PREFIX,
 ];
 
 /// Did this line reach for a focus marker?

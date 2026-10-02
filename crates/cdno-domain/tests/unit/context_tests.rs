@@ -1920,6 +1920,53 @@ fn a_drop_does_not_clear_a_start_whose_text_merely_resembles_a_reason() {
     );
 }
 
+#[test]
+fn current_focus_is_cleared_by_a_paused_action() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**11:00**: action paused on [[alpha]] \u{2014} Draft the methods section",
+    ]);
+
+    assert_eq!(
+        vault.current_focus(focus_day()).unwrap(),
+        None,
+        "a paused action is no longer what you are on"
+    );
+}
+
+#[test]
+fn a_paused_action_of_different_text_does_not_clear_the_start() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft the methods section",
+        "**11:00**: action paused on [[alpha]] \u{2014} Review the introduction",
+    ]);
+
+    let focus = vault
+        .current_focus(focus_day())
+        .unwrap()
+        .expect("the original start is untouched");
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section");
+}
+
+#[test]
+fn a_paused_head_with_continuations_still_clears_the_start() {
+    // The paused marker's continuations (next, reason) live on indented lines.
+    // They must not perturb the match: a pause of the same text still closes.
+    let vault = focus_vault_raw(
+        "- **09:30**: started [[alpha]] \u{2014} Draft the methods section\n\
+         - **11:00**: action paused on [[alpha]] \u{2014} Draft the methods section\n\
+         \x20 next: Review the existing work\n\
+         \x20 reason: Waiting for feedback",
+    );
+
+    assert_eq!(
+        vault.current_focus(focus_day()).unwrap(),
+        None,
+        "a paused action with continuations is no longer what you are on"
+    );
+}
+
 // ---------------------------------------------------------------------
 // completed_actions_between: bullet completions (#586)
 // ---------------------------------------------------------------------

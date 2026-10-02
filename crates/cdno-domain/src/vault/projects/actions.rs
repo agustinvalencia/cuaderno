@@ -668,6 +668,38 @@ pub(in crate::vault) fn format_action_dropped_log_entry(
 /// than a fresh literal.
 pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 
+/// The marker for the line recording that action being paused. Shared with
+/// [`Vault::current_focus`], which must clear an open start on a pause as
+/// well as on a completion or drop, or a paused action stays "what you are
+/// on" for ever. Also shared with lint so a malformed marker is reported.
+pub(in crate::vault) const LOG_ACTION_PAUSED_PREFIX: &str = "action paused on ";
+
+/// Key introducing the next-action hint on a paused entry's continuation line.
+pub(in crate::vault) const LOG_NEXT_KEY: &str = "next: ";
+
+/// Build the daily-log entry recording an action being paused, with optional
+/// continuations for where to pick up and why the pause happened.
+///
+/// The continuations follow the same rules as drops: they go on indented lines
+/// so [`Vault::current_focus`] can read the head without folding and still match
+/// it correctly. Both `next` and `reason` are optional and flattened independently.
+pub fn format_action_paused_log_entry(
+    slug: &str,
+    action_text: &str,
+    next: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    let base = format!("{LOG_ACTION_PAUSED_PREFIX}[[{slug}]] \u{2014} {action_text}");
+    let with_next = match next.map(flatten_reason).filter(|r| !r.is_empty()) {
+        Some(next) => format!("{base}\n  {LOG_NEXT_KEY}{next}"),
+        None => base,
+    };
+    match reason.map(flatten_reason).filter(|r| !r.is_empty()) {
+        Some(reason) => format!("{with_next}\n  {LOG_REASON_KEY}{reason}"),
+        None => with_next,
+    }
+}
+
 /// Collapse every whitespace run — newlines included — to a single
 /// space, so a multi-line reason cannot split one log entry into
 /// several lines that no reader would parse as one. A thin re-export of

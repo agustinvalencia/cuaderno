@@ -2371,6 +2371,27 @@ fn lint_flags_a_close_marker_near_miss_too() {
 }
 
 #[test]
+fn a_paused_line_with_an_ascii_hyphen_is_reported() {
+    // The paused marker should be linted just like started and done.
+    let body = daily_log("- **14:30**: action paused on [[alpha]] - Draft methods (deep)\n");
+    let vault = vault_with_notes(
+        &[("journal/2026/daily/2026-09-15.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes().expect("lint succeeds");
+    let warnings = focus_warnings(&report);
+    assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
+    let issue = warnings[0];
+    assert_eq!(issue.severity, LintSeverity::Warning);
+    assert!(
+        issue.message.contains("action paused on"),
+        "hint should name the paused marker: {}",
+        issue.message
+    );
+}
+
+#[test]
 fn lint_accepts_the_shape_the_writers_emit() {
     // The exact bytes `start_action` produces must never be flagged.
     let body = daily_log("- **09:30**: started [[alpha]] \u{2014} Draft methods (deep)\n");

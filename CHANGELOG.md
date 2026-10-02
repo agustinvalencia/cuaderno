@@ -6,6 +6,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- **The `paused` marker for the daily log (RFC 0005, #720).** `action paused on [[project]] — text`
+  with optional `next:` and `reason:` continuations, read by `cdno now` and `current_focus` to
+  clear an open start just as `action done on` and `action dropped on` do. Lint reports a
+  malformed marker. No verb writes it yet (`cdno action pause` arrives later in RFC 0005, #732).
+
 ## [0.41.0] - 2026-10-01
 
 ### Added

@@ -46,7 +46,7 @@ use crate::note_type::NoteType;
 use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::actions::{
-    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::projects::actions::{parse_attached_action_slug, strip_energy_suffix};
 use super::projects::{ProjectSummary, is_under_projects_done};
@@ -973,17 +973,18 @@ impl Vault {
     /// What you are in the middle of, according to today's log.
     ///
     /// Starting an action writes `- **HH:MM**: started [[slug]] — text`
-    /// into the daily note and completing it writes
-    /// `- **HH:MM**: action done on [[slug]] — text`, so
-    /// "what am I on" is already recorded. This reads it back rather than
-    /// keeping a parallel piece of state that could disagree with the
-    /// vault — which also means it sees a start made from the CLI or by an
-    /// agent over MCP, not only one clicked in the app.
+    /// into the daily note. A done, dropped or paused head of the same
+    /// (project, action) closes it: `- **HH:MM**: action done on [[slug]] — text`,
+    /// `- **HH:MM**: action dropped on [[slug]] — text`, or
+    /// `- **HH:MM**: action paused on [[slug]] — text`. "What am I on" is
+    /// already recorded. This reads it back rather than keeping a parallel
+    /// piece of state that could disagree with the vault — which also means
+    /// it sees a start made from the CLI or by an agent over MCP, not only
+    /// one clicked in the app.
     ///
-    /// The most recent start with no matching completion wins. Several
-    /// starts in a day are normal — you pick something up, put it down,
-    /// pick up something else — and the last one standing is what you are
-    /// on.
+    /// The most recent unclosed start wins. Several starts in a day are
+    /// normal — you pick something up, put it down, pick up something else —
+    /// and the last one standing is what you are on.
     pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
         let view = self.read_daily_note(date)?;
         if !view.exists {
@@ -1023,6 +1024,10 @@ impl Vault {
                     // action would stay "what you are on" for ever,
                     // since nothing else ever clears an open start.
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
+                    // A pause also closes the action: it is work stopped,
+                    // not work finished, but the result is the same — no
+                    // focus is open until a resume or a new start.
+                    .or_else(|| parse_focus_marker(&text, LOG_ACTION_PAUSED_PREFIX))
             {
                 open.retain(|f| !(f.project == project && f.action == action));
             }
