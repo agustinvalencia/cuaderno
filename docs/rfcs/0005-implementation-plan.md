@@ -1,7 +1,7 @@
 # RFC 0005 — Implementation plan
 
-Companion to [RFC 0005 — Focus](0005-focus.md) (merged as #718). Each task below is meant to be
-one issue and one pull request: small enough to review in one sitting, independent where the
+Companion to [RFC 0005 — Focus](0005-focus.md) (merged as #718); tracked by #719, with T0–T21
+filed as #720–#741 in order. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from the
 RFC 0002 and 0004 plans: a green suite is not a probe (a probe asserts the specific new behaviour,
 and where it guards a regression the breaking mutation is shown to fail), and no-regression probes
