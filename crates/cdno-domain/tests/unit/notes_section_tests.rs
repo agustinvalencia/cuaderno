@@ -626,3 +626,45 @@ impl VaultStore for RecordingStore {
         self.inner.acquire_write_lock()
     }
 }
+
+#[test]
+fn note_to_daily_and_log_carry_during_when_focused() {
+    let (vault, store, _index) = make_vault();
+    store
+        .write_file(
+            &vp(DAILY),
+            "---\ndate: 2026-09-27\ntype: daily\n---\n\n# 2026-09-27\n\n## Logs\n- **09:30**: started [[surrogate-model]] \u{2014} Draft the methods section\n",
+        )
+        .unwrap();
+
+    vault
+        .note_to_daily(at(10, 0), "Woodbury identity", "A body.")
+        .unwrap();
+    vault.log_to_daily_note(at(10, 5), "tried a thing").unwrap();
+
+    let logs = logs_of(&read(&store));
+    assert!(
+        logs.contains(
+            "- **10:00**: noted [[journal/2026/daily/2026-09-27#Woodbury identity]]\n  during: [[surrogate-model]]\n"
+        ),
+        "{logs}"
+    );
+    assert!(
+        logs.contains("- **10:05**: tried a thing\n  during: [[surrogate-model]]\n"),
+        "{logs}"
+    );
+}
+
+#[test]
+fn note_to_daily_and_log_are_untagged_without_a_focus() {
+    let (vault, _store, _index) = make_vault();
+    let (vault2, store2, _i2) = make_vault();
+    let _ = vault;
+    vault2
+        .note_to_daily(at(10, 0), "Woodbury identity", "A body.")
+        .unwrap();
+    vault2
+        .log_to_daily_note(at(10, 5), "tried a thing")
+        .unwrap();
+    assert!(!read(&store2).contains("during"));
+}

@@ -8,6 +8,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Writes made during a focus are tagged (RFC 0005, #730).** When a focus is open at write time
+  (a carried one included), `capture_to_inbox` writes `captured_during: <project-slug>` into the
+  new inbox item, and `note_to_daily` and `log_to_daily_note` (behind `cdno log` and
+  `append_to_log`) append an indented `during: [[<slug>]]` continuation to the line they write.
+  `discard_inbox_item` copies the tag from the item's `captured_during` onto its own log line, so
+  it outlives the file. The key is `LOG_DURING_KEY`, beside `LOG_REASON_KEY`. With no focus open
+  nothing is written differently. The focus reader reads entry heads and is unaffected, and
+  `get_project_context.recent_mentions` ignores the tag rather than counting it as a mention.
+
 - **`OrientationContext` and `ProjectSummary` carry focus and pause state (RFC 0005, #729).**
   `OrientationContext` gains `focus: Option<CurrentFocus>` so the morning read shows the current
   work without a second call. Each `ProjectSummary` gains `last_paused: Option<LastPause>` filled

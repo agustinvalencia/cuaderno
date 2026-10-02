@@ -13,7 +13,7 @@ use crate::note_type::NoteType;
 
 use super::Vault;
 use super::index_entry::build_index_entry_for;
-use super::log::flatten_for_log;
+use super::log::{during_continuation, flatten_for_log};
 use super::slug::slugify;
 
 /// One uncategorised capture under `inbox/` awaiting triage.
@@ -53,7 +53,12 @@ impl Vault {
         text: &str,
     ) -> Result<VaultPath, DomainError> {
         let path = self.next_inbox_path(at.date(), text)?;
-        let content = self.scaffold_inbox(at, text)?;
+        let mut content = self.scaffold_inbox(at, text)?;
+        // Tag the detour (RFC 0005 §5.6): while a focus is open the item
+        // records which project it was captured during.
+        if let Some(focus) = self.current_focus(at.date()).ok().flatten() {
+            content = add_captured_during(content, &focus.project);
+        }
 
         let entry_meta = build_index_entry_for(&path, &content, "inbox")?;
         let mut tx = self.transaction()?;
@@ -113,8 +118,17 @@ impl Vault {
         // from the daily log after the note is deleted. Collapse
         // whitespace so a multi-line capture stays a single log line.
         let raw = self.store.read_file(&path)?;
-        let (_fm, body) = Frontmatter::parse(&raw)?;
+        let (fm, body) = Frontmatter::parse(&raw)?;
         let text = flatten_for_log(body);
+        // Copied from the item, not the current focus: the tag outlives the
+        // file (RFC 0005 §5.6).
+        let during = fm
+            .optional_field::<String>(CAPTURED_DURING)
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| during_continuation(s.trim()))
+            .unwrap_or_default();
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
         tx.delete_file(path.clone());
@@ -126,6 +140,7 @@ impl Vault {
         } else {
             format!("triaged inbox item `{slug}` -- discarded: {text}")
         };
+        let log_entry = format!("{log_entry}{during}");
         self.stage_daily_log(at, &log_entry, &mut tx)?;
         tx.commit()?;
         Ok(path)
@@ -156,6 +171,26 @@ impl Vault {
             cdno_core::error::StoreError::AlreadyExists(base),
         ))
     }
+}
+
+/// Frontmatter key recording the project in focus when an item was captured.
+const CAPTURED_DURING: &str = "captured_during";
+
+/// Insert `captured_during: <slug>` as the last frontmatter line of
+/// `content`. Content without a frontmatter block is returned unchanged.
+fn add_captured_during(content: String, slug: &str) -> String {
+    let Some(rest) = content.strip_prefix("---\n") else {
+        return content;
+    };
+    let Some(end) = rest.find("\n---") else {
+        return content;
+    };
+    let at = 4 + end;
+    format!(
+        "{}\n{CAPTURED_DURING}: {slug}{}",
+        &content[..at],
+        &content[at..]
+    )
 }
 
 /// The filename stem of an `inbox/<stem>.md` capture. Empty string for

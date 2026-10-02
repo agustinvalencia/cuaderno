@@ -139,7 +139,11 @@ impl Vault {
             "{}#{heading}",
             relpath.strip_suffix(".md").unwrap_or(&relpath)
         );
-        let log_line = pointer_line(&target, body);
+        let log_line = format!(
+            "{}{}",
+            pointer_line(&target, body),
+            self.during_tag(at.date())
+        );
 
         let base = self.read_or_scaffold_daily(at.date())?;
         let with_entry = self.fold_daily_section(base, section, &entry, true)?;
