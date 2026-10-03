@@ -129,6 +129,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   clear an open start just as `action done on` and `action dropped on` do. Lint reports a
   malformed marker. No verb writes it yet (`cdno action pause` arrives later in RFC 0005, #732).
 
+- **MCP rejection codes for focus refusals (RFC 0005, #734).** `FocusOpen` and `NoFocus` errors
+  are now classified as actionable rejections in the MCP server, with codes `focus_open` and
+  `no_focus`. `focus_open` carries `details.focus` (the open action, its start time and date, and
+  whether it was carried from an earlier day), `details.same_action` and `details.remedy`
+  (`already_focused` when the same action, `resume_action` when carried, `switch_action`
+  otherwise). `no_focus` has empty details. The remedy value is computed from `DomainError::focus_remedy()`.
+  `start_action` and `start_unplanned_action` refusals now arrive as coded `focus_open` rejections
+  rather than plain protocol errors, so an agent can read the remedy without parsing prose.
+
 ### Changed
 
 - **The focus survives midnight (RFC 0005, #726).** `cdno now`, `current_focus` and the focus
