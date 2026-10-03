@@ -1445,8 +1445,18 @@ fn pause_and_resume_report_in_json() {
 #[test]
 fn resume_re_anchors_a_carried_focus_through_the_cli() {
     let dir = vault_with_bullet();
-    let yesterday = chrono::Local::now().naive_local() - chrono::Duration::days(1);
-    start(dir.path(), yesterday, "x", "Run ablation");
+    // Two days back inside a two-day window: a run that crosses midnight
+    // moves the binary's clock by a day and still finds the focus.
+    let cfg = dir.path().join(".cuaderno/config.toml");
+    let mut body = fs::read_to_string(&cfg).unwrap();
+    assert!(
+        !body.lines().any(|l| l.trim() == "[focus]"),
+        "init config grew a [focus] table"
+    );
+    body.push_str("\n[focus]\ncarry_over_days = 2\n");
+    fs::write(&cfg, body).unwrap();
+    let two_days_ago = chrono::Local::now().naive_local() - chrono::Duration::days(2);
+    start(dir.path(), two_days_ago, "x", "Run ablation");
     let out = cdno_in(dir.path())
         .args(["--no-interactive", "action", "resume"])
         .assert()

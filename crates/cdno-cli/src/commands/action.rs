@@ -736,7 +736,7 @@ fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool)
 
     let outcome = match vault.resume_action(at, project.as_deref()) {
         Ok(o) => o,
-        Err(DomainError::NoFocus) => match project.as_deref() {
+        Err(DomainError::NoFocus) => match project.as_deref().map(str::trim) {
             Some(p) => {
                 anyhow::bail!("Nothing to resume on {p} \u{2014} no carried focus or pause there.")
             }
