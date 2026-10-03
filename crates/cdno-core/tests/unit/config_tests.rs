@@ -1295,7 +1295,7 @@ max_window_days = 0
     );
     let err = result.unwrap_err().to_string();
     assert!(
-        err.contains("carry_over_days") && err.contains("the default"),
-        "Error should mention the default: {err}"
+        err.contains("`[focus] carry_over_days` is 1 but `max_window_days` is 0"),
+        "Error should name the key, its value and the ceiling: {err}"
     );
 }

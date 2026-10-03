@@ -367,8 +367,8 @@ disable either.
 **What.** In `crates/cdno-core/src/config.rs`, `FocusConfig` gains `max_window_days: u32` (default
 366, same per-field `default = "…"` pattern as `carry_over_days`). Validation: `carry_over_days`
 or `paused_lookback_days` greater than `max_window_days` is a hard config error whose message names
-the offending key, its value, and the limit (e.g. "`[focus] carry_over_days = 400` exceeds
-`max_window_days = 366`"). Put it where `VaultConfig`'s existing validation runs: a `validate_focus`
+the offending key, its value, the limit and the fix (e.g. "`[focus] carry_over_days` is 400 but
+`max_window_days` is 366; lower the window or raise `max_window_days`"). Put it where `VaultConfig`'s existing validation runs: a `validate_focus`
 method, called by `TypeRegistry::validate` after `validate_tracking`. Document both keys and the
 ceiling in the `[focus]` comment block of both `crates/cdno-cli/templates/default_config.toml` and
 the repo's `.cuaderno/config.toml`.

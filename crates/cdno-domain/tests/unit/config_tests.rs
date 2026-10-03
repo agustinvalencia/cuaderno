@@ -237,5 +237,9 @@ fn validate_rejects_defaults_when_max_window_is_zero() {
     let raw = "[focus]\nmax_window_days = 0\n";
     let err = validate_config_str(raw).expect_err("should reject defaults against zero ceiling");
     assert!(err.message.contains("carry_over_days"), "{}", err.message);
-    assert!(err.message.contains("the default"), "{}", err.message);
+    assert!(
+        err.message.contains("is 1 but `max_window_days` is 0"),
+        "{}",
+        err.message
+    );
 }

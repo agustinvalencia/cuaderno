@@ -8,7 +8,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **A vault whose `carry_over_days` or `paused_lookback_days` exceeds `max_window_days` (default 366) now fails to open (RFC 0005, #753).** The new config key `[focus] max_window_days` sets a limit on how far back the focus reader looks. If a vault's config violates this limit, opening it will fail with a helpful message naming the key, its value, and a fix hint. Existing vaults are unaffected; only custom window values that exceed the default 366 will need adjustment.
+- **A ceiling on the focus windows: `[focus] max_window_days` (RFC 0005, #753).** A vault whose
+  `carry_over_days` or `paused_lookback_days` exceeds `max_window_days` (default 366) now fails to
+  open, with an error naming the key, its value and the ceiling, and saying to lower the window or
+  raise `max_window_days`. Existing vaults with windows of 366 days or fewer are unaffected.
 
 - **`cdno now` knows what day a focus is from, and gains `--line` (RFC 0005, #731).** Elapsed time
   is now measured between datetimes, so a start left open last night reads `18h 55m` rather than a
