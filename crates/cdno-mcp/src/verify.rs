@@ -156,16 +156,19 @@ impl CuadernoServer {
     /// receives the focus as `current_focus(today)` reads it once the write
     /// has landed (RFC 0005 §5.5).
     ///
-    /// The focus is read in the **same** blocking closure as the
-    /// verification, after it. A second `with_vault` would be a second
-    /// `spawn_blocking`: it could read a focus another process changed in
-    /// between, and would double the lock traffic of every write. A focus
-    /// that cannot be read is `None` (logged at debug), never an error: the
-    /// write is verified by then, and an error would tell the caller that a
-    /// write which landed had failed.
+    /// The focus is read once, in the **same** blocking closure as the
+    /// verification and after it, so no second `spawn_blocking` is spent on
+    /// it and no second hop opens a further window in which another process
+    /// could change the focus before it is read. A focus that cannot be read
+    /// is `None` (logged at debug), never an error: the write is verified by
+    /// then, and an error would tell the caller that a write which landed had
+    /// failed.
     ///
-    /// `today` is the date of the `at` the handler gave the domain, so the
-    /// focus is read on the same clock the write was stamped with.
+    /// `today` is the handler's own clock, the date of its
+    /// `chrono::Local::now()`, so the focus is what `current_focus` returns.
+    /// For most tools that is also the date of the `at` given to the domain;
+    /// `note_to_daily` with a back-dated `date` writes to that earlier day
+    /// but still reads the focus on today.
     pub(crate) async fn verified_write_with_focus<T: serde::Serialize>(
         &self,
         path: VaultPath,
