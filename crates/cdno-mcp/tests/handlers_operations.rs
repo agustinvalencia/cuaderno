@@ -3316,7 +3316,8 @@ async fn start_action_rejection_carries_attempted() {
     // The whole fixture the CLI's `--json` is compared against too. The
     // handlers read the real clock, so the focus seeded at 09:10 today is
     // not carried and only the fixture's date is today's rather than the
-    // literal one.
+    // literal one. (The seed and this date each read the clock, so a run
+    // straddling midnight could disagree; the window is milliseconds.)
     let mut fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/focus_open_rejection.json"))
             .expect("fixture parses");
@@ -3356,5 +3357,68 @@ async fn unplanned_and_switch_rejections_carry_attempted_in_the_cli_shape() {
     assert_eq!(
         rejection["details"]["attempted"],
         serde_json::json!({ "project": "surrogate-model", "query": "Draft methods" })
+    );
+}
+
+#[tokio::test]
+async fn switch_with_nothing_open_says_it_was_a_plain_start() {
+    let (server, _store) = server_with_project();
+    server
+        .add_action(Parameters(AddActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Run ablation".to_owned(),
+            energy: "deep".to_owned(),
+            with_note: false,
+            vars: None,
+        }))
+        .await
+        .expect("add_action");
+    let result = server
+        .switch_action(Parameters(SwitchActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Run ablation".to_owned(),
+            next: Some("ignored".to_owned()),
+            reason: None,
+        }))
+        .await
+        .expect("switch_action");
+    let payload = decode_json(&result);
+    assert!(payload["paused"].is_null());
+    assert_eq!(
+        payload["message"],
+        "Nothing was open \u{2014} started Run ablation. (next ignored: nothing to attach it to)"
+    );
+}
+
+#[tokio::test]
+async fn only_a_focus_open_rejection_gets_attempted() {
+    let (server, _store) = server_with_focus();
+    let err = server
+        .start_action(Parameters(StartActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Buy milk".to_owned(),
+        }))
+        .await
+        .expect_err("no such bullet");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "action_not_found");
+    assert!(
+        rejection["details"].get("attempted").is_none(),
+        "{rejection}"
+    );
+
+    // Both seeded bullets contain "e": ambiguous, likewise without `attempted`.
+    let err = server
+        .start_action(Parameters(StartActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "e".to_owned(),
+        }))
+        .await
+        .expect_err("ambiguous");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "ambiguous_action");
+    assert!(
+        rejection["details"].get("attempted").is_none(),
+        "{rejection}"
     );
 }

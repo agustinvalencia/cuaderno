@@ -238,8 +238,10 @@ impl CurrentFocusDto {
     }
 }
 
-/// An action paused and not yet reopened (RFC 0005 §5.5), in the shape
-/// `cdno now --json` gives `last_paused`.
+/// An action paused and not yet reopened (RFC 0005 §5.5). A superset of
+/// both `cdno now --json`'s `last_paused` (`project`, `action`, `title`,
+/// `at`, `next`, `reason`) and the RFC's orientation shape (`action`, `at`,
+/// `date`, `next`, `reason`).
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct LastPauseDto {
     pub project: String,
@@ -249,6 +251,8 @@ pub struct LastPauseDto {
     pub title: String,
     /// When it was paused, `YYYY-MM-DDTHH:MM`.
     pub at: String,
+    /// The day it was paused, `YYYY-MM-DD`.
+    pub date: String,
     /// The `next:` re-entry hint, if one was given.
     pub next: Option<String>,
     /// The `reason:` the pause was given, if any.
@@ -260,6 +264,7 @@ impl From<LastPause> for LastPauseDto {
         Self {
             title: p.title(),
             at: p.at.format("%Y-%m-%dT%H:%M").to_string(),
+            date: p.at.format("%Y-%m-%d").to_string(),
             project: p.project,
             action: p.action,
             next: p.next,

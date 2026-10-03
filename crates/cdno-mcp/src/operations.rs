@@ -570,7 +570,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Move on from the CURRENT focus to an action that is ALREADY on a project map, in one commit: pauses what is in focus (logging `action paused on ...` with the optional `next:` and `reason:` lines for it) and starts the target (`started ...`), so the daily log reads as a pause followed by a start. `project` and `query` name the action to switch TO, matched by substring exactly as `start_action` matches; the one being paused is never named, it is whatever `current_focus` shows. Use this when `start_action` was refused with code `focus_open` AND the person has said to switch -- never switch on your own judgment; the refusal's message says to ask first. Pass `next` to leave a re-entry hint on the paused action, drafted from what you saw the person do. With nothing in focus it is a plain start and `next`/`reason` have nothing to attach to (the result's `paused` is null). Switching to the action already in focus is refused with code `focus_open` and remedy `already_focused`. A query that matches nothing or several bullets errors as it does for `start_action`, and nothing is written. For work not on the map yet use `switch_unplanned_action`."
+        description = "Move on from the CURRENT focus to an action that is ALREADY on a project map, in one commit: pauses what is in focus (logging `action paused on ...` with the optional `next:` and `reason:` lines for it) and starts the target (`started ...`), so the daily log reads as a pause followed by a start. `project` and `query` name the action to switch TO, matched by substring exactly as `start_action` matches; the one being paused is never named, it is whatever `current_focus` shows. Use this when `start_action` was refused with code `focus_open` AND the person has said to switch -- never switch on your own judgment; the refusal's message says to ask first. Pass `next` to leave a re-entry hint on the paused action, drafted from what you saw the person do. With nothing in focus it is a plain start and `next`/`reason` have nothing to attach to (the result's `paused` is null). Switching to the action already in focus is refused with code `focus_open`: remedy `already_focused` when it was started today (nothing to do), `resume_action` when it carried over from an earlier day (call `resume_action` then). A query that matches nothing or several bullets errors as it does for `start_action`, and nothing is written. For work not on the map yet use `switch_unplanned_action`."
     )]
     pub async fn switch_action(
         &self,
@@ -578,6 +578,7 @@ impl CuadernoServer {
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
         let attempted = serde_json::json!({ "project": input.project, "query": input.query });
+        let next_given = input.next.is_some();
         let outcome = self
             .with_vault(move |vault| {
                 vault.switch_action(
@@ -595,13 +596,14 @@ impl CuadernoServer {
             at,
             outcome,
             message,
+            next_given,
             WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
         )
         .await
     }
 
     #[tool(
-        description = "Move on from the CURRENT focus to work that is on NO project map yet, in one commit: pauses what is in focus (with the optional `next:` and `reason:` lines), appends the new action to `project`'s `## Next Actions`, and starts it -- the unplanned counterpart of `switch_action`, split from it for the reason `start_unplanned_action` is split from `start_action`: a query that matches nothing must never become a new action silently. `project` is the project of the NEW action; the one being paused is whatever `current_focus` shows and is never named. Use it only when the person has said to switch (a refused start says to ask first). `energy` is one of `\"deep\"`, `\"medium\"`, `\"light\"`. A `title` that duplicates an open bullet's text makes both unresolvable by substring, so check the map first if the work may already be listed. With nothing in focus it is a plain unplanned start and `paused` in the result is null. Switching to the action already in focus is refused with code `focus_open`."
+        description = "Move on from the CURRENT focus to work that is on NO project map yet, in one commit: pauses what is in focus (with the optional `next:` and `reason:` lines), appends the new action to `project`'s `## Next Actions`, and starts it -- the unplanned counterpart of `switch_action`, split from it for the reason `start_unplanned_action` is split from `start_action`: a query that matches nothing must never become a new action silently. `project` is the project of the NEW action; the one being paused is whatever `current_focus` shows and is never named. Use it only when the person has said to switch (a refused start says to ask first). `energy` is one of `\"deep\"`, `\"medium\"`, `\"light\"`. A `title` that duplicates an open bullet's text makes both unresolvable by substring, so check the map first if the work may already be listed. With nothing in focus it is a plain unplanned start and `paused` in the result is null. Switching to the action already in focus is refused with code `focus_open`: remedy `already_focused` when it was started today (nothing to do), `resume_action` when it carried over from an earlier day (call `resume_action` then)."
     )]
     pub async fn switch_unplanned_action(
         &self,
@@ -611,6 +613,7 @@ impl CuadernoServer {
             .map_err(|e| invalid_argument("energy", &e.to_string()))?;
         let at = chrono::Local::now().naive_local();
         let attempted = serde_json::json!({ "project": input.project, "title": input.title });
+        let next_given = input.next.is_some();
         let outcome = self
             .with_vault(move |vault| {
                 vault.switch_unplanned_action(
@@ -625,12 +628,12 @@ impl CuadernoServer {
             .await?
             .map_err(|e| into_mcp_error_attempting(e, attempted))?;
         let message = format!("Added to {} and switched", outcome.primary);
-        self.switch_result(at, outcome, message, WriteShape::Rewritten)
+        self.switch_result(at, outcome, message, next_given, WriteShape::Rewritten)
             .await
     }
 
     #[tool(
-        description = "Take up work again: re-anchors a focus carried over from an earlier day, or reopens the latest pause, and logs `- **HH:MM**: resumed [[project]] \u{2014} <text>` to today's daily note. The text comes from the log, never from the project map, so it takes no query or title; `project` is optional and only narrows the search to that project. With no `project`: the carried focus if there is one, else the most recent pause within the `[focus] paused_lookback_days` window. With `project`: that project's carried focus if the slot holds one, else its latest pause -- the one `get_orientation` shows beside its top action. When that project also carries a focus, the focus wins over the pause, so READ `resumed_from.kind` (`carried` or `paused`) and `resumed.action` BACK to the person rather than assuming the pause you were shown. `resumed_from.next` is the re-entry hint the pause left: read it to the person on re-entry. A different action already in focus is refused with code `focus_open` (never an automatic switch: pause it or `switch_action` first, on the person's word); the same action already started today is refused with remedy `already_focused`; nothing carried or paused is refused with code `no_focus`. Call it only on the person's yes."
+        description = "Take up work again: re-anchors a focus carried over from an earlier day, or reopens the latest pause, and logs `- **HH:MM**: resumed [[project]] \u{2014} <text>` to today's daily note. The text comes from the log, never from the project map, so it takes no query or title; `project` is optional and only narrows the search to that project. With no `project`: the carried focus if there is one, else the most recent pause within the `[focus] paused_lookback_days` window. With `project`: that project's carried focus if the slot holds one, else its latest pause -- the project's most recent pause, as `last_paused` reports it. When that project also carries a focus, the focus wins over the pause, so READ `resumed_from.kind` (`carried` or `paused`) and `resumed.action` BACK to the person rather than assuming it was a pause. `resumed_from.next` is the re-entry hint the pause left: read it to the person on re-entry. A different action already in focus is refused with code `focus_open` (never an automatic switch: pause it or `switch_action` first, on the person's word); the same action already started today is refused with remedy `already_focused`; nothing carried or paused is refused with code `no_focus`. Call it only on the person's yes."
     )]
     pub async fn resume_action(
         &self,
@@ -1028,8 +1031,22 @@ impl CuadernoServer {
         at: chrono::NaiveDateTime,
         outcome: cdno_domain::SwitchOutcome,
         message: String,
+        next_given: bool,
         shape: WriteShape,
     ) -> Result<CallToolResult, ErrorData> {
+        // With nothing open the switch was a plain start: say so, as the CLI does.
+        let message = if outcome.paused.is_none() {
+            let mut m = format!(
+                "Nothing was open \u{2014} started {}.",
+                outcome.started.title()
+            );
+            if next_given {
+                m.push_str(" (next ignored: nothing to attach it to)");
+            }
+            m
+        } else {
+            message
+        };
         let reported = outcome.primary.to_string();
         let today = at.date();
         let paused = outcome.paused.map(|f| CurrentFocusDto::at(f, today));
