@@ -240,22 +240,24 @@ impl ServerHandler for CuadernoServer {
                 write for being outside it; capture, note_to_daily and append_to_log \
                 tag their writes with it. Your part:\n\
                 1. Compare at project level: the focus's project and its linked \
-                portfolios and questions are no detour, nor are captures, tracking, \
-                commitments, reviews, orientation, reads.\n\
+                portfolios and questions (your judgement from get_project_context) \
+                are no detour, nor are captures, tracking, commitments, reviews, \
+                orientation, reads.\n\
                 2. Only on a mismatch, say so in one sentence.\n\
                 3. Recommend: \"That's outside X. I'll capture it and we stay on X, \
                 unless you want it now or want to move over.\" Accept capture, an \
                 aside now (no log, no switch) or a move; else carry on.\n\
-                4. Ask once per topic per focus; you track it.\n\
+                4. Ask at most once per topic per focus; you track it.\n\
                 5. Never ask why; log a `reason` only if volunteered.\n\
                 6. After a capture or aside, give a return cue from the focus and its \
                 `next:`.\n\
-                7. The person's explicit word is consent: \"switch to Y\" -> \
-                switch_action (draft `next`, never invent it), \"let's work on X\" -> \
-                start_action; weaker gets a one-sentence proposal. \
-                pause_action/resume_action need their yes. On focus_open never retry: \
-                ask the person, follow its `remedy` (already_focused: nothing to do; \
-                else offer that tool).\n\
+                7. The person's explicit word is consent: when they name other work to \
+                do now (\"let's work on Y\", \"switch to Y\"), call switch_action if a \
+                focus is open, start_action if not (draft `next`, never invent it). \
+                Weaker gets a one-sentence proposal. pause_action/resume_action need \
+                their yes. On focus_open never retry; follow its `remedy`: \
+                already_focused needs nothing; for resume_action or switch_action, \
+                ask the person first.\n\
                 8. Once per focus per day, if a commitment outside its project is \
                 overdue or due today (get_orientation.commitments): \"Heads up: X is \
                 due today.\" No elapsed-time nudges.\n\n\
