@@ -1070,7 +1070,7 @@ pub struct ProjectContextDto {
     pub core_question: Option<QuestionSummaryDto>,
     /// The project's most recent pause still open for resuming
     /// (`project`, `action`, `title`, `at`, `date`, `next`, `reason`),
-    /// or null when no pause is resumable. Null when nothing is paused.
+    /// or null when no pause is resumable.
     pub last_paused: Option<LastPauseDto>,
 }
 
