@@ -244,6 +244,16 @@ fn add(
 
   A field that is required but merely *has* a default is neither of
   these — that is the Defaults bullet above.
+- **A skippable hint prompt on a single-log-line verb.** `cdno action
+  pause` asks for `--next` when it is absent in a terminal: one
+  `Where to pick up (Enter to skip)` question, blank means none. It
+  does **not** set `prompted` and triggers **no** confirm. The reason
+  is the cost: what is written is one cheap log entry, so a confirm
+  stacked on top would be the friction, and the hint is worth most at
+  the moment of stopping, when a second keypress is what makes people
+  skip it. `--reason` on the same verb stays silent, never prompted.
+  The exception is narrow: one question, skippable by Enter, on a verb
+  that writes a single log line and takes no other prompted field.
 - **Domain layer** never sees the prompts. `cdno-domain` stays pure
   and synchronous; every prompt happens before the domain call.
 

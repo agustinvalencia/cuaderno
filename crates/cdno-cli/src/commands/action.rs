@@ -141,6 +141,33 @@ pub enum ActionCommands {
         reason: Option<String>,
     },
 
+    /// Pauses the current focus; takes no project or query.
+    ///
+    /// Logs `action paused on [[slug]] — <text>` to today's daily note
+    /// and leaves the bullet on the map untouched. In a terminal, a
+    /// missing `--next` is asked for once (Enter skips); `--reason` is
+    /// never asked for.
+    Pause {
+        /// Where to pick up again: the re-entry hint `resume` and
+        /// `cdno now` read back.
+        #[arg(long)]
+        next: Option<String>,
+        /// Why the work was paused. Never prompted for.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Resumes the carried or paused focus; takes no query or title.
+    ///
+    /// Re-anchors a focus carried over from an earlier day, or reopens
+    /// the most recent pause, and prints the pause's `next:` hint when
+    /// it has one. Refused while a different action is in focus.
+    Resume {
+        /// Resume the pause on this project instead of the latest one.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        project: Option<String>,
+    },
+
     /// List a project's open action bullets, with the attached-note
     /// status (active / blocked / completed / dropped) inline when present.
     List {
@@ -210,6 +237,10 @@ pub fn run(
             query,
             reason,
         } => drop_verb(&vault, at, project, query, reason, interactive, json),
+        ActionCommands::Pause { next, reason } => {
+            pause(&vault, at, next, reason, interactive, json)
+        }
+        ActionCommands::Resume { project } => resume(&vault, at, project, json),
         ActionCommands::List { project } => list(&vault, project, interactive, json),
     }
 }
@@ -617,6 +648,113 @@ fn drop_verb(
         &project_path.to_string(),
         &format!("Action dropped on {project_path}"),
     )?;
+    Ok(())
+}
+
+/// `cdno action pause` — stops the one focus there is (RFC 0005 §5.1).
+///
+/// Nothing here is gathered through `gather_or_error`: there is no
+/// project or query to ask for. The one prompt is the re-entry hint,
+/// skippable, and it deliberately neither sets `prompted` nor leads to
+/// a confirm (see "What is not part of the convention" in
+/// `docs/cli-ergonomics.md`). `--reason` is never prompted.
+fn pause(
+    vault: &Vault,
+    at: NaiveDateTime,
+    next: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+) -> Result<()> {
+    // Refuse before asking for a hint nobody can use.
+    if vault.current_focus(at.date())?.is_none() {
+        anyhow::bail!(NO_FOCUS_TO_PAUSE);
+    }
+    let next = pause_hint(next, interactive, || {
+        prompt::prompt_text("Where to pick up (Enter to skip)")
+    })?;
+    let outcome = match vault.pause_action(at, next.as_deref(), reason.as_deref()) {
+        Ok(o) => o,
+        Err(cdno_domain::error::DomainError::NoFocus) => anyhow::bail!(NO_FOCUS_TO_PAUSE),
+        Err(e) => return Err(e).context("pausing action"),
+    };
+    crate::output::emit_write_result(
+        json,
+        &outcome.path.to_string(),
+        &format!(
+            "Paused on {}, logged to {}",
+            outcome.paused.project, outcome.path
+        ),
+    )
+}
+
+/// The re-entry hint for a pause: the flag when given, else (in a
+/// terminal only) whatever `ask` returns, with blank meaning none.
+///
+/// Public so a test can count the questions without a pty. It takes no
+/// `prompted` flag on purpose: this question never leads to a confirm.
+pub fn pause_hint(
+    next: Option<String>,
+    interactive: bool,
+    ask: impl FnOnce() -> Result<String>,
+) -> Result<Option<String>> {
+    match next {
+        Some(n) => Ok(Some(n)),
+        None if interactive => {
+            let typed = ask()?;
+            let typed = typed.trim();
+            Ok((!typed.is_empty()).then(|| typed.to_owned()))
+        }
+        None => Ok(None),
+    }
+}
+
+const NO_FOCUS_TO_PAUSE: &str = "Nothing started \u{2014} nothing to pause.";
+
+/// `cdno action resume` — re-anchors a carried focus or reopens a pause.
+fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool) -> Result<()> {
+    use cdno_domain::ResumedKind;
+    use cdno_domain::error::DomainError;
+
+    let outcome = match vault.resume_action(at, project.as_deref()) {
+        Ok(o) => o,
+        Err(DomainError::NoFocus) => {
+            anyhow::bail!("Nothing to resume \u{2014} nothing is carried over or paused.")
+        }
+        Err(DomainError::FocusOpen { focus, .. }) => anyhow::bail!(
+            "{} is already in focus on {}. Pause it first (`cdno action pause`), \
+             or move on with `cdno action switch`.",
+            crate::output::sanitise(&focus.title()),
+            focus.project,
+        ),
+        Err(e) => return Err(e).context("resuming action"),
+    };
+    let message = format!(
+        "Resumed on {}, logged to {}",
+        outcome.resumed.project, outcome.path
+    );
+    let from = &outcome.from;
+    if json {
+        let payload = serde_json::json!({
+            "path": outcome.path.to_string(),
+            "message": message,
+            "resumed_from": {
+                "kind": match from.kind {
+                    ResumedKind::Carried => "carried",
+                    ResumedKind::Paused => "paused",
+                },
+                "date": from.date.to_string(),
+                "next": from.next,
+                "reason": from.reason,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+    println!("{message}");
+    if let Some(next) = &from.next {
+        println!("next: {}", crate::output::sanitise(next));
+    }
     Ok(())
 }
 

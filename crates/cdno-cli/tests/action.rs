@@ -16,6 +16,7 @@ use cdno_cli::commands::init;
 use cdno_cli::commands::project::{self, ProjectCommands};
 use cdno_domain::frontmatter::{Context, EnergyLevel};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
 
 fn moment(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
@@ -1070,4 +1071,242 @@ fn each_verb_keeps_its_own_error_context() {
             "{verb} must keep its own context `{expected}`:\n{shown}"
         );
     }
+}
+
+// --- pause / resume (RFC 0005, T12) --------------------------------------
+
+/// A vault with project `x` and one open bullet, "Run ablation".
+fn vault_with_bullet() -> TempDir {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    add_bullet(dir.path(), "x", "Run ablation");
+    dir
+}
+
+fn add_bullet(root: &Path, project: &str, title: &str) {
+    action::run(
+        root,
+        moment(2026, 5, 2, 9, 30),
+        ActionCommands::Add {
+            project: Some(project.to_owned()),
+            title: Some(title.to_owned()),
+            energy: Some(EnergyLevel::Deep),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+}
+
+fn run_action(root: &Path, at: NaiveDateTime, command: ActionCommands) -> anyhow::Result<()> {
+    action::run(root, at, command, true, false)
+}
+
+fn start(root: &Path, at: NaiveDateTime, project: &str, query: &str) {
+    run_action(
+        root,
+        at,
+        ActionCommands::Start {
+            project: Some(project.to_owned()),
+            query: Some(query.to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+    )
+    .expect("start");
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+/// Today's daily note, whatever today is (the binary stamps its own clock).
+fn todays_daily(root: &Path) -> String {
+    let today = chrono::Local::now().date_naive();
+    fs::read_to_string(root.join(format!("journal/{}/daily/{}.md", today.format("%Y"), today)))
+        .expect("today's daily note")
+}
+
+#[test]
+fn pause_prompts_once_for_next_and_never_confirms() {
+    // The suite has no pty helper, so the question is tested at the seam
+    // the handler routes it through: `pause_hint` is the whole of the
+    // prompt logic, and `pause` has no `prompted` flag to feed a confirm.
+    let mut asked = 0;
+    let hint = action::pause_hint(None, true, || {
+        asked += 1;
+        Ok("   ".to_owned())
+    })
+    .unwrap();
+    assert_eq!(asked, 1, "exactly one question");
+    assert_eq!(hint, None, "Enter (blank) skips");
+
+    let hint = action::pause_hint(None, true, || Ok(" pick up at step 3 ".to_owned())).unwrap();
+    assert_eq!(hint.as_deref(), Some("pick up at step 3"));
+
+    // A typed flag is never asked about again; non-interactive never asks.
+    let hint = action::pause_hint(Some("given".to_owned()), true, || {
+        panic!("must not ask when --next is given")
+    })
+    .unwrap();
+    assert_eq!(hint.as_deref(), Some("given"));
+    let hint = action::pause_hint(None, false, || panic!("must not ask")).unwrap();
+    assert_eq!(hint, None);
+
+    // And the written line lands without `next:` when the hint is skipped.
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    run_action(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ActionCommands::Pause {
+            next: None,
+            reason: None,
+        },
+    )
+    .expect("pause");
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("action paused on [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("next:"), "{daily}");
+}
+
+#[test]
+fn pause_with_no_interactive_never_prompts() {
+    let dir = vault_with_bullet();
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "start"])
+        .args(["--project", "x", "--query", "Run ablation"])
+        .assert()
+        .success();
+    // Null stdin (`< /dev/null`) and `--no-interactive`: a prompt would
+    // die in the prompt library or hang; neither is allowed.
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "pause"])
+        .write_stdin("")
+        .assert()
+        .success();
+    let daily = todays_daily(dir.path());
+    assert!(
+        daily.contains("action paused on [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+}
+
+#[test]
+fn pause_with_nothing_started_says_so_gently() {
+    let dir = vault_with_bullet();
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ActionCommands::Pause {
+            next: None,
+            reason: None,
+        },
+    )
+    .expect_err("nothing to pause");
+    assert_eq!(
+        format!("{err:#}"),
+        "Nothing started \u{2014} nothing to pause."
+    );
+
+    // Through the binary: the message, no cause chain, non-zero exit.
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "pause"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "Nothing started \u{2014} nothing to pause.",
+        ))
+        .stderr(predicates::str::contains("Caused by").not());
+}
+
+#[test]
+fn resume_prints_the_next_hint() {
+    let dir = vault_with_bullet();
+    for args in [
+        &[
+            "action",
+            "start",
+            "--project",
+            "x",
+            "--query",
+            "Run ablation",
+        ][..],
+        &["action", "pause", "--next", "pick up at step 3"][..],
+    ] {
+        cdno_in(dir.path())
+            .arg("--no-interactive")
+            .args(args)
+            .assert()
+            .success();
+    }
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "resume"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Resumed on x, logged to"))
+        .stdout(predicates::str::contains("next: pick up at step 3"));
+    assert!(todays_daily(dir.path()).contains("resumed [[x]]"));
+}
+
+#[test]
+fn resume_with_project_resumes_that_pause() {
+    let dir = vault_with_bullet();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Y", Context::Work);
+    add_bullet(dir.path(), "y", "Write report");
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let pause = |at, next: &str| {
+        run_action(
+            dir.path(),
+            at,
+            ActionCommands::Pause {
+                next: Some(next.to_owned()),
+                reason: None,
+            },
+        )
+        .expect("pause");
+    };
+    pause(moment(2026, 5, 2, 10, 30), "x hint");
+    start(dir.path(), moment(2026, 5, 2, 11, 0), "y", "Write report");
+    pause(moment(2026, 5, 2, 11, 30), "y hint");
+
+    run_action(
+        dir.path(),
+        moment(2026, 5, 2, 12, 0),
+        ActionCommands::Resume {
+            project: Some("x".to_owned()),
+        },
+    )
+    .expect("resume x");
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("resumed [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("resumed [[y]]"), "{daily}");
+
+    // With x in focus, resuming y is refused and says what to do.
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 12, 30),
+        ActionCommands::Resume {
+            project: Some("y".to_owned()),
+        },
+    )
+    .expect_err("slot taken");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("already in focus") && msg.contains("action switch"),
+        "{msg}"
+    );
 }
