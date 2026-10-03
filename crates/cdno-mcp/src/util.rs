@@ -52,6 +52,22 @@ pub(crate) fn into_mcp_error_attempting(e: DomainError, attempted: serde_json::V
     ErrorData::internal_error(e.to_string(), data)
 }
 
+/// [`into_mcp_error`] for a pause or a resume: a `no_focus` rejection carries
+/// `message`, that verb's own wording (`NO_FOCUS_TO_PAUSE_MESSAGE` or
+/// `NO_FOCUS_TO_RESUME_MESSAGE`), because the shared one cannot be specific
+/// to either. Any other error passes through unchanged.
+pub(crate) fn into_mcp_error_no_focus(e: DomainError, message: &str) -> ErrorData {
+    let mut data = crate::rejection::envelope(&e);
+    if let Some(rejection) = data
+        .as_mut()
+        .and_then(|d| d.get_mut(crate::rejection::MARKER))
+        && rejection["code"] == "no_focus"
+    {
+        rejection["message"] = message.into();
+    }
+    ErrorData::internal_error(e.to_string(), data)
+}
+
 /// Build an InvalidParams error pointing at a specific input field.
 /// Used by handlers that accept enum-typed strings (e.g. the `domain`
 /// filter on `get_active_questions`) and need to reject a value that

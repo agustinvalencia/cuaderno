@@ -42,9 +42,14 @@ impl FocusRemedy {
 pub const FOCUS_OPEN_MESSAGE: &str =
     "An action is already in focus. Ask the person before switching; do not retry.";
 
-/// Message for a `NoFocus` rejection: nothing is open to act on. Shared by
-/// the pause and resume verbs, so it names neither.
-pub const NO_FOCUS_MESSAGE: &str = "Nothing is in focus or paused.";
+/// Message for a `NoFocus` rejection of a pause: nothing is in focus. A
+/// resumable pause may still exist, so it says nothing about pauses.
+pub const NO_FOCUS_TO_PAUSE_MESSAGE: &str = "Nothing is in focus to pause.";
+
+/// Message for a `NoFocus` rejection of a resume: no carried focus and no
+/// pause (on the asked-for project, when one is named).
+pub const NO_FOCUS_TO_RESUME_MESSAGE: &str =
+    "Nothing to resume: no focus carried over and no pause.";
 
 impl DomainError {
     /// For a `FocusOpen`, its [`FocusRemedy`]; `None` for any other error.
@@ -113,8 +118,10 @@ pub enum DomainError {
 
     /// A verb that acts on the focus found nothing to act on: `pause_action`
     /// with nothing open, `resume_action` with no carried focus and no
-    /// resumable pause. The message is neutral because both verbs share it.
-    #[error("nothing is in focus or paused to act on")]
+    /// resumable pause. The text names what each verb needs, so it is true
+    /// whichever raised it; each interface gives the person its verb's own
+    /// message ([`NO_FOCUS_TO_PAUSE_MESSAGE`], [`NO_FOCUS_TO_RESUME_MESSAGE`]).
+    #[error("nothing to act on: pause needs an action in focus, resume a carried focus or a pause")]
     NoFocus,
 
     /// A start, or a resume of a pause, was attempted while an action is
