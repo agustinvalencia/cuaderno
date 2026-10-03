@@ -12,7 +12,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   now opens with a terse `FOCUS` section holding the eight points of RFC §5.6 (compare at project
   level, one sentence only on a mismatch, recommend capture and accept an aside or a move, once per
   topic per focus, never ask why, a return cue, the person's explicit word as consent (`switch_action`
-  with a focus open, `start_action` without), no retry after `focus_open` and its `remedy` followed, a narrow due-today mention, no elapsed-time nudges)
+  with a focus open, `start_action` without), no retry after `focus_open` and its `remedy`
+  followed, a narrow due-today mention, no elapsed-time nudges)
   and states that the server never refuses a write for being outside the focus. It comes first
   because Claude Code cuts server instructions at 2048 characters by default; the section ends
   within the first 1450, and the existing guidance follows it unchanged. `current_focus`,
