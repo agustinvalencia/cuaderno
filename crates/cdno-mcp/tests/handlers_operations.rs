@@ -3207,6 +3207,52 @@ async fn pause_action_with_nothing_in_focus_is_a_no_focus_rejection() {
         .await
         .expect_err("nothing to pause");
     assert_eq!(rejection_of(&err)["code"], "no_focus");
+    assert_eq!(
+        rejection_of(&err)["message"],
+        cdno_domain::NO_FOCUS_TO_PAUSE_MESSAGE
+    );
+}
+
+/// A second pause is refused, but a resumable pause exists, so the message
+/// must not say there is none (review of #769).
+#[tokio::test]
+async fn a_second_pause_says_nothing_is_in_focus_not_that_nothing_is_paused() {
+    let (server, _store) = server_with_focus();
+    let pause = || PauseActionInput {
+        next: None,
+        reason: None,
+    };
+    server
+        .pause_action(Parameters(pause()))
+        .await
+        .expect("first pause");
+    let err = server
+        .pause_action(Parameters(pause()))
+        .await
+        .expect_err("nothing left to pause");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "no_focus");
+    assert_eq!(rejection["message"], "Nothing is in focus to pause.");
+
+    server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect("the pause is still resumable");
+}
+
+#[tokio::test]
+async fn resume_action_with_nothing_to_resume_is_a_no_focus_rejection_with_its_own_message() {
+    let (server, _store) = server_with_project();
+    let err = server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect_err("nothing to resume");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "no_focus");
+    assert_eq!(
+        rejection["message"],
+        "Nothing to resume: no focus carried over and no pause."
+    );
 }
 
 #[tokio::test]
@@ -3299,6 +3345,58 @@ async fn resume_action_reopens_a_pause_and_reports_where_it_came_from() {
     assert!(
         body.contains("resumed [[surrogate-model]] \u{2014} Draft methods section (deep)"),
         "{body}"
+    );
+}
+
+/// Runtime strings carry what happened, never agent guidance: the FOCUS
+/// pointers belong in tool descriptions (review of #769, where they had
+/// landed in this message and in three error field names).
+#[tokio::test]
+async fn runtime_strings_do_not_carry_the_focus_pointers() {
+    let (server, _store) = server_with_focus();
+    server
+        .pause_action(Parameters(PauseActionInput {
+            next: None,
+            reason: None,
+        }))
+        .await
+        .expect("pause_action");
+    let result = server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect("resume_action");
+    let payload = decode_json(&result);
+    let message = payload["message"].as_str().expect("message");
+    assert_eq!(
+        message,
+        format!(
+            "Resumed on surrogate-model, logged to {}",
+            payload["path"].as_str().expect("path")
+        )
+    );
+    assert!(!message.contains("FOCUS section"), "{message}");
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: true,
+        }))
+        .await
+        .expect_err("both given");
+    assert_eq!(
+        err.message,
+        "invalid 'clear': pass either `core_question` or `clear: true`, not both"
+    );
+
+    let err = server
+        .note_to_daily(Parameters(note_input("  ", "substance")))
+        .await
+        .expect_err("blank heading");
+    assert!(
+        err.message.starts_with("invalid 'heading': required:"),
+        "{}",
+        err.message
     );
 }
 

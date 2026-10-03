@@ -1782,10 +1782,16 @@ fn pause_and_resume_refusals_are_json_objects_under_json() {
             .clone();
         serde_json::from_slice(&out).expect("json on stdout")
     };
-    for verb in [["pause"], ["resume"]] {
+    for (verb, message) in [
+        (["pause"], "Nothing is in focus to pause."),
+        (
+            ["resume"],
+            "Nothing to resume: no focus carried over and no pause.",
+        ),
+    ] {
         let v = run(&verb);
         assert_eq!(v["code"], "no_focus");
-        assert_eq!(v["message"], "Nothing is in focus or paused.");
+        assert_eq!(v["message"], message);
         assert_eq!(v["details"], serde_json::json!({}));
     }
     cdno_in(dir.path())

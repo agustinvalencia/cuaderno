@@ -1429,7 +1429,13 @@ async fn search_notes_rejects_unknown_note_type() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-    assert!(err.message.contains("note_type"), "msg: {}", err.message);
+    // Exact, so agent guidance pasted into the field name is caught (review
+    // of #769).
+    assert_eq!(
+        err.message,
+        "invalid 'note_type': unknown note type 'bogus'"
+    );
+    assert!(!err.message.contains("FOCUS section"), "{}", err.message);
 }
 
 #[tokio::test]
