@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno now` knows what day a focus is from, and gains `--line` (RFC 0005, #731).** Elapsed time
+  is now measured between datetimes, so a start left open last night reads `18h 55m` rather than a
+  time-of-day difference. The text has three shapes: `On alpha — Draft methods (deep), since 09:10
+  (2h 15m).`; `… picked up 08:50 today (started Monday 14:05).` for a focus re-anchored by `resume`;
+  and `Nothing started.` followed by `Last paused: <project> — <title> (<when>), next: <hint>`. A
+  focus carried from an earlier day names it (`since Monday 14:05`). `now --json` keeps `project`,
+  `action` and `started` unchanged and adds `title`, `note`, `energy`, `started_at`, `date`,
+  `carried`, `origin`, `elapsed_minutes` and `last_paused`, every key always present and null when
+  it has no value. `now --line` prints one sanitised line of at most 160 characters
+  (`Focus: alpha — Draft methods (since 09:10)`, or `Focus: none (last paused: …)`) for prompt
+  segments and hooks, and prints nothing and exits 0 when no vault is found or anything fails.
+  The text form no longer prints the raw bullet on a second line, and "Nothing started yet…"
+  became "Nothing started.".
+
 - **Writes made during a focus are tagged (RFC 0005, #730).** When a focus is open at write time
   (a carried one included), `cdno capture` and MCP `capture` write `captured_during: <project-slug>`
   into the new inbox item, and `cdno log`, `cdno log note`, MCP `append_to_log` and MCP

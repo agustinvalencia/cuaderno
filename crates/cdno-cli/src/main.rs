@@ -4,6 +4,7 @@
 //! the vault root from CWD, and delegates to a library handler. All
 //! real work lives in [`cdno_cli`].
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -181,8 +182,16 @@ enum Commands {
     /// and the `[focus] carry_over_days` days before it (default 1) — so a
     /// start made from an agent counts too, as does one written by hand
     /// in the log's own shape (`- **HH:MM**: started [[slug]] — text`,
-    /// stamp and em dash both required).
-    Now,
+    /// stamp and em dash both required). A focus carried over from an
+    /// earlier day, or picked up again with `action resume`, says so. With
+    /// nothing started, the most recent pause and its `next:` hint show.
+    Now {
+        /// Print one sanitised line of at most 160 characters for a prompt
+        /// segment or hook. Prints nothing and exits 0 when no vault is
+        /// found or anything fails. Wins over `--json` when both are given.
+        #[arg(long)]
+        line: bool,
+    },
 
     /// Quick snapshot: active projects and their top next actions.
     Status,
@@ -534,10 +543,23 @@ fn main() -> Result<()> {
                 cli.json,
             )
         }
-        Commands::Now => {
+        Commands::Now { line: true } => {
+            // Never fails: a prompt segment that errors breaks the prompt.
+            if let Ok(cwd) = std::env::current_dir() {
+                let env_value = std::env::var(ENV_VAULT_PATH).ok();
+                if let Some(root) =
+                    bootstrap::resolve_vault_root(cli.vault.as_deref(), &cwd, env_value.as_deref())
+                    && let Ok(text) = commands::now::build_line(&root, Local::now().naive_local())
+                {
+                    // A closed pipe must not panic: ignore the write result.
+                    let _ = writeln!(std::io::stdout(), "{text}");
+                }
+            }
+            Ok(())
+        }
+        Commands::Now { line: false } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            let now = Local::now();
-            commands::now::run(&root, now.date_naive(), now.time(), cli.json)
+            commands::now::run(&root, Local::now().naive_local(), cli.json)
         }
         Commands::Status => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

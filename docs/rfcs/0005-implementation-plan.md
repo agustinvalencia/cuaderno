@@ -809,8 +809,13 @@ fixes the placement and the words.
 ### T19 — The Claude Code hook example
 
 **What.** `examples/hooks/claude-code/README.md`, `focus.sh` and `settings.snippet.json`: a
-`UserPromptSubmit` hook running `cdno now --line --vault "${CUADERNO_VAULT_PATH:?}"`, `set -u`,
-exit 0 always, output only when `cdno` succeeded. README: what it does, that it is what makes
+`UserPromptSubmit` hook running `cdno now --line --vault "$CUADERNO_VAULT_PATH"`, exit 0 always,
+output only when `cdno` succeeded. Hazards found in review of #758, each handled: an unset or empty
+variable must skip the call (`cdno now --line --vault ""` is a clap error, exit 2, and a
+`UserPromptSubmit` hook exiting 2 **blocks the prompt** — so no `${VAR:?}` either, which also exits
+non-zero); stderr is redirected (reconciliation warnings on a vault with an unparsable note); and
+the README names the possible 5 s stall when another process holds the vault lock and the index is
+stale. README: what it does, that it is what makes
 §5.6 behaviour rather than advice, the measured cost (one warm `cdno` run per turn, §3.3), that
 `--vault` or the env var is required because CLI discovery is upward from the session's cwd, and
 how to merge the snippet into `settings.json`. Add the folder to `examples/README.md` if one

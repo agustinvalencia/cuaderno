@@ -34,19 +34,28 @@ invisible.
 
 ```bash
 $ cdno now
-surrogate-model since 09:30 · 1h 30m
-  Draft the methods section (deep)
+On surrogate-model — Draft the methods section (deep), since 09:30 (1h 30m).
 ```
 
-With nothing open it says so rather than printing an empty frame:
+A start carried over from an earlier day names it (`since Monday 14:05 (18h 55m)`), and one
+re-anchored with `action resume` reads `picked up 08:50 today (started Monday 14:05)`. A day more than
+six days back is shown as a date (`2026-09-22 14:05`), since a weekday name would be ambiguous. With nothing
+open it says so, and shows the most recent open pause:
 
 ```bash
 $ cdno now
-Nothing started yet. `cdno orient` suggests one thing to begin.
+Nothing started.
+Last paused: surrogate-model — Draft the methods section (10:40), next: pick up at "Prior approaches"
 ```
 
-`--json` emits `{project, action, started}`, all three `null` when nothing is open — so a caller can
-test one field without first branching on the shape of the document.
+`--line` prints one sanitised line of at most 160 characters for a prompt segment or hook —
+`Focus: surrogate-model — Draft the methods section (since 09:30)`, or `Focus: none (last paused:
+…)`. It prints nothing and exits 0 when no vault is found or anything goes wrong.
+
+`--json` emits `project`, `action`, `title`, `note`, `energy`, `started`, `started_at`, `date`,
+`carried`, `origin`, `elapsed_minutes` and `last_paused`. Every key is always there and is `null` when
+it has no value (all of them but `last_paused` when nothing is open), so a caller can test one field
+without first branching on the shape of the document.
 
 The `action` field is the bullet text exactly as logged, energy suffix and all. That is the same
 string [`cdno action complete`](action.md#cdno-action-complete) matches, which is why the pairing

@@ -2327,7 +2327,7 @@ fn now_renders_the_started_action_through_the_real_binary() {
         .stdout(predicate::str::is_match(r"since \d{2}:\d{2}").unwrap())
         // The elapsed half is measured against the `NaiveDateTime` main.rs
         // stamps, not the date -- a start made moments ago reads "just now".
-        .stdout(predicate::str::contains("\u{b7} just now"));
+        .stdout(predicate::str::contains("(just now)"));
 
     cdno()
         .args([
@@ -2346,7 +2346,7 @@ fn now_renders_the_started_action_through_the_real_binary() {
         .args(["--vault", vault, "now"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Nothing started yet"));
+        .stdout(predicate::str::contains("Nothing started."));
 }
 
 #[test]
