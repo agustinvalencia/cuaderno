@@ -671,7 +671,8 @@ bullet that is the focus; `--next` absent + interactive → the T12 skippable pr
 not add to the confirm. With nothing open, print `Nothing was open — started <Y>.` and, if
 `--next` was given, `(--next ignored: nothing to attach it to)`. `start` on `FocusOpen`: print
 the refusal naming the open focus and the exact `cdno action switch …` (or `resume`) command;
-under `--json` emit the §5.1 object (`code`, `message`, `details`); in a terminal
+under `--json` emit the §5.1 object (`code`, `message`, `details`) — and give `action pause` /
+`action resume`'s refusals the same `--json` object (review of #761: they print text today); in a terminal
 (`reports_interactively`), `prompt_confirm("Switch to it instead?", false)` and on yes run the
 switch with the already-resolved arguments, without asking for `--next` or `--reason`.
 

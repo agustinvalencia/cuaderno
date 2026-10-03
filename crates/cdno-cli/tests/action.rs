@@ -16,6 +16,7 @@ use cdno_cli::commands::init;
 use cdno_cli::commands::project::{self, ProjectCommands};
 use cdno_domain::frontmatter::{Context, EnergyLevel};
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+use predicates::prelude::PredicateBooleanExt;
 use tempfile::TempDir;
 
 fn moment(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
@@ -1070,4 +1071,399 @@ fn each_verb_keeps_its_own_error_context() {
             "{verb} must keep its own context `{expected}`:\n{shown}"
         );
     }
+}
+
+// --- pause / resume (RFC 0005, T12) --------------------------------------
+
+/// A vault with project `x` and one open bullet, "Run ablation".
+fn vault_with_bullet() -> TempDir {
+    let dir = vault();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "X", Context::Work);
+    add_bullet(dir.path(), "x", "Run ablation");
+    dir
+}
+
+fn add_bullet(root: &Path, project: &str, title: &str) {
+    action::run(
+        root,
+        moment(2026, 5, 2, 9, 30),
+        ActionCommands::Add {
+            project: Some(project.to_owned()),
+            title: Some(title.to_owned()),
+            energy: Some(EnergyLevel::Deep),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+}
+
+fn run_action(root: &Path, at: NaiveDateTime, command: ActionCommands) -> anyhow::Result<()> {
+    action::run(root, at, command, true, false)
+}
+
+fn start(root: &Path, at: NaiveDateTime, project: &str, query: &str) {
+    run_action(
+        root,
+        at,
+        ActionCommands::Start {
+            project: Some(project.to_owned()),
+            query: Some(query.to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+    )
+    .expect("start");
+}
+
+/// The binary against `root`, never inheriting the developer's vault.
+fn cdno_in(root: &Path) -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cdno").expect("cdno binary built");
+    cmd.env_remove("CUADERNO_VAULT_PATH");
+    cmd.arg("--vault").arg(root);
+    cmd
+}
+
+/// The daily note a verb reports in its `logged to <path>` line, so no
+/// test recomputes "today" against the binary's own clock.
+fn logged_daily(root: &Path, stdout: &[u8]) -> String {
+    let out = String::from_utf8_lossy(stdout);
+    let path = out
+        .lines()
+        .find_map(|l| l.split("logged to ").nth(1))
+        .unwrap_or_else(|| panic!("no `logged to` line in {out:?}"))
+        .trim();
+    fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+#[test]
+fn pause_prompts_once_for_next_and_never_confirms() {
+    // The suite has no pty helper, so the question is tested at the seam
+    // the handler routes it through: `pause_hint` is the whole of the
+    // prompt logic, and `pause` has no `prompted` flag to feed a confirm.
+    let mut asked = 0;
+    let hint = action::pause_hint(None, true, || {
+        asked += 1;
+        Ok("   ".to_owned())
+    })
+    .unwrap();
+    assert_eq!(asked, 1, "exactly one question");
+    assert_eq!(hint, None, "Enter (blank) skips");
+
+    let hint = action::pause_hint(None, true, || Ok(" pick up at step 3 ".to_owned())).unwrap();
+    assert_eq!(hint.as_deref(), Some("pick up at step 3"));
+
+    // A typed flag is never asked about again; non-interactive never asks.
+    let hint = action::pause_hint(Some("given".to_owned()), true, || {
+        panic!("must not ask when --next is given")
+    })
+    .unwrap();
+    assert_eq!(hint.as_deref(), Some("given"));
+    let hint = action::pause_hint(None, false, || panic!("must not ask")).unwrap();
+    assert_eq!(hint, None);
+
+    // And the written line lands without `next:` when the hint is skipped.
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    run_action(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ActionCommands::Pause {
+            next: None,
+            reason: None,
+        },
+    )
+    .expect("pause");
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("action paused on [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("next:"), "{daily}");
+}
+
+#[test]
+fn pause_with_no_interactive_never_prompts() {
+    let dir = vault_with_bullet();
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "start"])
+        .args(["--project", "x", "--query", "Run ablation"])
+        .assert()
+        .success();
+    // Null stdin (`< /dev/null`) and `--no-interactive`: a prompt would
+    // die in the prompt library or hang; neither is allowed.
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "pause"])
+        .write_stdin("")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let daily = logged_daily(dir.path(), &out);
+    assert!(
+        daily.contains("action paused on [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+}
+
+#[test]
+fn pause_with_nothing_started_says_so_gently() {
+    let dir = vault_with_bullet();
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 11, 0),
+        ActionCommands::Pause {
+            next: None,
+            reason: None,
+        },
+    )
+    .expect_err("nothing to pause");
+    assert_eq!(
+        format!("{err:#}"),
+        "Nothing started \u{2014} nothing to pause."
+    );
+
+    // Through the binary: the message, no cause chain, non-zero exit.
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "pause"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "Nothing started \u{2014} nothing to pause.",
+        ))
+        .stderr(predicates::str::contains("Caused by").not());
+}
+
+#[test]
+fn resume_prints_the_next_hint() {
+    let dir = vault_with_bullet();
+    for args in [
+        &[
+            "action",
+            "start",
+            "--project",
+            "x",
+            "--query",
+            "Run ablation",
+        ][..],
+        &["action", "pause", "--next", "pick up at step 3"][..],
+    ] {
+        cdno_in(dir.path())
+            .arg("--no-interactive")
+            .args(args)
+            .assert()
+            .success();
+    }
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "resume"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Resumed on x, logged to"))
+        .stdout(predicates::str::contains("next: pick up at step 3"))
+        .get_output()
+        .stdout
+        .clone();
+    assert!(logged_daily(dir.path(), &out).contains("resumed [[x]]"));
+}
+
+#[test]
+fn resume_with_project_resumes_that_pause() {
+    let dir = vault_with_bullet();
+    create_project(dir.path(), moment(2026, 5, 2, 9, 0), "Y", Context::Work);
+    add_bullet(dir.path(), "y", "Write report");
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let pause = |at, next: &str| {
+        run_action(
+            dir.path(),
+            at,
+            ActionCommands::Pause {
+                next: Some(next.to_owned()),
+                reason: None,
+            },
+        )
+        .expect("pause");
+    };
+    pause(moment(2026, 5, 2, 10, 30), "x hint");
+    start(dir.path(), moment(2026, 5, 2, 11, 0), "y", "Write report");
+    pause(moment(2026, 5, 2, 11, 30), "y hint");
+
+    run_action(
+        dir.path(),
+        moment(2026, 5, 2, 12, 0),
+        ActionCommands::Resume {
+            project: Some("x".to_owned()),
+        },
+    )
+    .expect("resume x");
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(
+        daily.contains("resumed [[x]] \u{2014} Run ablation (deep)"),
+        "{daily}"
+    );
+    assert!(!daily.contains("resumed [[y]]"), "{daily}");
+
+    // With x in focus, resuming y is refused and says what to do.
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 12, 30),
+        ActionCommands::Resume {
+            project: Some("y".to_owned()),
+        },
+    )
+    .expect_err("slot taken");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("already in focus") && msg.contains("action switch"),
+        "{msg}"
+    );
+}
+
+/// Drive the pause handler as an interactive run, counting questions.
+fn interactive_pause(
+    root: &Path,
+    at: NaiveDateTime,
+    next: Option<&str>,
+    answer: &str,
+) -> (anyhow::Result<()>, usize) {
+    let (vault, _) = cdno_cli::bootstrap::open_vault(root).unwrap();
+    let mut asked = 0;
+    let r = action::pause_asking(
+        &vault,
+        at,
+        next.map(str::to_owned),
+        None,
+        true,
+        false,
+        || {
+            asked += 1;
+            Ok(answer.to_owned())
+        },
+    );
+    (r, asked)
+}
+
+#[test]
+fn the_pause_handler_asks_exactly_once_when_nothing_is_given() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), None, "step 3");
+    r.expect("pause");
+    assert_eq!(asked, 1);
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(daily.contains("next: step 3"), "{daily}");
+}
+
+#[test]
+fn the_pause_handler_never_asks_when_nothing_is_in_focus() {
+    let dir = vault_with_bullet();
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), None, "x");
+    assert!(r.is_err());
+    assert_eq!(asked, 0, "the refusal comes before the question");
+}
+
+#[test]
+fn the_pause_handler_never_asks_when_next_is_given() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), Some("given"), "x");
+    r.expect("pause");
+    assert_eq!(asked, 0);
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(daily.contains("next: given"), "{daily}");
+}
+
+#[test]
+fn resuming_the_action_already_in_focus_says_nothing_to_resume() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 10, 30),
+        ActionCommands::Resume { project: None },
+    )
+    .expect_err("already focused");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("already in focus") && msg.contains("nothing to resume"),
+        "{msg}"
+    );
+    assert!(!msg.contains("switch") && !msg.contains("pause"), "{msg}");
+}
+
+#[test]
+fn resume_with_a_project_that_has_nothing_names_it() {
+    let dir = vault_with_bullet();
+    let msg = |p: Option<&str>| {
+        let e = run_action(
+            dir.path(),
+            moment(2026, 5, 2, 10, 30),
+            ActionCommands::Resume {
+                project: p.map(str::to_owned),
+            },
+        )
+        .expect_err("nothing");
+        format!("{e:#}")
+    };
+    assert_eq!(
+        msg(Some("x")),
+        "Nothing to resume on x \u{2014} no carried focus or pause there."
+    );
+    assert_eq!(
+        msg(None),
+        "Nothing to resume \u{2014} nothing is carried over or paused."
+    );
+}
+
+#[test]
+fn pause_and_resume_report_in_json() {
+    let dir = vault_with_bullet();
+    let run = |args: &[&str]| -> serde_json::Value {
+        let out = cdno_in(dir.path())
+            .args(["--json", "action"])
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        serde_json::from_slice(&out).expect("json")
+    };
+    run(&["start", "--project", "x", "--query", "Run ablation"]);
+    let p = run(&["pause", "--next", "step 3", "--reason", "lunch"]);
+    assert!(p["path"].is_string() && p["message"].as_str().unwrap().starts_with("Paused on x"));
+    let r = run(&["resume"]);
+    assert!(r["message"].as_str().unwrap().starts_with("Resumed on x"));
+    assert_eq!(r["resumed_from"]["kind"], "paused");
+    assert_eq!(r["resumed_from"]["next"], "step 3");
+    assert_eq!(r["resumed_from"]["reason"], "lunch");
+}
+
+#[test]
+fn resume_re_anchors_a_carried_focus_through_the_cli() {
+    let dir = vault_with_bullet();
+    // Two days back inside a two-day window: a run that crosses midnight
+    // moves the binary's clock by a day and still finds the focus.
+    let cfg = dir.path().join(".cuaderno/config.toml");
+    let mut body = fs::read_to_string(&cfg).unwrap();
+    assert!(
+        !body.lines().any(|l| l.trim() == "[focus]"),
+        "init config grew a [focus] table"
+    );
+    body.push_str("\n[focus]\ncarry_over_days = 2\n");
+    fs::write(&cfg, body).unwrap();
+    let two_days_ago = chrono::Local::now().naive_local() - chrono::Duration::days(2);
+    start(dir.path(), two_days_ago, "x", "Run ablation");
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "resume"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Resumed on x"))
+        .get_output()
+        .stdout
+        .clone();
+    assert!(logged_daily(dir.path(), &out).contains("resumed [[x]]"));
 }

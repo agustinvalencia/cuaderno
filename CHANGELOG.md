@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno action pause` and `cdno action resume` (RFC 0005, #732).** `pause [--next <text>]
+  [--reason <text>]` logs `action paused on [[slug]] — <text>` for the current focus and takes no
+  project or query; in a terminal a missing `--next` is asked once ("Where to pick up (Enter to
+  skip)"), with no confirm after it, and `--reason` is never prompted. `resume [--project <slug>]`
+  re-anchors a carried focus or reopens the latest pause (or the named project's), then prints the
+  pause's `next:` hint. With nothing to act on they say so plainly (`Nothing started — nothing to
+  pause.`) and exit non-zero; `resume --project <p>` with nothing there names `<p>`; `resume` while the
+  same action is in focus says there is nothing to resume, and while another is, names it and points
+  at `pause` and `switch`. `--json` gives `path` and `message`, and for `resume` a `resumed_from`
+  object. `docs/cli-ergonomics.md` names the skippable hint prompt as an exception to
+  confirm-on-prompt.
+
 - **A ceiling on the focus windows: `[focus] max_window_days` (RFC 0005, #753).** A vault whose
   `carry_over_days` or `paused_lookback_days` exceeds `max_window_days` (default 366) now fails to
   open, with an error naming the key, its value and the ceiling, and saying to lower the window or
