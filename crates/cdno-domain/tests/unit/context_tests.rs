@@ -2302,3 +2302,56 @@ fn a_wikilink_bullet_title_renders_without_markup() {
         "labels win, then the final path segment; plain text is untouched"
     );
 }
+
+#[test]
+fn a_hand_written_promotion_line_renames_the_open_start() {
+    // No verb and no map: the line alone is enough, and the energy can only
+    // have come from the start's own suffix.
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft methods (deep)",
+        "**10:00**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "[[actions/draft-methods]] (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+}
+
+#[test]
+fn a_promotion_title_containing_an_arrow_still_parses() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} fix a -> b (light)",
+        "**10:00**: action promoted on [[alpha]] \u{2014} \"fix a -> b\" -> [[actions/fix-a-b]]",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "[[actions/fix-a-b]] (light)");
+}
+
+#[test]
+fn a_promotion_of_another_action_or_project_leaves_the_focus_alone() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft methods (deep)",
+        "**10:00**: action promoted on [[beta]] \u{2014} \"Draft methods\" -> [[actions/x]]",
+        "**10:05**: action promoted on [[alpha]] \u{2014} \"Other thing\" -> [[actions/y]]",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Draft methods (deep)");
+}
+
+#[test]
+fn a_promotion_of_a_start_without_an_energy_suffix_is_skipped() {
+    let vault = focus_vault(&[
+        "**09:30**: started [[alpha]] \u{2014} Draft methods",
+        "**10:00**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]",
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Draft methods");
+}

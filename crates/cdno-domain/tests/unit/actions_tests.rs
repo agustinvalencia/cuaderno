@@ -1576,13 +1576,12 @@ fn unplanned_start_creates_the_section_on_a_drifted_project() {
 }
 
 #[test]
-fn a_promotion_between_start_and_close_strands_the_focus() {
-    // The limit of "the verbs agree by construction" (#568). Promotion is
-    // the fourth caller of `resolve_open_action` and the only one that
-    // REWRITES the text it matched, so a start logged before it can never
-    // pair with the close after it. Pre-existing and unchanged by #568 —
-    // pinned so the claim cannot quietly grow into one the code does not
-    // keep, and so that fixing it later has a failing test to flip.
+fn a_promotion_between_start_and_close_moves_the_focus_to_the_note() {
+    // Promotion is the fourth caller of `resolve_open_action` and the only
+    // one that REWRITES the text it matched. The reader follows it: the
+    // promotion line renames the open start (RFC 0005 5.4), keeping the
+    // original start time, so the close that logs the rewritten bullet
+    // still pairs.
     let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
     vault
         .add_action(
@@ -1595,24 +1594,51 @@ fn a_promotion_between_start_and_close_strands_the_focus() {
     vault
         .start_action(dt(2026, 5, 26, 9, 30), "alpha", "Draft methods")
         .unwrap();
+    let day = NaiveDate::from_ymd_opt(2026, 5, 26).unwrap();
 
-    // Promotion rewrites the bullet to wikilink the new action note.
     vault
         .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
         .unwrap();
 
-    // The close logs the REWRITTEN text, which cannot match the start.
+    let focus = vault.current_focus(day).unwrap().expect("a focus");
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "[[actions/draft-methods]] (deep)");
+    assert_eq!(
+        focus.started,
+        NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+        "the person never stopped, so the original start time stays"
+    );
+
     vault
         .complete_action(dt(2026, 5, 26, 11, 0), "alpha", "draft-methods")
         .unwrap();
 
-    let focus = vault
-        .current_focus(NaiveDate::from_ymd_opt(2026, 5, 26).unwrap())
+    assert_eq!(vault.current_focus(day).unwrap(), None);
+}
+
+#[test]
+fn a_promotion_line_written_by_promote_action_is_not_flagged_by_lint() {
+    let (vault, _store) = vault_with(&[("projects/alpha.md", ACTIVE_PROJECT)]);
+    vault
+        .add_action(
+            dt(2026, 5, 26, 9, 0),
+            "alpha",
+            "Draft methods",
+            EnergyLevel::Deep,
+        )
         .unwrap();
+    vault
+        .promote_action(dt(2026, 5, 26, 10, 0), "alpha", "Draft methods")
+        .unwrap();
+
+    let report = vault.lint_all_notes().unwrap();
     assert!(
-        focus.is_some_and(|f| f.action.contains("Draft methods")),
-        "documented limitation: the pre-promotion start is still open, \
-         with no bullet left that could ever close it"
+        !report
+            .issues
+            .iter()
+            .any(|i| i.message.contains("`cdno now` will not see it")),
+        "the real promotion line must read back: {:?}",
+        report.issues
     );
 }
 

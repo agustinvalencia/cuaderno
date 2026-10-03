@@ -177,15 +177,10 @@ impl Vault {
     /// the texts agree by construction rather than by both sides
     /// formatting the string the same way.
     ///
-    /// That agreement holds for the *close* verbs only. [`Vault::promote_action`]
-    /// also resolves through [`resolve_open_action`] but **rewrites** the
-    /// bullet it matched, so a start logged before a promotion can never
-    /// be paired with the close that follows it and the focus stays
-    /// pinned. That is pre-existing and unchanged here — `start_action`
-    /// logged the same verbatim text before this change — but it is the
-    /// limit of "agree by construction", and
-    /// `a_promotion_between_start_and_close_strands_the_focus` pins the
-    /// real behaviour so the claim cannot quietly grow.
+    /// [`Vault::promote_action`] also resolves through [`resolve_open_action`]
+    /// but **rewrites** the bullet it matched. The reader follows it: the
+    /// promotion line it logs renames the open start, so the later close
+    /// still pairs (`a_promotion_between_start_and_close_moves_the_focus_to_the_note`).
     ///
     /// Keep this separate from `start_action` rather than making it a
     /// fallback when the query matches nothing: a fallback would turn
@@ -533,7 +528,7 @@ impl Vault {
             build_index_entry_for(&project_path, &new_content, NoteType::Project.as_str())?;
 
         let log_entry = format!(
-            "action promoted on [[{slug}]] — \"{title}\" -> [[{}/{action_slug}]]",
+            "{LOG_ACTION_PROMOTED_PREFIX}[[{slug}]] — \"{title}\" -> [[{}/{action_slug}]]",
             cdno_core::paths::ACTIONS,
         );
 
@@ -642,6 +637,11 @@ pub(in crate::vault) const LOG_ACTION_DONE_PREFIX: &str = "action done on ";
 /// drop as well as on a completion, or an abandoned action stays "what
 /// you are on" for ever.
 pub(in crate::vault) const LOG_ACTION_DROPPED_PREFIX: &str = "action dropped on ";
+/// The marker for the line [`Vault::promote_action`] writes when it
+/// rewrites an inline bullet into an attached action note. Shared with
+/// [`Vault::current_focus`], which reads it as a **rename** of the open
+/// start, so the focus follows the bullet to its note.
+pub(in crate::vault) const LOG_ACTION_PROMOTED_PREFIX: &str = "action promoted on ";
 
 /// Build the daily-log entry recording an action being started.
 fn format_action_started_log_entry(slug: &str, action_text: &str) -> String {
@@ -845,7 +845,7 @@ pub(in crate::vault) fn strip_energy_suffix(text: &str) -> &str {
 /// `(deep|medium|light)` suffix; `None` for any other shape. Callers
 /// decide whether the absence is an error (promote needs it) or
 /// silently OK (completion just logs the raw text).
-fn parse_bullet_energy(text: &str) -> Option<EnergyLevel> {
+pub(in crate::vault) fn parse_bullet_energy(text: &str) -> Option<EnergyLevel> {
     if text.ends_with(" (deep)") {
         Some(EnergyLevel::Deep)
     } else if text.ends_with(" (medium)") {

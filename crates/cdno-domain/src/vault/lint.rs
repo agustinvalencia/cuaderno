@@ -19,12 +19,13 @@ use crate::note_type::NoteType;
 
 use super::commitments::{parse_periodic_line, split_at_next_marker};
 use super::context::{
-    RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads, record_time,
-    records_of, str_field,
+    RECORD_TIME_FORMATS, RecordTime, parse_focus_marker, parse_log_entry_heads,
+    parse_promotion_marker, record_time, records_of, str_field,
 };
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
-    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 use super::{DAILY_LOGS_SECTION, Vault};
@@ -367,9 +368,17 @@ impl Vault {
                 // The verdict, through the very functions current_focus
                 // runs: the stamp must yield an entry head, and that
                 // head's text must yield a marker.
+                // A promotion is judged by its own, stricter parser: the
+                // reader renames the open start only on the exact shape.
                 let read_back = parse_log_entry_heads(line)
                     .first()
-                    .is_some_and(|(_, text)| parse_focus_marker(text, claim.prefix).is_some());
+                    .is_some_and(|(_, text)| {
+                        if claim.prefix == LOG_ACTION_PROMOTED_PREFIX {
+                            parse_promotion_marker(text).is_some()
+                        } else {
+                            parse_focus_marker(text, claim.prefix).is_some()
+                        }
+                    });
                 if read_back {
                     continue;
                 }
@@ -606,12 +615,13 @@ struct FocusClaim<'a> {
     text: &'a str,
 }
 
-/// The four markers [`Vault::current_focus`] is built from.
-const FOCUS_MARKER_PREFIXES: [&str; 4] = [
+/// The five markers [`Vault::current_focus`] is built from.
+const FOCUS_MARKER_PREFIXES: [&str; 5] = [
     LOG_STARTED_PREFIX,
     LOG_ACTION_DONE_PREFIX,
     LOG_ACTION_DROPPED_PREFIX,
     LOG_ACTION_PAUSED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX,
 ];
 
 /// Did this line reach for a focus marker?
@@ -700,6 +710,10 @@ fn focus_marker_hint(claim: &FocusClaim<'_>) -> String {
         // not broken.
         if project.is_empty() || action.trim().is_empty() {
             return "the slug or the action either side of the em-dash is empty".to_owned();
+        }
+        if claim.prefix == LOG_ACTION_PROMOTED_PREFIX {
+            return "the line does not match `action promoted on [[project]] \u{2014} \"title\" -> [[actions/<slug>]]` (quoted title, ASCII `->`, and the target in `[[ ]]`)"
+                .to_owned();
         }
         return "the line does not match `[[slug]] \u{2014} action`".to_owned();
     }

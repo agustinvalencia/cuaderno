@@ -71,9 +71,9 @@ pub enum ActionCommands {
     /// The action must already be on the map. A start names a bullet so
     /// that the later completion logs matching text and the focus
     /// clears; a start that names nothing could never be closed (#568).
-    /// `action promote` rewrites the bullet it matches, so promoting
-    /// between a start and its close strands the focus for the rest of
-    /// the day and the close verbs then match nothing.
+    /// `action promote` rewrites the bullet it matches; the focus
+    /// follows it to the new note, so promoting between a start and its
+    /// close is safe and the start time is kept.
     /// For work on no map yet, pass `--unplanned` with `--title` and
     /// `--energy` — that adds the bullet and starts it in one commit.
     Start {

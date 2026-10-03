@@ -11,9 +11,9 @@ There is no state behind this. It replays today's `## Logs`, so a start made fro
 note by hand all count — and a completion or a drop clears it. Nothing to keep in sync, and
 nothing to go stale.
 
-One verb breaks the pairing: [`cdno action promote`](action.md#cdno-action-promote) *rewrites* the
-bullet it matched, so promoting between a start and its close leaves `cdno now` naming the old text
-for the rest of the day, and `action complete` and `action drop` then match nothing.
+[`cdno action promote`](action.md#cdno-action-promote) *rewrites* the bullet it matched, and the
+focus follows it: the `action promoted on` line it logs renames the open start to the new note, with
+the original start time, so `action complete` and `action drop` still close it.
 
 A line you type yourself has to match the shape the writers emit:
 
