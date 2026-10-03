@@ -1004,7 +1004,7 @@ mod tests {
         let payload = classify(&DomainError::NoFocus).expect("no_focus is caller-actionable");
 
         assert_eq!(payload["code"], "no_focus");
-        assert_eq!(payload["message"], "Nothing is started.");
+        assert_eq!(payload["message"], "Nothing is in focus or paused.");
         assert_eq!(payload["details"], json!({}));
     }
 

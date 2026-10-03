@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Server instructions carry the detour protocol (RFC 0005, #738).** The `with_instructions` text
+  gains a `FOCUS` section with the eight points of RFC §5.6 (compare at project level, one sentence
+  only on a mismatch, recommend rather than ask, once per topic per focus, never ask why, a return
+  cue, the person's explicit word as consent, a narrow due-today mention) and states that the
+  server never refuses a write for being outside the focus. `current_focus`, `start_action` and
+  `switch_action` point at it; `lint` names `resumed` among the focus markers it checks; `capture`,
+  `append_to_log` and `note_to_daily` say the `captured_during` / `during:` tag is written for the
+  agent. The shared `no_focus` message now reads "Nothing is in focus or paused.", so it fits
+  `resume_action` as well as `pause_action`. Nine comments and descriptions in `cdno-mcp` that used
+  words the RFC bars from agent-facing text were reworded; behaviour is unchanged.
+
 - **Write results carry the focus (RFC 0005, #736).** The success payloads of `start_action`,
   `start_unplanned_action`, `switch_action`, `switch_unplanned_action`, `pause_action`,
   `resume_action`, `complete_action`, `drop_action`, `promote_action`, `add_action`,

@@ -248,7 +248,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope), malformed stewardship-dashboard bullets (`warning`; `## Active Habits` / `## Periodic Commitments` lines the canonical parsers reject), daily-log focus markers that `current_focus` will not read back (`warning`; a `started`/`action done on`/`action dropped on`/`action paused on`/`action promoted on` line whose `- **HH:MM**: ` stamp or em-dash separator is missing or malformed, or an `action promoted on` line not shaped `[[project]] \u{2014} \"title\" -> [[actions/<slug>]]` -- the message names the likely cause), a project whose `status` disagrees with its folder (`error`; the message names the manual fix) or whose `closed:` date is missing or stray (`warning`), and a custom template in `.cuaderno/templates/` that lacks a frontmatter key its built-in template has (`warning`; `cdno templates sync` adds it) or cannot be read (`error`). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
+        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope), malformed stewardship-dashboard bullets (`warning`; `## Active Habits` / `## Periodic Commitments` lines the canonical parsers reject), daily-log focus markers that `current_focus` will not read back (`warning`; a `started`/`resumed`/`action done on`/`action dropped on`/`action paused on`/`action promoted on` line whose `- **HH:MM**: ` stamp or em-dash separator is missing or malformed, or an `action promoted on` line not shaped `[[project]] \u{2014} \"title\" -> [[actions/<slug>]]` -- the message names the likely cause), a project whose `status` disagrees with its folder (`error`; the message names the manual fix) or whose `closed:` date is missing or stray (`warning`), and a custom template in `.cuaderno/templates/` that lacks a frontmatter key its built-in template has (`warning`; `cdno templates sync` adds it) or cannot be read (`error`). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
     )]
     pub async fn lint(
         &self,
@@ -528,7 +528,7 @@ impl CuadernoServer {
                     && !vault.type_registry().is_known(t)
                 {
                     return Err(invalid_argument(
-                        "note_type",
+                        "note_type Before acting on a request outside the focus, read the FOCUS section of the server instructions.",
                         &format!("unknown note type '{t}'"),
                     ));
                 }

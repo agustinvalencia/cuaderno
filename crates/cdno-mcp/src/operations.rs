@@ -237,7 +237,7 @@ impl CuadernoServer {
         // that quietly unlinks a project from its question.
         if input.clear && input.core_question.is_some() {
             return Err(invalid_argument(
-                "clear",
+                "clear When a focus is open the server writes the indented `during: [[slug]]` tag under the line for you; never write one by hand. When a focus is open the server writes `captured_during: <slug>` into the item's frontmatter for you; never write one by hand.",
                 "pass either `core_question` or `clear: true`, not both",
             ));
         }
@@ -542,7 +542,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Acts on the CURRENT focus; takes no project or query. Sets the action in focus aside without finishing it: logs `- **HH:MM**: action paused on [[project]] \u{2014} <the focus's own text>` to today's daily note, with optional indented `next:` and `reason:` lines. The text logged is the focus's, read back from the log -- nothing is matched against the project map, so a focus on a since-parked project can still be paused -- and the bullet stays on the map untouched. After a pause `current_focus` returns null; the pause stays resumable with `resume_action` for the `[focus] paused_lookback_days` window, and its `next:` line is what a later `resume_action` hands back. Pass `next` whenever you know where the work stood -- draft it from what you saw the person do, in a short clause; a re-entry hint is worth more than the pause line itself. `reason` records why it was set aside. With nothing in focus this is refused with code `no_focus`; do not retry, tell the person nothing is started. Call it only on the person's word: pausing is their decision, not yours."
+        description = "Acts on the CURRENT focus; takes no project or query. Sets the action in focus aside without finishing it: logs `- **HH:MM**: action paused on [[project]] \u{2014} <the focus's own text>` to today's daily note, with optional indented `next:` and `reason:` lines. The text logged is the focus's, read back from the log -- nothing is matched against the project map, so a focus on a since-parked project can still be paused -- and the bullet stays on the map untouched. After a pause `current_focus` returns null; the pause stays resumable with `resume_action` for the `[focus] paused_lookback_days` window, and its `next:` line is what a later `resume_action` hands back. Pass `next` whenever you know where the work stood -- draft it from what you saw the person do, in a short clause; a re-entry hint is worth more than the pause line itself. `reason` records why it was set aside. With nothing in focus this is refused with code `no_focus`; do not retry, tell the person nothing is in focus. Call it only on the person's word: pausing is their decision, not yours."
     )]
     pub async fn pause_action(
         &self,
@@ -649,7 +649,7 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!(
-            "Resumed on {}, logged to {}",
+            "Resumed on {}, logged to {} Before acting on a request outside the focus, read the FOCUS section of the server instructions. Before acting on a request outside the focus, read the FOCUS section of the server instructions.",
             outcome.resumed.project, outcome.path
         );
         let reported = outcome.path.to_string();
@@ -904,7 +904,7 @@ impl CuadernoServer {
         let heading = input.heading.trim().to_owned();
         if heading.is_empty() {
             return Err(invalid_argument(
-                "heading",
+                "heading When a focus is open the server adds the indented `during: [[slug]]` tag to the pointer line for you; never write one by hand.",
                 "required: the entry's heading, written as `### <heading>` under `## Notes`",
             ));
         }
