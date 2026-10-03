@@ -38,7 +38,8 @@ On surrogate-model — Draft the methods section (deep), since 09:30 (1h 30m).
 ```
 
 A start carried over from an earlier day names it (`since Monday 14:05 (18h 55m)`), and one
-re-anchored with `action resume` reads `picked up 08:50 today (started Monday 14:05)`. With nothing
+re-anchored with `action resume` reads `picked up 08:50 today (started Monday 14:05)`. A day more than
+six days back is shown as a date (`2026-09-22 14:05`), since a weekday name would be ambiguous. With nothing
 open it says so, and shows the most recent open pause:
 
 ```bash

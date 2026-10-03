@@ -615,3 +615,50 @@ fn text_output_is_sanitised() {
         "{out}"
     );
 }
+
+#[test]
+fn an_old_origin_renders_its_date_not_a_weekday() {
+    let dir = vault_with_action();
+    // Widen the window so a start ten days back is still readable.
+    let cfg = dir.path().join(".cuaderno/config.toml");
+    let mut text = fs::read_to_string(&cfg).unwrap();
+    text.push_str("\n[focus]\ncarry_over_days = 10\n");
+    fs::write(&cfg, text).unwrap();
+
+    let render_with_origin = |days_back: u64| {
+        let origin_day = day() - chrono::Days::new(days_back);
+        write_daily(
+            dir.path(),
+            origin_day,
+            &["- **14:05**: started [[alpha]] \u{2014} Draft methods (deep)"],
+        );
+        write_daily(
+            dir.path(),
+            day(),
+            &["- **08:50**: resumed [[alpha]] \u{2014} Draft methods (deep)"],
+        );
+        let out = build_now(dir.path(), at(day(), 11, 0)).unwrap();
+        fs::remove_file(
+            dir.path()
+                .join(format!("journal/2026/daily/{origin_day}.md")),
+        )
+        .unwrap();
+        out
+    };
+
+    let old = render_with_origin(10);
+    assert!(
+        old.contains("(started 2026-05-16 14:05)"),
+        "ten days back is a date:\n{old}"
+    );
+    let edge = render_with_origin(6);
+    assert!(
+        edge.contains("(started Wednesday 14:05)"),
+        "six days back is still a weekday:\n{edge}"
+    );
+    let seven = render_with_origin(7);
+    assert!(
+        seven.contains("(started 2026-05-19 14:05)"),
+        "seven days back is a date:\n{seven}"
+    );
+}
