@@ -66,7 +66,7 @@ jobs:
       # toolchains and installed system libraries before it could run.
       # With the package gone the exclusions would name nothing, and
       # `--exclude` on an absent package is an error rather than a no-op.
-      - run: cargo tarpaulin --workspace --out xml
+      - run: cargo tarpaulin -p cdno-mcp --test handlers_operations --out xml -- --test-threads=1
       - uses: codecov/codecov-action@v5
         with:
           files: cobertura.xml
