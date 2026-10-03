@@ -47,7 +47,7 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.current_focus(today))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(focus.map(CurrentFocusDto::from))
+        json_result(focus.map(|f| CurrentFocusDto::at(f, today)))
     }
 
     #[tool(

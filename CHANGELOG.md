@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **MCP tools `pause_action`, `switch_action`, `switch_unplanned_action` and `resume_action` (RFC 0005, #735).**
+  The focus verbs over MCP, with the split `start` has: `switch_action {project, query, next?,
+  reason?}` for a bullet on the map and `switch_unplanned_action {project, title, energy, next?,
+  reason?}` for work that is not, so a typo never creates an action. `pause_action {next?,
+  reason?}` acts on the current focus and takes no project or query; `resume_action {project?}`
+  re-anchors a carried focus or reopens a pause, and its payload carries `resumed_from`
+  (`kind` `carried` or `paused`, `date`, `next`, `reason`) next to `resumed`, which the
+  description tells the agent to read back. `current_focus` (and the new payloads) gain `date`,
+  `carried` and `origin` in the formats `cdno now --json` uses; `null` when nothing is open is
+  unchanged. A `focus_open` rejection from `start_action`, `start_unplanned_action` or either
+  switch tool now carries `details.attempted` (`{project, query}` or `{project, title}`), the CLI's
+  shape, checked against `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json`. The tool
+  catalogue is 64.
+
 - **`cdno action switch`, and `start` refuses while something is in focus (RFC 0005, #733).**
   `switch` takes `start`'s `--project`/`--query` (or `--unplanned` with `--title` and `--energy`)
   plus `--next` and `--reason`, pauses the focus and starts the target in one commit, and with

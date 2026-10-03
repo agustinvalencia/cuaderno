@@ -78,7 +78,7 @@ use serde_json::{Value, json};
 /// `data` field is the spec's own slot for "additional information about
 /// the error … defined by the sender", so the payload is legitimate even
 /// on the path where it stays a protocol error.
-const MARKER: &str = "cdno_rejection";
+pub(crate) const MARKER: &str = "cdno_rejection";
 
 /// The `code` an agent branches on, as a type rather than a string.
 ///

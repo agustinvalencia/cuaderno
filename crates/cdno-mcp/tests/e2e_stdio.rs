@@ -224,10 +224,84 @@ fn tools_list_returns_all_advertised_tools() {
     let tools = response["result"]["tools"].as_array().expect("tools array");
     assert_eq!(
         tools.len(),
-        60,
+        64,
         "expected the full catalogue advertised over stdio; tests/server.rs pins the names, got {}",
         tools.len()
     );
+}
+
+/// Pause, switch and resume over the real binary: three calls, and the
+/// daily note's lines in the order they were made.
+#[test]
+fn pause_switch_resume_over_stdio() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let mut id = 100;
+    let mut call = |mcp: &mut McpSubprocess, name: &str, arguments: Value| -> Value {
+        id += 1;
+        mcp.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }));
+        mcp.read_response(id)
+    };
+
+    let created = call(
+        &mut mcp,
+        "create_project",
+        json!({ "title": "Surrogate Model", "context": "university" }),
+    );
+    let slug = slug_of(&created);
+    for title in ["Draft methods section", "Run ablation"] {
+        call(
+            &mut mcp,
+            "add_action",
+            json!({ "project": slug, "title": title, "energy": "deep" }),
+        );
+    }
+    call(
+        &mut mcp,
+        "start_action",
+        json!({ "project": slug, "query": "Draft methods" }),
+    );
+
+    // 1. switch to the other bullet (pauses the first).
+    let switched = call_payload(&call(
+        &mut mcp,
+        "switch_action",
+        json!({ "project": slug, "query": "Run ablation", "next": "section 3" }),
+    ));
+    assert_eq!(switched["paused"]["action"], "Draft methods section (deep)");
+    assert_eq!(switched["started"]["action"], "Run ablation (deep)");
+
+    // 2. pause that one.
+    let paused = call_payload(&call(&mut mcp, "pause_action", json!({})));
+    assert_eq!(paused["paused"]["action"], "Run ablation (deep)");
+
+    // 3. resume the latest pause.
+    let resumed = call_payload(&call(&mut mcp, "resume_action", json!({})));
+    assert_eq!(resumed["resumed"]["action"], "Run ablation (deep)");
+    assert_eq!(resumed["resumed_from"]["kind"], "paused");
+
+    let path = resumed["path"].as_str().expect("daily path");
+    let body = std::fs::read_to_string(dir.path().join(path)).expect("daily note");
+    let heads = [
+        "started [[".to_owned() + &slug + "]] \u{2014} Draft methods section (deep)",
+        "action paused on [[".to_owned() + &slug + "]] \u{2014} Draft methods section (deep)",
+        "started [[".to_owned() + &slug + "]] \u{2014} Run ablation (deep)",
+        "action paused on [[".to_owned() + &slug + "]] \u{2014} Run ablation (deep)",
+        "resumed [[".to_owned() + &slug + "]] \u{2014} Run ablation (deep)",
+    ];
+    let mut from = 0;
+    for head in &heads {
+        let at = body[from..].find(head.as_str()).unwrap_or_else(|| {
+            panic!("`{head}` missing or out of order after byte {from}:\n{body}")
+        });
+        from += at + head.len();
+    }
 }
 
 #[test]

@@ -819,7 +819,9 @@ FOCUS section of the server instructions before acting on a request outside the 
 `lint`'s description lists `paused`, `resumed` and `promoted`; the `capture`, `append_to_log` and
 `note_to_daily` descriptions say the `during:` / `captured_during` tag is written for them (so an
 agent never writes one by hand); the `focus_open` message text
-agrees with the instructions ("ask the person"). Apply the wording rule: no "drift",
+agrees with the instructions ("ask the person"). `no_focus`'s message ("Nothing is started.") reads wrongly when it comes from
+`resume_action`; give `resume_action`'s refusal its own wording, or make the shared one neutral
+(review of #765). Apply the wording rule: no "drift",
 "distraction", "off-task", "leaked", "enforce" anywhere in `crates/cdno-mcp/src/`.
 
 **Deliverable.** The text, a test.
