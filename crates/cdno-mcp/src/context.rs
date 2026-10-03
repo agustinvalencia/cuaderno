@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries the current focus (RFC 0005 §5.5)."
     )]
     pub async fn get_orientation(
         &self,
@@ -62,11 +62,17 @@ impl CuadernoServer {
         // the suggestion locally. Same separation the CLI uses (see
         // `commands/orient.rs::suggestion`).
         let today = chrono::Local::now().date_naive();
-        let ctx = self
-            .with_vault(move |vault| vault.orientation_context(today))
+        let (ctx, focus) = self
+            .with_vault(move |vault| {
+                let ctx = vault.orientation_context(today)?;
+                let focus = vault.current_focus(today)?;
+                Ok::<_, DomainError>((ctx, focus))
+            })
             .await?
             .map_err(into_mcp_error)?;
-        json_result(OrientationContextDto::from(ctx))
+        let mut dto = OrientationContextDto::from(ctx);
+        dto.focus = focus.map(|f| CurrentFocusDto::at(f, today));
+        json_result(dto)
     }
 
     #[tool(
@@ -276,7 +282,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), the resolved core_question summary when the project sets one, and the last paused action for this project (RFC 0005 §5.5). Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
     )]
     pub async fn get_project_context(
         &self,
@@ -286,11 +292,12 @@ impl CuadernoServer {
         let since = today - chrono::Duration::days(30);
 
         let project = input.project.clone();
-        let (fm, body, mentions, backlinks, core_question) = self
+        let (fm, body, mentions, backlinks, core_question, last_paused) = self
             .with_vault(move |vault| {
                 let project_full = vault.get_project_full(&project, today)?;
                 let fm = project_full.frontmatter;
                 let body = project_full.body;
+                let last_paused = project_full.last_paused;
                 let mentions = vault.daily_log_mentions(&project, since)?;
                 let backlinks = vault.project_backlinks(&project)?;
 
@@ -312,7 +319,7 @@ impl CuadernoServer {
                     None
                 };
 
-                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question))
+                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question, last_paused))
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -335,6 +342,7 @@ impl CuadernoServer {
             recent_mentions,
             backlinks: backlinks.into(),
             core_question: core_question.map(QuestionSummaryDto::from),
+            last_paused: last_paused.map(Into::into),
         })
     }
 

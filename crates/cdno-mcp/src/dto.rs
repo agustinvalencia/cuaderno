@@ -48,6 +48,7 @@ pub struct ProjectSummaryDto {
     pub status: String,
     pub state_snippet: String,
     pub top_action: Option<TopActionDto>,
+    pub last_paused: Option<LastPauseDto>,
 }
 
 impl From<ProjectSummary> for ProjectSummaryDto {
@@ -57,6 +58,7 @@ impl From<ProjectSummary> for ProjectSummaryDto {
             status: project_status_str(p.status).to_owned(),
             state_snippet: p.state_snippet,
             top_action: p.top_action.map(Into::into),
+            last_paused: p.last_paused.map(Into::into),
         }
     }
 }
@@ -168,6 +170,7 @@ pub struct OrientationContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     pub projects: Vec<ProjectSummaryDto>,
     pub lapsed_habits: Vec<LapsedHabitDto>,
+    pub focus: Option<CurrentFocusDto>,
 }
 
 impl From<OrientationContext> for OrientationContextDto {
@@ -176,6 +179,7 @@ impl From<OrientationContext> for OrientationContextDto {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
+            focus: None, // Will be filled by the handler
         }
     }
 }
@@ -1058,6 +1062,11 @@ pub struct ProjectContextDto {
     /// `None` if the field is absent, the wikilink doesn't parse, or
     /// the target question has been deleted.
     pub core_question: Option<QuestionSummaryDto>,
+    /// The most recent paused action for this project, when one exists
+    /// within `paused_lookback_days` (RFC 0005 §5.5). Allows the person
+    /// to re-enter a paused action through `resume_action` without a
+    /// second call to `get_orientation`.
+    pub last_paused: Option<LastPauseDto>,
 }
 
 // ---------------------------------------------------------------------
