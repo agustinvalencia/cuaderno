@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDateTime, Timelike};
+use chrono::{NaiveDate, NaiveDateTime, Timelike};
 
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
@@ -16,7 +16,7 @@ use crate::note_type::NoteType;
 use super::super::Vault;
 use super::super::WriteOutcome;
 use super::super::closure::Closure;
-use super::super::context::{CurrentFocus, resumed_focus};
+use super::super::context::{CurrentFocus, LastPause, resumed_focus};
 use super::super::index_entry::build_index_entry_for;
 use super::NEXT_ACTIONS_SECTION;
 
@@ -393,6 +393,20 @@ impl Vault {
         Ok(PauseOutcome { paused, path })
     }
 
+    /// The pause a resume would reopen: `project`'s newest open pause, or the
+    /// newest across projects when `None` (one [`Vault::open_pauses`] scan).
+    fn resumable_pause(
+        &self,
+        today: NaiveDate,
+        project: Option<&str>,
+    ) -> Result<Option<LastPause>, DomainError> {
+        let pauses = self.open_pauses(today)?;
+        Ok(match project {
+            Some(slug) => pauses.by_project.get(slug).cloned(),
+            None => pauses.latest,
+        })
+    }
+
     /// Resume work: one `resumed [[slug]] — <text>` line in the daily log,
     /// which re-anchors the focus at `at` (RFC 0005 §5.3, D9).
     ///
@@ -447,7 +461,7 @@ impl Vault {
                     },
                 )
             }
-            _ => match self.last_resumable_pause(today, project)? {
+            _ => match self.resumable_pause(today, project)? {
                 Some(pause) => {
                     // The slot is taken — today or carried — so reopening the
                     // pause would displace it with no pause line.

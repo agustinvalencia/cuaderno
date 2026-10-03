@@ -446,9 +446,13 @@ carry_over_days     = 1
 paused_lookback_days = 14
 ```
 
-`Vault::last_paused(window)` is one pass over at most `paused_lookback_days + 1` daily notes
+`Vault::last_paused(today)` is one pass over at most `paused_lookback_days + 1` daily notes
 yielding every project's last pause (not one scan per project), in the shape
-`daily_log_mentions` and `weekly_logs` already use; days with no note cost nothing. Fifteen
+`daily_log_mentions` and `weekly_logs` already use; days with no note cost nothing. A pause is
+no longer offered once a later `started`, `resumed`, `action done on` or `action dropped on` of
+the same `(project, text)`, or a promotion of it, follows (§5.3). The same scan also yields the
+newest pause across projects in fold order (`open_pauses`), for bare `resume` and `cdno now`.
+`next:` and `reason:` read back trimmed, interior spacing kept. Fifteen
 reads of entry heads is milliseconds and sits on the orientation path, not the hook path. There
 is no index-backed alternative that stays non-authoritative without the machinery §3.3 removed;
 none is built.
@@ -579,7 +583,7 @@ start Y") and shows the typed `next:`; the picker never offers the bullet that i
   resolution and before any add. `promote_action_with_vars` is unchanged.
 - `context.rs`: the whole-window one-slot fold (§5.2, D11); the fold gains three arms —
   `paused` as a close, `resumed` as close-plus-reopen, `promoted` as a rename;
-  `CurrentFocus { date, origin }`; `last_paused(window)` as one pass; `parse_focus_marker`
+  `CurrentFocus { date, origin }`; `last_paused(today)` as one pass; `parse_focus_marker`
   unchanged; a `parse_promotion_marker` beside it.
 - `lint.rs`: `paused`, `resumed` and `promoted` join `FOCUS_MARKER_PREFIXES`; `lint_all_notes`
   does not need `today` after all (no cache to compare), so its signature is unchanged.

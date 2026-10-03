@@ -482,8 +482,8 @@ private helper already implements it.
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::context_tests` passes with:
-  `last_paused_returns_the_continuations` (`next` and `reason` read back, whitespace as
-  written); `a_pause_followed_by_a_resume_is_not_offered`;
+  `last_paused_returns_the_continuations` (`next` and `reason` read back trimmed, interior
+  whitespace as written — amended in review of #755); `latest_follows_file_order_not_stamp_order`; `a_pause_followed_by_a_resume_is_not_offered`;
   `a_pause_followed_by_a_start_of_the_same_text_is_not_offered`;
   `a_friday_pause_is_offered_on_monday` (three-day gap, default look-back);
   `a_pause_outside_the_lookback_is_not_offered` (15 days, default);

@@ -3024,3 +3024,148 @@ fn a_promotion_of_a_start_without_an_energy_suffix_is_skipped() {
 
     assert_eq!(focus.action, "Draft methods");
 }
+
+// ---------------------------------------------------------------------
+// last_paused (RFC 0005 §5.5)
+// ---------------------------------------------------------------------
+
+const PAUSE_X: &str =
+    "**10:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)";
+
+#[test]
+fn last_paused_returns_the_continuations() {
+    let body = "- **10:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n  next:   finish; then  review\n  reason: waiting on data\n";
+    let (vault, _s) = vault_with(&[(
+        &daily_path(focus_day()),
+        &daily_with_logs(focus_day(), body),
+    )]);
+
+    let pauses = vault.last_paused(focus_day()).unwrap();
+    let p = pauses.get("alpha").expect("a pause");
+    assert_eq!(p.action, "Draft the methods section (deep)");
+    assert_eq!(p.at, focus_day().and_hms_opt(10, 0, 0).unwrap());
+    assert_eq!(p.next.as_deref(), Some("finish; then  review"));
+    assert_eq!(p.reason.as_deref(), Some("waiting on data"));
+}
+
+#[test]
+fn a_pause_followed_by_a_resume_is_not_offered() {
+    let vault = focus_days(&[(
+        focus_day(),
+        &[
+            PAUSE_X,
+            "**11:00**: resumed [[alpha]] \u{2014} Draft the methods section (deep)",
+        ],
+    )]);
+    assert!(vault.last_paused(focus_day()).unwrap().is_empty());
+}
+
+#[test]
+fn a_pause_followed_by_a_start_of_the_same_text_is_not_offered() {
+    let vault = focus_days(&[(days_ago(1), &[PAUSE_X]), (focus_day(), &[START_X])]);
+    assert!(vault.last_paused(focus_day()).unwrap().is_empty());
+
+    // A start of different text leaves the pause open.
+    let vault = focus_days(&[
+        (days_ago(1), &[PAUSE_X]),
+        (
+            focus_day(),
+            &["**09:00**: started [[alpha]] \u{2014} Something else (light)"],
+        ),
+    ]);
+    assert_eq!(vault.last_paused(focus_day()).unwrap().len(), 1);
+}
+
+#[test]
+fn a_friday_pause_is_offered_on_monday() {
+    let monday = focus_day(); // 2026-07-13
+    let friday = days_ago(3);
+    let vault = focus_days(&[(friday, &[PAUSE_X])]);
+    let p = vault.last_paused(monday).unwrap();
+    assert_eq!(p["alpha"].at.date(), friday);
+}
+
+#[test]
+fn a_pause_outside_the_lookback_is_not_offered() {
+    let vault = focus_days(&[(days_ago(15), &[PAUSE_X])]);
+    assert!(vault.last_paused(focus_day()).unwrap().is_empty());
+    // The boundary day itself is in.
+    let vault = focus_days(&[(days_ago(14), &[PAUSE_X])]);
+    assert_eq!(vault.last_paused(focus_day()).unwrap().len(), 1);
+}
+
+#[test]
+fn one_pass_yields_every_project() {
+    let vault = focus_days(&[
+        (days_ago(2), &[PAUSE_X]),
+        (
+            days_ago(1),
+            &["**09:00**: action paused on [[beta]] \u{2014} Chase the venue (light)"],
+        ),
+    ]);
+    let all = vault.open_pauses(focus_day()).unwrap();
+    assert_eq!(all.by_project.keys().collect::<Vec<_>>(), ["alpha", "beta"]);
+    assert_eq!(all.latest.as_ref().unwrap().project, "beta");
+    assert_eq!(vault.last_paused(focus_day()).unwrap(), all.by_project);
+}
+
+#[test]
+fn a_pause_followed_by_done_drop_or_promotion_is_not_offered() {
+    fn at(h: u32, m: u32) -> chrono::NaiveDateTime {
+        focus_day().and_hms_opt(h, m, 0).unwrap()
+    }
+    type Close = fn(&Vault);
+    let closes: [(&str, Close); 3] = [
+        ("done", |v| {
+            v.complete_action(at(11, 0), "foo", "draft").unwrap();
+        }),
+        ("dropped", |v| {
+            v.drop_action(at(11, 0), "foo", "draft", Some("not needed"))
+                .unwrap();
+        }),
+        ("promoted", |v| {
+            v.promote_action(at(11, 0), "foo", "draft").unwrap();
+        }),
+    ];
+    for (name, close) in closes {
+        let map = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n\n## Next Actions\n- [ ] Draft methods (deep)\n";
+        let (vault, _s) = vault_with(&[("projects/foo.md", map)]);
+        vault.start_action(at(9, 0), "foo", "draft").unwrap();
+        vault
+            .pause_action(at(10, 0), Some("section 2"), None)
+            .unwrap();
+        assert_eq!(
+            vault.last_paused(focus_day()).unwrap().len(),
+            1,
+            "{name}: open"
+        );
+        close(&vault);
+        assert!(
+            vault.last_paused(focus_day()).unwrap().is_empty(),
+            "{name}: consumed"
+        );
+    }
+}
+
+#[test]
+fn latest_follows_file_order_not_stamp_order() {
+    // The 09:00 line is written after the 15:00 one, so it is the later
+    // entry in the fold even though its stamp is earlier.
+    let body = "- **15:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n- **09:00**: action paused on [[beta]] \u{2014} Chase the venue (light)\n";
+    let (vault, _s) = vault_with(&[(
+        &daily_path(focus_day()),
+        &daily_with_logs(focus_day(), body),
+    )]);
+    let open = vault.open_pauses(focus_day()).unwrap();
+    assert_eq!(open.latest.as_ref().unwrap().project, "beta");
+
+    // Same project, two actions: the later line wins in `by_project`.
+    let body = "- **15:00**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)\n- **09:00**: action paused on [[alpha]] \u{2014} Fix the badge (light)\n";
+    let (vault, _s) = vault_with(&[(
+        &daily_path(focus_day()),
+        &daily_with_logs(focus_day(), body),
+    )]);
+    let open = vault.open_pauses(focus_day()).unwrap();
+    assert_eq!(open.by_project["alpha"].action, "Fix the badge (light)");
+    assert_eq!(open.latest.unwrap().action, "Fix the badge (light)");
+}
