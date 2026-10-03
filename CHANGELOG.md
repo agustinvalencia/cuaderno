@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Writes made during a focus are tagged (RFC 0005, #730).** When a focus is open at write time
+  (a carried one included), `cdno capture` and MCP `capture` write `captured_during: <project-slug>`
+  into the new inbox item, and `cdno log`, `cdno log note`, MCP `append_to_log` and MCP
+  `note_to_daily` append an indented `during: [[<slug>]]` continuation to the log line they write.
+  `cdno triage` and MCP `discard_inbox_item` copy the tag from the item onto their own log
+  line, so it outlives the file. With no focus open nothing is written differently, and a focus
+  window that cannot be read writes untagged rather than failing. Visible effects: the `log_line`
+  that `note_to_daily` returns echoes the tag on a second line; and today's daily note becomes a
+  backlink of the project (in `get_project_context` and `read_note`) when a carried focus is
+  tagged, or when a tagged capture is discarded on a later day. `get_project_context.recent_mentions`
+  ignores the tag rather than counting it as a mention.
+
 - **`OrientationContext` and `ProjectSummary` carry focus and pause state (RFC 0005, #729).**
   `OrientationContext` gains `focus: Option<CurrentFocus>` so the morning read shows the current
   work without a second call. Each `ProjectSummary` gains `last_paused: Option<LastPause>` filled

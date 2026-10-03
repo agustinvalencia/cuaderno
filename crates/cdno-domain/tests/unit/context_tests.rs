@@ -3211,3 +3211,102 @@ fn project_context_carries_its_last_pause() {
     let full_beta = vault.get_project_full("beta", today).unwrap();
     assert!(full_beta.last_paused.is_none(), "beta should have no pause");
 }
+
+// ---------------------------------------------------------------------
+// RFC 0005 §5.6: the `during:` tag perturbs no reader (T10)
+// ---------------------------------------------------------------------
+
+#[test]
+fn a_during_continuation_does_not_perturb_the_focus() {
+    let (vault, _store) = vault_with(&[(
+        "journal/2026/daily/2026-07-13.md",
+        &daily_with(
+            focus_day(),
+            &["**09:30**: started [[alpha]] \u{2014} Draft the methods section"],
+        ),
+    )]);
+    let at = focus_day().and_hms_opt(10, 0, 0).unwrap();
+    // A log line whose prose is the focus text itself, written during it.
+    vault
+        .log_to_daily_note(at, "Draft the methods section")
+        .unwrap();
+    let focus = vault
+        .current_focus(focus_day())
+        .unwrap()
+        .expect("still open");
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(9, 30, 0).unwrap());
+
+    // A line whose head is a genuine close, written during the focus: the tag
+    // becomes its continuation, so the head still matches and the focus closes.
+    vault
+        .log_to_daily_note(
+            at,
+            "action done on [[alpha]] \u{2014} Draft the methods section",
+        )
+        .unwrap();
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn a_during_tag_leaves_weekly_context_and_mentions_unchanged() {
+    let start = "**09:30**: started [[alpha]] \u{2014} Draft the methods section";
+    let project = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-05-01\n---\n\n# Alpha\n\n## Current State\nN/A.\n\n## Next Actions\n";
+    let at = focus_day().and_hms_opt(10, 0, 0).unwrap();
+
+    // With a focus open, then a log line; without one, the same log line.
+    let (with, _s) = vault_with(&[
+        ("projects/alpha.md", project),
+        (
+            "journal/2026/daily/2026-07-13.md",
+            &daily_with(focus_day(), &[start]),
+        ),
+    ]);
+    with.log_to_daily_note(at, "tried a thing").unwrap();
+    let (without, _s) = vault_with(&[
+        ("projects/alpha.md", project),
+        (
+            "journal/2026/daily/2026-07-13.md",
+            &daily_with(focus_day(), &[]),
+        ),
+    ]);
+    without.log_to_daily_note(at, "tried a thing").unwrap();
+
+    let monday = ymd(2026, 7, 13);
+    let sunday = ymd(2026, 7, 19);
+    // Aggregated fields of get_weekly_context: identical.
+    assert_eq!(
+        with.completed_actions_between(monday, sunday).unwrap(),
+        without.completed_actions_between(monday, sunday).unwrap()
+    );
+    assert_eq!(
+        with.closed_projects_between(monday, sunday).unwrap(),
+        without.closed_projects_between(monday, sunday).unwrap()
+    );
+    assert_eq!(
+        with.project_state_changes_between(monday, sunday).unwrap(),
+        without
+            .project_state_changes_between(monday, sunday)
+            .unwrap()
+    );
+    assert_eq!(
+        with.commitments(focus_day(), 14).unwrap(),
+        without.commitments(focus_day(), 14).unwrap()
+    );
+    // `logs` differs only by the tag (the raw note text) and the start line.
+    let strip = |v: &Vault| -> Vec<String> {
+        v.weekly_logs(focus_day())
+            .unwrap()
+            .into_iter()
+            .map(|l| l.text.replace("; during: [[alpha]]", ""))
+            .filter(|t| !t.starts_with("started"))
+            .collect()
+    };
+    assert_eq!(strip(&with), strip(&without));
+    // The tagged line is not a mention of the focused project: only the
+    // start line is.
+    let mentions = with.daily_log_mentions("alpha", ymd(2026, 7, 1)).unwrap();
+    assert_eq!(mentions.len(), 1, "{mentions:?}");
+    assert!(mentions[0].text.starts_with("started"), "{mentions:?}");
+}

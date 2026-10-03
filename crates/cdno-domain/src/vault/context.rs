@@ -48,7 +48,7 @@ use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
-    LOG_ACTION_PROMOTED_PREFIX, LOG_NEXT_KEY, LOG_REASON_KEY, LOG_RESUMED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_DURING_KEY, LOG_NEXT_KEY, LOG_REASON_KEY, LOG_RESUMED_PREFIX,
     LOG_STARTED_PREFIX,
 };
 use super::projects::actions::{
@@ -1647,9 +1647,29 @@ fn parse_state_changes(section: &str) -> Vec<(String, String, String)> {
 /// (`[[projects/<slug>]]`) shapes — the daily-log writers use both
 /// depending on context.
 fn mentions_project(text: &str, slug: &str) -> bool {
+    let text = without_during_tag(text);
     let bare = format!("[[{slug}]]");
     let qualified = format!("[[projects/{slug}]]");
     text.contains(&bare) || text.contains(&qualified)
+}
+
+/// `text` with a trailing `; during: [[<slug>]]` focus tag (RFC 0005 §5.6)
+/// removed. The tag records where attention was when the line was written,
+/// not what the line is about, so it must not make the line a mention of the
+/// focused project.
+fn without_during_tag(text: &str) -> &str {
+    let marker = format!("; {LOG_DURING_KEY}[[");
+    match text.rfind(&marker) {
+        Some(at) if text.ends_with("]]") => {
+            // The tag is one wikilink: exactly one `]]`, at the very end.
+            if text[at + marker.len()..].matches("]]").count() == 1 {
+                &text[..at]
+            } else {
+                text
+            }
+        }
+        _ => text,
+    }
 }
 
 /// Extract the H1 text from a body. `None` when the body has no

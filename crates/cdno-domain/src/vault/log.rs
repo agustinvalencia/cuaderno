@@ -21,6 +21,7 @@ use super::Vault;
 use super::index_entry::build_index_entry_for;
 
 use super::DAILY_LOGS_SECTION;
+use super::projects::actions::LOG_DURING_KEY;
 
 impl Vault {
     /// Append a log entry to the daily note for the given moment.
@@ -37,9 +38,23 @@ impl Vault {
         entry: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?;
-        let path = self.stage_daily_log(at, entry, &mut tx)?;
+        // A line written while a focus is open carries the tag (RFC 0005
+        // §5.6); with none open the entry is written untouched.
+        let tagged = format!("{entry}{}", self.during_tag(at.date()));
+        let path = self.stage_daily_log(at, &tagged, &mut tx)?;
         tx.commit()?;
         Ok(path)
+    }
+
+    /// The `\n  during: [[<slug>]]` continuation for the focus open on
+    /// `date`, or an empty string when none is. A window that cannot be
+    /// read is treated as no focus: tagging is a nicety and must not block
+    /// the write it decorates.
+    pub(in crate::vault) fn during_tag(&self, date: NaiveDate) -> String {
+        match self.current_focus(date) {
+            Ok(Some(focus)) => during_continuation(&focus.project),
+            _ => String::new(),
+        }
     }
 
     /// Stage the writes that append `entry` to the daily-log section
@@ -167,6 +182,22 @@ impl Vault {
         self.stage_daily_log(at, &line, tx)?;
         Ok(())
     }
+}
+
+/// The bare project slug: a `projects/` prefix and `.md` suffix dropped.
+pub(in crate::vault) fn normalise_project_slug(slug: &str) -> &str {
+    let slug = slug.strip_prefix("projects/").unwrap_or(slug);
+    slug.strip_suffix(".md").unwrap_or(slug)
+}
+
+/// The `\n  during: [[<slug>]]` continuation line, two-space indented like
+/// `reason:` and `next:`.
+///
+/// The slug is normalised to the bare project slug the rest of the vault
+/// links by: a `projects/` prefix and `.md` suffix are dropped.
+pub(in crate::vault) fn during_continuation(slug: &str) -> String {
+    let slug = normalise_project_slug(slug);
+    format!("\n  {LOG_DURING_KEY}[[{slug}]]")
 }
 
 /// The one place that renders a "created" log line: `<type_name> created

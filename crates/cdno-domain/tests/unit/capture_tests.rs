@@ -291,3 +291,190 @@ fn discard_inbox_item_errors_on_missing_slug() {
         "got {err:?}"
     );
 }
+
+// --- RFC 0005 §5.6: tagging a capture made during a focus -------------
+
+const FOCUS_DAILY: &str = "---\ndate: 2026-04-26\ntype: daily\n---\n\n# 2026-04-26\n\n## Logs\n- **09:30**: started [[surrogate-model]] \u{2014} Draft the methods section\n";
+
+fn focused_vault() -> (Vault, Arc<dyn VaultStore>) {
+    let (vault, store) = make_vault();
+    store
+        .write_file(
+            &VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap(),
+            FOCUS_DAILY,
+        )
+        .unwrap();
+    (vault, store)
+}
+
+#[test]
+fn a_capture_during_a_focus_is_tagged_and_the_discard_line_carries_it() {
+    let (vault, store) = focused_vault();
+    let path = vault
+        .capture_to_inbox(moment(), "check the kernel width")
+        .unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.starts_with(
+            "---\ntype: inbox\ncreated: 2026-04-26T15:47:12\ncaptured_during: surrogate-model\n---\n"
+        ),
+        "{raw}"
+    );
+    // The inbox schema accepts the field: lint raises nothing for it.
+    let report = vault.lint_all_notes().unwrap();
+    assert!(
+        report
+            .issues
+            .iter()
+            .all(|i| !format!("{i:?}").contains("inbox/")),
+        "{:?}",
+        report.issues
+    );
+
+    // Close the focus, then discard: the tag comes from the item, not the
+    // (now absent) focus.
+    let daily_path = VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    let daily = store.read_file(&daily_path).unwrap();
+    store
+        .write_file(
+            &daily_path,
+            &format!(
+                "{daily}- **10:00**: action done on [[surrogate-model]] \u{2014} Draft the methods section\n"
+            ),
+        )
+        .unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+
+    let daily = store.read_file(&daily_path).unwrap();
+    assert!(
+        daily.contains("discarded: check the kernel width\n  during: [[surrogate-model]]\n"),
+        "{daily}"
+    );
+}
+
+#[test]
+fn a_capture_with_no_focus_has_no_tag() {
+    let (vault, store) = make_vault();
+    let path = vault.capture_to_inbox(moment(), "buy milk").unwrap();
+    assert_eq!(
+        store.read_file(&path).unwrap(),
+        "---\ntype: inbox\ncreated: 2026-04-26T15:47:12\n---\n\nbuy milk\n"
+    );
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+    let daily = store
+        .read_file(&VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap())
+        .unwrap();
+    assert!(!daily.contains("during"), "{daily}");
+}
+
+#[test]
+fn a_capture_without_a_focus_discarded_during_a_focus_stays_untagged() {
+    // The tag is copied from the item, never from the focus open at discard.
+    let (vault, store) = make_vault();
+    let path = vault.capture_to_inbox(moment(), "buy milk").unwrap();
+    let daily_path = VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    store.write_file(&daily_path, FOCUS_DAILY).unwrap();
+    let slug = path
+        .as_path()
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    vault.discard_inbox_item(moment(), &slug).unwrap();
+    let daily = store.read_file(&daily_path).unwrap();
+    assert!(daily.contains("discarded: buy milk"), "{daily}");
+    assert!(!daily.contains("during:"), "{daily}");
+}
+
+#[test]
+fn an_unreadable_focus_window_writes_untagged() {
+    let (vault, store) = focused_vault();
+    // Today holds an open start, so a readable window would tag; yesterday is
+    // inside the default one-day window and does not parse.
+    store
+        .write_file(
+            &VaultPath::new("journal/2026/daily/2026-04-25.md").unwrap(),
+            "---\nnot: [closed\n---\n",
+        )
+        .unwrap();
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    assert!(!store.read_file(&path).unwrap().contains("captured_during"));
+    let daily = vault.log_to_daily_note(moment(), "a line").unwrap();
+    assert!(!store.read_file(&daily).unwrap().contains("during:"));
+}
+
+fn inbox_template(store: &Arc<dyn VaultStore>, content: &str) {
+    store
+        .write_file(
+            &VaultPath::new(".cuaderno/templates/inbox.md").unwrap(),
+            content,
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_template_that_already_declares_captured_during_is_not_duplicated() {
+    let (vault, store) = focused_vault();
+    inbox_template(
+        &store,
+        "---\ntype: inbox\ncreated: {{created}}\ncaptured_during: other-project\n---\n\n{{body}}\n",
+    );
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert_eq!(raw.matches("captured_during").count(), 1, "{raw}");
+    let items = vault.list_inbox().unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].text, "a thought");
+}
+
+#[test]
+fn captured_during_is_added_to_crlf_frontmatter() {
+    let (vault, store) = focused_vault();
+    inbox_template(
+        &store,
+        "---\r\ntype: inbox\r\ncreated: {{created}}\r\n---\r\n\r\n{{body}}\r\n",
+    );
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert!(
+        raw.contains("created: 2026-04-26T15:47:12\r\ncaptured_during: surrogate-model\r\n---"),
+        "{raw:?}"
+    );
+    assert_eq!(vault.list_inbox().unwrap().len(), 1);
+}
+
+#[test]
+fn during_tags_use_the_bare_project_slug() {
+    let (vault, store) = make_vault();
+    let daily_path = VaultPath::new("journal/2026/daily/2026-04-26.md").unwrap();
+    store
+        .write_file(
+            &daily_path,
+            "---\ndate: 2026-04-26\ntype: daily\n---\n\n# 2026-04-26\n\n## Logs\n- **09:30**: started [[projects/surrogate-model]] \u{2014} Draft the methods section\n",
+        )
+        .unwrap();
+    let path = vault.capture_to_inbox(moment(), "a thought").unwrap();
+    let raw = store.read_file(&path).unwrap();
+    assert!(raw.contains("captured_during: surrogate-model\n"), "{raw}");
+    vault.log_to_daily_note(moment(), "a line").unwrap();
+    let daily = store.read_file(&daily_path).unwrap();
+    assert!(
+        daily.contains("a line\n  during: [[surrogate-model]]\n"),
+        "{daily}"
+    );
+}

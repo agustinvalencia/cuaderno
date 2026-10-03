@@ -1106,6 +1106,13 @@ pub(in crate::vault) fn format_action_dropped_log_entry(
 /// than a fresh literal.
 pub(in crate::vault) const LOG_REASON_KEY: &str = "reason: ";
 
+/// Key introducing the focus tag on a log entry's continuation line
+/// (RFC 0005 §5.6): `  during: [[<project-slug>]]`, written when a focus
+/// is open at write time (and copied from `captured_during` when a triaged
+/// inbox item is discarded). Like the reason, it lives below the head, so
+/// [`Vault::current_focus`] never sees it.
+pub(in crate::vault) const LOG_DURING_KEY: &str = "during: ";
+
 /// The marker for the line recording that action being paused. Shared with
 /// [`Vault::current_focus`], which must clear an open start on a pause as
 /// well as on a completion or drop, or a paused action stays "what you are
