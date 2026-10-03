@@ -62,6 +62,19 @@ pub enum DomainError {
     #[error("nothing is started \u{2014} nothing to pause")]
     NoFocus,
 
+    /// A start was attempted while an action is already in focus (RFC 0005
+    /// §5.1, D5): focus is one slot, and starting never displaces it.
+    /// `focus` is the open one; `same_action` is true when the refused start
+    /// targeted that very action; `carried` is true when the focus was
+    /// started on an earlier day. The message differs by case because the
+    /// remedy does: switching to the focused action is itself refused.
+    #[error("{}", focus_open_message(.focus, *.same_action, *.carried))]
+    FocusOpen {
+        focus: crate::CurrentFocus,
+        same_action: bool,
+        carried: bool,
+    },
+
     #[error("no action matching '{query}' on project '{slug}'")]
     ActionNotFound { slug: String, query: String },
 
@@ -319,5 +332,20 @@ pub(crate) fn describe_project_status(
         (ProjectStatus::Parked, _) => "parked".to_owned(),
         (closed_status, Some(date)) => format!("{} on {date}", closed_status.as_str()),
         (closed_status, None) => closed_status.as_str().to_owned(),
+    }
+}
+
+fn focus_open_message(focus: &crate::CurrentFocus, same_action: bool, carried: bool) -> String {
+    let named = format!("{}: {}", focus.project, focus.action);
+    match (same_action, carried) {
+        (true, true) => format!(
+            "that action is already in focus, carried over from an earlier day \u{2014} {named}. \
+             Resume it instead of starting it"
+        ),
+        (true, false) => format!("that action is already in focus \u{2014} {named}"),
+        (false, _) => format!(
+            "an action is already in focus \u{2014} {named}. Switch to the new action, or pause \
+             or complete this one first"
+        ),
     }
 }

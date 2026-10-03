@@ -20,6 +20,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   clear an open start just as `action done on` and `action dropped on` do. Lint reports a
   malformed marker. No verb writes it yet (`cdno action pause` arrives later in RFC 0005, #732).
 
+### Changed
+
+- **Starting an action is refused while another is in focus (RFC 0005, #723).** `cdno action
+  start`, `start_action` and `start_unplanned_action` used to stack a second start on top of an
+  open one without comment; they now fail with the new `DomainError::FocusOpen`, naming the open
+  focus and saying to switch, or pause or complete it first. A typo or an ambiguous query is still
+  reported as such, and a refused unplanned start adds no bullet and logs nothing. Starting the
+  focused action again is refused too. A paused or finished focus does not block a start. For
+  now only `complete` or `drop` clears a focus; the `pause` and `switch` verbs arrive later in
+  RFC 0005 (#732, #733).
+
 ### Fixed
 
 - **The focus follows a promoted bullet (RFC 0005, #722).** `cdno now` and `current_focus` read
