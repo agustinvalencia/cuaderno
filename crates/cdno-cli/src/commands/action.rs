@@ -111,6 +111,41 @@ pub enum ActionCommands {
         energy: Option<EnergyLevel>,
     },
 
+    /// Moves focus to another action: pauses the one in focus and starts
+    /// this one, in one commit.
+    ///
+    /// The deliberate way past `start`'s refusal. Takes the same
+    /// `--project`/`--query` (or `--unplanned` with `--title` and
+    /// `--energy`) as `start`. In a terminal a missing `--next` is asked
+    /// for once (Enter skips); `--reason` is never asked for. With
+    /// nothing in focus it is a plain start and `--next` has nothing to
+    /// attach to.
+    Switch {
+        /// Project slug.
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        project: Option<String>,
+        /// Substring matching the open bullet to switch to.
+        #[arg(long, conflicts_with_all = ["unplanned", "title", "energy"])]
+        query: Option<String>,
+        /// Switch to work that is on no map yet: adds the bullet, then
+        /// starts it.
+        #[arg(long)]
+        unplanned: bool,
+        /// Title for the new bullet. Requires `--unplanned`.
+        #[arg(long, requires = "unplanned")]
+        title: Option<String>,
+        /// Energy for the new bullet: `deep`, `medium` or `light`.
+        /// Requires `--unplanned`.
+        #[arg(long, requires = "unplanned")]
+        energy: Option<EnergyLevel>,
+        /// Where to pick the paused action up again.
+        #[arg(long)]
+        next: Option<String>,
+        /// Why the focus moved. Never prompted for.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
     /// Mark a next action as completed by case-insensitive substring
     /// match. A wikilinked bullet also archives its note to
     /// `actions/_done/<year>/`.
@@ -184,6 +219,19 @@ pub fn run(
     no_interactive: bool,
     json: bool,
 ) -> Result<()> {
+    run_with_vault_flag(root, None, at, command, no_interactive, json)
+}
+
+/// [`run`] for a caller that knows the person passed `--vault`: the
+/// commands a refusal suggests then carry it, so they work as pasted.
+pub fn run_with_vault_flag(
+    root: &Path,
+    vault_flag: Option<&Path>,
+    at: NaiveDateTime,
+    command: ActionCommands,
+    no_interactive: bool,
+    json: bool,
+) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     // `--json` implies non-interactive: prompts/confirms print to stdout,
     // which would corrupt the JSON result. Scripted callers pass full args.
@@ -221,13 +269,40 @@ pub fn run(
         } => start(
             &vault,
             at,
+            Target {
+                project,
+                query,
+                unplanned,
+                title,
+                energy,
+            },
+            interactive,
+            json,
+            vault_flag,
+        ),
+        ActionCommands::Switch {
             project,
             query,
             unplanned,
             title,
             energy,
+            next,
+            reason,
+        } => switch(
+            &vault,
+            at,
+            Target {
+                project,
+                query,
+                unplanned,
+                title,
+                energy,
+            },
+            next,
+            reason,
             interactive,
             json,
+            vault_flag,
         ),
         ActionCommands::Complete { project, query } => {
             complete(&vault, at, project, query, interactive, json)
@@ -324,6 +399,150 @@ fn add(
     Ok(())
 }
 
+/// What a `start` or `switch` was asked to act on, as typed: every
+/// promptable field still optional.
+pub struct Target {
+    pub project: Option<String>,
+    pub query: Option<String>,
+    pub unplanned: bool,
+    pub title: Option<String>,
+    pub energy: Option<EnergyLevel>,
+}
+
+/// The same, once every field has been gathered.
+pub enum Resolved {
+    /// An existing bullet, named by the text that matched it.
+    Bullet { project: String, query: String },
+    /// A bullet to add and start.
+    New {
+        project: String,
+        title: String,
+        energy: EnergyLevel,
+    },
+}
+
+impl Resolved {
+    /// The `cdno` (plus `--vault`, when the person passed one) the
+    /// suggested commands start with.
+    fn cdno(vault_flag: Option<&Path>) -> String {
+        match vault_flag {
+            Some(v) => format!("cdno --vault {}", shell_word(&v.to_string_lossy())),
+            None => "cdno".to_owned(),
+        }
+    }
+
+    /// The exact `cdno action switch …` that does what this start meant.
+    fn switch_command(&self, vault_flag: Option<&Path>) -> String {
+        let cdno = Self::cdno(vault_flag);
+        match self {
+            Resolved::Bullet { project, query } => format!(
+                "{cdno} action switch --project {} --query {}",
+                shell_word(project),
+                shell_word(query)
+            ),
+            Resolved::New {
+                project,
+                title,
+                energy,
+            } => format!(
+                "{cdno} action switch --project {} --unplanned --title {} --energy {}",
+                shell_word(project),
+                shell_word(title),
+                energy.as_str()
+            ),
+        }
+    }
+
+    /// What was tried, for the rejection's `details.attempted`.
+    fn attempted(&self) -> serde_json::Value {
+        match self {
+            Resolved::Bullet { project, query } => {
+                serde_json::json!({ "project": project, "query": query })
+            }
+            Resolved::New { project, title, .. } => {
+                serde_json::json!({ "project": project, "title": title })
+            }
+        }
+    }
+}
+
+/// `s` as one shell word: bare when it is plainly safe, else single-quoted.
+fn shell_word(s: &str) -> String {
+    let safe = !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':'));
+    if safe {
+        s.to_owned()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+}
+
+/// The bullets the picker offers: every open bullet except the one in
+/// focus, since switching to it is refused and offering it would be a
+/// dead end.
+pub fn pickable_labels(
+    entries: &[ActionListEntry],
+    project: &str,
+    exclude: Option<&cdno_domain::CurrentFocus>,
+) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|e| !exclude.is_some_and(|f| f.project == project && f.action == e.text))
+        .map(|e| e.text.clone())
+        .collect()
+}
+
+/// Gather what a start or switch acts on, through `gather_or_error`.
+fn gather_target(
+    vault: &Vault,
+    target: Target,
+    interactive: bool,
+    prompted: &mut bool,
+    exclude: Option<&cdno_domain::CurrentFocus>,
+) -> Result<Resolved> {
+    let project =
+        prompt::gather_or_error(target.project, "project", interactive, prompted, || {
+            prompt::prompt_project(vault)
+        })?;
+    if target.unplanned {
+        let title = prompt::gather_or_error(target.title, "title", interactive, prompted, || {
+            prompt::prompt_text("Title")
+        })?;
+        let energy =
+            prompt::gather_or_error(target.energy, "energy", interactive, prompted, || {
+                prompt::prompt_energy()
+            })?;
+        return Ok(Resolved::New {
+            project,
+            title,
+            energy,
+        });
+    }
+    let query = prompt::gather_or_error(target.query, "query", interactive, prompted, || {
+        let entries = vault
+            .list_actions(&project)
+            .context("listing actions for the bullet picker")?;
+        // Verbatim `text`, energy suffix and wikilink included: the
+        // domain's whole-bullet tiebreak needs the exact string, and
+        // `start_action` resolves through the same matcher the close
+        // verbs use.
+        prompt::prompt_bullet(&project, &pickable_labels(&entries, &project, exclude))
+    })?;
+    Ok(Resolved::Bullet { project, query })
+}
+
+/// A `FocusOpen` refusal, with its three facts.
+struct Refusal {
+    focus: cdno_domain::CurrentFocus,
+    same_action: bool,
+    carried: bool,
+}
+
+/// The question a refused `start` ends with. Its default, `false`, is
+/// passed at the call site: Enter must never move focus.
+pub const SWITCH_OFFER: &str = "Switch to it instead?";
+
 /// `cdno action start` — two intents behind one verb, kept apart the
 /// way the domain keeps them.
 ///
@@ -333,77 +552,430 @@ fn add(
 /// #568: routing a non-matching query into creation would turn a typo
 /// into a new action, silently, which is the failure the domain change
 /// removed.
-#[allow(clippy::too_many_arguments)] // two modes, each a gather→execute passthrough
+///
+/// With a focus already open the start is refused (RFC 0005 §5.1). The
+/// refusal names the open focus and the exact `switch` that would do
+/// what was asked; in a terminal it also offers to run it.
 fn start(
     vault: &Vault,
     at: NaiveDateTime,
-    project: Option<String>,
-    query: Option<String>,
-    unplanned: bool,
-    title: Option<String>,
-    energy: Option<EnergyLevel>,
+    target: Target,
     interactive: bool,
     json: bool,
+    vault_flag: Option<&Path>,
 ) -> Result<()> {
     let mut prompted = false;
-    let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
-    })?;
+    let resolved = gather_target(vault, target, interactive, &mut prompted, None)?;
+    start_after_gather(
+        vault,
+        at,
+        resolved,
+        prompted,
+        interactive,
+        json,
+        vault_flag,
+        prompt::confirm_preview,
+        prompt::prompt_confirm,
+    )
+}
 
-    if unplanned {
-        let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
-            prompt::prompt_text("Title")
-        })?;
-        let energy = prompt::gather_or_error(energy, "energy", interactive, &mut prompted, || {
-            prompt::prompt_energy()
-        })?;
-        if prompted
-            && !prompt::confirm_preview(&format!(
-                "About to ADD to '{project}' and start it:\n  title:  {title}\n  energy: {}",
-                energy.as_str(),
-            ))?
-        {
-            println!("Aborted.");
-            return Ok(());
+/// Whether a start shows its preview and asks to proceed. Not when a
+/// focus is open: the start will be refused, and a question the answer to
+/// which cannot matter is the wrong thing to ask first.
+pub fn start_confirms(prompted: bool, focus_open: bool) -> bool {
+    prompted && !focus_open
+}
+
+/// [`start`] from resolved arguments, with `confirm` (the preview) and
+/// `offer` (the question, given its default) injected so a test can drive
+/// it without a pty.
+///
+/// With `json` set a refusal prints the rejection object and **exits the
+/// process** with status 1 (see `reject_json`); tests must not pass it.
+#[allow(clippy::too_many_arguments)]
+pub fn start_after_gather(
+    vault: &Vault,
+    at: NaiveDateTime,
+    mut resolved: Resolved,
+    prompted: bool,
+    interactive: bool,
+    json: bool,
+    vault_flag: Option<&Path>,
+    confirm: impl FnOnce(&str) -> Result<bool>,
+    offer: impl FnOnce(&str, bool) -> Result<bool>,
+) -> Result<()> {
+    let focus_open = vault
+        .current_focus(at.date())
+        .context("reading the current focus")?
+        .is_some();
+    let confirms = start_confirms(prompted, focus_open);
+
+    let refusal = match &mut resolved {
+        Resolved::New {
+            project,
+            title,
+            energy,
+        } => {
+            if confirms
+                && !confirm(&format!(
+                    "About to ADD to '{project}' and start it:\n  title:  {title}\n  energy: {}",
+                    energy.as_str(),
+                ))?
+            {
+                println!("Aborted.");
+                return Ok(());
+            }
+            match vault.start_unplanned_action(at, project, title, *energy) {
+                Ok(outcome) => {
+                    let path = outcome.primary;
+                    return crate::output::emit_write_result(
+                        json,
+                        &path.to_string(),
+                        &format!("Added to {path} and started"),
+                    );
+                }
+                Err(cdno_domain::error::DomainError::FocusOpen {
+                    focus,
+                    same_action,
+                    carried,
+                }) => Refusal {
+                    focus,
+                    same_action,
+                    carried,
+                },
+                Err(e) => return Err(e).context("starting unplanned action"),
+            }
         }
-        let path = vault
-            .start_unplanned_action(at, &project, &title, energy)
-            .context("starting unplanned action")?
-            .primary;
-        crate::output::emit_write_result(
-            json,
-            &path.to_string(),
-            &format!("Added to {path} and started"),
-        )?;
+        Resolved::Bullet { project, query } => {
+            if confirms && !confirm(&format!("About to START on '{project}': '{query}'"))? {
+                println!("Aborted.");
+                return Ok(());
+            }
+            // The text the call last ran with: after a picker round the
+            // refusal's switch command must name the bullet that was chosen.
+            let mut ran = query.clone();
+            let result =
+                resolving_ambiguity(project, query, interactive, "starting action", |q| {
+                    q.clone_into(&mut ran);
+                    match vault.start_action(at, project, q) {
+                        Ok(daily) => Ok(Ok(daily)),
+                        Err(cdno_domain::error::DomainError::FocusOpen {
+                            focus,
+                            same_action,
+                            carried,
+                        }) => Ok(Err(Refusal {
+                            focus,
+                            same_action,
+                            carried,
+                        })),
+                        Err(e) => Err(e),
+                    }
+                })?;
+            match result {
+                Ok(daily) => {
+                    return crate::output::emit_write_result(
+                        json,
+                        &daily.to_string(),
+                        &format!("Started on {project}, logged to {daily}"),
+                    );
+                }
+                Err(refusal) => {
+                    *query = ran;
+                    refusal
+                }
+            }
+        }
+    };
+    refuse_start(
+        vault,
+        at,
+        &resolved,
+        refusal,
+        interactive,
+        json,
+        vault_flag,
+        offer,
+    )
+}
+
+/// Report a refused start, and in a terminal offer the switch.
+#[allow(clippy::too_many_arguments)]
+fn refuse_start(
+    vault: &Vault,
+    at: NaiveDateTime,
+    resolved: &Resolved,
+    refusal: Refusal,
+    interactive: bool,
+    json: bool,
+    vault_flag: Option<&Path>,
+    offer: impl FnOnce(&str, bool) -> Result<bool>,
+) -> Result<()> {
+    if json {
+        reject_json(focus_open_rejection(
+            &refusal.focus,
+            refusal.same_action,
+            refusal.carried,
+            Some(resolved.attempted()),
+        ))?;
+    }
+    let text = refusal_text(resolved, &refusal, at.date(), vault_flag);
+    // Switching to the bullet already in focus is itself refused, so
+    // there is nothing to offer.
+    if !interactive || refusal.same_action {
+        anyhow::bail!(text);
+    }
+    println!("{text}");
+    // The default is the literal `false`, here: Enter must not move focus.
+    if !offer(SWITCH_OFFER, false)? {
+        println!("Aborted.");
         return Ok(());
     }
+    // The arguments are already resolved, so neither `--next` nor
+    // `--reason` is asked for.
+    run_switch(
+        vault,
+        at,
+        resolved,
+        None,
+        None,
+        interactive,
+        json,
+        vault_flag,
+    )
+}
 
-    let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
-        let entries = vault
-            .list_actions(&project)
-            .context("listing actions for the bullet picker")?;
-        // Verbatim `text`, energy suffix and wikilink included: the
-        // domain's whole-bullet tiebreak needs the exact string, and
-        // `start_action` resolves through the same matcher the close
-        // verbs use.
-        let labels: Vec<String> = entries.iter().map(|e| e.text.clone()).collect();
-        prompt::prompt_bullet(&project, &labels)
-    })?;
+/// What a refused start says: the open focus, then the way past it.
+fn refusal_text(
+    resolved: &Resolved,
+    r: &Refusal,
+    today: chrono::NaiveDate,
+    vault_flag: Option<&Path>,
+) -> String {
+    use cdno_domain::FocusRemedy;
+    let title = crate::output::sanitise(&r.focus.title());
+    let project = &r.focus.project;
+    match FocusRemedy::of(r.same_action, r.carried) {
+        FocusRemedy::AlreadyFocused => {
+            format!("{title} is already in focus on {project} \u{2014} nothing to do.")
+        }
+        FocusRemedy::Resume => format!(
+            "{title} is already in focus on {project}, carried over from {}. \
+             Pick it up again with `{} action resume`.",
+            r.focus.date,
+            Resolved::cdno(vault_flag)
+        ),
+        FocusRemedy::Switch => {
+            // Worded like `cdno now`, so a carried focus names its day.
+            let since = crate::commands::now::when(
+                chrono::NaiveDateTime::new(r.focus.date, r.focus.started),
+                today,
+            );
+            format!(
+                "{title} is already in focus on {project} (since {since}).\n\
+                 To move on to this instead: {}\n\
+                 Or complete or pause it first.",
+                resolved.switch_command(vault_flag)
+            )
+        }
+    }
+}
 
-    if prompted && !prompt::confirm_preview(&format!("About to START on '{project}': '{query}'"))? {
+/// `cdno action switch` — pause what is open and start the target, in
+/// one commit (RFC 0005 §5.1).
+#[allow(clippy::too_many_arguments)] // thin gather→confirm→execute passthrough
+fn switch(
+    vault: &Vault,
+    at: NaiveDateTime,
+    target: Target,
+    next: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+    vault_flag: Option<&Path>,
+) -> Result<()> {
+    let focus = vault
+        .current_focus(at.date())
+        .context("reading the current focus")?;
+    let mut prompted = false;
+    let resolved = gather_target(vault, target, interactive, &mut prompted, focus.as_ref())?;
+    switch_after_gather(
+        vault,
+        at,
+        resolved,
+        prompted,
+        next,
+        reason,
+        interactive,
+        json,
+        vault_flag,
+        prompt::confirm_preview,
+        || prompt::prompt_text("Where to pick up (Enter to skip)"),
+    )
+}
+
+/// [`switch`] from resolved arguments, with the confirm and the hint
+/// question injected (see [`pause_asking`]).
+///
+/// With `json` set a refusal prints the rejection object and **exits the
+/// process** (see `reject_json`); tests must not pass it.
+#[allow(clippy::too_many_arguments)]
+pub fn switch_after_gather(
+    vault: &Vault,
+    at: NaiveDateTime,
+    resolved: Resolved,
+    prompted: bool,
+    next: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+    vault_flag: Option<&Path>,
+    confirm: impl FnOnce(&str) -> Result<bool>,
+    ask: impl FnOnce() -> Result<String>,
+) -> Result<()> {
+    let focus = vault
+        .current_focus(at.date())
+        .context("reading the current focus")?;
+    if prompted && !confirm(&switch_preview(focus.as_ref(), &resolved, &next))? {
         println!("Aborted.");
         return Ok(());
     }
 
-    let daily = resolving_ambiguity(&project, &query, interactive, "starting action", |q| {
-        vault.start_action(at, &project, q)
-    })?;
-    crate::output::emit_write_result(
+    // The hint is asked for after the confirm and adds nothing to it. With
+    // nothing open there is nothing to attach it to, so it is not asked.
+    let next = if focus.is_some() {
+        pause_hint(next, interactive, ask)?
+    } else {
+        next
+    };
+    run_switch(
+        vault,
+        at,
+        &resolved,
+        next.as_deref(),
+        reason.as_deref(),
+        interactive,
         json,
-        &daily.to_string(),
-        &format!("Started on {project}, logged to {daily}"),
-    )?;
-    Ok(())
+        vault_flag,
+    )
+}
+
+/// What a prompted switch shows before it asks to proceed: both sides,
+/// and a typed `--next`. A hint still to be asked for is not here — that
+/// question comes after the confirm and adds nothing to it.
+pub fn switch_preview(
+    focus: Option<&cdno_domain::CurrentFocus>,
+    resolved: &Resolved,
+    next: &Option<String>,
+) -> String {
+    let starting = match resolved {
+        Resolved::Bullet { project, query } => format!("start '{query}' on '{project}'"),
+        Resolved::New {
+            project,
+            title,
+            energy,
+        } => format!(
+            "ADD '{title}' ({}) to '{project}' and start it",
+            energy.as_str()
+        ),
+    };
+    match focus {
+        Some(f) => {
+            let mut p = format!(
+                "About to pause {} on '{}', {starting}",
+                crate::output::sanitise(&f.title()),
+                f.project
+            );
+            if let Some(n) = next {
+                p.push_str(&format!("\n  next:  {}", crate::output::sanitise(n)));
+            }
+            p
+        }
+        None => format!("Nothing is open. About to {starting}"),
+    }
+}
+
+/// Run the switch for resolved arguments and report it.
+#[allow(clippy::too_many_arguments)]
+fn run_switch(
+    vault: &Vault,
+    at: NaiveDateTime,
+    resolved: &Resolved,
+    next: Option<&str>,
+    reason: Option<&str>,
+    interactive: bool,
+    json: bool,
+    vault_flag: Option<&Path>,
+) -> Result<()> {
+    use cdno_domain::error::DomainError;
+    let attempt = match resolved {
+        Resolved::New {
+            project,
+            title,
+            energy,
+        } => vault.switch_unplanned_action(at, project, title, *energy, next, reason),
+        Resolved::Bullet { project, query } => {
+            resolving_ambiguity(project, query, interactive, "switching action", |q| {
+                match vault.switch_action(at, project, q, next, reason) {
+                    // Handed back as a value so the refusal keeps its type.
+                    Err(e @ DomainError::FocusOpen { .. }) => Ok(Err(e)),
+                    Err(e) => Err(e),
+                    Ok(o) => Ok(Ok(o)),
+                }
+            })?
+        }
+    };
+    let outcome = match attempt {
+        Ok(o) => o,
+        Err(DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        }) => {
+            // Only the bullet already in focus is refused by a switch.
+            let r = Refusal {
+                focus,
+                same_action,
+                carried,
+            };
+            if json {
+                reject_json(focus_open_rejection(
+                    &r.focus,
+                    same_action,
+                    carried,
+                    Some(resolved.attempted()),
+                ))?;
+            }
+            anyhow::bail!(refusal_text(resolved, &r, at.date(), vault_flag));
+        }
+        Err(e) => return Err(e).context("switching action"),
+    };
+    let started = crate::output::sanitise(&outcome.started.title());
+    // The log lines are in the daily note; for an unplanned switch the
+    // primary path is the project map, so name the note the log is in.
+    let daily = outcome
+        .paths
+        .iter()
+        .find(|p| {
+            p.to_string()
+                .starts_with(&format!("{}/", cdno_core::paths::JOURNAL))
+        })
+        .unwrap_or(&outcome.primary);
+    let message = match &outcome.paused {
+        Some(p) => format!(
+            "Paused {} on {}, started {started} on {}, logged to {daily}",
+            crate::output::sanitise(&p.title()),
+            p.project,
+            outcome.started.project,
+        ),
+        None => {
+            let mut m = format!("Nothing was open \u{2014} started {started}.");
+            if next.is_some() {
+                m.push_str("\n(--next ignored: nothing to attach it to)");
+            }
+            m
+        }
+    };
+    crate::output::emit_write_result(json, &outcome.primary.to_string(), &message)
 }
 
 /// Run an action verb that resolves its target by substring, turning an
@@ -688,12 +1260,14 @@ pub fn pause_asking(
         .context("reading the current focus")?
         .is_none()
     {
-        anyhow::bail!(NO_FOCUS_TO_PAUSE);
+        return no_focus(json, NO_FOCUS_TO_PAUSE.to_owned());
     }
     let next = pause_hint(next, interactive, ask)?;
     let outcome = match vault.pause_action(at, next.as_deref(), reason.as_deref()) {
         Ok(o) => o,
-        Err(cdno_domain::error::DomainError::NoFocus) => anyhow::bail!(NO_FOCUS_TO_PAUSE),
+        Err(cdno_domain::error::DomainError::NoFocus) => {
+            return no_focus(json, NO_FOCUS_TO_PAUSE.to_owned());
+        }
         Err(e) => return Err(e).context("pausing action"),
     };
     crate::output::emit_write_result(
@@ -736,27 +1310,41 @@ fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool)
 
     let outcome = match vault.resume_action(at, project.as_deref()) {
         Ok(o) => o,
-        Err(DomainError::NoFocus) => match project.as_deref().map(str::trim) {
-            Some(p) => {
-                anyhow::bail!("Nothing to resume on {p} \u{2014} no carried focus or pause there.")
-            }
-            None => anyhow::bail!("Nothing to resume \u{2014} nothing is carried over or paused."),
-        },
+        Err(DomainError::NoFocus) => {
+            return no_focus(
+                json,
+                match project.as_deref().map(str::trim) {
+                    Some(p) => format!(
+                        "Nothing to resume on {p} \u{2014} no carried focus or pause there."
+                    ),
+                    None => {
+                        "Nothing to resume \u{2014} nothing is carried over or paused.".to_owned()
+                    }
+                },
+            );
+        }
         Err(DomainError::FocusOpen {
             focus,
-            same_action: true,
-            ..
-        }) => anyhow::bail!(
-            "{} is already in focus on {} \u{2014} nothing to resume.",
-            crate::output::sanitise(&focus.title()),
-            focus.project,
-        ),
-        Err(DomainError::FocusOpen { focus, .. }) => anyhow::bail!(
-            "{} is already in focus on {}. Pause it first (`cdno action pause`), \
-             or move on with `cdno action switch`.",
-            crate::output::sanitise(&focus.title()),
-            focus.project,
-        ),
+            same_action,
+            carried,
+        }) => {
+            if json {
+                reject_json(focus_open_rejection(&focus, same_action, carried, None))?;
+            }
+            if same_action {
+                anyhow::bail!(
+                    "{} is already in focus on {} \u{2014} nothing to resume.",
+                    crate::output::sanitise(&focus.title()),
+                    focus.project,
+                );
+            }
+            anyhow::bail!(
+                "{} is already in focus on {}. Pause it first (`cdno action pause`), \
+                 or move on with `cdno action switch`.",
+                crate::output::sanitise(&focus.title()),
+                focus.project,
+            );
+        }
         Err(e) => return Err(e).context("resuming action"),
     };
     let message = format!(
@@ -786,6 +1374,75 @@ fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool)
         println!("next: {}", crate::output::sanitise(next));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Refusals as JSON (RFC 0005 §5.1)
+// ---------------------------------------------------------------------
+
+/// The `remedy` a `FocusOpen` carries: what the caller does next.
+/// `already_focused` (the same action, started today), `resume_action`
+/// (the same action, carried from an earlier day), else `switch_action`.
+pub fn focus_open_remedy(same_action: bool, carried: bool) -> &'static str {
+    cdno_domain::FocusRemedy::of(same_action, carried).as_str()
+}
+
+/// The `focus_open` rejection object. The one place the CLI builds it:
+/// `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json` is the
+/// shape the MCP server's rejection is compared against too, so the two
+/// surfaces cannot say it differently.
+pub fn focus_open_rejection(
+    focus: &cdno_domain::CurrentFocus,
+    same_action: bool,
+    carried: bool,
+    attempted: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut object = serde_json::json!({
+        "code": "focus_open",
+        "message": "An action is already in focus. Ask the person before switching; do not retry.",
+        "details": {
+            "focus": {
+                "project": focus.project,
+                "action": focus.action,
+                "started": focus.started.format("%H:%M").to_string(),
+                "date": focus.date.to_string(),
+                "carried": carried,
+            },
+            "same_action": same_action,
+            "remedy": focus_open_remedy(same_action, carried),
+        },
+    });
+    // What the caller tried; absent for `resume`, which names no target.
+    if let Some(a) = attempted {
+        object["details"]["attempted"] = a;
+    }
+    object
+}
+
+/// The `no_focus` rejection object.
+pub fn no_focus_rejection() -> serde_json::Value {
+    serde_json::json!({
+        "code": "no_focus",
+        "message": "Nothing is started.",
+        "details": {},
+    })
+}
+
+/// Print a rejection object and exit non-zero, as `project complete`
+/// does for its refusal: a script checking the exit code must not read
+/// a refusal as a pass. Returns only if printing failed.
+fn reject_json(value: serde_json::Value) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    std::process::exit(1);
+}
+
+/// "Nothing is open to act on": the `no_focus` object under `--json`,
+/// else `text` as the error.
+fn no_focus(json: bool, text: String) -> Result<()> {
+    if json {
+        reject_json(no_focus_rejection())?;
+    }
+    anyhow::bail!(text)
 }
 
 fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -> Result<()> {

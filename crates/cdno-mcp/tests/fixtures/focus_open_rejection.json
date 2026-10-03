@@ -1,0 +1,19 @@
+{
+  "code": "focus_open",
+  "message": "An action is already in focus. Ask the person before switching; do not retry.",
+  "details": {
+    "focus": {
+      "project": "surrogate-model",
+      "action": "Draft methods section (deep)",
+      "started": "09:10",
+      "date": "2026-10-01",
+      "carried": false
+    },
+    "attempted": {
+      "project": "surrogate-model",
+      "query": "Run ablation"
+    },
+    "same_action": false,
+    "remedy": "switch_action"
+  }
+}

@@ -717,8 +717,10 @@ The `attempted` block is filled by the handler (T15), since the domain error doe
 **Probes.**
 - `cargo test -p cdno-mcp --test handlers_operations` (or the existing rejection test target)
   passes with `focus_open_classifies_with_the_three_remedies` and `no_focus_classifies`.
-- The JSON of the `focus_open` fixture is checked into `crates/cdno-mcp/tests/fixtures/` and
-  T13's CLI probe compares against the same file.
+- T13 checked in `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json` (amended in review of
+  #763). `classify` cannot know `attempted`, so this probe compares its output against the fixture
+  **with `details.attempted` removed**; T15's handler probe compares the whole file. The remedy
+  comes from `DomainError::focus_remedy()` (`cdno_domain::FocusRemedy`), never a local table.
 
 **Correct means.** An agent can read the remedy without parsing prose.
 
@@ -733,7 +735,9 @@ where that applies. `CurrentFocusDto` gains `date`, `carried`, `origin`; new `La
 `ResumedFromDto`; `resume_action`'s payload carries `resumed_from`, and its description tells the
 agent to read `resumed_from.kind` and `resumed.action` back (with `project`, a carried focus on
 that project wins over the pause orientation showed — RFC §5.3). The `start_action` handler
-fills `attempted` into a `focus_open` rejection. The catalogue pins in `tests/server.rs:141`
+fills `attempted` into a `focus_open` rejection, in the CLI's shape: `{project, query}`, or
+`{project, title}` for `start_unplanned_action` / `switch_unplanned_action` (no `energy`) — and
+`start_action_rejection_carries_attempted` compares the whole T13 fixture. The catalogue pins in `tests/server.rs:141`
 and `tests/e2e_stdio.rs:226` move 60 → 64.
 
 **Deliverable.** Four tools, three DTOs, the pins, tests.
