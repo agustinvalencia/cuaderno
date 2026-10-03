@@ -4,6 +4,53 @@ use cdno_core::error::{
 };
 use cdno_core::path::VaultPath;
 
+/// What a caller does about a [`DomainError::FocusOpen`]: the one rule,
+/// shared by every surface that names a remedy (the CLI's refusal text and
+/// JSON, the MCP rejection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusRemedy {
+    /// The same action, started today: nothing to do.
+    AlreadyFocused,
+    /// The same action, carried over from an earlier day: resume it.
+    Resume,
+    /// A different action: switch to it, on the person's word.
+    Switch,
+}
+
+impl FocusRemedy {
+    /// The remedy for a `FocusOpen` with these two facts.
+    pub fn of(same_action: bool, carried: bool) -> Self {
+        match (same_action, carried) {
+            (true, false) => FocusRemedy::AlreadyFocused,
+            (true, true) => FocusRemedy::Resume,
+            (false, _) => FocusRemedy::Switch,
+        }
+    }
+
+    /// The wire name: `already_focused`, `resume_action` or `switch_action`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FocusRemedy::AlreadyFocused => "already_focused",
+            FocusRemedy::Resume => "resume_action",
+            FocusRemedy::Switch => "switch_action",
+        }
+    }
+}
+
+impl DomainError {
+    /// For a `FocusOpen`, its [`FocusRemedy`]; `None` for any other error.
+    pub fn focus_remedy(&self) -> Option<FocusRemedy> {
+        match self {
+            DomainError::FocusOpen {
+                same_action,
+                carried,
+                ..
+            } => Some(FocusRemedy::of(*same_action, *carried)),
+            _ => None,
+        }
+    }
+}
+
 /// Errors from domain-level business logic.
 ///
 /// Wraps core errors via `From` conversions and adds

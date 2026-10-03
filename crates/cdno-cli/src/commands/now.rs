@@ -217,7 +217,7 @@ fn weekday_name(date: NaiveDate) -> &'static str {
 /// `HH:MM`, prefixed with the weekday when the day is not today, or with
 /// the date once it is more than six days back (a weekday name would then
 /// be ambiguous).
-fn when(at: NaiveDateTime, today: NaiveDate) -> String {
+pub(crate) fn when(at: NaiveDateTime, today: NaiveDate) -> String {
     let time = at.format("%H:%M");
     if at.date() == today {
         time.to_string()

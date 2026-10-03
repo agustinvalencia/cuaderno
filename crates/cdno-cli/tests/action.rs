@@ -1578,20 +1578,17 @@ fn switch_pauses_then_starts_and_the_hint_prompt_is_asked_once() {
     );
     let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
     let mut asked = 0;
-    action::switch_asking(
+    action::switch_after_gather(
         &vault,
         moment(2026, 10, 1, 10, 0),
-        action::Target {
-            project: Some("surrogate-model".to_owned()),
-            query: Some("Run ablation".to_owned()),
-            unplanned: false,
-            title: None,
-            energy: None,
-        },
+        resolved_ablation(),
+        false,
         None,
         Some("lunch".to_owned()),
         true,
         false,
+        None,
+        |_| panic!("not prompted, so no confirm"),
         || {
             asked += 1;
             Ok("step 3".to_owned())
@@ -1636,7 +1633,15 @@ fn start_refusal_names_the_switch_command() {
         "{err}"
     );
     assert!(
-        err.contains("cdno action switch --project surrogate-model --query 'Run ablation'"),
+        err.contains(" action switch --project surrogate-model --query 'Run ablation'"),
+        "{err}"
+    );
+    // The person passed --vault, so the suggestion carries it.
+    assert!(
+        err.contains(&format!(
+            "cdno --vault {} action switch",
+            dir.path().display()
+        )),
         "{err}"
     );
     assert!(!err.contains("Caused by"), "{err}");
@@ -1654,7 +1659,7 @@ fn start_refusal_names_the_switch_command() {
     let err = String::from_utf8_lossy(&out);
     assert!(
         err.contains(
-            "cdno action switch --project surrogate-model --unplanned --title Sketch --energy light"
+            " action switch --project surrogate-model --unplanned --title Sketch --energy light"
         ),
         "{err}"
     );
@@ -1726,7 +1731,12 @@ fn start_refusal_json_matches_the_rejection_shape() {
         panic!("not FocusOpen: {err:?}");
     };
     assert_eq!(
-        action::focus_open_rejection(&focus, same_action, carried),
+        action::focus_open_rejection(
+            &focus,
+            same_action,
+            carried,
+            Some(serde_json::json!({"project": "surrogate-model", "query": "Run ablation"}))
+        ),
         rejection_fixture()
     );
 
@@ -1798,41 +1808,49 @@ fn pause_and_resume_refusals_are_json_objects_under_json() {
     assert_eq!(v["details"]["remedy"], "switch_action");
 }
 
+fn resolved_ablation() -> action::Resolved {
+    action::Resolved::Bullet {
+        project: "surrogate-model".to_owned(),
+        query: "Run ablation".to_owned(),
+    }
+}
+
+/// Drive a start from resolved arguments as an interactive run; `answer`
+/// is the offer's reply, and the default the offer was made with is
+/// returned beside the number of times it was asked.
 fn ask_start(
     root: &Path,
     at: NaiveDateTime,
     answer: bool,
-    asked: &mut usize,
-) -> anyhow::Result<()> {
+    flag: Option<&Path>,
+) -> (anyhow::Result<()>, usize, Option<bool>) {
     let (vault, _) = cdno_cli::bootstrap::open_vault(root).unwrap();
-    action::start_asking(
+    let mut asked = 0;
+    let mut default = None;
+    let r = action::start_after_gather(
         &vault,
         at,
-        action::Target {
-            project: Some("surrogate-model".to_owned()),
-            query: Some("Run ablation".to_owned()),
-            unplanned: false,
-            title: None,
-            energy: None,
-        },
+        resolved_ablation(),
+        false,
         true,
         false,
-        || {
-            *asked += 1;
+        flag,
+        |_| panic!("not prompted, so no preview"),
+        |question, d| {
+            assert_eq!(question, action::SWITCH_OFFER);
+            asked += 1;
+            default = Some(d);
             Ok(answer)
         },
-    )
+    );
+    (r, asked, default)
 }
 
 #[test]
 fn start_refusal_offers_the_switch_and_defaults_to_no() {
-    // The suite has no pty helper, so the offer is driven through
-    // `start_asking`'s injected confirm; the default itself is the
-    // `SWITCH_OFFER_DEFAULT` constant the real prompt is built from.
-    let default = std::hint::black_box(action::SWITCH_OFFER_DEFAULT);
-    assert!(!default, "Enter must not move focus");
-    assert_eq!(action::SWITCH_OFFER, "Switch to it instead?");
-
+    // The suite has no pty helper, so the offer is driven through the
+    // injected confirm of `start_after_gather`, which is handed the default
+    // the call site passes; flipping that literal fails here.
     let dir = surrogate_vault();
     start(
         dir.path(),
@@ -1842,22 +1860,17 @@ fn start_refusal_offers_the_switch_and_defaults_to_no() {
     );
     let before = daily_of(dir.path(), "2026-10-01");
 
-    // Declined (the default): asked once, nothing written.
-    let mut asked = 0;
-    ask_start(
-        dir.path(),
-        moment(2026, 10, 1, 10, 0),
-        action::SWITCH_OFFER_DEFAULT,
-        &mut asked,
-    )
-    .expect("declining is not an error");
+    // Declined: asked once with default false, nothing written.
+    let (r, asked, default) = ask_start(dir.path(), moment(2026, 10, 1, 10, 0), false, None);
+    r.expect("declining is not an error");
     assert_eq!(asked, 1);
+    assert_eq!(default, Some(false), "Enter must not move focus");
     assert_eq!(daily_of(dir.path(), "2026-10-01"), before);
 
     // Accepted: the switch runs with the resolved arguments, and no
-    // --next question is asked (this injected handler has none to call).
-    let mut asked = 0;
-    ask_start(dir.path(), moment(2026, 10, 1, 10, 0), true, &mut asked).expect("switch");
+    // --next question is asked (run_switch is given none to ask).
+    let (r, asked, _) = ask_start(dir.path(), moment(2026, 10, 1, 10, 0), true, None);
+    r.expect("switch");
     assert_eq!(asked, 1);
     let daily = daily_of(dir.path(), "2026-10-01");
     assert!(
@@ -1880,8 +1893,193 @@ fn the_offer_is_not_made_for_the_action_already_in_focus() {
         "surrogate-model",
         "Run ablation",
     );
-    let mut asked = 0;
-    let r = ask_start(dir.path(), moment(2026, 10, 1, 10, 0), true, &mut asked);
+    let (r, asked, _) = ask_start(dir.path(), moment(2026, 10, 1, 10, 0), true, None);
     assert!(r.is_err());
     assert_eq!(asked, 0);
+}
+
+#[test]
+fn a_refused_start_never_asks_to_proceed_first() {
+    let dir = surrogate_vault();
+    start(
+        dir.path(),
+        moment(2026, 10, 1, 9, 10),
+        "surrogate-model",
+        "Draft methods",
+    );
+    let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    let mut offered = false;
+    // A prompted run (`prompted = true`): the preview must not be shown.
+    action::start_after_gather(
+        &vault,
+        moment(2026, 10, 1, 10, 0),
+        resolved_ablation(),
+        true,
+        true,
+        false,
+        None,
+        |_| panic!("a refused start must not ask 'Proceed?' first"),
+        |_, _| {
+            offered = true;
+            Ok(false)
+        },
+    )
+    .expect("declined");
+    assert!(offered);
+    // With nothing open the preview is still shown.
+    assert!(action::start_confirms(true, false));
+    assert!(!action::start_confirms(true, true));
+    assert!(!action::start_confirms(false, false));
+}
+
+#[test]
+fn a_prompted_switch_confirms_without_the_hint_and_asks_for_it_after() {
+    let dir = surrogate_vault();
+    start(
+        dir.path(),
+        moment(2026, 10, 1, 9, 10),
+        "surrogate-model",
+        "Draft methods",
+    );
+    let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    let preview = std::cell::RefCell::new(String::new());
+    let mut asked_after_confirm = false;
+    action::switch_after_gather(
+        &vault,
+        moment(2026, 10, 1, 10, 0),
+        resolved_ablation(),
+        true,
+        None,
+        None,
+        true,
+        false,
+        None,
+        |p| {
+            *preview.borrow_mut() = p.to_owned();
+            Ok(true)
+        },
+        || {
+            asked_after_confirm = !preview.borrow().is_empty();
+            Ok("step 3".to_owned())
+        },
+    )
+    .expect("switch");
+    let preview = preview.into_inner();
+    assert!(asked_after_confirm, "the hint is asked after the confirm");
+    assert!(
+        !preview.contains("step 3") && !preview.contains("next:"),
+        "{preview}"
+    );
+    assert!(preview.contains("pause Draft methods section"), "{preview}");
+    assert!(daily_of(dir.path(), "2026-10-01").contains("next: step 3"));
+}
+
+#[test]
+fn no_hint_is_asked_when_nothing_is_open() {
+    let dir = surrogate_vault();
+    let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    action::switch_after_gather(
+        &vault,
+        moment(2026, 10, 1, 10, 0),
+        resolved_ablation(),
+        false,
+        None,
+        None,
+        true,
+        false,
+        None,
+        |_| panic!("not prompted"),
+        || panic!("nothing is open, so there is nothing to ask a hint for"),
+    )
+    .expect("a plain start");
+    assert!(daily_of(dir.path(), "2026-10-01").contains("started [[surrogate-model]]"));
+}
+
+#[test]
+fn the_picker_leaves_out_the_bullet_in_focus() {
+    let dir = surrogate_vault();
+    start(
+        dir.path(),
+        moment(2026, 10, 1, 9, 10),
+        "surrogate-model",
+        "Draft methods",
+    );
+    let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    let focus = vault
+        .current_focus(moment(2026, 10, 1, 10, 0).date())
+        .unwrap()
+        .expect("focus");
+    let entries = vault.list_actions("surrogate-model").unwrap();
+    let all = action::pickable_labels(&entries, "surrogate-model", None);
+    assert!(all.iter().any(|l| l == &focus.action));
+    let picked = action::pickable_labels(&entries, "surrogate-model", Some(&focus));
+    assert_eq!(picked.len(), all.len() - 1);
+    assert!(!picked.iter().any(|l| l == &focus.action));
+    // The same text on another project is not the focus.
+    let other = action::pickable_labels(&entries, "elsewhere", Some(&focus));
+    assert_eq!(other.len(), all.len());
+}
+
+#[test]
+fn a_carried_focus_names_its_day_and_the_vault_flag_is_kept() {
+    let dir = surrogate_vault();
+    start(
+        dir.path(),
+        moment(2026, 10, 1, 14, 5),
+        "surrogate-model",
+        "Draft methods",
+    );
+    // Thursday's focus, asked about on Friday (carry_over_days defaults to 1).
+    let flag = dir.path().to_path_buf();
+    let (r, _, _) = ask_start(
+        dir.path(),
+        moment(2026, 10, 2, 10, 0),
+        false,
+        Some(flag.as_path()),
+    );
+    r.expect("declined");
+    // Not interactive: the text is the error, which we can read.
+    let (vault, _) = cdno_cli::bootstrap::open_vault(dir.path()).unwrap();
+    let err = action::start_after_gather(
+        &vault,
+        moment(2026, 10, 2, 10, 0),
+        resolved_ablation(),
+        false,
+        false,
+        false,
+        Some(flag.as_path()),
+        |_| panic!(),
+        |_, _| panic!(),
+    )
+    .expect_err("refused");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("(since Thursday 14:05)"), "{msg}");
+    let quoted = flag.to_string_lossy();
+    assert!(
+        msg.contains(&format!("cdno --vault {quoted} action switch --project")),
+        "{msg}"
+    );
+}
+
+#[test]
+fn an_unplanned_switch_names_the_daily_note_it_logged_to() {
+    let dir = surrogate_vault();
+    // Through the binary, so the focus is open on the binary's own clock.
+    cdno_in(dir.path())
+        .args(["--no-interactive", "action", "start"])
+        .args(["--project", "surrogate-model", "--query", "Draft methods"])
+        .assert()
+        .success();
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "switch"])
+        .args(["--project", "surrogate-model", "--unplanned"])
+        .args(["--title", "Sketch", "--energy", "light"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let out = String::from_utf8_lossy(&out);
+    assert!(out.contains("logged to journal/"), "{out}");
+    assert!(!out.contains("logged to projects/"), "{out}");
 }

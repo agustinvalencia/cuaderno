@@ -612,8 +612,9 @@ fn main() -> Result<()> {
         }
         Commands::Action { subcommand } => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
-            commands::action::run(
+            commands::action::run_with_vault_flag(
                 &root,
+                cli.vault.as_deref(),
                 Local::now().naive_local(),
                 subcommand,
                 cli.no_interactive,

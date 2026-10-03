@@ -2583,3 +2583,15 @@ fn a_promotion_on_another_project_does_not_consume_a_pause() {
     assert_eq!(outcome.from.kind, ResumedKind::Paused);
     assert_eq!(outcome.from.next.as_deref(), Some("section 2"));
 }
+
+#[test]
+fn focus_remedy_is_derived_from_same_action_and_carried() {
+    use cdno_domain::FocusRemedy;
+    assert_eq!(FocusRemedy::of(true, false), FocusRemedy::AlreadyFocused);
+    assert_eq!(FocusRemedy::of(true, true), FocusRemedy::Resume);
+    assert_eq!(FocusRemedy::of(false, false), FocusRemedy::Switch);
+    assert_eq!(FocusRemedy::of(false, true), FocusRemedy::Switch);
+    assert_eq!(FocusRemedy::AlreadyFocused.as_str(), "already_focused");
+    assert_eq!(FocusRemedy::Resume.as_str(), "resume_action");
+    assert_eq!(FocusRemedy::Switch.as_str(), "switch_action");
+}

@@ -9,6 +9,10 @@
       "date": "2026-10-01",
       "carried": false
     },
+    "attempted": {
+      "project": "surrogate-model",
+      "query": "Run ablation"
+    },
     "same_action": false,
     "remedy": "switch_action"
   }

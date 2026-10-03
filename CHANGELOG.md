@@ -18,10 +18,14 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `cdno action switch …` command (`cdno action resume` when it is the same action carried over
   from an earlier day; nothing to do when it was started today). In a terminal it then asks
   `Switch to it instead?` (default no) and, on yes, runs the switch without asking for `--next` or
-  `--reason`. Under `--json`, `start`, `pause`, `resume` and `switch` print the rejection object
-  (`code`, `message`, `details`) on stdout and exit non-zero; its shape is checked in at
-  `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json`. `start` with nothing open is
-  unchanged.
+  `--reason`. A carried focus is named by its day (`since Thursday 14:05`, as `cdno now` says it),
+  a refused start no longer asks `Proceed?` first, and when `--vault` was passed the suggested
+  commands carry it. Under `--json`, `start`, `pause`, `resume` and `switch` print the rejection
+  object (`code`, `message`, `details`, with `details.attempted` naming the project and query or
+  title that was tried) on stdout and exit non-zero; its shape is checked in at
+  `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json`. The remedy rule lives in the domain
+  as `FocusRemedy`. An unplanned `switch` names the daily note it logged to. `start` with nothing
+  open is unchanged.
 
 - **`cdno action pause` and `cdno action resume` (RFC 0005, #732).** `pause [--next <text>]
   [--reason <text>]` logs `action paused on [[slug]] — <text>` for the current focus and takes no
