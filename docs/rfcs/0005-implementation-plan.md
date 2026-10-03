@@ -390,6 +390,8 @@ reading exactly.
   `two_starts_yesterday_closing_the_later_today_leaves_nothing`;
   `an_unrelated_close_today_does_not_hide_yesterdays_start`;
   `window_zero_reads_today_only` (yesterday's open start is ignored);
+  `pausing_after_a_legacy_stack_is_no_focus` (yesterday: start X, start Y, done Y written by
+  hand; `pause_action` today is `NoFocus`, not a pause of X);
   `starting_a_carried_focus_again_says_to_resume_it` (the `FocusOpen` message for `same_action`
   and `carried`, asserted by exact text — the branch T3 wrote but could not reach).
 - Mutation: fold only today's note; `a_start_yesterday_left_open_is_the_focus_with_yesterdays_date`
@@ -839,7 +841,9 @@ eight points and the wording rule.
 
 **What.** `docs-site/src/reference/cli/action.md` (pause, switch, resume, the start refusal),
 `now.md` (three shapes, `--json` fields, `--line`), `configuration.md` (`[focus]`),
-`troubleshooting.md` (delete "names the wrong action"; add "says I'm still on yesterday's thing"
+`troubleshooting.md` (delete "names the wrong action"; add, as a third cause under "says nothing
+is started", D11's upgrade case — "I started X, then Y, finished Y, and now nothing is in focus";
+add "says I'm still on yesterday's thing"
 and "`action start` refuses with `focus_open`"), `reference/mcp/reads.md` and `writes.md` (four
 tools, `focus` on writes, `last_paused`), `concepts/contexts-and-energy.md` (a "Focus" section),
 `tutorials/daily-loop.md` and `actions.md`; `SUMMARY.md` if a page is added. `docs/design.md`:

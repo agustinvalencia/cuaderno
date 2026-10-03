@@ -985,9 +985,11 @@ impl Vault {
     /// it sees a start made from the CLI or by an agent over MCP, not only
     /// one clicked in the app.
     ///
-    /// The most recent unclosed start wins. Several starts in a day are
-    /// normal — you pick something up, put it down, pick up something else —
-    /// and the last one standing is what you are on.
+    /// Focus is one slot (RFC 0005 D11). A newer start displaces an older
+    /// one for good: the older start is not "still open underneath", so
+    /// closing or pausing the newer one leaves nothing in focus rather than
+    /// bringing the older back. A close, pause or promotion that names
+    /// anything other than the slot's own action changes nothing.
     pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
         let view = self.read_daily_note(date)?;
         if !view.exists {
@@ -998,10 +1000,9 @@ impl Vault {
             return Ok(None);
         };
 
-        // Walk forward keeping the open starts in order; a completion
-        // clears its matching start wherever it sits, since a day can
-        // interleave several.
-        let mut open: Vec<CurrentFocus> = Vec::new();
+        // Walk forward holding the single focus slot: a start replaces it,
+        // and a close empties it only when it names the slot's own action.
+        let mut slot: Option<CurrentFocus> = None;
         //
         // Read the entry **heads** — first physical lines — not the
         // folded entries `parse_log_lines` produces. Focus matching
@@ -1014,7 +1015,7 @@ impl Vault {
         // continuation line load-bearing rather than decorative.
         for (time, text) in parse_log_entry_heads(section) {
             if let Some((project, action)) = parse_focus_marker(&text, LOG_STARTED_PREFIX) {
-                open.push(CurrentFocus {
+                slot = Some(CurrentFocus {
                     project,
                     action,
                     started: time,
@@ -1025,33 +1026,37 @@ impl Vault {
                     // completion does; only the claim about what
                     // happened differs. Without this arm an abandoned
                     // action would stay "what you are on" for ever,
-                    // since nothing else ever clears an open start.
+                    // since nothing else clears the slot short of a newer start.
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
                     // A pause also closes the action: it is work stopped,
                     // not work finished, but the result is the same — no
                     // focus is open until a resume or a new start.
                     .or_else(|| parse_focus_marker(&text, LOG_ACTION_PAUSED_PREFIX))
             {
-                open.retain(|f| !(f.project == project && f.action == action));
+                if slot
+                    .as_ref()
+                    .is_some_and(|f| f.project == project && f.action == action)
+                {
+                    slot = None;
+                }
             } else if let Some((project, title, new_slug)) = parse_promotion_marker(&text) {
                 // A promotion rewrites the bullet into a link to its new
                 // note; the person never stopped, so the open start is
                 // renamed in place and keeps its `started`. The energy
                 // comes from the start's own suffix, never from the map:
                 // promotion refuses a bullet without one, so a start
-                // lacking it cannot be the subject.
-                if let Some((f, energy)) = open.iter_mut().rev().find_map(|f| {
-                    if f.project != project || strip_energy_suffix(&f.action).trim() != title {
-                        return None;
-                    }
-                    let energy = parse_bullet_energy(&f.action)?;
-                    Some((f, energy))
-                }) {
+                // lacking it cannot be the subject. Only the slot can be
+                // renamed; a promotion of a displaced start changes nothing.
+                if let Some(f) = slot.as_mut()
+                    && f.project == project
+                    && strip_energy_suffix(&f.action).trim() == title
+                    && let Some(energy) = parse_bullet_energy(&f.action)
+                {
                     f.action = format!("[[{new_slug}]] ({})", energy.as_str());
                 }
             }
         }
-        Ok(open.pop())
+        Ok(slot)
     }
 }
 
