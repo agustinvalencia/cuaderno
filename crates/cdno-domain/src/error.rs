@@ -37,6 +37,14 @@ impl FocusRemedy {
     }
 }
 
+/// Message for a `FocusOpen` rejection: the action the agent must handle
+/// before starting a different one (RFC 0005 §5.1).
+pub const FOCUS_OPEN_MESSAGE: &str =
+    "An action is already in focus. Ask the person before switching; do not retry.";
+
+/// Message for a `NoFocus` rejection: nothing is open to act on.
+pub const NO_FOCUS_MESSAGE: &str = "Nothing is started.";
+
 impl DomainError {
     /// For a `FocusOpen`, its [`FocusRemedy`]; `None` for any other error.
     pub fn focus_remedy(&self) -> Option<FocusRemedy> {

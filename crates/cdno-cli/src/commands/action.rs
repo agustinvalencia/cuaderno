@@ -18,7 +18,7 @@ use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{ActionStatus, EnergyLevel};
-use cdno_domain::{ActionListEntry, AttachedAction, Vault};
+use cdno_domain::{ActionListEntry, AttachedAction, FOCUS_OPEN_MESSAGE, NO_FOCUS_MESSAGE, Vault};
 
 use crate::bootstrap;
 use crate::completions;
@@ -1399,7 +1399,7 @@ pub fn focus_open_rejection(
 ) -> serde_json::Value {
     let mut object = serde_json::json!({
         "code": "focus_open",
-        "message": "An action is already in focus. Ask the person before switching; do not retry.",
+        "message": FOCUS_OPEN_MESSAGE,
         "details": {
             "focus": {
                 "project": focus.project,
@@ -1423,7 +1423,7 @@ pub fn focus_open_rejection(
 pub fn no_focus_rejection() -> serde_json::Value {
     serde_json::json!({
         "code": "no_focus",
-        "message": "Nothing is started.",
+        "message": NO_FOCUS_MESSAGE,
         "details": {},
     })
 }

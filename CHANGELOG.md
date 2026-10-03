@@ -134,7 +134,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `no_focus`. `focus_open` carries `details.focus` (the open action, its start time and date, and
   whether it was carried from an earlier day), `details.same_action` and `details.remedy`
   (`already_focused` when the same action, `resume_action` when carried, `switch_action`
-  otherwise). `no_focus` has empty details. The remedy value comes from `DomainError::focus_remedy()`.
+  otherwise). `no_focus` has empty details. The remedy value is computed from `DomainError::focus_remedy()`.
+  `start_action` and `start_unplanned_action` refusals now arrive as coded `focus_open` rejections
+  rather than plain protocol errors, so an agent can read the remedy without parsing prose.
 
 ### Changed
 

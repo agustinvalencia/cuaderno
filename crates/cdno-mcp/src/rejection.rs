@@ -60,6 +60,7 @@
 
 use cdno_core::error::{ManipulationError, StoreError, ValidationError};
 use cdno_domain::error::DomainError;
+use cdno_domain::{FOCUS_OPEN_MESSAGE, NO_FOCUS_MESSAGE};
 use rmcp::ErrorData;
 use rmcp::model::{CallToolResult, Content};
 use serde::Serialize;
@@ -145,6 +146,23 @@ pub(crate) enum RejectionCode {
     UnrepresentableFrontmatterValue,
     UnresolvedPrompts,
     WaitingOnNotFound,
+}
+
+/// The message for a classified rejection.
+///
+/// Most codes use the domain error's own `Display` text, carried inside the
+/// payload rather than only in the protocol envelope — that envelope is
+/// exactly what the client in #560 throws away. Two codes (`focus_open`,
+/// `no_focus`) use RFC-specified text instead (RFC 0005 §5.1 and the remedy
+/// rule): the domain's wording names what the agent should do, while the
+/// MCP rejection must say what the person must do, so the agent can read
+/// the fix without parsing prose.
+fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
+    match code {
+        RejectionCode::FocusOpen => FOCUS_OPEN_MESSAGE.to_string(),
+        RejectionCode::NoFocus => NO_FOCUS_MESSAGE.to_string(),
+        _ => e.to_string(),
+    }
 }
 
 /// The `code` an agent can branch on, plus the fields it needs to
@@ -339,7 +357,12 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
             same_action,
             carried,
         } => {
-            let remedy = cdno_domain::FocusRemedy::of(*same_action, *carried).as_str();
+            // The remedy is computed from the domain error itself; focus_remedy()
+            // encodes the three remedy cases.
+            let remedy = e
+                .focus_remedy()
+                .expect("FocusOpen variant always yields a remedy")
+                .as_str();
             (
                 RejectionCode::FocusOpen,
                 json!({
@@ -508,17 +531,7 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::Config(_) => return None,
     };
 
-    // `message` is the domain's own `Display` output, carried inside the
-    // payload rather than only in the protocol envelope — that envelope
-    // is exactly what the client in #560 throws away.
-    let message = match code {
-        RejectionCode::FocusOpen => {
-            "An action is already in focus. Ask the person before switching; do not retry."
-                .to_string()
-        }
-        RejectionCode::NoFocus => "Nothing is started.".to_string(),
-        _ => e.to_string(),
-    };
+    let message = rejection_message(code, e);
     Some(json!({ "code": code, "message": message, "details": details }))
 }
 
@@ -937,7 +950,7 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
         let time = NaiveTime::from_hms_opt(9, 10, 0).unwrap();
         let focus = CurrentFocus {
-            project: "thesis".into(),
+            project: "surrogate-model".into(),
             action: "Draft methods (deep)".into(),
             started: time,
             date: day,
