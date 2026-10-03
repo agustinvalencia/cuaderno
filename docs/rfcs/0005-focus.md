@@ -538,7 +538,7 @@ Last paused: thesis — Draft methods section (10:40), next: pick up at "Prior a
 
 ```json
 {"project": "thesis", "action": "[[actions/draft-methods]] (deep)",
- "title": "Draft methods section", "note": "actions/draft-methods", "energy": "deep",
+ "title": "draft-methods", "note": "actions/draft-methods", "energy": "deep",
  "started": "08:50", "started_at": "2026-10-02T08:50", "date": "2026-10-02",
  "carried": false, "origin": {"started_at": "2026-09-30T14:05"},
  "elapsed_minutes": 135,
@@ -546,7 +546,9 @@ Last paused: thesis — Draft methods section (10:40), next: pick up at "Prior a
 ```
 
 `action` stays the raw bullet text (what `complete_action` expects back); `title` strips the
-link and suffix for display and `note` is the attached slug or null. `started` (HH:MM) stays
+link and suffix for display — for an attached note that is the slug's last segment, not the note's
+own title, so no extra read is needed (maintainer's decision, #759) — and `note` is the attached
+slug or null. `started` (HH:MM) stays
 for compatibility. `origin` is null unless the focus was resumed.
 
 `cdno now --line` emits one sanitised, length-capped line for prompt segments and the hook —
