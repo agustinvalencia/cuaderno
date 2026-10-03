@@ -10,6 +10,7 @@ use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
+use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::Context;
 use cdno_domain::vault::{days_since_mtime_in, mtime_threshold_ns_in};
 use cdno_domain::{
@@ -268,7 +269,6 @@ fn get_project_full_errors_on_missing_slug() {
     let (vault, _store) = vault_with(&[]);
     let err = vault.get_project_full("nonexistent").unwrap_err();
     use cdno_core::error::StoreError;
-    use cdno_domain::error::DomainError;
     assert!(matches!(err, DomainError::Store(StoreError::NotFound(_))));
 }
 
@@ -884,6 +884,453 @@ fn the_energy_suffix_is_preserved_and_still_matches_on_completion() {
     ]);
 
     assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+// ---------------------------------------------------------------------
+// current_focus across days (RFC 0005 §5.2, D11): the daily notes from
+// `today - carry_over_days` to today fold through the one slot, oldest
+// note first, line order within a note, with no early stop.
+// ---------------------------------------------------------------------
+
+/// `focus_day()` minus `n` days.
+fn days_ago(n: u64) -> NaiveDate {
+    focus_day() - chrono::Days::new(n)
+}
+
+/// A vault holding one daily note per `(date, lines)` pair, read with
+/// `[focus] carry_over_days = window`, plus any `extra` notes.
+fn focus_days_in(
+    window: u32,
+    days: &[(NaiveDate, &[&str])],
+    extra: &[(&str, &str)],
+) -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    for (date, lines) in days {
+        store
+            .write_file(&vp(&daily_path(*date)), &daily_with(*date, lines))
+            .unwrap();
+    }
+    for (path, body) in extra {
+        store.write_file(&vp(path), body).unwrap();
+    }
+    let mut config = VaultConfig::default();
+    config.focus.carry_over_days = window;
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    (vault, store)
+}
+
+/// [`focus_days_in`] with the default window (`carry_over_days = 1`).
+fn focus_days(days: &[(NaiveDate, &[&str])]) -> Vault {
+    assert_eq!(VaultConfig::default().focus.carry_over_days, 1);
+    focus_days_in(1, days, &[]).0
+}
+
+const START_X: &str = "**14:05**: started [[alpha]] \u{2014} Draft the methods section (deep)";
+const DONE_X: &str =
+    "**09:10**: action done on [[alpha]] \u{2014} Draft the methods section (deep)";
+
+#[test]
+fn a_start_yesterday_closed_today_is_not_a_focus() {
+    let vault = focus_days(&[(days_ago(1), &[START_X]), (focus_day(), &[DONE_X])]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn a_start_yesterday_left_open_is_the_focus_with_yesterdays_date() {
+    let vault = focus_days(&[(days_ago(1), &[START_X])]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(14, 5, 0).unwrap());
+    assert_eq!(
+        focus.date,
+        days_ago(1),
+        "the date of the note the start is in"
+    );
+}
+
+#[test]
+fn a_start_today_carries_todays_date() {
+    let vault = focus_days(&[(focus_day(), &[START_X])]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.date, focus_day());
+}
+
+#[test]
+fn a_start_two_days_ago_is_outside_the_default_window() {
+    let vault = focus_days(&[(days_ago(2), &[START_X])]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn window_two_d2_start_d1_start_d0_close_is_no_focus() {
+    // Z was displaced by Y the moment Y started, so closing Y leaves
+    // nothing — Z does not come back across days either.
+    let (vault, _store) = focus_days_in(
+        2,
+        &[
+            (
+                days_ago(2),
+                &["**09:00**: started [[alpha]] \u{2014} Write Z (deep)"],
+            ),
+            (
+                days_ago(1),
+                &["**10:00**: started [[beta]] \u{2014} Write Y (light)"],
+            ),
+            (
+                focus_day(),
+                &["**08:30**: action done on [[beta]] \u{2014} Write Y (light)"],
+            ),
+        ],
+        &[],
+    );
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn window_two_reaches_a_start_two_days_ago() {
+    let (vault, _store) = focus_days_in(2, &[(days_ago(2), &[START_X])], &[]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.date, days_ago(2));
+}
+
+#[test]
+fn two_starts_yesterday_closing_the_later_today_leaves_nothing() {
+    let vault = focus_days(&[
+        (
+            days_ago(1),
+            &[
+                "**09:00**: started [[alpha]] \u{2014} Write X (deep)",
+                "**11:00**: started [[alpha]] \u{2014} Write Y (light)",
+            ],
+        ),
+        (
+            focus_day(),
+            &["**08:00**: action done on [[alpha]] \u{2014} Write Y (light)"],
+        ),
+    ]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn two_starts_yesterday_closing_the_earlier_today_leaves_the_later() {
+    let vault = focus_days(&[
+        (
+            days_ago(1),
+            &[
+                "**09:00**: started [[alpha]] \u{2014} Write X (deep)",
+                "**11:00**: started [[alpha]] \u{2014} Write Y (light)",
+            ],
+        ),
+        (
+            focus_day(),
+            &["**08:00**: action done on [[alpha]] \u{2014} Write X (deep)"],
+        ),
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Write Y (light)");
+    assert_eq!(focus.date, days_ago(1));
+}
+
+#[test]
+fn an_unrelated_close_today_does_not_hide_yesterdays_start() {
+    // Today's note holds a focus line, but one that names nothing in the
+    // slot: a reader that stopped at the newest note with any focus line
+    // would report nothing here.
+    let vault = focus_days(&[
+        (days_ago(1), &[START_X]),
+        (
+            focus_day(),
+            &["**08:00**: action done on [[beta]] \u{2014} Chase the venue (light)"],
+        ),
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.date, days_ago(1));
+}
+
+#[test]
+fn window_zero_reads_today_only() {
+    let (vault, _store) = focus_days_in(0, &[(days_ago(1), &[START_X])], &[]);
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+
+    // And today's own note still reads exactly as before.
+    let (vault, _store) = focus_days_in(
+        0,
+        &[(days_ago(1), &[START_X]), (focus_day(), &[START_X])],
+        &[],
+    );
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+    assert_eq!(focus.date, focus_day());
+}
+
+#[test]
+fn window_zero_does_not_pair_todays_close_with_yesterdays_start() {
+    // Today-only reading: the close has nothing to pair with and is dropped,
+    // and yesterday's start is not seen at all.
+    let (vault, _store) = focus_days_in(
+        0,
+        &[(days_ago(1), &[START_X]), (focus_day(), &[DONE_X])],
+        &[],
+    );
+
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn the_fold_keeps_line_order_within_a_note_not_stamp_order() {
+    // A hand-edited line out of stamp order keeps its place: the close
+    // stamped 08:00 sits before the start stamped 09:00 in the note, so it
+    // pairs with nothing and the start stands.
+    let vault = focus_days(&[(
+        focus_day(),
+        &[
+            "**08:00**: action done on [[alpha]] \u{2014} Write X (deep)",
+            "**09:00**: started [[alpha]] \u{2014} Write X (deep)",
+        ],
+    )]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Write X (deep)");
+}
+
+#[test]
+fn a_missing_note_inside_the_window_is_skipped() {
+    let (vault, _store) = focus_days_in(
+        3,
+        &[
+            (days_ago(3), &[START_X]),
+            (focus_day(), &["**08:00**: an ordinary line"]),
+        ],
+        &[],
+    );
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.date, days_ago(3));
+}
+
+#[test]
+fn a_malformed_note_inside_the_window_is_an_error_naming_it() {
+    // Yesterday's note has an opening `---` and no closing one. Reading
+    // past it as an empty day could hide an open start, so it is an error,
+    // and the message says which note, since it is not today's.
+    let yesterday = days_ago(1);
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(focus_day(), &["**08:00**: an ordinary line"])],
+        &[(
+            &daily_path(yesterday),
+            "---\ndate: 2026-07-12\n\n## Logs\n- **09:00**: started [[alpha]] \u{2014} X (deep)\n",
+        )],
+    );
+
+    let err = vault.current_focus(focus_day()).unwrap_err();
+
+    assert!(matches!(err, DomainError::Parse(_)), "{err:?}");
+    assert!(
+        err.to_string().contains(&daily_path(yesterday)),
+        "the message names the note: {err}"
+    );
+}
+
+#[test]
+fn a_promotion_today_of_yesterdays_start_renames_it_and_keeps_its_date() {
+    let vault = focus_days(&[
+        (
+            days_ago(1),
+            &["**14:05**: started [[alpha]] \u{2014} Draft methods (deep)"],
+        ),
+        (
+            focus_day(),
+            &[
+                "**08:30**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]",
+            ],
+        ),
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "[[actions/draft-methods]] (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(14, 5, 0).unwrap());
+    assert_eq!(focus.date, days_ago(1));
+}
+
+#[test]
+fn pausing_after_a_legacy_stack_is_no_focus() {
+    // A pre-RFC log stacked starts: X, then Y, then Y closed by hand. Under
+    // one slot X was displaced by Y, so there is nothing to pause today —
+    // not a pause of X.
+    let (vault, store) = focus_days_in(
+        1,
+        &[(
+            days_ago(1),
+            &[
+                "**09:00**: started [[alpha]] \u{2014} Write X (deep)",
+                "**10:00**: started [[alpha]] \u{2014} Write Y (light)",
+                "**11:00**: action done on [[alpha]] \u{2014} Write Y (light)",
+            ],
+        )],
+        &[],
+    );
+
+    let err = vault
+        .pause_action(focus_day().and_hms_opt(9, 0, 0).unwrap(), None, None)
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::NoFocus), "{err:?}");
+    assert!(
+        !store.exists(&vp(&daily_path(focus_day()))).unwrap(),
+        "nothing written today"
+    );
+}
+
+/// An active project `foo` whose `## Next Actions` holds two bullets.
+const FOO_MAP: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Fix the badge (light)\n";
+
+#[test]
+fn starting_a_carried_focus_again_says_to_resume_it() {
+    let (vault, store) = focus_days_in(
+        1,
+        &[(
+            days_ago(1),
+            &["**14:05**: started [[foo]] \u{2014} Draft methods (deep)"],
+        )],
+        &[("projects/foo.md", FOO_MAP)],
+    );
+
+    let err = vault
+        .start_action(focus_day().and_hms_opt(9, 0, 0).unwrap(), "foo", "draft")
+        .unwrap_err();
+
+    match &err {
+        DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        } => {
+            assert!(same_action);
+            assert!(carried);
+            assert_eq!(focus.date, days_ago(1));
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert_eq!(
+        err.to_string(),
+        "that action is already in focus, carried over from an earlier day \u{2014} foo: Draft \
+         methods (deep). Resume it instead of starting it"
+    );
+    assert!(
+        !store.exists(&vp(&daily_path(focus_day()))).unwrap(),
+        "a refused start writes nothing"
+    );
+}
+
+#[test]
+fn starting_another_action_over_a_carried_focus_is_refused_as_carried() {
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(
+            days_ago(1),
+            &["**14:05**: started [[foo]] \u{2014} Draft methods (deep)"],
+        )],
+        &[("projects/foo.md", FOO_MAP)],
+    );
+
+    let err = vault
+        .start_action(focus_day().and_hms_opt(9, 0, 0).unwrap(), "foo", "badge")
+        .unwrap_err();
+
+    match &err {
+        DomainError::FocusOpen {
+            same_action,
+            carried,
+            ..
+        } => {
+            assert!(!same_action);
+            assert!(carried);
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert_eq!(
+        err.to_string(),
+        "an action is already in focus \u{2014} foo: Draft methods (deep). Switch to the new \
+         action, or pause or complete this one first"
+    );
+}
+
+#[test]
+fn switching_from_a_carried_focus_pauses_it_today_and_starts_the_target() {
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(
+            days_ago(1),
+            &["**14:05**: started [[foo]] \u{2014} Draft methods (deep)"],
+        )],
+        &[("projects/foo.md", FOO_MAP)],
+    );
+
+    let outcome = vault
+        .switch_action(
+            focus_day().and_hms_opt(9, 0, 0).unwrap(),
+            "foo",
+            "badge",
+            None,
+            None,
+        )
+        .unwrap();
+
+    let paused = outcome.paused.expect("the carried focus was paused");
+    assert_eq!(paused.date, days_ago(1));
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+    assert_eq!(focus.action, "Fix the badge (light)");
+    assert_eq!(focus.date, focus_day());
+}
+
+#[test]
+fn a_focus_started_today_is_not_carried() {
+    // A focus opened and refused on the same day reports `carried: false`.
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(
+            focus_day(),
+            &["**08:05**: started [[foo]] \u{2014} Draft methods (deep)"],
+        )],
+        &[("projects/foo.md", FOO_MAP)],
+    );
+
+    let err = vault
+        .start_action(focus_day().and_hms_opt(9, 0, 0).unwrap(), "foo", "draft")
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DomainError::FocusOpen {
+                same_action: true,
+                carried: false,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
 }
 
 // ---------------------------------------------------------------------

@@ -56,8 +56,9 @@ must be a real em dash (U+2014), not a hyphen. A near-miss is skipped in silence
 beginning "started something" must never register as a focus — so `cdno lint` reports it instead,
 naming the line and the likely cause. Run it and fix what it points at.
 
-Otherwise, check the date. The focus is read from **today's** daily note only, so a start logged
-yesterday and never closed does not carry over.
+Otherwise, check the date. The focus is read from today's daily note and the
+`[focus] carry_over_days` days before it (default 1, so yesterday's too); a start logged earlier than
+that and never closed does not carry over.
 
 ## `cdno now` names the wrong action
 

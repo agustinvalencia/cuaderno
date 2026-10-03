@@ -8,7 +8,9 @@ comes back.
 cdno now [OPTIONS]
 ```
 
-There is no state behind this. It replays today's `## Logs`, so a start made from
+There is no state behind this. It replays the `## Logs` of today and of the
+`[focus] carry_over_days` days before it (default 1, so a start left open yesterday is still your
+focus this morning), so a start made from
 [`cdno action start`](action.md#cdno-action-start), from an agent over MCP, or typed into the daily
 note by hand all count — and a completion, a drop or a pause clears it. Nothing to keep in sync, and
 nothing to go stale.

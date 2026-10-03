@@ -28,11 +28,12 @@
 //! - [`Vault::tracking_series`] — numeric time series lifted from the
 //!   tracking notes' tables, ready for trend charts.
 
-use chrono::{Datelike, Duration, NaiveDate, NaiveTime};
+use chrono::{Datelike, Days, Duration, NaiveDate, NaiveDateTime, NaiveTime};
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use cdno_core::config::{Aggregate, PlotKind, TrackingSpec};
+use cdno_core::error::ParseError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::{MarkdownDocument, extract_first_table};
 use cdno_core::path::VaultPath;
@@ -973,7 +974,7 @@ impl Vault {
         self.config.tracking.get(activity)
     }
 
-    /// What you are in the middle of, according to today's log.
+    /// What you are in the middle of, according to the daily log.
     ///
     /// Starting an action writes `- **HH:MM**: started [[slug]] — text`
     /// into the daily note. A done, dropped or paused head of the same
@@ -990,73 +991,121 @@ impl Vault {
     /// closing or pausing the newer one leaves nothing in focus rather than
     /// bringing the older back. A close, pause or promotion that names
     /// anything other than the slot's own action changes nothing.
+    ///
+    /// The focus survives midnight within a window (RFC 0005 §5.2): the
+    /// daily notes from `date - [focus] carry_over_days` to `date` are
+    /// folded through the one slot, oldest note first and in line order
+    /// within each note, missing notes skipped. Every note in the window
+    /// is read — there is no early stop — so a close in a newer note pairs
+    /// with a start in an older one, and a newer note holding only an
+    /// unrelated close cannot hide an older start. The order is never a
+    /// sort by stamp: a hand-edited line keeps its place in its note. With
+    /// `carry_over_days = 0` only `date`'s note is read, as before RFC 0005.
     pub fn current_focus(&self, date: NaiveDate) -> Result<Option<CurrentFocus>, DomainError> {
-        let view = self.read_daily_note(date)?;
-        if !view.exists {
-            return Ok(None);
-        }
-        let doc = MarkdownDocument::parse(view.markdown)?;
-        let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
-            return Ok(None);
-        };
-
-        // Walk forward holding the single focus slot: a start replaces it,
-        // and a close empties it only when it names the slot's own action.
+        let window = u64::from(self.config.focus.carry_over_days);
         let mut slot: Option<CurrentFocus> = None;
-        //
-        // Read the entry **heads** — first physical lines — not the
-        // folded entries `parse_log_lines` produces. Focus matching
-        // compares a closing entry's action text against the start's,
-        // and a folded entry carries its continuation lines appended
-        // after a `"; "`. Matching on the head keeps the comparison
-        // against exactly the text the writer emitted, so a `reason:`
-        // continuation cannot perturb it and no delimiter has to be
-        // stripped back off — which is what makes the reason's
-        // continuation line load-bearing rather than decorative.
-        for (time, text) in parse_log_entry_heads(section) {
-            if let Some((project, action)) = parse_focus_marker(&text, LOG_STARTED_PREFIX) {
-                slot = Some(CurrentFocus {
-                    project,
-                    action,
-                    started: time,
-                });
-            } else if let Some((project, action)) =
-                parse_focus_marker(&text, LOG_ACTION_DONE_PREFIX)
-                    // A drop closes the action just as finally as a
-                    // completion does; only the claim about what
-                    // happened differs. Without this arm an abandoned
-                    // action would stay "what you are on" for ever,
-                    // since nothing else clears the slot short of a newer start.
-                    .or_else(|| parse_focus_marker(&text, LOG_ACTION_DROPPED_PREFIX))
-                    // A pause also closes the action: it is work stopped,
-                    // not work finished, but the result is the same — no
-                    // focus is open until a resume or a new start.
-                    .or_else(|| parse_focus_marker(&text, LOG_ACTION_PAUSED_PREFIX))
-            {
-                if slot
-                    .as_ref()
-                    .is_some_and(|f| f.project == project && f.action == action)
-                {
-                    slot = None;
-                }
-            } else if let Some((project, title, new_slug)) = parse_promotion_marker(&text) {
-                // A promotion rewrites the bullet into a link to its new
-                // note; the person never stopped, so the open start is
-                // renamed in place and keeps its `started`. The energy
-                // comes from the start's own suffix, never from the map:
-                // promotion refuses a bullet without one, so a start
-                // lacking it cannot be the subject. Only the slot can be
-                // renamed; a promotion of a displaced start changes nothing.
-                if let Some(f) = slot.as_mut()
-                    && f.project == project
-                    && strip_energy_suffix(&f.action).trim() == title
-                    && let Some(energy) = parse_bullet_energy(&f.action)
-                {
-                    f.action = format!("[[{new_slug}]] ({})", energy.as_str());
-                }
+        // Oldest note first. A day before chrono's earliest date cannot hold
+        // a note, so it is skipped like a missing one.
+        for back in (0..=window).rev() {
+            let Some(day) = date.checked_sub_days(Days::new(back)) else {
+                continue;
+            };
+            for (stamp, text) in self.focus_heads(day)? {
+                fold_focus_head(&mut slot, stamp, &text);
             }
         }
         Ok(slot)
+    }
+
+    /// The `## Logs` entry heads of `date`'s daily note, each stamped with
+    /// that date, in line order. A missing note or one with no `## Logs`
+    /// section has none.
+    ///
+    /// Heads — first physical lines — not the folded entries
+    /// `parse_log_lines` produces. Focus matching compares a closing
+    /// entry's action text against the start's, and a folded entry carries
+    /// its continuation lines appended after a `"; "`. Matching on the head
+    /// keeps the comparison against exactly the text the writer emitted, so
+    /// a `reason:` continuation cannot perturb it and no delimiter has to be
+    /// stripped back off — which is what makes the reason's continuation
+    /// line load-bearing rather than decorative.
+    pub(crate) fn focus_heads(
+        &self,
+        date: NaiveDate,
+    ) -> Result<Vec<(NaiveDateTime, String)>, DomainError> {
+        let view = self.read_daily_note(date)?;
+        if !view.exists {
+            return Ok(Vec::new());
+        }
+        // A note that does not parse is an error, not an empty day: the
+        // window would otherwise read past it as if nothing were open. The
+        // error names the note, since it may not be today's.
+        let doc =
+            MarkdownDocument::parse(view.markdown).map_err(|e| parse_error_in(&view.path, e))?;
+        let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
+            return Ok(Vec::new());
+        };
+        Ok(parse_log_entry_heads(section)
+            .into_iter()
+            .map(|(time, text)| (date.and_time(time), text))
+            .collect())
+    }
+}
+
+/// `e` with the note it came from named in its message, keeping its variant.
+fn parse_error_in(path: &VaultPath, e: ParseError) -> DomainError {
+    let named = |msg: String| format!("{msg} (in {path})");
+    DomainError::Parse(match e {
+        ParseError::InvalidFrontmatter(msg) => ParseError::InvalidFrontmatter(named(msg)),
+        ParseError::MissingFrontmatter(msg) => ParseError::MissingFrontmatter(named(msg)),
+        ParseError::Yaml(msg) => ParseError::Yaml(named(msg)),
+    })
+}
+
+/// One step of the one-slot fold [`Vault::current_focus`] runs: a start
+/// replaces the slot, and a close empties it only when it names the slot's
+/// own action.
+fn fold_focus_head(slot: &mut Option<CurrentFocus>, stamp: NaiveDateTime, text: &str) {
+    if let Some((project, action)) = parse_focus_marker(text, LOG_STARTED_PREFIX) {
+        *slot = Some(CurrentFocus {
+            project,
+            action,
+            started: stamp.time(),
+            date: stamp.date(),
+        });
+    } else if let Some((project, action)) = parse_focus_marker(text, LOG_ACTION_DONE_PREFIX)
+        // A drop closes the action just as finally as a
+        // completion does; only the claim about what
+        // happened differs. Without this arm an abandoned
+        // action would stay "what you are on" for ever,
+        // since nothing else clears the slot short of a newer start.
+        .or_else(|| parse_focus_marker(text, LOG_ACTION_DROPPED_PREFIX))
+        // A pause also closes the action: it is work stopped,
+        // not work finished, but the result is the same — no
+        // focus is open until a resume or a new start.
+        .or_else(|| parse_focus_marker(text, LOG_ACTION_PAUSED_PREFIX))
+    {
+        if slot
+            .as_ref()
+            .is_some_and(|f| f.project == project && f.action == action)
+        {
+            *slot = None;
+        }
+    } else if let Some((project, title, new_slug)) = parse_promotion_marker(text) {
+        // A promotion rewrites the bullet into a link to its new
+        // note; the person never stopped, so the open start is
+        // renamed in place and keeps its `started` and `date`. The energy
+        // comes from the start's own suffix, never from the map:
+        // promotion refuses a bullet without one, so a start
+        // lacking it cannot be the subject. Only the slot can be
+        // renamed; a promotion of a displaced start changes nothing.
+        if let Some(f) = slot.as_mut()
+            && f.project == project
+            && strip_energy_suffix(&f.action).trim() == title
+            && let Some(energy) = parse_bullet_energy(&f.action)
+        {
+            f.action = format!("[[{new_slug}]] ({})", energy.as_str());
+        }
     }
 }
 
@@ -1069,6 +1118,10 @@ pub struct CurrentFocus {
     pub action: String,
     /// When it was started, from the log line's own stamp.
     pub started: NaiveTime,
+    /// The date of the daily note the open marker was read from — before
+    /// today when the focus was carried over (RFC 0005 §5.2). A promotion
+    /// keeps the start's date.
+    pub date: NaiveDate,
 }
 
 /// The `## Logs` entries as their **first physical lines** — `(time,

@@ -37,6 +37,19 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- **The focus survives midnight (RFC 0005, #726).** `cdno now`, `current_focus` and the focus
+  verbs now read the daily notes from today back `[focus] carry_over_days` days (default 1), folded
+  oldest first through the one slot, so a start left open yesterday is still your focus this
+  morning and a close today pairs with yesterday's start. A start older than the window is not a
+  focus. On the first morning after upgrading, a start left open yesterday therefore blocks
+  today's `start` with `FocusOpen`, now marked carried (starting that same action again says to
+  resume it); `switch`, or completing or dropping the focus, clears it. Set
+  `carry_over_days = 0` to keep reading today's note only, exactly as before. For now `switch`
+  and `pause` are domain verbs only and `resume` does not exist yet, so from the CLI or MCP a
+  carried focus is cleared by completing or dropping it, or with `carry_over_days = 0`; the verbs
+  arrive later in RFC 0005 (#732, #733, #735). A daily note inside the window that does not parse
+  is an error naming that note, rather than being read as an empty day.
+
 - **Focus is one slot (RFC 0005, D11, #746).** `cdno now` and `current_focus` now read a single
   slot instead of a stack of open starts. A newer start displaces an older one for good, and a close, pause or
   promotion only acts when it names the slot's own action. A log with start X, start Y, done Y

@@ -1,7 +1,8 @@
 //! `cdno now`: what you are in the middle of.
 //!
-//! A read verb over `Vault::current_focus`, which replays today's
-//! `## Logs` rather than holding state — so a start made from the CLI,
+//! A read verb over `Vault::current_focus`, which replays the `## Logs`
+//! of today and the `[focus] carry_over_days` days before it rather than
+//! holding state — so a start made from the CLI,
 //! from an agent over MCP, or by hand in an editor all count, and a
 //! completion, a drop or a pause clears it. Focus is one slot: a newer
 //! start displaces an older one for good. Nothing to keep in sync.
@@ -93,10 +94,10 @@ pub fn build_now(root: &Path, today: NaiveDate, now: NaiveTime) -> Result<String
 /// log with a stamp later than now, which this module's own "by hand"
 /// route invites. Saying nothing beats "-3h ago".
 ///
-/// Not a midnight crossing: `current_focus` is asked for one date and
-/// reads only that date's note, and `main.rs` takes a single
-/// `Local::now()` for both the date and the time, so yesterday's start
-/// is never read back to render against today's clock.
+/// A carried focus (RFC 0005 §5.2) is the known gap: `current_focus` now
+/// reads back a start from an earlier day within `carry_over_days`, and
+/// this compares times of day only, so such a start renders as if it
+/// were today's. Making this date-aware is RFC 0005's `cdno now` task.
 ///
 /// `pub` so `tests/now.rs` can pin it directly: it is the one piece of
 /// arithmetic here, and the crate's convention is a `pub` seam over an
