@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
 
     let server = CuadernoServer::new(Arc::new(opened.vault));
     // Derive the count from the merged router rather than hardcoding it,
-    // so the startup log can't drift out of sync as tools are added.
+    // so the startup log can't fall out of sync as tools are added.
     tracing::info!(
         tools = server.advertised_tools().len(),
         "vault opened; serving cdno-mcp tools over stdio"

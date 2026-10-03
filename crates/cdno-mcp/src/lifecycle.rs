@@ -40,7 +40,7 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Parked project at {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -56,7 +56,7 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.complete_project(at, &input.project))
             .await?
             .map_err(into_mcp_error)?;
-        self.verified_closure(outcome, "Completed").await
+        self.verified_closure(outcome, "Completed", at.date()).await
     }
 
     #[tool(
@@ -85,11 +85,11 @@ impl CuadernoServer {
             })
             .await?
             .map_err(into_mcp_error)?;
-        self.verified_closure(outcome, "Dropped").await
+        self.verified_closure(outcome, "Dropped", at.date()).await
     }
 
     #[tool(
-        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. Enforces the active-project cap — errors if the vault is already at the cap (park another first)."
+        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. Applies the active-project cap — errors if the vault is already at the cap (park another first)."
     )]
     pub async fn activate_project(
         &self,
@@ -101,7 +101,7 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Activated project at {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -166,12 +166,16 @@ impl CuadernoServer {
         &self,
         outcome: cdno_domain::ProjectClosureOutcome,
         verb: &str,
+        today: chrono::NaiveDate,
     ) -> Result<CallToolResult, ErrorData> {
         let path = outcome.outcome.primary.clone();
         let message = format!("{verb} project at {path}");
         let reported = path.to_string();
-        self.verified_write_with(path, WriteShape::Rewritten, move |verification| {
-            ProjectClosureDto {
+        self.verified_write_with_focus(
+            path,
+            WriteShape::Rewritten,
+            today,
+            move |verification, focus| ProjectClosureDto {
                 path: reported,
                 message,
                 dropped_actions: outcome.dropped_actions,
@@ -182,8 +186,9 @@ impl CuadernoServer {
                     .map(Into::into)
                     .collect(),
                 verification,
-            }
-        })
+                focus,
+            },
+        )
         .await
     }
 }

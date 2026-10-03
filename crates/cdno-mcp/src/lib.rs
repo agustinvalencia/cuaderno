@@ -57,6 +57,9 @@ pub mod startup;
 mod util;
 mod verify;
 
+#[cfg(test)]
+mod focus_closure_tests;
+
 pub use nudge::SyncNudge;
 pub use server::CuadernoServer;
 pub use smoke::SmokeServer;

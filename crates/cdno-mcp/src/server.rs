@@ -141,6 +141,8 @@ impl CuadernoServer {
     where
         R: Send + 'static,
     {
+        #[cfg(test)]
+        WITH_VAULT_CALLS.with(|calls| calls.set(calls.get() + 1));
         let vault = Arc::clone(&self.vault);
         tokio::task::spawn_blocking(move || f(&vault))
             .await
@@ -158,6 +160,15 @@ impl CuadernoServer {
                 )
             })
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times [`CuadernoServer::with_vault`] was entered on this
+    /// thread — one `spawn_blocking` each. Test-only: the unit tests run on
+    /// a current-thread runtime, so the handler's async half runs on the
+    /// test's own thread and parallel tests cannot see each other's count.
+    pub(crate) static WITH_VAULT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 // `router = self.tool_router` so the wire dispatch uses the MERGED
@@ -179,7 +190,7 @@ impl ServerHandler for CuadernoServer {
     /// opt in. See [`crate::rejection`] for the classification and for
     /// why it travels through `ErrorData::data` to get here.
     ///
-    /// # Forked from the macro, so it can drift
+    /// # Forked from the macro, so it can fall out of step
     ///
     /// The two lines before `.or_else` are a verbatim copy of what
     /// `rmcp-macros` **1.7.0** generates (`src/tool_handler.rs`), and the
@@ -218,7 +229,39 @@ impl ServerHandler for CuadernoServer {
                 // listing; the *judgement* about which note type a thing is belongs
                 // here, where it is paid once per session. The previous version
                 // pointed at `docs/design.md`, which an agent over MCP cannot read.
-                "Cuaderno is a vault manager for the Research Logbook Method (RLM). \
+                //
+                // FOCUS comes first and stays terse (RFC 0005 §5.6): Claude Code
+                // cuts server instructions at 2048 characters by default
+                // (`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`), and the whole text is
+                // past that, so whatever must reach every agent sits at the top.
+                // `instructions_carry_the_focus_protocol` pins it inside the cut.
+                "FOCUS\n\
+                One action can be in focus (current_focus). The server never refuses a \
+                write for being outside it; capture, note_to_daily and append_to_log \
+                tag their writes with it. Your part:\n\
+                1. Compare at project level: the focus's project and its linked \
+                portfolios and questions (your judgement from get_project_context) \
+                are no detour, nor are captures, tracking, commitments, reviews, \
+                orientation, reads.\n\
+                2. Only on a mismatch, say so in one sentence.\n\
+                3. Recommend: \"That's outside X. I'll capture it and we stay on X, \
+                unless you want it now or want to move over.\" Accept capture, an \
+                aside now (no log, no switch) or a move; else carry on.\n\
+                4. Ask at most once per topic per focus; you track it.\n\
+                5. Never ask why; log a `reason` only if volunteered.\n\
+                6. After a capture or aside, give a return cue from the focus and its \
+                `next:`.\n\
+                7. The person's explicit word is consent: when they name other work to \
+                do now (\"let's work on Y\", \"switch to Y\"), call switch_action if a \
+                focus is open, start_action if not (draft `next`, never invent it). \
+                Weaker gets a one-sentence proposal. pause_action/resume_action need \
+                their yes. On focus_open never retry; follow its `remedy`: \
+                already_focused needs nothing; for resume_action or switch_action, \
+                ask the person first.\n\
+                8. Once per focus per day, if a commitment outside its project is \
+                overdue or due today (get_orientation.commitments): \"Heads up: X is \
+                due today.\" No elapsed-time nudges.\n\n\
+                Cuaderno is a vault manager for the Research Logbook Method (RLM). \
                 Choosing the right note type matters more than calling the tool \
                 correctly, so read this before creating anything.\n\n\
                 The method runs two tracks over one vault. INQUIRY is open-ended: a \

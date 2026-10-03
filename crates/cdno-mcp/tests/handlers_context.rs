@@ -134,6 +134,176 @@ async fn get_orientation_accepts_and_ignores_energy_field() {
     assert!(value.get("commitments").is_some());
 }
 
+#[tokio::test]
+async fn orientation_carries_focus_and_last_paused() {
+    use cdno_domain::frontmatter::{Context, EnergyLevel};
+    let today = today();
+    let yesterday = today - chrono::Duration::days(1);
+    let server = server_with(|vault| {
+        // Create three projects
+        vault
+            .create_project(
+                today.and_hms_opt(8, 0, 0).unwrap(),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+        vault
+            .create_project(
+                today.and_hms_opt(8, 1, 0).unwrap(),
+                "Analysis tool",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+        vault
+            .create_project(
+                today.and_hms_opt(8, 2, 0).unwrap(),
+                "Other project",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+
+        // Last paused: Start and pause an action on analysis-tool (yesterday, still paused)
+        vault
+            .add_action(
+                yesterday.and_hms_opt(10, 0, 0).unwrap(),
+                "analysis-tool",
+                "Run experiments",
+                EnergyLevel::Medium,
+            )
+            .unwrap();
+        vault
+            .start_action(
+                yesterday.and_hms_opt(10, 0, 0).unwrap(),
+                "analysis-tool",
+                "Run experiments",
+            )
+            .unwrap();
+        vault
+            .pause_action(
+                yesterday.and_hms_opt(11, 0, 0).unwrap(),
+                Some("midpoint"),
+                Some("context switch"),
+            )
+            .unwrap();
+
+        // Focus: Start an action on surrogate-model (today)
+        vault
+            .add_action(
+                today.and_hms_opt(8, 0, 0).unwrap(),
+                "surrogate-model",
+                "Research papers",
+                EnergyLevel::Deep,
+            )
+            .unwrap();
+        vault
+            .start_action(
+                today.and_hms_opt(9, 0, 0).unwrap(),
+                "surrogate-model",
+                "Research papers",
+            )
+            .unwrap();
+
+        // other-project: has neither focus nor paused
+    });
+
+    let result = server
+        .get_orientation(Parameters(GetOrientationInput { energy: None }))
+        .await
+        .expect("get_orientation");
+    let value = decode_json(&result);
+
+    // Check projects
+    let projects = value["projects"].as_array().unwrap();
+    assert_eq!(projects.len(), 3);
+
+    // Find surrogate-model: should have focus, no last_paused
+    let surrogate = projects
+        .iter()
+        .find(|p| p["slug"].as_str().unwrap() == "surrogate-model")
+        .unwrap();
+    assert!(
+        surrogate["last_paused"].is_null(),
+        "surrogate-model should have null last_paused"
+    );
+
+    // Check the focus: should be on surrogate-model, not carried
+    let focus = &value["focus"];
+    assert!(!focus.is_null(), "focus should be non-null");
+    assert_eq!(focus["project"].as_str().unwrap(), "surrogate-model");
+    assert!(
+        focus["action"]
+            .as_str()
+            .unwrap()
+            .contains("Research papers")
+    );
+    assert_eq!(focus["started"].as_str().unwrap(), "09:00");
+    assert_eq!(focus["date"].as_str().unwrap(), today.to_string());
+    assert!(!focus["carried"].as_bool().unwrap());
+
+    // Find analysis-tool: should have last_paused with next and reason
+    let analysis = projects
+        .iter()
+        .find(|p| p["slug"].as_str().unwrap() == "analysis-tool")
+        .unwrap();
+    let last_paused = &analysis["last_paused"];
+    assert!(
+        !last_paused.is_null(),
+        "analysis-tool should have a last_paused"
+    );
+    assert_eq!(last_paused["project"].as_str().unwrap(), "analysis-tool");
+    assert!(
+        last_paused["action"]
+            .as_str()
+            .unwrap()
+            .contains("Run experiments")
+    );
+    assert_eq!(last_paused["next"].as_str().unwrap(), "midpoint");
+    assert_eq!(last_paused["reason"].as_str().unwrap(), "context switch");
+
+    // Find other-project: should have null last_paused
+    let other = projects
+        .iter()
+        .find(|p| p["slug"].as_str().unwrap() == "other-project")
+        .unwrap();
+    assert!(
+        other["last_paused"].is_null(),
+        "other-project should have null last_paused"
+    );
+}
+
+#[tokio::test]
+async fn orientation_focus_is_null_when_nothing_open() {
+    use cdno_domain::frontmatter::Context;
+    let today = today();
+    let server = server_with(|vault| {
+        vault
+            .create_project(
+                today.and_hms_opt(8, 0, 0).unwrap(),
+                "Test",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .get_orientation(Parameters(GetOrientationInput { energy: None }))
+        .await
+        .expect("get_orientation");
+    let value = decode_json(&result);
+
+    // focus field must be present but null when nothing is open
+    assert!(value.get("focus").is_some(), "focus field must be present");
+    assert!(
+        value["focus"].is_null(),
+        "focus must be null when nothing is open"
+    );
+}
+
 // ---------------------------------------------------------------------
 // get_active_questions
 // ---------------------------------------------------------------------
@@ -1259,7 +1429,13 @@ async fn search_notes_rejects_unknown_note_type() {
         .await
         .unwrap_err();
     assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
-    assert!(err.message.contains("note_type"), "msg: {}", err.message);
+    // Exact, so agent guidance pasted into the field name is caught (review
+    // of #769).
+    assert_eq!(
+        err.message,
+        "invalid 'note_type': unknown note type 'bogus'"
+    );
+    assert!(!err.message.contains("FOCUS section"), "{}", err.message);
 }
 
 #[tokio::test]
@@ -2121,6 +2297,68 @@ async fn get_project_context_reads_a_closed_project() {
     assert_eq!(value["frontmatter"]["status"], "dropped");
     assert_eq!(value["frontmatter"]["closed"], "2026-09-01");
     assert!(value["body_markdown"].as_str().unwrap().contains("# Beta"));
+}
+
+#[tokio::test]
+async fn project_context_carries_last_paused() {
+    use cdno_domain::frontmatter::{Context, EnergyLevel};
+    use cdno_mcp::server::ProjectSlugInput;
+    let server = server_with(|vault| {
+        vault
+            .create_project(
+                moment(2026, 10, 3, 8, 0),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+
+        // Pause an action on the project
+        vault
+            .add_action(
+                moment(2026, 10, 2, 10, 0),
+                "surrogate-model",
+                "Run experiments",
+                EnergyLevel::Medium,
+            )
+            .unwrap();
+        vault
+            .start_action(
+                moment(2026, 10, 2, 10, 0),
+                "surrogate-model",
+                "Run experiments",
+            )
+            .unwrap();
+        vault
+            .pause_action(
+                moment(2026, 10, 3, 8, 30),
+                Some("at phase 2"),
+                Some("time limit"),
+            )
+            .unwrap();
+    });
+
+    let value = decode_json(
+        &server
+            .get_project_context(Parameters(ProjectSlugInput {
+                project: "surrogate-model".to_owned(),
+            }))
+            .await
+            .expect("get_project_context"),
+    );
+
+    let last_paused = &value["last_paused"];
+    assert!(!last_paused.is_null(), "last_paused should be present");
+    assert_eq!(last_paused["project"].as_str().unwrap(), "surrogate-model");
+    assert!(
+        last_paused["action"]
+            .as_str()
+            .unwrap()
+            .contains("experiments")
+    );
+    assert_eq!(last_paused["next"].as_str().unwrap(), "at phase 2");
+    assert_eq!(last_paused["reason"].as_str().unwrap(), "time limit");
+    assert_eq!(last_paused["date"].as_str().unwrap(), "2026-10-03");
 }
 
 /// A vault with one project completed today, one dropped 40 days ago (out

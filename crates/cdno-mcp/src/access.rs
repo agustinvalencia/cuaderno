@@ -6,7 +6,7 @@
 //! signed identity assertion in the `Cf-Access-Jwt-Assertion` header
 //! toward the origin. This module verifies that assertion on **every**
 //! request — defence in depth per design decision D5: the tunnel is
-//! never trusted alone, so a leaked tunnel hostname, a misconfigured
+//! never trusted alone, so an exposed tunnel hostname, a misconfigured
 //! Access policy, or another local process pointed at the port all
 //! still fail here.
 //!
@@ -16,7 +16,7 @@
 //!   from the token header — `alg: none` and cross-algorithm
 //!   confusion are structurally impossible.
 //! - **`iss` must equal the team URL** and **`aud` must contain the
-//!   Access application's AUD tag**; `exp` is required (all enforced
+//!   Access application's AUD tag**; `exp` is required (all checked
 //!   by `jsonwebtoken`'s `Validation`).
 //! - **Keys come from the team JWKS** (`{team}/cdn-cgi/access/certs`),
 //!   fetched at startup — construction fails if the fetch does, so

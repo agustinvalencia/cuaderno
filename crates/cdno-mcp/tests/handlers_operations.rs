@@ -3207,6 +3207,52 @@ async fn pause_action_with_nothing_in_focus_is_a_no_focus_rejection() {
         .await
         .expect_err("nothing to pause");
     assert_eq!(rejection_of(&err)["code"], "no_focus");
+    assert_eq!(
+        rejection_of(&err)["message"],
+        cdno_domain::NO_FOCUS_TO_PAUSE_MESSAGE
+    );
+}
+
+/// A second pause is refused, but a resumable pause exists, so the message
+/// must not say there is none (review of #769).
+#[tokio::test]
+async fn a_second_pause_says_nothing_is_in_focus_not_that_nothing_is_paused() {
+    let (server, _store) = server_with_focus();
+    let pause = || PauseActionInput {
+        next: None,
+        reason: None,
+    };
+    server
+        .pause_action(Parameters(pause()))
+        .await
+        .expect("first pause");
+    let err = server
+        .pause_action(Parameters(pause()))
+        .await
+        .expect_err("nothing left to pause");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "no_focus");
+    assert_eq!(rejection["message"], "Nothing is in focus to pause.");
+
+    server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect("the pause is still resumable");
+}
+
+#[tokio::test]
+async fn resume_action_with_nothing_to_resume_is_a_no_focus_rejection_with_its_own_message() {
+    let (server, _store) = server_with_project();
+    let err = server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect_err("nothing to resume");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["code"], "no_focus");
+    assert_eq!(
+        rejection["message"],
+        "Nothing to resume: no focus carried over and no pause."
+    );
 }
 
 #[tokio::test]
@@ -3299,6 +3345,58 @@ async fn resume_action_reopens_a_pause_and_reports_where_it_came_from() {
     assert!(
         body.contains("resumed [[surrogate-model]] \u{2014} Draft methods section (deep)"),
         "{body}"
+    );
+}
+
+/// Runtime strings carry what happened, never agent guidance: the FOCUS
+/// pointers belong in tool descriptions (review of #769, where they had
+/// landed in this message and in three error field names).
+#[tokio::test]
+async fn runtime_strings_do_not_carry_the_focus_pointers() {
+    let (server, _store) = server_with_focus();
+    server
+        .pause_action(Parameters(PauseActionInput {
+            next: None,
+            reason: None,
+        }))
+        .await
+        .expect("pause_action");
+    let result = server
+        .resume_action(Parameters(ResumeActionInput { project: None }))
+        .await
+        .expect("resume_action");
+    let payload = decode_json(&result);
+    let message = payload["message"].as_str().expect("message");
+    assert_eq!(
+        message,
+        format!(
+            "Resumed on surrogate-model, logged to {}",
+            payload["path"].as_str().expect("path")
+        )
+    );
+    assert!(!message.contains("FOCUS section"), "{message}");
+
+    let err = server
+        .set_core_question(Parameters(SetCoreQuestionInput {
+            project: "surrogate-model".to_owned(),
+            core_question: Some("questions/research/foo".to_owned()),
+            clear: true,
+        }))
+        .await
+        .expect_err("both given");
+    assert_eq!(
+        err.message,
+        "invalid 'clear': pass either `core_question` or `clear: true`, not both"
+    );
+
+    let err = server
+        .note_to_daily(Parameters(note_input("  ", "substance")))
+        .await
+        .expect_err("blank heading");
+    assert!(
+        err.message.starts_with("invalid 'heading': required:"),
+        "{}",
+        err.message
     );
 }
 
@@ -3421,4 +3519,470 @@ async fn only_a_focus_open_rejection_gets_attempted() {
         rejection["details"].get("attempted").is_none(),
         "{rejection}"
     );
+}
+
+// --- focus on every write payload (RFC 0005 §5.5, #736) -----------------
+
+/// The seventeen tools whose success payload carries `focus`.
+const FOCUSED_WRITES: [&str; 17] = [
+    "start_action",
+    "start_unplanned_action",
+    "switch_action",
+    "switch_unplanned_action",
+    "pause_action",
+    "resume_action",
+    "complete_action",
+    "drop_action",
+    "promote_action",
+    "add_action",
+    "append_to_log",
+    "capture",
+    "note_to_daily",
+    "park_project",
+    "activate_project",
+    "complete_project",
+    "drop_project",
+];
+
+/// A vault for the focus table, before anything is in focus:
+/// `surrogate-model` with three open bullets and an open pause on
+/// `Run ablation` (started then paused this morning), `side-quest` (active,
+/// nothing open, so it can be parked, completed or dropped) and `old-idea`
+/// (parked, so it can be activated). Today's daily note is written as the
+/// domain writes it.
+fn server_for_focus_table() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with(|vault, store| {
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+        for (title, energy) in [
+            ("Draft methods section", EnergyLevel::Deep),
+            ("Run ablation", EnergyLevel::Deep),
+            ("Write abstract", EnergyLevel::Light),
+        ] {
+            vault
+                .add_action(moment(2026, 5, 1, 9, 5), "surrogate-model", title, energy)
+                .unwrap();
+        }
+        vault
+            .start_action(today_at(8, 0), "surrogate-model", "Run ablation")
+            .unwrap();
+        vault.pause_action(today_at(8, 30), None, None).unwrap();
+        store
+            .write_file(
+                &vp("projects/side-quest.md"),
+                "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-01-01\ncore_question: null\nclosed: null\n---\n\n# Side quest\n\n## Next Actions\n- [x] Ship (deep)\n",
+            )
+            .unwrap();
+        store
+            .write_file(
+                &vp("projects/_parked/old-idea.md"),
+                "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-01\ncore_question: null\nclosed: null\n---\n\n# Old idea\n\n## Next Actions\n",
+            )
+            .unwrap();
+    })
+}
+
+/// Call one of [`FOCUSED_WRITES`] with arguments valid on
+/// [`server_for_focus_table`].
+async fn call_focused_write(
+    server: &CuadernoServer,
+    tool: &str,
+) -> Result<CallToolResult, rmcp::model::ErrorData> {
+    let project = || "surrogate-model".to_owned();
+    match tool {
+        "start_action" => {
+            server
+                .start_action(Parameters(StartActionInput {
+                    project: project(),
+                    query: "Write abstract".to_owned(),
+                }))
+                .await
+        }
+        "start_unplanned_action" => {
+            server
+                .start_unplanned_action(Parameters(StartUnplannedActionInput {
+                    project: project(),
+                    title: "Fix the CI badge".to_owned(),
+                    energy: "light".to_owned(),
+                }))
+                .await
+        }
+        "switch_action" => {
+            server
+                .switch_action(Parameters(SwitchActionInput {
+                    project: project(),
+                    query: "Write abstract".to_owned(),
+                    next: None,
+                    reason: None,
+                }))
+                .await
+        }
+        "switch_unplanned_action" => {
+            server
+                .switch_unplanned_action(Parameters(SwitchUnplannedActionInput {
+                    project: project(),
+                    title: "Fix the CI badge".to_owned(),
+                    energy: "light".to_owned(),
+                    next: None,
+                    reason: None,
+                }))
+                .await
+        }
+        "pause_action" => {
+            server
+                .pause_action(Parameters(PauseActionInput {
+                    next: None,
+                    reason: None,
+                }))
+                .await
+        }
+        "resume_action" => {
+            server
+                .resume_action(Parameters(ResumeActionInput { project: None }))
+                .await
+        }
+        "complete_action" => {
+            server
+                .complete_action(Parameters(ActionQueryInput {
+                    project: project(),
+                    query: "Write abstract".to_owned(),
+                }))
+                .await
+        }
+        "drop_action" => {
+            server
+                .drop_action(Parameters(DropActionInput {
+                    project: project(),
+                    query: "Write abstract".to_owned(),
+                    reason: None,
+                }))
+                .await
+        }
+        "promote_action" => {
+            server
+                .promote_action(Parameters(PromoteActionInput {
+                    project: project(),
+                    query: "Write abstract".to_owned(),
+                    vars: None,
+                }))
+                .await
+        }
+        "add_action" => {
+            server
+                .add_action(Parameters(AddActionInput {
+                    project: project(),
+                    title: "Plot the loss curves".to_owned(),
+                    energy: "medium".to_owned(),
+                    with_note: false,
+                    vars: None,
+                }))
+                .await
+        }
+        "append_to_log" => {
+            server
+                .append_to_log(Parameters(AppendToLogInput {
+                    text: "read a related paper".to_owned(),
+                }))
+                .await
+        }
+        "capture" => {
+            server
+                .capture(Parameters(CaptureInput {
+                    text: "look into mixed precision".to_owned(),
+                }))
+                .await
+        }
+        "note_to_daily" => {
+            server
+                .note_to_daily(Parameters(NoteToDailyInput {
+                    date: None,
+                    heading: "Loss scaling".to_owned(),
+                    body: "Scale the loss before the backward pass.".to_owned(),
+                }))
+                .await
+        }
+        "park_project" => {
+            server
+                .park_project(Parameters(ProjectSlugInput {
+                    project: "side-quest".to_owned(),
+                }))
+                .await
+        }
+        "activate_project" => {
+            server
+                .activate_project(Parameters(ProjectSlugInput {
+                    project: "old-idea".to_owned(),
+                }))
+                .await
+        }
+        "complete_project" => {
+            server
+                .complete_project(Parameters(ProjectSlugInput {
+                    project: "side-quest".to_owned(),
+                }))
+                .await
+        }
+        "drop_project" => {
+            server
+                .drop_project(Parameters(DropProjectInput {
+                    project: "side-quest".to_owned(),
+                    reason: None,
+                    open_items: OpenItemsChoice::Refuse,
+                    expected_open_items: None,
+                }))
+                .await
+        }
+        other => panic!("not a focused write: {other}"),
+    }
+}
+
+/// What `current_focus` returns on `server` right now, as JSON.
+async fn current_focus_json(server: &CuadernoServer) -> serde_json::Value {
+    let result = server
+        .current_focus(Parameters(cdno_mcp::server::EmptyInput {}))
+        .await
+        .expect("current_focus");
+    decode_json(&result)
+}
+
+/// What a row of the focus table expects of its tool's result.
+#[derive(Debug, Clone, Copy)]
+enum FocusAfter {
+    /// Success, and `focus` is exactly the focus the phase began with.
+    Same,
+    /// Success, and `focus` is null.
+    Null,
+    /// Success, and `focus` is a new one on this action text: the tool
+    /// opens or moves the focus by construction.
+    Opened(&'static str),
+    /// Refused with this rejection code: there is no success payload.
+    Refused(&'static str),
+}
+
+/// Run one row against a fresh copy of the phase's vault.
+async fn check_focus_row(
+    phase: &str,
+    tool: &str,
+    expect: FocusAfter,
+    begin: &serde_json::Value,
+    server: &CuadernoServer,
+) {
+    let outcome = call_focused_write(server, tool).await;
+    let payload = match (expect, outcome) {
+        (FocusAfter::Refused(code), Err(err)) => {
+            assert_eq!(rejection_of(&err)["code"], code, "{phase}: {tool}");
+            return;
+        }
+        (FocusAfter::Refused(code), Ok(r)) => {
+            panic!("{phase}: {tool} should be refused with {code}, got {r:?}")
+        }
+        (_, Err(err)) => panic!("{phase}: {tool} failed: {err:?}"),
+        (_, Ok(r)) => decode_json(&r),
+    };
+    let focus = payload
+        .get("focus")
+        .unwrap_or_else(|| panic!("{phase}: {tool} payload has no `focus`: {payload}"));
+    // The invariant every row shares: the payload's focus is what
+    // `current_focus` returns after the write.
+    assert_eq!(
+        focus,
+        &current_focus_json(server).await,
+        "{phase}: {tool}'s focus is not current_focus"
+    );
+    match expect {
+        FocusAfter::Same => assert_eq!(focus, begin, "{phase}: {tool}"),
+        FocusAfter::Null => assert!(focus.is_null(), "{phase}: {tool}: {focus}"),
+        FocusAfter::Opened(action) => {
+            assert_eq!(focus["action"], action, "{phase}: {tool}: {focus}");
+            assert_eq!(focus["carried"], false, "{phase}: {tool}: {focus}");
+        }
+        FocusAfter::Refused(_) => unreachable!(),
+    }
+}
+
+/// Every listed write carries `focus` (RFC 0005 §5.5), and it is the focus
+/// `current_focus` reads after the write. Two phases, each row on a fresh
+/// vault: after a `start_action`, and after a `complete_action` of that
+/// start. A tool that opens, moves or closes the focus by construction
+/// (start, switch, pause, resume) cannot return the phase's focus unchanged,
+/// so its row names the focus it must return instead, or the rejection it
+/// gets in that phase.
+#[tokio::test]
+async fn every_listed_write_carries_focus() {
+    use FocusAfter::*;
+    let draft = "Draft methods section (deep)";
+
+    // Phase A: `Draft methods section` started through the tool.
+    let after_start: [(&str, FocusAfter); 17] = [
+        // A second start is refused while a focus is open; the phase's own
+        // start is checked below.
+        ("start_action", Refused("focus_open")),
+        ("start_unplanned_action", Refused("focus_open")),
+        ("switch_action", Opened("Write abstract (light)")),
+        (
+            "switch_unplanned_action",
+            Opened("Fix the CI badge (light)"),
+        ),
+        ("pause_action", Null),
+        // The open pause is on another action than the focus.
+        ("resume_action", Refused("focus_open")),
+        ("complete_action", Same),
+        ("drop_action", Same),
+        ("promote_action", Same),
+        ("add_action", Same),
+        ("append_to_log", Same),
+        ("capture", Same),
+        ("note_to_daily", Same),
+        ("park_project", Same),
+        ("activate_project", Same),
+        ("complete_project", Same),
+        ("drop_project", Same),
+    ];
+    // Phase B: that start then completed through the tool.
+    let after_complete: [(&str, FocusAfter); 17] = [
+        ("start_action", Opened("Write abstract (light)")),
+        ("start_unplanned_action", Opened("Fix the CI badge (light)")),
+        // With nothing open a switch is a plain start.
+        ("switch_action", Opened("Write abstract (light)")),
+        (
+            "switch_unplanned_action",
+            Opened("Fix the CI badge (light)"),
+        ),
+        ("pause_action", Refused("no_focus")),
+        // The morning's pause on `Run ablation` is still open.
+        ("resume_action", Opened("Run ablation (deep)")),
+        ("complete_action", Null),
+        ("drop_action", Null),
+        ("promote_action", Null),
+        ("add_action", Null),
+        ("append_to_log", Null),
+        ("capture", Null),
+        ("note_to_daily", Null),
+        ("park_project", Null),
+        ("activate_project", Null),
+        ("complete_project", Null),
+        ("drop_project", Null),
+    ];
+    for table in [&after_start, &after_complete] {
+        let tools: Vec<&str> = table.iter().map(|(t, _)| *t).collect();
+        assert_eq!(tools, FOCUSED_WRITES, "every listed tool, once");
+    }
+
+    let start = |server: CuadernoServer| async move {
+        let result = server
+            .start_action(Parameters(StartActionInput {
+                project: "surrogate-model".to_owned(),
+                query: "Draft methods".to_owned(),
+            }))
+            .await
+            .expect("start_action");
+        (server, decode_json(&result))
+    };
+
+    for (tool, expect) in after_start {
+        let (server, payload) = start(server_for_focus_table().0).await;
+        let begin = payload["focus"].clone();
+        assert_eq!(begin["action"], draft, "{payload}");
+        assert_eq!(begin, current_focus_json(&server).await);
+        check_focus_row("after start_action", tool, expect, &begin, &server).await;
+    }
+
+    for (tool, expect) in after_complete {
+        let (server, _) = start(server_for_focus_table().0).await;
+        let result = server
+            .complete_action(Parameters(ActionQueryInput {
+                project: "surrogate-model".to_owned(),
+                query: "Draft methods".to_owned(),
+            }))
+            .await
+            .expect("complete_action");
+        let begin = decode_json(&result)["focus"].clone();
+        assert!(begin.is_null(), "complete_action clears the focus: {begin}");
+        check_focus_row("after complete_action", tool, expect, &begin, &server).await;
+    }
+}
+
+/// A focus that cannot be read after a committed write is `focus: null`,
+/// never a tool error (RFC 0005 §5.5). Yesterday's daily note is inside the
+/// default focus window and is replaced, through the store, by one the
+/// markdown parser rejects (no frontmatter): `current_focus` itself fails,
+/// while writes to today's notes still land and report success.
+#[tokio::test]
+async fn a_failing_focus_read_yields_null_not_an_error() {
+    let (server, store) = server_with_focus();
+    let yesterday = chrono::Local::now().date_naive().pred_opt().unwrap();
+    store
+        .write_file(
+            &vp(&cdno_core::paths::daily_note_relpath(yesterday)),
+            "no frontmatter here\n\n## Logs\n",
+        )
+        .unwrap();
+    // The read genuinely fails: this is not "nothing open".
+    server
+        .current_focus(Parameters(cdno_mcp::server::EmptyInput {}))
+        .await
+        .expect_err("the focus window holds a note that does not parse");
+
+    let logged = server
+        .append_to_log(Parameters(AppendToLogInput {
+            text: "kept going regardless".to_owned(),
+        }))
+        .await
+        .expect("a write that landed is not an error");
+    let payload = decode_json(&logged);
+    assert!(payload["focus"].is_null(), "{payload}");
+    assert_eq!(payload["verification"]["verified"], "content", "{payload}");
+    assert!(todays_daily(&store).contains("kept going regardless"));
+
+    let captured = server
+        .capture(Parameters(CaptureInput {
+            text: "an idea for later".to_owned(),
+        }))
+        .await
+        .expect("a write that landed is not an error");
+    let payload = decode_json(&captured);
+    assert!(payload["focus"].is_null(), "{payload}");
+    assert!(
+        store
+            .exists(&vp(payload["path"].as_str().unwrap()))
+            .unwrap()
+    );
+}
+
+/// `note_to_daily` with a back-dated `date` writes to that day but reads the
+/// focus on today's clock, so its `focus` is what `current_focus` returns, not
+/// the focus as of the earlier day (which, outside the window, would be null).
+#[tokio::test]
+async fn note_to_daily_back_dated_still_reads_todays_focus() {
+    let (server, _store) = server_with_focus();
+    let three_days_ago = chrono::Local::now()
+        .date_naive()
+        .checked_sub_days(chrono::Days::new(3))
+        .unwrap();
+    let result = server
+        .note_to_daily(Parameters(NoteToDailyInput {
+            date: Some(three_days_ago),
+            heading: "Loss scaling".to_owned(),
+            body: "Scale the loss before the backward pass.".to_owned(),
+        }))
+        .await
+        .expect("note_to_daily");
+    let payload = decode_json(&result);
+    assert!(
+        payload["path"]
+            .as_str()
+            .unwrap()
+            .contains(&three_days_ago.to_string()),
+        "written to the back-dated day: {payload}"
+    );
+    let focus = &payload["focus"];
+    assert!(!focus.is_null(), "{payload}");
+    assert_eq!(focus["action"], "Draft methods section (deep)", "{payload}");
+    assert_eq!(focus, &current_focus_json(&server).await);
 }

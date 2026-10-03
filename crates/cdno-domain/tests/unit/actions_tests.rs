@@ -1756,7 +1756,10 @@ fn pause_with_nothing_started_is_no_focus() {
         .pause_action(dt(2026, 5, 26, 10, 0), None, None)
         .unwrap_err();
     assert!(matches!(err, DomainError::NoFocus), "got {err:?}");
-    assert_eq!(err.to_string(), "nothing is in focus or paused to act on");
+    assert_eq!(
+        err.to_string(),
+        "nothing to act on: pause needs an action in focus, resume a carried focus or a pause"
+    );
     assert!(
         !store
             .exists(&vp("journal/2026/daily/2026-05-26.md"))
@@ -2198,7 +2201,10 @@ fn resume_with_nothing_resumable_is_no_focus() {
             .resume_action(dt(2026, 5, 26, 9, 0), project)
             .unwrap_err();
         assert!(matches!(err, DomainError::NoFocus), "{project:?}: {err:?}");
-        assert_eq!(err.to_string(), "nothing is in focus or paused to act on");
+        assert_eq!(
+            err.to_string(),
+            "nothing to act on: pause needs an action in focus, resume a carried focus or a pause"
+        );
     }
     assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
 

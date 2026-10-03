@@ -36,7 +36,7 @@ use crate::server::CuadernoServer;
 #[tool_router(router = context_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "What the person is in the middle of right now: the action most recently started, unless it has since been completed, dropped or paused -- focus is one slot, so an older start never comes back -- or null if nothing is open. Read this BEFORE suggesting what to work on, and before acting on a request that may be a detour -- if the focus names something else, say so rather than silently starting a second thing. There is no state behind it: it replays the `## Logs` of today and of the `[focus] carry_over_days` days before it (default 1, so a start left open yesterday is still the focus), so a start made from the CLI or from this server counts, and a completion, a drop or a pause clears it. `promote_action` rewrites the bullet it matches and the focus follows it: after a promotion `action` is the new note's link, `[[actions/<slug>]] (energy)`, with the original start time. A line typed into the note by hand counts only in the writers' own shape, `- **HH:MM**: started [[slug]] \u{2014} text` -- the parser requires BOTH the `- **HH:MM**: ` stamp and that exact em-dash codepoint (U+2014), so prose is never mistaken for a focus; if the person insists something is started and this returns null, a missing stamp or an ASCII hyphen is the likely reason -- `lint` reports such a line and names the cause. `action` is the bullet text exactly as logged, which is the string `complete_action` expects back."
+        description = "What the person is in the middle of right now: the action most recently started, unless it has since been completed, dropped or paused -- focus is one slot, so an older start never comes back -- or null if nothing is open. Read this BEFORE suggesting what to work on, and before acting on a request that may be a detour -- if the focus names something else, say so rather than silently starting a second thing. There is no state behind it: it replays the `## Logs` of today and of the `[focus] carry_over_days` days before it (default 1, so a start left open yesterday is still the focus), so a start made from the CLI or from this server counts, and a completion, a drop or a pause clears it. `promote_action` rewrites the bullet it matches and the focus follows it: after a promotion `action` is the new note's link, `[[actions/<slug>]] (energy)`, with the original start time. A line typed into the note by hand counts only in the writers' own shape, `- **HH:MM**: started [[slug]] \u{2014} text` -- the parser requires BOTH the `- **HH:MM**: ` stamp and that exact em-dash codepoint (U+2014), so prose is never mistaken for a focus; if the person insists something is started and this returns null, a missing stamp or an ASCII hyphen is the likely reason -- `lint` reports such a line and names the cause. `action` is the bullet text exactly as logged, which is the string `complete_action` expects back. Before acting on a request outside the focus, read the FOCUS section of the server instructions."
     )]
     pub async fn current_focus(
         &self,
@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null."
     )]
     pub async fn get_orientation(
         &self,
@@ -66,7 +66,8 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.orientation_context(today))
             .await?
             .map_err(into_mcp_error)?;
-        json_result(OrientationContextDto::from(ctx))
+        let dto = OrientationContextDto::at(ctx, today);
+        json_result(dto)
     }
 
     #[tool(
@@ -247,7 +248,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope), malformed stewardship-dashboard bullets (`warning`; `## Active Habits` / `## Periodic Commitments` lines the canonical parsers reject), daily-log focus markers that `current_focus` will not read back (`warning`; a `started`/`action done on`/`action dropped on`/`action paused on`/`action promoted on` line whose `- **HH:MM**: ` stamp or em-dash separator is missing or malformed, or an `action promoted on` line not shaped `[[project]] \u{2014} \"title\" -> [[actions/<slug>]]` -- the message names the likely cause), a project whose `status` disagrees with its folder (`error`; the message names the manual fix) or whose `closed:` date is missing or stray (`warning`), and a custom template in `.cuaderno/templates/` that lacks a frontmatter key its built-in template has (`warning`; `cdno templates sync` adds it) or cannot be read (`error`). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
+        description = "Validate every indexed note and return a structured report: unknown note types, missing required fields, append-only violations, attachment-pairing problems (all `error`), broken wikilinks (`warning`; body links only -- frontmatter links like `project:`/`origin:` are out of scope), malformed stewardship-dashboard bullets (`warning`; `## Active Habits` / `## Periodic Commitments` lines the canonical parsers reject), daily-log focus markers that `current_focus` will not read back (`warning`; a `started`/`resumed`/`action done on`/`action dropped on`/`action paused on`/`action promoted on` line whose `- **HH:MM**: ` stamp or em-dash separator is missing or malformed, or an `action promoted on` line not shaped `[[project]] \u{2014} \"title\" -> [[actions/<slug>]]` -- the message names the likely cause), a project whose `status` disagrees with its folder (`error`; the message names the manual fix) or whose `closed:` date is missing or stray (`warning`), and a custom template in `.cuaderno/templates/` that lacks a frontmatter key its built-in template has (`warning`; `cdno templates sync` adds it) or cannot be read (`error`). The programmatic backing for the `vault-lint` skill; `clean` is true when nothing was found."
     )]
     pub async fn lint(
         &self,
@@ -276,7 +277,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), and the resolved core_question summary when the project sets one. Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), the resolved core_question summary when the project sets one, and the project's most recent pause still open for resuming (with its `next:` hint), or null. Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
     )]
     pub async fn get_project_context(
         &self,
@@ -286,11 +287,12 @@ impl CuadernoServer {
         let since = today - chrono::Duration::days(30);
 
         let project = input.project.clone();
-        let (fm, body, mentions, backlinks, core_question) = self
+        let (fm, body, mentions, backlinks, core_question, last_paused) = self
             .with_vault(move |vault| {
                 let project_full = vault.get_project_full(&project, today)?;
                 let fm = project_full.frontmatter;
                 let body = project_full.body;
+                let last_paused = project_full.last_paused;
                 let mentions = vault.daily_log_mentions(&project, since)?;
                 let backlinks = vault.project_backlinks(&project)?;
 
@@ -312,7 +314,7 @@ impl CuadernoServer {
                     None
                 };
 
-                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question))
+                Ok::<_, DomainError>((fm, body, mentions, backlinks, core_question, last_paused))
             })
             .await?
             .map_err(into_mcp_error)?;
@@ -335,6 +337,7 @@ impl CuadernoServer {
             recent_mentions,
             backlinks: backlinks.into(),
             core_question: core_question.map(QuestionSummaryDto::from),
+            last_paused: last_paused.map(Into::into),
         })
     }
 
