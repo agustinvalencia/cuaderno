@@ -107,6 +107,7 @@ pub(crate) enum RejectionCode {
     CommitmentNotActive,
     EmptyField,
     FieldNotSettable,
+    FocusOpen,
     HardMilestoneRequiresDate,
     ImplausibleDate,
     InvalidField,
@@ -119,6 +120,7 @@ pub(crate) enum RejectionCode {
     HistorySectionNotReplaceable,
     HistoryEntryHeadingInvalid,
     MissingSection,
+    NoFocus,
     NotFound,
     NoteNotRevisable,
     PeriodicDateUnwritable,
@@ -326,6 +328,34 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::MissingSection(section) => {
             (RejectionCode::MissingSection, json!({ "section": section }))
         }
+
+        // -------------------------------------------------------------
+        // Focus: the action the agent tried and what is already open.
+        // The remedy comes from `DomainError::focus_remedy()`, which is
+        // the only place the three remedy values live.
+        // -------------------------------------------------------------
+        DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        } => {
+            let remedy = cdno_domain::FocusRemedy::of(*same_action, *carried).as_str();
+            (
+                RejectionCode::FocusOpen,
+                json!({
+                    "focus": {
+                        "project": focus.project,
+                        "action": focus.action,
+                        "started": focus.started.format("%H:%M").to_string(),
+                        "date": focus.date.to_string(),
+                        "carried": carried,
+                    },
+                    "same_action": same_action,
+                    "remedy": remedy,
+                }),
+            )
+        }
+        DomainError::NoFocus => (RejectionCode::NoFocus, json!({})),
         DomainError::MissingFrontmatterField(field) => (
             RejectionCode::MissingFrontmatterField,
             json!({ "field": field }),
@@ -475,21 +505,21 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::Transaction(_)
         | DomainError::Path(_)
         | DomainError::Template(_)
-        | DomainError::Config(_)
-        // No MCP verb can raise NoFocus yet (pause arrives with RFC 0005's
-        // T14, which gives it a proper rejection code); until then it stays
-        // a plain protocol error carrying the domain's own message.
-        | DomainError::NoFocus
-        // FocusOpen is raised by start_action and start_unplanned_action
-        // today and reaches MCP clients as a plain error carrying the domain
-        // message, until T14 (#734) gives it the `focus_open` code.
-        | DomainError::FocusOpen { .. } => return None,
+        | DomainError::Config(_) => return None,
     };
 
     // `message` is the domain's own `Display` output, carried inside the
     // payload rather than only in the protocol envelope — that envelope
     // is exactly what the client in #560 throws away.
-    Some(json!({ "code": code, "message": e.to_string(), "details": details }))
+    let message = match code {
+        RejectionCode::FocusOpen => {
+            "An action is already in focus. Ask the person before switching; do not retry."
+                .to_string()
+        }
+        RejectionCode::NoFocus => "Nothing is started.".to_string(),
+        _ => e.to_string(),
+    };
+    Some(json!({ "code": code, "message": message, "details": details }))
 }
 
 /// Wrap a classified rejection for transport in `ErrorData::data`.
@@ -897,5 +927,113 @@ mod tests {
 
         let from_router = ErrorData::invalid_params("no such tool", None);
         assert!(decode(from_router).is_err());
+    }
+
+    #[test]
+    fn focus_open_classifies_with_the_three_remedies() {
+        use cdno_domain::CurrentFocus;
+        use chrono::{NaiveDate, NaiveTime};
+
+        let day = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 10, 0).unwrap();
+        let focus = CurrentFocus {
+            project: "thesis".into(),
+            action: "Draft methods (deep)".into(),
+            started: time,
+            date: day,
+            origin: None,
+        };
+
+        // Same action, not carried: already_focused
+        let payload = classify(&DomainError::FocusOpen {
+            focus: focus.clone(),
+            same_action: true,
+            carried: false,
+        })
+        .expect("focus_open is caller-actionable");
+
+        assert_eq!(payload["code"], "focus_open");
+        assert_eq!(
+            payload["message"],
+            "An action is already in focus. Ask the person before switching; do not retry."
+        );
+        assert_eq!(payload["details"]["same_action"], true);
+        assert_eq!(payload["details"]["remedy"], "already_focused");
+        assert_eq!(payload["details"]["focus"]["started"], "09:10");
+        assert_eq!(payload["details"]["focus"]["date"], "2026-10-01");
+
+        // Same action, carried: resume_action
+        let payload = classify(&DomainError::FocusOpen {
+            focus: focus.clone(),
+            same_action: true,
+            carried: true,
+        })
+        .expect("focus_open is caller-actionable");
+
+        assert_eq!(payload["code"], "focus_open");
+        assert_eq!(payload["details"]["remedy"], "resume_action");
+        assert_eq!(payload["details"]["focus"]["carried"], true);
+
+        // Different action (carried doesn't matter): switch_action
+        let payload = classify(&DomainError::FocusOpen {
+            focus,
+            same_action: false,
+            carried: false,
+        })
+        .expect("focus_open is caller-actionable");
+
+        assert_eq!(payload["code"], "focus_open");
+        assert_eq!(payload["details"]["remedy"], "switch_action");
+    }
+
+    #[test]
+    fn no_focus_classifies() {
+        let payload = classify(&DomainError::NoFocus).expect("no_focus is caller-actionable");
+
+        assert_eq!(payload["code"], "no_focus");
+        assert_eq!(payload["message"], "Nothing is started.");
+        assert_eq!(payload["details"], json!({}));
+    }
+
+    #[test]
+    fn focus_open_matches_the_shared_fixture_without_attempted() {
+        use cdno_domain::CurrentFocus;
+        use chrono::{NaiveDate, NaiveTime};
+
+        let day = NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        let time = NaiveTime::from_hms_opt(9, 10, 0).unwrap();
+        let focus = CurrentFocus {
+            project: "surrogate-model".into(),
+            action: "Draft methods section (deep)".into(),
+            started: time,
+            date: day,
+            origin: None,
+        };
+
+        let payload = classify(&DomainError::FocusOpen {
+            focus,
+            same_action: false,
+            carried: false,
+        })
+        .expect("focus_open classifies");
+
+        // Load and parse the fixture
+        let fixture_str = include_str!("../tests/fixtures/focus_open_rejection.json");
+        let mut fixture: Value = serde_json::from_str(fixture_str).expect("fixture parses");
+
+        // Remove attempted from fixture for comparison
+        fixture["details"]
+            .as_object_mut()
+            .unwrap()
+            .remove("attempted");
+
+        // Compare: both should be the same
+        assert_eq!(
+            payload,
+            fixture,
+            "MCP output must match the fixture (minus attempted): payload={}, fixture={}",
+            serde_json::to_string_pretty(&payload).unwrap(),
+            serde_json::to_string_pretty(&fixture).unwrap()
+        );
     }
 }
