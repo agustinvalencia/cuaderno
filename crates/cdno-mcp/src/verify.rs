@@ -45,7 +45,7 @@ use cdno_core::path::VaultPath;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 
-use crate::dto::{WriteResultDto, WriteVerificationDto};
+use crate::dto::{CurrentFocusDto, FocusedWriteResultDto, WriteResultDto, WriteVerificationDto};
 use crate::server::CuadernoServer;
 use crate::util::json_result;
 
@@ -128,6 +128,72 @@ impl CuadernoServer {
         // never reach here.
         self.nudge_sync_agent();
         json_result(build(verification))
+    }
+}
+
+impl CuadernoServer {
+    /// [`verified_write`](Self::verified_write) for a tool that writes a
+    /// daily-log line or changes a project map: the same payload plus the
+    /// focus (RFC 0005 §5.5).
+    pub(crate) async fn verified_write_focused(
+        &self,
+        path: VaultPath,
+        message: String,
+        shape: WriteShape,
+        today: chrono::NaiveDate,
+    ) -> Result<CallToolResult, ErrorData> {
+        let reported = path.to_string();
+        self.verified_write_with_focus(path, shape, today, |verification, focus| {
+            FocusedWriteResultDto {
+                write: WriteResultDto::new(reported, message, verification),
+                focus,
+            }
+        })
+        .await
+    }
+
+    /// [`verified_write_with`](Self::verified_write_with) whose `build` also
+    /// receives the focus as `current_focus(today)` reads it once the write
+    /// has landed (RFC 0005 §5.5).
+    ///
+    /// The focus is read in the **same** blocking closure as the
+    /// verification, after it. A second `with_vault` would be a second
+    /// `spawn_blocking`: it could read a focus another process changed in
+    /// between, and would double the lock traffic of every write. A focus
+    /// that cannot be read is `None` (logged at debug), never an error: the
+    /// write is verified by then, and an error would tell the caller that a
+    /// write which landed had failed.
+    ///
+    /// `today` is the date of the `at` the handler gave the domain, so the
+    /// focus is read on the same clock the write was stamped with.
+    pub(crate) async fn verified_write_with_focus<T: serde::Serialize>(
+        &self,
+        path: VaultPath,
+        shape: WriteShape,
+        today: chrono::NaiveDate,
+        build: impl FnOnce(WriteVerificationDto, Option<CurrentFocusDto>) -> T,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (verification, focus) = self
+            .with_vault(move |vault| {
+                let verification = verify(vault, &path, shape)?;
+                Ok::<_, ErrorData>((verification, focus_after_write(vault, today)))
+            })
+            .await??;
+        self.nudge_sync_agent();
+        json_result(build(verification, focus))
+    }
+}
+
+/// The focus on `today`, or `None` when nothing is open **or** it cannot be
+/// read. Only for after a committed write: see
+/// [`CuadernoServer::verified_write_with_focus`].
+fn focus_after_write(vault: &Vault, today: chrono::NaiveDate) -> Option<CurrentFocusDto> {
+    match vault.current_focus(today) {
+        Ok(focus) => focus.map(|f| CurrentFocusDto::at(f, today)),
+        Err(e) => {
+            tracing::debug!(error = %e, "focus unreadable after a write; reporting it as null");
+            None
+        }
     }
 }
 

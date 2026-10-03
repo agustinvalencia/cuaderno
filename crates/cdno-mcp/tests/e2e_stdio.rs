@@ -304,6 +304,69 @@ fn pause_switch_resume_over_stdio() {
     }
 }
 
+/// A write result carries the focus over the real binary (RFC 0005 §5.5):
+/// the start's own result, a log line written while it is open, and a
+/// completion that closes it, which reports `focus: null`.
+#[test]
+fn focus_is_on_the_write_result_over_stdio() {
+    let dir = TempDir::new().unwrap();
+    make_vault(dir.path());
+    let mut mcp = McpSubprocess::spawn(dir.path());
+    initialise(&mut mcp);
+
+    let mut id = 100;
+    let mut call = |mcp: &mut McpSubprocess, name: &str, arguments: Value| -> Value {
+        id += 1;
+        mcp.send(&json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }));
+        mcp.read_response(id)
+    };
+
+    let created = call(
+        &mut mcp,
+        "create_project",
+        json!({ "title": "Surrogate Model", "context": "university" }),
+    );
+    let slug = slug_of(&created);
+    call(
+        &mut mcp,
+        "add_action",
+        json!({ "project": slug, "title": "Draft methods section", "energy": "deep" }),
+    );
+
+    let started = call_payload(&call(
+        &mut mcp,
+        "start_action",
+        json!({ "project": slug, "query": "Draft methods" }),
+    ));
+    let focus = &started["focus"];
+    assert_eq!(focus["project"], slug.as_str(), "{started}");
+    assert_eq!(focus["action"], "Draft methods section (deep)", "{started}");
+    assert_eq!(focus["carried"], false, "{started}");
+
+    let logged = call_payload(&call(
+        &mut mcp,
+        "append_to_log",
+        json!({ "text": "read a related paper" }),
+    ));
+    assert_eq!(&logged["focus"], focus, "{logged}");
+    let current = call_payload(&call(&mut mcp, "current_focus", json!({})));
+    assert_eq!(&current, focus, "the same as `current_focus`");
+
+    let completed = call_payload(&call(
+        &mut mcp,
+        "complete_action",
+        json!({ "project": slug, "query": "Draft methods" }),
+    ));
+    let closed = completed
+        .as_object()
+        .and_then(|o| o.get("focus"))
+        .unwrap_or_else(|| panic!("`focus` present, null: {completed}"));
+    assert!(closed.is_null(), "{completed}");
+}
+
 #[test]
 fn tools_call_get_orientation_against_empty_vault_returns_empty_arrays() {
     let dir = TempDir::new().unwrap();

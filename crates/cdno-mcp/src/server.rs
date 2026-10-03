@@ -141,6 +141,8 @@ impl CuadernoServer {
     where
         R: Send + 'static,
     {
+        #[cfg(test)]
+        WITH_VAULT_CALLS.with(|calls| calls.set(calls.get() + 1));
         let vault = Arc::clone(&self.vault);
         tokio::task::spawn_blocking(move || f(&vault))
             .await
@@ -158,6 +160,15 @@ impl CuadernoServer {
                 )
             })
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times [`CuadernoServer::with_vault`] was entered on this
+    /// thread — one `spawn_blocking` each. Test-only: the unit tests run on
+    /// a current-thread runtime, so the handler's async half runs on the
+    /// test's own thread and parallel tests cannot see each other's count.
+    pub(crate) static WITH_VAULT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 // `router = self.tool_router` so the wire dispatch uses the MERGED
