@@ -955,7 +955,7 @@ fn run_switch(
     let daily = outcome
         .paths
         .iter()
-        .find(|p| p.to_string().starts_with("journal/"))
+        .find(|p| p.to_string().starts_with(&format!("{}/", cdno_core::paths::JOURNAL)))
         .unwrap_or(&outcome.primary);
     let message = match &outcome.paused {
         Some(p) => format!(
