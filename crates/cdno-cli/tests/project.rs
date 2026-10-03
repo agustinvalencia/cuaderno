@@ -810,6 +810,7 @@ fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
         context,
         state_snippet: state.to_owned(),
         top_action: None,
+        last_paused: None,
     }
 }
 
@@ -1434,4 +1435,49 @@ fn activate_from_done_works() {
     assert!(raw.contains("status: active"), "{raw}");
     assert!(raw.contains("closed: null"), "{raw}");
     assert!(!dir.path().join("projects/_done/2025/old.md").exists());
+}
+
+#[test]
+fn project_list_json_does_not_expose_last_paused() {
+    // RFC 0005 T9 adds last_paused to ProjectSummary, but it is internal
+    // and should not appear in CLI JSON output. Exposure in MCP and CLI
+    // are decided later in RFC 0005. This test pins that last_paused is not
+    // in `cdno project list --json` output, even with a genuinely unconsumed
+    // pause logged.
+    let dir = vault();
+    fs::write(
+        dir.path().join("projects/test-proj.md"),
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Test\n\n## Current State\nActive.\n",
+    )
+    .unwrap();
+    // Add a paused action to the daily log. No later start/resume/done/drop
+    // of the same text, so the pause remains genuinely unconsumed.
+    let daily = format!("{}/journal/2026/daily/2026-09-29.md", dir.path().display());
+    fs::write(
+        &daily,
+        "---\ndate: 2026-09-29\ntype: daily\n---\n\n# 2026-09-29\n\n## Logs\n\
+         - **14:15**: action paused on [[test-proj]] — Some task\n  \
+         next: Resume later\n",
+    )
+    .unwrap();
+
+    let out = cdno_bin()
+        .args(["--json", "--vault"])
+        .arg(dir.path())
+        .args(["project", "list"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let rows: serde_json::Value = serde_json::from_slice(&out).expect("stdout is JSON");
+    if let Some(arr) = rows.as_array() {
+        for proj in arr {
+            assert!(
+                !proj.get("last_paused").is_some(),
+                "ProjectSummary.last_paused must not be in JSON: {proj}"
+            );
+        }
+    }
 }

@@ -288,7 +288,9 @@ impl CuadernoServer {
         let project = input.project.clone();
         let (fm, body, mentions, backlinks, core_question) = self
             .with_vault(move |vault| {
-                let (fm, body) = vault.get_project_full(&project)?;
+                let project_full = vault.get_project_full(&project, today)?;
+                let fm = project_full.frontmatter;
+                let body = project_full.body;
                 let mentions = vault.daily_log_mentions(&project, since)?;
                 let backlinks = vault.project_backlinks(&project)?;
 

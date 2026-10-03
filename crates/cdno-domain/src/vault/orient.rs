@@ -11,6 +11,7 @@ use cdno_core::markdown::MarkdownDocument;
 use crate::error::DomainError;
 use crate::note_type::NoteType;
 
+use super::context::CurrentFocus;
 use super::stewardships::stewardship_slug_from_path;
 use super::{CommitmentEntry, ProjectSummary, Vault};
 
@@ -34,6 +35,11 @@ pub struct OrientationContext {
     pub projects: Vec<ProjectSummary>,
     /// Stewardship habits whose dashboard line declares them lapsed.
     pub lapsed_habits: Vec<LapsedHabit>,
+    /// The action currently in focus, if any. Carried so the morning
+    /// view shows the current work without a second call. Not exposed in
+    /// CLI JSON output; exposure in MCP and CLI are decided later in RFC 0005.
+    #[serde(skip)]
+    pub focus: Option<CurrentFocus>,
 }
 
 /// A stewardship habit whose `## Active Habits` line declares a lapse
@@ -51,12 +57,17 @@ impl Vault {
     ///
     /// Pure composition over existing queries: `commitments` (48h
     /// window + overdue look-back), a `project_summary` per active
-    /// project, and the lapsed-habit scan over stewardship
-    /// dashboards. A malformed project propagates the error rather
-    /// than being dropped — orientation should surface vault
+    /// project (including each project's most recent paused action if
+    /// one exists), the current focus, and the lapsed-habit scan over
+    /// stewardship dashboards. A malformed project propagates the error
+    /// rather than being dropped — orientation should surface vault
     /// problems, not hide them.
     pub fn orientation_context(&self, today: NaiveDate) -> Result<OrientationContext, DomainError> {
         let commitments = self.commitments(today, ORIENTATION_LOOKAHEAD_DAYS)?;
+
+        // Get the focus and paused actions in two calls.
+        let focus = self.current_focus(today)?;
+        let last_paused = self.last_paused(today)?;
 
         let mut projects = Vec::new();
         for (path, _frontmatter) in self.active_projects()? {
@@ -65,7 +76,10 @@ impl Vault {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
-            projects.push(self.project_summary(slug)?);
+            let mut summary = self.project_summary(slug)?;
+            // Look up this project's most recent pause in the map.
+            summary.last_paused = last_paused.get(slug).cloned();
+            projects.push(summary);
         }
 
         let lapsed_habits = self.lapsed_habits()?;
@@ -74,6 +88,7 @@ impl Vault {
             commitments,
             projects,
             lapsed_habits,
+            focus,
         })
     }
 

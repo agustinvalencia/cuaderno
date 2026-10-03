@@ -14,6 +14,7 @@ use crate::error::DomainError;
 use crate::frontmatter::{Context, EnergyLevel, ProjectStatus};
 
 use super::super::Vault;
+use super::super::context::LastPause;
 use super::{CURRENT_STATE_SECTION, NEXT_ACTIONS_SECTION};
 
 /// Compact view of a project for orientation displays and reviews.
@@ -34,6 +35,12 @@ pub struct ProjectSummary {
     pub context: Context,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
+    /// The most recent paused action for this project, when one exists
+    /// within `paused_lookback_days`. Carried here so orientation
+    /// consumers get it in the same pass that reads the log. Not exposed
+    /// in CLI JSON output; exposure in MCP and CLI are decided later in RFC 0005.
+    #[serde(skip)]
+    pub last_paused: Option<LastPause>,
 }
 
 /// One next-action line, with its energy bucket parsed when the
@@ -80,6 +87,7 @@ impl Vault {
             context: project.context,
             state_snippet,
             top_action,
+            last_paused: None,
         })
     }
 }

@@ -10,6 +10,7 @@ use cdno_domain::TopAction;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
+use chrono::NaiveDate;
 
 use super::support::{FailingStore, RacingStore};
 
@@ -3756,9 +3757,10 @@ fn locate_project_finds_active_parked_and_closed() {
         vault.project_summary("c").unwrap().status,
         ProjectStatus::Completed
     );
-    let (fm, body) = vault.get_project_full("c").unwrap();
-    assert_eq!(fm.status, ProjectStatus::Completed);
-    assert!(body.contains("# C"), "body: {body}");
+    let today = NaiveDate::from_ymd_opt(2026, 4, 1).unwrap();
+    let full = vault.get_project_full("c", today).unwrap();
+    assert_eq!(full.frontmatter.status, ProjectStatus::Completed);
+    assert!(full.body.contains("# C"), "body: {}", full.body);
 }
 
 #[test]

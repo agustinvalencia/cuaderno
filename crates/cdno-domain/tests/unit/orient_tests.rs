@@ -153,3 +153,51 @@ fn lapsed_habits_sorted_and_expanded_variant_included() {
     assert_eq!(lapsed[0].stewardship, "aqua");
     assert_eq!(lapsed[1].stewardship, "zeta");
 }
+
+// Tests for focus and last_paused (RFC 0005 T9)
+
+#[test]
+fn orientation_carries_the_focus_and_each_projects_last_pause() {
+    let today = ymd(2026, 5, 26);
+    let daily = "---\ntype: daily\ndate: 2026-05-26\n---\n\n# Daily\n\n## Logs\n- **14:05**: started [[alpha]] — Draft the methods section (deep)\n- **14:15**: action paused on [[beta]] — Review the outline (medium)\n  next: Polish section 2\n- **14:30**: started [[gamma]] — Refresh data (light)\n";
+
+    let gamma = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Gamma\n\n## Current State\nActive.\n\n## Next Actions\n- [ ] First task (light)\n";
+
+    let beta_active = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Beta\n\n## Current State\nOn track.\n\n## Next Actions\n- [ ] Review the outline (medium)\n";
+
+    let vault = vault_with(&[
+        ("projects/alpha.md", ALPHA),
+        ("projects/beta.md", beta_active),
+        ("projects/gamma.md", gamma),
+        ("journal/2026/daily/2026-05-26.md", daily),
+    ]);
+
+    let ctx = vault.orientation_context(today).unwrap();
+
+    // Focus should be the last started action of the day: gamma at 14:30.
+    assert!(ctx.focus.is_some(), "should have a focus");
+    let focus = ctx.focus.unwrap();
+    assert_eq!(focus.project, "gamma", "focus project");
+    assert_eq!(focus.action, "Refresh data (light)", "focus action");
+
+    // Three active projects in the summary (alpha, beta, gamma).
+    assert_eq!(ctx.projects.len(), 3, "three active projects");
+
+    // Alpha: has a started entry at 14:05 (not the current focus), no last_paused.
+    assert_eq!(ctx.projects[0].slug, "alpha");
+    assert!(ctx.projects[0].last_paused.is_none(), "alpha has no pause");
+
+    // Beta: has a paused entry at 14:15 with a next continuation, no focus.
+    assert_eq!(ctx.projects[1].slug, "beta");
+    let beta_pause = ctx.projects[1]
+        .last_paused
+        .as_ref()
+        .expect("beta has last_paused");
+    assert_eq!(beta_pause.project, "beta");
+    assert_eq!(beta_pause.action, "Review the outline (medium)");
+    assert_eq!(beta_pause.next, Some("Polish section 2".to_owned()));
+
+    // Gamma: has a started entry at 14:30 (the current focus), no last_paused.
+    assert_eq!(ctx.projects[2].slug, "gamma");
+    assert!(ctx.projects[2].last_paused.is_none(), "gamma has no pause");
+}

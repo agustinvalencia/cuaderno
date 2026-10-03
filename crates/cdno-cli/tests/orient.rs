@@ -140,3 +140,55 @@ fn orient_renders_each_project_as_a_card_with_its_next_action() {
         "the commitments section must not grow a gutter:\n{out}"
     );
 }
+
+#[test]
+fn orient_json_does_not_expose_focus_or_last_paused() {
+    // RFC 0005 T9 adds focus and last_paused to domain types, but they are
+    // internal and should not appear in CLI JSON output. Exposure in MCP
+    // and CLI are decided later in RFC 0005. This test pins that focus and
+    // last_paused are not in `cdno orient --json` output, even with a focus
+    // open and a genuinely unconsumed pause logged.
+    use assert_cmd::Command;
+
+    let dir = tempdir().unwrap();
+    seed_alpha_vault(dir.path());
+    // Add a paused action to the daily log. No later start/resume/done/drop
+    // of the same text, so the pause remains genuinely unconsumed.
+    let daily = format!("{}/journal/2026/daily/2026-05-27.md", dir.path().display());
+    fs::write(
+        &daily,
+        "---\ndate: 2026-05-27\ntype: daily\n---\n\n# 2026-05-27\n\n## Logs\n\
+         - **14:15**: action paused on [[alpha]] — Draft the methods section (deep)\n  \
+         next: Polish abstract\n",
+    )
+    .unwrap();
+
+    let out = Command::cargo_bin("cdno")
+        .expect("cdno binary built")
+        .args(["--vault"])
+        .arg(dir.path())
+        .args(["orient", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&out).expect("stdout is valid JSON");
+
+    // Check OrientationContext: no focus key.
+    assert!(
+        !json.get("focus").is_some(),
+        "OrientationContext.focus must not be in JSON: {json}"
+    );
+
+    // Check each ProjectSummary: no last_paused key.
+    if let Some(projects) = json.get("projects").and_then(|p| p.as_array()) {
+        for proj in projects {
+            assert!(
+                !proj.get("last_paused").is_some(),
+                "ProjectSummary.last_paused must not be in JSON: {proj}"
+            );
+        }
+    }
+}
