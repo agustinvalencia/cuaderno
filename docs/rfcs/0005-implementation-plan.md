@@ -1,7 +1,7 @@
 # RFC 0005 — Implementation plan
 
 Companion to [RFC 0005 — Focus](0005-focus.md) (merged as #718); tracked by #719, with T0–T21
-filed as #720–#741 in order and T3a (added by D11) as #746. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
+filed as #720–#741 in order, T3a (added by D11) as #746, and T5a (the window ceiling) as #753. Each task below is meant to be one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from the
 RFC 0002 and 0004 plans: a green suite is not a probe (a probe asserts the specific new behaviour,
 and where it guards a regression the breaking mutation is shown to fail), and no-regression probes
@@ -29,7 +29,7 @@ task requires, not from how many lines it touches.
 A task tiered M or S that turns out to need a decision the RFC does not make is stopped and the
 decision raised on its issue, not improvised.
 
-Tally: 6 M, 14 S, 3 R (T6, T7, T16). The three R tasks are the ones where a wrong answer is
+Tally: 7 M, 14 S, 3 R (T6, T7, T16). The three R tasks are the ones where a wrong answer is
 silent — a focus that quietly expires, quietly persists, or quietly lies after a write — and
 each has a mutation probe for exactly that.
 
@@ -45,6 +45,7 @@ flowchart LR
         T3a["T3a one-slot fold"]
         T4["T4 switch_action (+ unplanned)"]
         T5["T5 [focus] config"]
+        T5a["T5a window ceiling"]
         T6["T6 cross-day walk"]
         T7["T7 resumed + resume_action"]
         T8["T8 last_paused"]
@@ -77,6 +78,7 @@ flowchart LR
     T1 --> T4
     T3 --> T4
     T5 --> T6
+    T5 --> T5a
     T0 --> T6
     T2 --> T6
     T4 --> T7
@@ -937,6 +939,6 @@ contributor docs no longer describe the stranding.
 
 ## Suggested order of work
 
-Three tracks can run in parallel from day one: **A** T0 → T1 → T3 → T4; **B** T2; **C** T5. A and
+Three tracks can run in parallel from day one: **A** T0 → T1 → T3 → T4; **B** T2; **C** T5 (then T5a, the ceiling, which nothing else waits on). A and
 B meet at T3a (the one-slot fold, after T2 and T3); all three join at T6 (R), which gates T7 (R), then T8 → T9 → T10. The CLI and MCP stages are independent of
 each other once T7 and T8 are in; T16 (R) is the last piece of real risk. T19–T21 are the tail.
