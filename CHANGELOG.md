@@ -103,6 +103,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   the project it reads. These are domain-only fields, not exposed in `--json` output anywhere yet;
   MCP exposure comes later (#737) and the CLI decision later (#741).
 
+- **MCP `get_orientation` and `get_project_context` carry focus and last paused (RFC 0005, #737).**
+  `get_orientation` now returns `focus` (the current focus in the shape `CurrentFocusDto`, or null)
+  and each project carries `last_paused` (the project's most recent unresolved pause, or null).
+  `get_project_context` similarly carries `last_paused` for its project, so the person can pick up
+  a paused action without a second call to `get_orientation`. Both are additive: every existing
+  field is unchanged, nulls are present (not missing), and the tool descriptions state that these
+  fields exist. The focus is read inside the `get_orientation` handler in the same vault closure
+  that builds the context, using today's date.
+
 - **`Vault::last_paused` (RFC 0005, #728).** One pass over the daily notes from `today -
   paused_lookback_days` to `today` returns, per project, the most recent `paused` entry that no later
   line consumed (a start, resume, completion or drop of the same text, or a promotion of its
