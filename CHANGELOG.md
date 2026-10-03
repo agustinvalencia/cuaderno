@@ -8,6 +8,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`Vault::resume_action` and the `resumed` marker (RFC 0005, #727).** `resumed [[project]] — text`
+  is a new open marker: the focus reader takes it as close-plus-reopen at the line's own stamp, so
+  a focus resumed each morning stays inside the `carry_over_days` window, and `CurrentFocus` gains
+  `origin`, the earlier start it continues when the slot held the same action (a resume after a
+  pause, or over an empty or different slot, has none). `resume_action` resumes the focus carried
+  over from an earlier day, else the most recent pause within `paused_lookback_days` that no later
+  line consumed: a start or resume of the same text, its completion or drop, or a promotion of
+  its bullet. Given a project, both are restricted to that project. It returns the pause's date
+  and its `next:` / `reason:` lines. It refuses with `NoFocus` when nothing is resumable, with
+  `FocusOpen` when a different focus is in the slot, today's or carried, and with `FocusOpen`
+  (`same_action`) when there is no pause to resume and the focus, on the named project if one is
+  given, is already today's. Lint reports a
+  malformed `resumed` line. `NoFocus`, now shared by pause and resume, reads `nothing is in focus or
+  paused to act on`. Domain verb only; no CLI or MCP verb calls it yet.
+
 - **Focus configuration block (RFC 0005, #725).** The `[focus]` section in `.cuaderno/config.toml`
   declares two look-back windows: `carry_over_days` (default 1) for reading focus across days, and
   `paused_lookback_days` (default 14) for offering paused actions to resume. An unknown key in the
@@ -27,7 +42,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `action paused on [[project]] — text` entry with optional `next:` and `reason:` lines, using the
   focus's own text read back from the log. It resolves nothing against the project map, so a focus
   on a since-parked project can be paused and the map is never touched; with nothing started it
-  fails with the new `DomainError::NoFocus` (`nothing is started — nothing to pause`). No CLI or
+  fails with the new `DomainError::NoFocus` (`nothing is in focus or paused to act on`). No CLI or
   MCP verb calls it yet.
 
 - **The `paused` marker for the daily log (RFC 0005, #720).** `action paused on [[project]] — text`

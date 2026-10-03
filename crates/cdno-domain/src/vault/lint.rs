@@ -25,7 +25,7 @@ use super::context::{
 use super::orient::{ACTIVE_HABITS_SECTION, parse_habit_line};
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
-    LOG_ACTION_PROMOTED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_RESUMED_PREFIX, LOG_STARTED_PREFIX,
 };
 use super::stewardships::PERIODIC_COMMITMENTS_SECTION;
 use super::{DAILY_LOGS_SECTION, Vault};
@@ -615,9 +615,10 @@ struct FocusClaim<'a> {
     text: &'a str,
 }
 
-/// The five markers [`Vault::current_focus`] is built from.
-const FOCUS_MARKER_PREFIXES: [&str; 5] = [
+/// The six markers [`Vault::current_focus`] is built from.
+const FOCUS_MARKER_PREFIXES: [&str; 6] = [
     LOG_STARTED_PREFIX,
+    LOG_RESUMED_PREFIX,
     LOG_ACTION_DONE_PREFIX,
     LOG_ACTION_DROPPED_PREFIX,
     LOG_ACTION_PAUSED_PREFIX,

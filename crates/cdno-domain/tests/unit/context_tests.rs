@@ -1202,6 +1202,178 @@ fn pausing_after_a_legacy_stack_is_no_focus() {
     );
 }
 
+// ---------------------------------------------------------------------
+// The `resumed` marker (RFC 0005 §5.3): close-plus-reopen at its own
+// stamp, keeping the origin only when it continues the slot's action.
+// ---------------------------------------------------------------------
+
+const RESUME_X: &str = "**08:50**: resumed [[alpha]] \u{2014} Draft the methods section (deep)";
+
+#[test]
+fn a_resume_today_of_yesterdays_start_is_dated_today_with_yesterdays_origin() {
+    let vault = focus_days(&[(days_ago(1), &[START_X]), (focus_day(), &[RESUME_X])]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(focus.action, "Draft the methods section (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(8, 50, 0).unwrap());
+    assert_eq!(focus.date, focus_day(), "anchored at the resume");
+    assert_eq!(
+        focus.origin,
+        Some(days_ago(1).and_hms_opt(14, 5, 0).unwrap()),
+        "the start it continues"
+    );
+}
+
+#[test]
+fn a_resumed_focus_is_inside_the_window_the_day_after() {
+    // Tuesday start, resumed Wednesday through the verb, read Thursday with
+    // the default one-day window.
+    let (tuesday, wednesday, thursday) = (days_ago(2), days_ago(1), focus_day());
+    let (vault, _store) = focus_days_in(
+        1,
+        &[(
+            tuesday,
+            &["**14:05**: started [[foo]] \u{2014} Draft methods (deep)"],
+        )],
+        &[("projects/foo.md", FOO_MAP)],
+    );
+
+    let outcome = vault
+        .resume_action(wednesday.and_hms_opt(8, 50, 0).unwrap(), None)
+        .expect("the carried focus resumes");
+    let on_wednesday = vault.current_focus(wednesday).unwrap().expect("a focus");
+    assert_eq!(on_wednesday, outcome.resumed);
+    assert_eq!(on_wednesday.date, wednesday, "re-stamped at the resume");
+    assert_eq!(
+        on_wednesday.started,
+        NaiveTime::from_hms_opt(8, 50, 0).unwrap()
+    );
+    assert_eq!(
+        on_wednesday.origin,
+        Some(tuesday.and_hms_opt(14, 5, 0).unwrap())
+    );
+
+    let on_thursday = vault
+        .current_focus(thursday)
+        .unwrap()
+        .expect("still in focus on Thursday");
+    assert_eq!(on_thursday.action, "Draft methods (deep)");
+    assert_eq!(on_thursday.date, wednesday, "the Wednesday-dated focus");
+    assert_eq!(
+        on_thursday.started,
+        NaiveTime::from_hms_opt(8, 50, 0).unwrap()
+    );
+    // Tuesday's note is outside Thursday's window, so the origin is not seen.
+    assert_eq!(on_thursday.origin, None);
+}
+
+#[test]
+fn a_resume_with_no_open_marker_is_a_plain_start() {
+    let vault = focus_days(&[(focus_day(), &[RESUME_X])]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Draft the methods section (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(8, 50, 0).unwrap());
+    assert_eq!(focus.date, focus_day());
+    assert_eq!(focus.origin, None);
+}
+
+#[test]
+fn a_resume_over_a_different_focus_displaces_it_with_no_origin() {
+    let vault = focus_days(&[
+        (
+            days_ago(1),
+            &["**10:00**: started [[beta]] \u{2014} Chase the venue (light)"],
+        ),
+        (focus_day(), &[RESUME_X]),
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.project, "alpha");
+    assert_eq!(
+        focus.origin, None,
+        "a different action's stamp is no origin"
+    );
+}
+
+#[test]
+fn pause_then_resume_round_trips_without_a_second_verb() {
+    let paused_then_resumed: &[&str] = &[
+        "**09:00**: started [[alpha]] \u{2014} Draft the methods section (deep)",
+        "**10:40**: action paused on [[alpha]] \u{2014} Draft the methods section (deep)",
+        "**14:05**: resumed [[alpha]] \u{2014} Draft the methods section (deep)",
+    ];
+    let vault = focus_days(&[(focus_day(), paused_then_resumed)]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "Draft the methods section (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(14, 5, 0).unwrap());
+    assert_eq!(focus.origin, None, "the pause emptied the slot");
+
+    // And a done after the resume closes it.
+    let mut closed = paused_then_resumed.to_vec();
+    closed.push("**16:00**: action done on [[alpha]] \u{2014} Draft the methods section (deep)");
+    let vault = focus_days(&[(focus_day(), &closed)]);
+    assert_eq!(vault.current_focus(focus_day()).unwrap(), None);
+}
+
+#[test]
+fn a_promotion_after_a_resume_renames_and_keeps_the_resume_stamp() {
+    let vault = focus_days(&[
+        (
+            days_ago(1),
+            &["**14:05**: started [[alpha]] \u{2014} Draft methods (deep)"],
+        ),
+        (
+            focus_day(),
+            &[
+                "**08:50**: resumed [[alpha]] \u{2014} Draft methods (deep)",
+                "**09:30**: action promoted on [[alpha]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]",
+            ],
+        ),
+    ]);
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.action, "[[actions/draft-methods]] (deep)");
+    assert_eq!(focus.started, NaiveTime::from_hms_opt(8, 50, 0).unwrap());
+    assert_eq!(focus.date, focus_day());
+    assert_eq!(
+        focus.origin,
+        Some(days_ago(1).and_hms_opt(14, 5, 0).unwrap()),
+        "the rename keeps the origin too"
+    );
+}
+
+#[test]
+fn a_chain_of_resumes_keeps_the_earliest_origin_the_window_shows() {
+    let (vault, _store) = focus_days_in(
+        2,
+        &[
+            (days_ago(2), &[START_X]),
+            (
+                days_ago(1),
+                &["**09:00**: resumed [[alpha]] \u{2014} Draft the methods section (deep)"],
+            ),
+            (focus_day(), &[RESUME_X]),
+        ],
+        &[],
+    );
+
+    let focus = vault.current_focus(focus_day()).unwrap().expect("a focus");
+
+    assert_eq!(focus.date, focus_day());
+    assert_eq!(
+        focus.origin,
+        Some(days_ago(2).and_hms_opt(14, 5, 0).unwrap())
+    );
+}
+
 /// An active project `foo` whose `## Next Actions` holds two bullets.
 const FOO_MAP: &str = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Current State\nGoing.\n\n## Next Actions\n- [ ] Draft methods (deep)\n- [ ] Fix the badge (light)\n";
 

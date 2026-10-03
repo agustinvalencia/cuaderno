@@ -48,7 +48,8 @@ use super::DAILY_LOGS_SECTION;
 use super::Vault;
 use super::projects::actions::{
     LOG_ACTION_DONE_PREFIX, LOG_ACTION_DROPPED_PREFIX, LOG_ACTION_PAUSED_PREFIX,
-    LOG_ACTION_PROMOTED_PREFIX, LOG_STARTED_PREFIX,
+    LOG_ACTION_PROMOTED_PREFIX, LOG_NEXT_KEY, LOG_REASON_KEY, LOG_RESUMED_PREFIX,
+    LOG_STARTED_PREFIX,
 };
 use super::projects::actions::{
     parse_attached_action_slug, parse_bullet_energy, strip_energy_suffix,
@@ -990,7 +991,10 @@ impl Vault {
     /// one for good: the older start is not "still open underneath", so
     /// closing or pausing the newer one leaves nothing in focus rather than
     /// bringing the older back. A close, pause or promotion that names
-    /// anything other than the slot's own action changes nothing.
+    /// anything other than the slot's own action changes nothing. A
+    /// `resumed [[slug]] — text` line opens like a start but at its own
+    /// stamp, inheriting the slot's origin when it continues the same
+    /// action ([`CurrentFocus::origin`], RFC 0005 §5.3).
     ///
     /// The focus survives midnight within a window (RFC 0005 §5.2): the
     /// daily notes from `date - [focus] carry_over_days` to `date` are
@@ -1033,23 +1037,139 @@ impl Vault {
         &self,
         date: NaiveDate,
     ) -> Result<Vec<(NaiveDateTime, String)>, DomainError> {
+        let Some(section) = self.daily_logs_section(date)? else {
+            return Ok(Vec::new());
+        };
+        Ok(parse_log_entry_heads(&section)
+            .into_iter()
+            .map(|(time, text)| (date.and_time(time), text))
+            .collect())
+    }
+
+    /// The `## Logs` section of `date`'s daily note, or `None` when the note
+    /// is missing or has no such section.
+    fn daily_logs_section(&self, date: NaiveDate) -> Result<Option<String>, DomainError> {
         let view = self.read_daily_note(date)?;
         if !view.exists {
-            return Ok(Vec::new());
+            return Ok(None);
         }
         // A note that does not parse is an error, not an empty day: the
         // window would otherwise read past it as if nothing were open. The
         // error names the note, since it may not be today's.
         let doc =
             MarkdownDocument::parse(view.markdown).map_err(|e| parse_error_in(&view.path, e))?;
-        let Ok(section) = doc.section(DAILY_LOGS_SECTION) else {
-            return Ok(Vec::new());
-        };
-        Ok(parse_log_entry_heads(section)
-            .into_iter()
-            .map(|(time, text)| (date.and_time(time), text))
-            .collect())
+        Ok(doc.section(DAILY_LOGS_SECTION).ok().map(str::to_owned))
     }
+
+    /// The most recent pause a resume may reopen: the newest `paused` entry
+    /// among the daily notes from `today - [focus] paused_lookback_days` to
+    /// `today` that no later line in any of those notes consumed. A pause is
+    /// consumed by a `started`, `resumed`, `action done on` or `action
+    /// dropped on` of the same `(project, action)`, and by a promotion of its
+    /// bullet, matched as the fold's rename arm matches one (same project,
+    /// the energy-stripped text equal to the promoted title) — otherwise a
+    /// finished or promoted action would be offered for resume. With
+    /// `project`, only that project's pauses count.
+    ///
+    /// "Newest" is fold order — note order, then line order within a note —
+    /// never a sort by stamp, as for [`Vault::current_focus`]. The entry's
+    /// `next:` and `reason:` continuation lines are read back with it.
+    ///
+    /// A deliberately minimal reader for `resume_action` (RFC 0005 §5.3);
+    /// RFC 0005's `last_paused` (§5.5) generalises it to every project in
+    /// one pass.
+    pub(in crate::vault) fn last_resumable_pause(
+        &self,
+        today: NaiveDate,
+        project: Option<&str>,
+    ) -> Result<Option<ResumablePause>, DomainError> {
+        let window = u64::from(self.config.focus.paused_lookback_days);
+        // Every pause not yet followed by a reopen, oldest first.
+        let mut open: Vec<ResumablePause> = Vec::new();
+        for back in (0..=window).rev() {
+            let Some(day) = today.checked_sub_days(Days::new(back)) else {
+                continue;
+            };
+            let Some(section) = self.daily_logs_section(day)? else {
+                continue;
+            };
+            for (time, head, continuations) in parse_log_entries_with_continuations(&section) {
+                if let Some((project, action)) = parse_focus_marker(&head, LOG_ACTION_PAUSED_PREFIX)
+                {
+                    let value_of = |key: &str| {
+                        continuations
+                            .iter()
+                            .find_map(|c| c.strip_prefix(key))
+                            .filter(|v| !v.is_empty())
+                            .map(str::to_owned)
+                    };
+                    open.push(ResumablePause {
+                        next: value_of(LOG_NEXT_KEY),
+                        reason: value_of(LOG_REASON_KEY),
+                        project,
+                        action,
+                        at: day.and_time(time),
+                    });
+                } else if let Some((project, action)) =
+                    parse_focus_marker(&head, LOG_STARTED_PREFIX)
+                        .or_else(|| parse_focus_marker(&head, LOG_RESUMED_PREFIX))
+                        .or_else(|| parse_focus_marker(&head, LOG_ACTION_DONE_PREFIX))
+                        .or_else(|| parse_focus_marker(&head, LOG_ACTION_DROPPED_PREFIX))
+                {
+                    open.retain(|p| !(p.project == project && p.action == action));
+                } else if let Some((project, title, _)) = parse_promotion_marker(&head) {
+                    open.retain(|p| {
+                        !(p.project == project && strip_energy_suffix(&p.action).trim() == title)
+                    });
+                }
+            }
+        }
+        Ok(open
+            .into_iter()
+            .rev()
+            .find(|p| project.is_none_or(|slug| p.project == slug)))
+    }
+}
+
+/// A `paused` entry [`Vault::last_resumable_pause`] found: what was paused,
+/// when, and the continuations written with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::vault) struct ResumablePause {
+    pub project: String,
+    pub action: String,
+    pub at: NaiveDateTime,
+    pub next: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// The `## Logs` entries as `(time, head, continuations)`: the head is the
+/// entry's first physical line exactly as [`parse_log_entry_heads`] reads it,
+/// and `continuations` are its indented lines, each trimmed, in order.
+///
+/// Heads are accepted on exactly [`parse_log_entry_heads`]'s terms and
+/// continuations on exactly [`parse_log_lines`]'s, but kept as separate lines
+/// rather than joined with `"; "`, so a `next:` hint containing `"; "` cannot
+/// be confused with the `reason:` line after it.
+fn parse_log_entries_with_continuations(section: &str) -> Vec<(NaiveTime, String, Vec<String>)> {
+    let mut out: Vec<(NaiveTime, String, Vec<String>)> = Vec::new();
+    for line in section.lines() {
+        let trimmed = line.trim_end();
+        if let Some(rest) = trimmed.strip_prefix("- **") {
+            let Some((hhmm, after)) = rest.split_once("**: ") else {
+                continue;
+            };
+            let Ok(time) = NaiveTime::parse_from_str(hhmm, "%H:%M") else {
+                continue;
+            };
+            out.push((time, after.to_owned(), Vec::new()));
+        } else if !trimmed.is_empty()
+            && trimmed.starts_with(' ')
+            && let Some((_, _, continuations)) = out.last_mut()
+        {
+            continuations.push(trimmed.trim_start().to_owned());
+        }
+    }
+    out
 }
 
 /// `e` with the note it came from named in its message, keeping its variant.
@@ -1062,9 +1182,9 @@ fn parse_error_in(path: &VaultPath, e: ParseError) -> DomainError {
     })
 }
 
-/// One step of the one-slot fold [`Vault::current_focus`] runs: a start
-/// replaces the slot, and a close empties it only when it names the slot's
-/// own action.
+/// One step of the one-slot fold [`Vault::current_focus`] runs: a start or
+/// a resume replaces the slot, and a close empties it only when it names the
+/// slot's own action.
 fn fold_focus_head(slot: &mut Option<CurrentFocus>, stamp: NaiveDateTime, text: &str) {
     if let Some((project, action)) = parse_focus_marker(text, LOG_STARTED_PREFIX) {
         *slot = Some(CurrentFocus {
@@ -1072,7 +1192,13 @@ fn fold_focus_head(slot: &mut Option<CurrentFocus>, stamp: NaiveDateTime, text: 
             action,
             started: stamp.time(),
             date: stamp.date(),
+            origin: None,
         });
+    } else if let Some((project, action)) = parse_focus_marker(text, LOG_RESUMED_PREFIX) {
+        // Close-plus-reopen at this line's stamp (RFC 0005 §5.3): the
+        // window counts from the resume, while the origin is kept only
+        // when the slot held this very action.
+        *slot = Some(resumed_focus(slot.as_ref(), stamp, &project, &action));
     } else if let Some((project, action)) = parse_focus_marker(text, LOG_ACTION_DONE_PREFIX)
         // A drop closes the action just as finally as a
         // completion does; only the claim about what
@@ -1094,7 +1220,7 @@ fn fold_focus_head(slot: &mut Option<CurrentFocus>, stamp: NaiveDateTime, text: 
     } else if let Some((project, title, new_slug)) = parse_promotion_marker(text) {
         // A promotion rewrites the bullet into a link to its new
         // note; the person never stopped, so the open start is
-        // renamed in place and keeps its `started` and `date`. The energy
+        // renamed in place and keeps its `started`, `date` and `origin`. The energy
         // comes from the start's own suffix, never from the map:
         // promotion refuses a bullet without one, so a start
         // lacking it cannot be the subject. Only the slot can be
@@ -1109,6 +1235,37 @@ fn fold_focus_head(slot: &mut Option<CurrentFocus>, stamp: NaiveDateTime, text: 
     }
 }
 
+/// The focus a `resumed [[project]] — action` line stamped `stamp` opens
+/// over `slot`, the focus the fold held just before it. Shared by the fold
+/// and `resume_action`, so what the verb reports and what the reader reads
+/// back afterwards cannot disagree.
+///
+/// The new focus is anchored at the resume's own stamp and date — that
+/// re-stamp is what keeps a focus resumed each morning inside the window.
+/// When the slot held the same `(project, action)` the resume continues it,
+/// so its `origin` is inherited: the displaced marker's own `origin` when it
+/// has one (a chain of resumes keeps the earliest start the window still
+/// shows), else that marker's own stamp. Anything else in the slot — or an
+/// empty slot, as after a pause — makes the resume a plain start with no
+/// `origin`.
+pub(in crate::vault) fn resumed_focus(
+    slot: Option<&CurrentFocus>,
+    stamp: NaiveDateTime,
+    project: &str,
+    action: &str,
+) -> CurrentFocus {
+    let origin = slot
+        .filter(|f| f.project == project && f.action == action)
+        .map(|f| f.origin.unwrap_or_else(|| f.date.and_time(f.started)));
+    CurrentFocus {
+        project: project.to_owned(),
+        action: action.to_owned(),
+        started: stamp.time(),
+        date: stamp.date(),
+        origin,
+    }
+}
+
 /// An action started and not yet finished, as recorded in a daily log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurrentFocus {
@@ -1120,8 +1277,14 @@ pub struct CurrentFocus {
     pub started: NaiveTime,
     /// The date of the daily note the open marker was read from — before
     /// today when the focus was carried over (RFC 0005 §5.2). A promotion
-    /// keeps the start's date.
+    /// keeps the start's date. For a resumed focus, the resume's date.
     pub date: NaiveDate,
+    /// When the work was first started, for a focus re-anchored by a
+    /// `resumed` line that continued the same action (RFC 0005 §5.3): the
+    /// earliest open marker of that action the window still shows. `None`
+    /// for a plain start, and for a resume after a pause or over an empty
+    /// or different slot. `started` and `date` are the resume's own.
+    pub origin: Option<NaiveDateTime>,
 }
 
 /// The `## Logs` entries as their **first physical lines** — `(time,

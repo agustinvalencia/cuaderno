@@ -55,15 +55,15 @@ pub enum DomainError {
         due: chrono::NaiveDate,
     },
 
-    /// A verb that acts on the open focus was called with none open. Raised
-    /// by `pause_action`; the message is pause's, so a later verb that
-    /// shares the variant (RFC 0005's resume) is rendered by its CLI and MCP
-    /// layers rather than through this `Display`.
-    #[error("nothing is started \u{2014} nothing to pause")]
+    /// A verb that acts on the focus found nothing to act on: `pause_action`
+    /// with nothing open, `resume_action` with no carried focus and no
+    /// resumable pause. The message is neutral because both verbs share it.
+    #[error("nothing is in focus or paused to act on")]
     NoFocus,
 
-    /// A start was attempted while an action is already in focus (RFC 0005
-    /// §5.1, D5): focus is one slot, and starting never displaces it.
+    /// A start, or a resume of a pause, was attempted while an action is
+    /// already in focus (RFC 0005 §5.1, §5.3, D5): focus is one slot, and
+    /// neither verb displaces it.
     /// `focus` is the open one; `same_action` is true when the refused start
     /// targeted that very action; `carried` is true when the focus was
     /// started on an earlier day. The message differs by case because the

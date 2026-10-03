@@ -47,7 +47,10 @@ pub(crate) mod state;
 mod summary;
 mod waiting;
 
-pub use actions::{ActionListEntry, AttachedAction, PauseOutcome, SwitchOutcome};
+pub use actions::{
+    ActionListEntry, AttachedAction, PauseOutcome, ResumeOutcome, ResumedFrom, ResumedKind,
+    SwitchOutcome,
+};
 pub use closed::ClosedProjectEntry;
 pub use closing::ProjectClosureOutcome;
 pub use open_items::{

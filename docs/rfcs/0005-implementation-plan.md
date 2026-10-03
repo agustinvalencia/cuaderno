@@ -168,7 +168,8 @@ against the map** (RFC §5.1: a focus on a parked project can be paused), so it 
 `ProjectNotActive` or `ActionNotFound`.
 
 **Deliverable.** The verb, the error variant with its `thiserror` message
-(`nothing is started — nothing to pause`), and tests.
+(`nothing is started — nothing to pause`; T7 rewords it to the neutral `nothing is in focus or
+paused to act on`, since resume returns it too), and tests.
 
 **Depends on.** T0.
 
@@ -419,7 +420,8 @@ emptied the slot); `ResumedFrom.date` carries the pause's date. `CurrentFocus` g
 with no `project`, resume the carried focus (`current_focus` with `date != today`) if any, else
 the most recent pause (a minimal `last_paused` is written here as a private helper and
 generalised in T8); with `project`, that project's most recent pause. `NoFocus` when nothing
-qualifies; `FocusOpen` when a different focus is in the slot — open today **or carried** (D11:
+qualifies — with `project`, a carried focus **on that project** is resumed like the bare form,
+and today's focus on it is `same_action`; `FocusOpen` when a different focus is in the slot — open today **or carried** (D11:
 resuming over a carried X would displace it with no pause line, and `last_paused` would never
 offer it again) — or `same_action` when it is already today's. `ResumeOutcome { resumed: CurrentFocus, from: ResumedFrom { kind: Carried | Paused, date, next, reason }, path }`.
 
@@ -447,7 +449,9 @@ every other arm: a `resumed` after a `paused` of the same text is a reopen, a `d
   `resume_while_a_different_focus_is_open_today_is_focus_open`;
   `resume_of_a_pause_while_a_different_focus_is_carried_is_focus_open`;
   `resume_of_todays_focus_is_focus_open_same_action`.
-- Mutation: keep the original stamp instead of re-stamping; the Thursday test fails.
+- Mutation: keep the original stamp instead of re-stamping; the Thursday test fails at its
+  Wednesday read-back (with the default window the Thursday read never sees Tuesday, so the
+  mutation can only show on Wednesday) — amended in review of #754.
 - Mutation: drop `origin`; the first test fails.
 - Mutation: check `FocusOpen` against today's open markers only; the carried test fails.
 
@@ -459,9 +463,13 @@ the origin is kept for as long as the window can see it.
 **What.** `Vault::last_paused(today) -> Result<BTreeMap<String, LastPause>, DomainError>` in
 `context.rs`, `LastPause { project, action, at: NaiveDateTime, next: Option<String>, reason: Option<String> }`.
 One pass over the daily notes for `today - paused_lookback_days ..= today` (skip missing
-notes), reading **folded** entries this time (`parse_log_lines`, since the continuations are
-wanted) and keeping, per project, the most recent `paused` head that is not followed — in the
-same pass, any day — by a `started` or `resumed` of the same `(project, action)`. The T7 private
+notes), reading entries **with their continuation lines** (T7's
+`parse_log_entries_with_continuations`, not `parse_log_lines`, whose `"; "` fold cuts a hint that
+contains `"; "`) and keeping, per project, the most recent `paused` head that is not followed — in
+the same pass, any day — by a `started`, `resumed`, `action done on` or `action dropped on` of the
+same `(project, action)`, or by a promotion of it (amended in review of #754: a finished or
+promoted action is never offered for resume). "Most recent across projects" (bare `resume`, T11's
+`Last paused:`) needs the fold order, so keep it alongside the per-project map. The T7 private
 helper is replaced by this.
 
 **Deliverable.** The function, the type, tests.
@@ -469,7 +477,8 @@ helper is replaced by this.
 **Depends on.** T0, T5, T7.
 
 **Complexity.** S. The scan shape is `weekly_logs` / `daily_log_mentions`; the one rule
-("not followed by a start or resume of the same text") is stated.
+("not followed by a start, resume, done, drop or promotion of the same text") is stated, and T7's
+private helper already implements it.
 
 **Probes.**
 - `cargo test -p cdno-domain --test unit -- unit::context_tests` passes with:
@@ -478,7 +487,8 @@ helper is replaced by this.
   `a_pause_followed_by_a_start_of_the_same_text_is_not_offered`;
   `a_friday_pause_is_offered_on_monday` (three-day gap, default look-back);
   `a_pause_outside_the_lookback_is_not_offered` (15 days, default);
-  `one_pass_yields_every_project` (two projects paused on different days, both present).
+  `one_pass_yields_every_project` (two projects paused on different days, both present);
+  `a_pause_followed_by_done_drop_or_promotion_is_not_offered` (one table, through verbs).
 - Mutation: read heads instead of folded lines; the continuations test fails.
 
 **Correct means.** The re-entry hint survives a weekend and is found in one scan.
@@ -684,7 +694,9 @@ The `attempted` block is filled by the handler (T15), since the domain error doe
 `resume_action {project?}`, each through `with_vault` and `verified_write_with`, each
 description opening with the "acts on the CURRENT focus; takes no project or query" sentence
 where that applies. `CurrentFocusDto` gains `date`, `carried`, `origin`; new `LastPauseDto`,
-`ResumedFromDto`; `resume_action`'s payload carries `resumed_from`. The `start_action` handler
+`ResumedFromDto`; `resume_action`'s payload carries `resumed_from`, and its description tells the
+agent to read `resumed_from.kind` and `resumed.action` back (with `project`, a carried focus on
+that project wins over the pause orientation showed — RFC §5.3). The `start_action` handler
 fills `attempted` into a `focus_open` rejection. The catalogue pins in `tests/server.rs:141`
 and `tests/e2e_stdio.rs:226` move 60 → 64.
 

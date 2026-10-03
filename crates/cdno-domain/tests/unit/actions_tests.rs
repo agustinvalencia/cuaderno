@@ -10,6 +10,7 @@ use cdno_core::frontmatter::Frontmatter;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
+use cdno_domain::ResumedKind;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
@@ -1755,10 +1756,7 @@ fn pause_with_nothing_started_is_no_focus() {
         .pause_action(dt(2026, 5, 26, 10, 0), None, None)
         .unwrap_err();
     assert!(matches!(err, DomainError::NoFocus), "got {err:?}");
-    assert_eq!(
-        err.to_string(),
-        "nothing is started \u{2014} nothing to pause"
-    );
+    assert_eq!(err.to_string(), "nothing is in focus or paused to act on");
     assert!(
         !store
             .exists(&vp("journal/2026/daily/2026-05-26.md"))
@@ -2174,4 +2172,414 @@ fn switch_to_the_focused_bullet_is_focus_open_same_action() {
         map_before,
         "the refused unplanned switch left the map byte-identical"
     );
+}
+
+// ---------------------------------------------------------------------
+// Resume: resume_action (RFC 0005 §5.3)
+// ---------------------------------------------------------------------
+
+/// `foo` with two bullets and `bar` with one, both active.
+fn resume_vault() -> (Vault, Arc<dyn VaultStore>) {
+    let foo_map = project_with_bullets("- [ ] Draft methods (deep)\n- [ ] Fix the badge (light)\n");
+    let bar_map = project_with_bullets("- [ ] Chase the venue (light)\n");
+    vault_with(&[("projects/foo.md", &foo_map), ("projects/bar.md", &bar_map)])
+}
+
+fn daily_of(day: u32) -> VaultPath {
+    vp(&format!("journal/2026/daily/2026-05-{day:02}.md"))
+}
+
+#[test]
+fn resume_with_nothing_resumable_is_no_focus() {
+    let (vault, store) = resume_vault();
+
+    for project in [None, Some("foo")] {
+        let err = vault
+            .resume_action(dt(2026, 5, 26, 9, 0), project)
+            .unwrap_err();
+        assert!(matches!(err, DomainError::NoFocus), "{project:?}: {err:?}");
+        assert_eq!(err.to_string(), "nothing is in focus or paused to act on");
+    }
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+
+    // A pause already resumed (and then finished) is not offered again.
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 26, 10, 0), Some("section 2"), None)
+        .unwrap();
+    vault.resume_action(dt(2026, 5, 26, 11, 0), None).unwrap();
+    vault
+        .complete_action(dt(2026, 5, 26, 12, 0), "foo", "draft")
+        .unwrap();
+    let before = store.read_file(&daily_of(26)).unwrap();
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 13, 0), None)
+        .unwrap_err();
+    assert!(matches!(err, DomainError::NoFocus), "{err:?}");
+    assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
+}
+
+#[test]
+fn resume_prefers_the_carried_focus_over_an_older_pause() {
+    let (vault, store) = resume_vault();
+    // Monday: Draft methods, then a switch to the badge, left open.
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .switch_action(dt(2026, 5, 25, 10, 0), "foo", "badge", Some("hint"), None)
+        .unwrap();
+
+    let outcome = vault.resume_action(dt(2026, 5, 26, 8, 50), None).unwrap();
+
+    assert_eq!(outcome.resumed.project, "foo");
+    assert_eq!(outcome.resumed.action, "Fix the badge (light)");
+    assert_eq!(
+        outcome.resumed.started,
+        NaiveTime::from_hms_opt(8, 50, 0).unwrap()
+    );
+    assert_eq!(outcome.resumed.date, dt(2026, 5, 26, 0, 0).date());
+    assert_eq!(outcome.resumed.origin, Some(dt(2026, 5, 25, 10, 0)));
+    assert_eq!(outcome.from.kind, ResumedKind::Carried);
+    assert_eq!(outcome.from.date, dt(2026, 5, 25, 0, 0).date());
+    assert_eq!(outcome.from.next, None);
+    assert_eq!(outcome.from.reason, None);
+    assert_eq!(outcome.path, daily_of(26));
+
+    let daily = store.read_file(&daily_of(26)).unwrap();
+    assert_eq!(
+        daily.trim_end().lines().last().unwrap(),
+        "- **08:50**: resumed [[foo]] \u{2014} Fix the badge (light)"
+    );
+    assert_eq!(
+        vault.current_focus(dt(2026, 5, 26, 0, 0).date()).unwrap(),
+        Some(outcome.resumed),
+        "the outcome is what the reader reads back"
+    );
+}
+
+#[test]
+fn resume_with_project_picks_that_projects_last_pause_and_returns_its_next() {
+    let (vault, store) = resume_vault();
+    // An older foo pause, a newer foo pause, then a still newer bar pause.
+    vault
+        .start_action(dt(2026, 5, 20, 9, 0), "foo", "badge")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 20, 10, 0), Some("old hint"), None)
+        .unwrap();
+    vault
+        .start_action(dt(2026, 5, 22, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(
+            dt(2026, 5, 22, 10, 0),
+            Some("pick up at  section 2; then figures"),
+            Some("Meeting"),
+        )
+        .unwrap();
+    vault
+        .start_action(dt(2026, 5, 22, 11, 0), "bar", "venue")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 22, 12, 0), Some("bar hint"), None)
+        .unwrap();
+
+    let outcome = vault
+        .resume_action(dt(2026, 5, 26, 9, 0), Some("foo"))
+        .unwrap();
+
+    assert_eq!(outcome.resumed.project, "foo");
+    assert_eq!(outcome.resumed.action, "Draft methods (deep)");
+    assert_eq!(outcome.resumed.date, dt(2026, 5, 26, 0, 0).date());
+    assert_eq!(outcome.resumed.origin, None, "a paused focus has no origin");
+    assert_eq!(outcome.from.kind, ResumedKind::Paused);
+    assert_eq!(outcome.from.date, dt(2026, 5, 22, 0, 0).date());
+    assert_eq!(
+        outcome.from.next.as_deref(),
+        Some("pick up at section 2; then figures"),
+        "the hint as the pause wrote it, `; ` and all"
+    );
+    assert_eq!(outcome.from.reason.as_deref(), Some("Meeting"));
+    assert_eq!(
+        store
+            .read_file(&daily_of(26))
+            .unwrap()
+            .trim_end()
+            .lines()
+            .last()
+            .unwrap(),
+        "- **09:00**: resumed [[foo]] \u{2014} Draft methods (deep)"
+    );
+    assert_eq!(
+        vault.current_focus(dt(2026, 5, 26, 0, 0).date()).unwrap(),
+        Some(outcome.resumed)
+    );
+}
+
+#[test]
+fn resume_with_no_project_picks_the_most_recent_pause_of_any_project() {
+    let (vault, _store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 22, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 22, 10, 0), None, None)
+        .unwrap();
+    vault
+        .start_action(dt(2026, 5, 22, 11, 0), "bar", "venue")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 22, 12, 0), Some("bar hint"), None)
+        .unwrap();
+
+    let outcome = vault.resume_action(dt(2026, 5, 26, 9, 0), None).unwrap();
+
+    assert_eq!(outcome.resumed.project, "bar");
+    assert_eq!(outcome.from.kind, ResumedKind::Paused);
+    assert_eq!(outcome.from.next.as_deref(), Some("bar hint"));
+}
+
+#[test]
+fn resume_while_a_different_focus_is_open_today_is_focus_open() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .switch_action(dt(2026, 5, 26, 10, 0), "foo", "badge", None, None)
+        .unwrap();
+    let before = store.read_file(&daily_of(26)).unwrap();
+
+    for project in [None, Some("foo")] {
+        let err = vault
+            .resume_action(dt(2026, 5, 26, 11, 0), project)
+            .unwrap_err();
+        match &err {
+            DomainError::FocusOpen {
+                focus,
+                same_action,
+                carried,
+            } => {
+                assert_eq!(focus.action, "Fix the badge (light)");
+                assert!(!same_action);
+                assert!(!carried);
+            }
+            other => panic!("{project:?}: expected FocusOpen, got {other:?}"),
+        }
+    }
+    assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
+}
+
+#[test]
+fn resume_of_a_pause_while_a_different_focus_is_carried_is_focus_open() {
+    let (vault, store) = resume_vault();
+    // Monday: foo's Draft methods paused by a switch to bar's venue, left
+    // open. (A carried focus on foo itself would be resumed instead.)
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .switch_action(dt(2026, 5, 25, 10, 0), "bar", "venue", None, None)
+        .unwrap();
+
+    // Tuesday: resuming the pause would displace the carried venue with no
+    // pause line, and nothing would ever offer it again.
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 0), Some("foo"))
+        .unwrap_err();
+
+    match &err {
+        DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        } => {
+            assert_eq!(focus.project, "bar");
+            assert_eq!(focus.action, "Chase the venue (light)");
+            assert_eq!(focus.date, dt(2026, 5, 25, 0, 0).date());
+            assert!(!same_action);
+            assert!(carried);
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+}
+
+#[test]
+fn resume_of_todays_focus_is_focus_open_same_action() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault.resume_action(dt(2026, 5, 26, 8, 50), None).unwrap();
+    let before = store.read_file(&daily_of(26)).unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 30), None)
+        .unwrap_err();
+
+    match &err {
+        DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        } => {
+            assert_eq!(focus.action, "Draft methods (deep)");
+            assert!(same_action, "already focused");
+            assert!(!carried);
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert_eq!(
+        err.to_string(),
+        "that action is already in focus \u{2014} foo: Draft methods (deep)"
+    );
+    assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
+}
+
+#[test]
+fn resume_with_project_resumes_that_projects_carried_focus() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+
+    // Another project's resume finds no pause of its own.
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 8, 40), Some("bar"))
+        .unwrap_err();
+    assert!(matches!(err, DomainError::NoFocus), "{err:?}");
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+
+    let outcome = vault
+        .resume_action(dt(2026, 5, 26, 8, 50), Some("foo"))
+        .unwrap();
+
+    assert_eq!(outcome.resumed.project, "foo");
+    assert_eq!(outcome.resumed.action, "Draft methods (deep)");
+    assert_eq!(outcome.resumed.date, dt(2026, 5, 26, 0, 0).date());
+    assert_eq!(outcome.resumed.origin, Some(dt(2026, 5, 25, 9, 0)));
+    assert_eq!(outcome.from.kind, ResumedKind::Carried);
+    assert_eq!(outcome.from.date, dt(2026, 5, 25, 0, 0).date());
+    assert_eq!(
+        vault.current_focus(dt(2026, 5, 26, 0, 0).date()).unwrap(),
+        Some(outcome.resumed)
+    );
+}
+
+#[test]
+fn resume_with_project_of_todays_focus_is_focus_open_same_action() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "foo", "draft")
+        .unwrap();
+    let before = store.read_file(&daily_of(26)).unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 30), Some("foo"))
+        .unwrap_err();
+
+    match &err {
+        DomainError::FocusOpen {
+            focus,
+            same_action,
+            carried,
+        } => {
+            assert_eq!(focus.action, "Draft methods (deep)");
+            assert!(same_action, "already focused");
+            assert!(!carried);
+        }
+        other => panic!("expected FocusOpen, got {other:?}"),
+    }
+    assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
+}
+
+#[test]
+fn a_pause_followed_by_completion_is_not_resumable() {
+    // Each line that finishes or rewrites the paused bullet consumes the
+    // pause: done, dropped, and a promotion of the bullet into a note.
+    type Close = fn(&Vault);
+    let closes: [(&str, Close); 3] = [
+        ("done", |v| {
+            v.complete_action(dt(2026, 5, 25, 11, 0), "foo", "draft")
+                .unwrap();
+        }),
+        ("dropped", |v| {
+            v.drop_action(dt(2026, 5, 25, 11, 0), "foo", "draft", Some("not needed"))
+                .unwrap();
+        }),
+        ("promoted", |v| {
+            v.promote_action(dt(2026, 5, 25, 11, 0), "foo", "draft")
+                .unwrap();
+        }),
+    ];
+    for (name, close) in closes {
+        let (vault, store) = resume_vault();
+        vault
+            .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+            .unwrap();
+        vault
+            .pause_action(dt(2026, 5, 25, 10, 0), Some("section 2"), None)
+            .unwrap();
+        close(&vault);
+
+        let err = vault
+            .resume_action(dt(2026, 5, 26, 9, 0), None)
+            .unwrap_err();
+        assert!(matches!(err, DomainError::NoFocus), "{name}: {err:?}");
+        let err = vault
+            .resume_action(dt(2026, 5, 26, 9, 0), Some("foo"))
+            .unwrap_err();
+        assert!(matches!(err, DomainError::NoFocus), "{name}: {err:?}");
+        assert!(
+            !store.exists(&daily_of(26)).unwrap(),
+            "{name}: nothing written"
+        );
+    }
+}
+
+#[test]
+fn a_promotion_of_another_bullet_does_not_consume_a_pause() {
+    let (vault, _store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 25, 10, 0), None, None)
+        .unwrap();
+    vault
+        .promote_action(dt(2026, 5, 25, 11, 0), "foo", "badge")
+        .unwrap();
+
+    let outcome = vault.resume_action(dt(2026, 5, 26, 9, 0), None).unwrap();
+
+    assert_eq!(outcome.resumed.action, "Draft methods (deep)");
+    assert_eq!(outcome.from.kind, ResumedKind::Paused);
+}
+
+#[test]
+fn a_promotion_on_another_project_does_not_consume_a_pause() {
+    // Hand-written: foo's "Draft methods (deep)" is paused, then bar promotes
+    // a bullet whose title happens to be the same. Only a promotion on foo
+    // could consume foo's pause.
+    let monday = "---\ndate: 2026-05-25\ntype: daily\n---\n\n# 2026-05-25\n\n## Logs\n\
+        - **09:00**: started [[foo]] \u{2014} Draft methods (deep)\n\
+        - **10:00**: action paused on [[foo]] \u{2014} Draft methods (deep)\n  \
+        next: section 2\n\
+        - **11:00**: action promoted on [[bar]] \u{2014} \"Draft methods\" -> [[actions/draft-methods]]\n";
+    let foo_map = project_with_bullets("- [ ] Draft methods (deep)\n");
+    let (vault, _store) = vault_with(&[
+        ("projects/foo.md", &foo_map),
+        ("journal/2026/daily/2026-05-25.md", monday),
+    ]);
+
+    let outcome = vault.resume_action(dt(2026, 5, 26, 9, 0), None).unwrap();
+
+    assert_eq!(outcome.resumed.project, "foo");
+    assert_eq!(outcome.resumed.action, "Draft methods (deep)");
+    assert_eq!(outcome.from.kind, ResumedKind::Paused);
+    assert_eq!(outcome.from.next.as_deref(), Some("section 2"));
 }
