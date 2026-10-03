@@ -43,10 +43,11 @@ impl CuadernoServer {
         // The section comes from the domain, never a literal here: the
         // MCP layer must not carry its own opinion about where a log
         // line lands (see `WriteShape::AppendedToSection`).
-        self.verified_write(
+        self.verified_write_focused(
             path,
             message,
             WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+            at.date(),
         )
         .await
     }
@@ -64,7 +65,7 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Captured to {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -470,7 +471,7 @@ impl CuadernoServer {
             "Added action bullet to"
         };
         let message = format!("{label} {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -490,7 +491,7 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         let message = format!("Promoted action note at {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -508,10 +509,11 @@ impl CuadernoServer {
             .await?
             .map_err(|e| into_mcp_error_attempting(e, attempted))?;
         let message = format!("Started action, logged to {}", path);
-        self.verified_write(
+        self.verified_write_focused(
             path,
             message,
             WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+            at.date(),
         )
         .await
     }
@@ -535,7 +537,7 @@ impl CuadernoServer {
             .map_err(|e| into_mcp_error_attempting(e, attempted))?
             .primary;
         let message = format!("Added to {} and started", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -556,14 +558,16 @@ impl CuadernoServer {
         let message = format!("Paused action, logged to {}", outcome.path);
         let reported = outcome.path.to_string();
         let paused = CurrentFocusDto::at(outcome.paused, at.date());
-        self.verified_write_with(
+        self.verified_write_with_focus(
             outcome.path,
             WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
-            move |verification| PauseResultDto {
+            at.date(),
+            move |verification, focus| PauseResultDto {
                 path: reported,
                 message,
                 paused,
                 verification,
+                focus,
             },
         )
         .await
@@ -651,15 +655,17 @@ impl CuadernoServer {
         let reported = outcome.path.to_string();
         let resumed = CurrentFocusDto::at(outcome.resumed, at.date());
         let resumed_from = ResumedFromDto::from(outcome.from);
-        self.verified_write_with(
+        self.verified_write_with_focus(
             outcome.path,
             WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
-            move |verification| ResumeResultDto {
+            at.date(),
+            move |verification, focus| ResumeResultDto {
                 path: reported,
                 message,
                 resumed,
                 resumed_from,
                 verification,
+                focus,
             },
         )
         .await
@@ -682,7 +688,7 @@ impl CuadernoServer {
             .map_err(into_mcp_error)?
             .primary;
         let message = format!("Completed action on {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -705,7 +711,7 @@ impl CuadernoServer {
             .map_err(into_mcp_error)?
             .primary;
         let message = format!("Dropped action on {}", path);
-        self.verified_write(path, message, WriteShape::Rewritten)
+        self.verified_write_focused(path, message, WriteShape::Rewritten, at.date())
             .await
     }
 
@@ -923,11 +929,16 @@ impl CuadernoServer {
             .map_err(into_mcp_error)?;
         let path = outcome.path.clone();
         let response = NoteToDailyResponse::from(outcome);
-        self.verified_write_with(
+        // The focus is read on the handler's clock, not on `at`: with a
+        // `date` given, `at` names an earlier day, and the payload's focus
+        // must be what `current_focus` returns now.
+        self.verified_write_with_focus(
             path,
             WriteShape::AppendedToSection(DailySection::Notes.heading()),
-            move |verification| NoteToDailyResponse {
+            now.date(),
+            move |verification, focus| NoteToDailyResponse {
                 verification: Some(verification),
+                focus,
                 ..response
             },
         )
@@ -1051,13 +1062,14 @@ impl CuadernoServer {
         let today = at.date();
         let paused = outcome.paused.map(|f| CurrentFocusDto::at(f, today));
         let started = CurrentFocusDto::at(outcome.started, today);
-        self.verified_write_with(outcome.primary, shape, move |verification| {
+        self.verified_write_with_focus(outcome.primary, shape, today, move |verification, focus| {
             SwitchResultDto {
                 path: reported,
                 message,
                 paused,
                 started,
                 verification,
+                focus,
             }
         })
         .await
