@@ -216,15 +216,33 @@ async fn orientation_carries_focus_and_last_paused() {
         .expect("get_orientation");
     let value = decode_json(&result);
 
-    // Check that focus field exists
-    assert!(
-        value.get("focus").is_some(),
-        "focus field should exist in response"
-    );
-
     // Check projects
     let projects = value["projects"].as_array().unwrap();
     assert_eq!(projects.len(), 3);
+
+    // Find surrogate-model: should have focus, no last_paused
+    let surrogate = projects
+        .iter()
+        .find(|p| p["slug"].as_str().unwrap() == "surrogate-model")
+        .unwrap();
+    assert!(
+        surrogate["last_paused"].is_null(),
+        "surrogate-model should have null last_paused"
+    );
+
+    // Check the focus: should be on surrogate-model, not carried
+    let focus = &value["focus"];
+    assert!(!focus.is_null(), "focus should be non-null");
+    assert_eq!(focus["project"].as_str().unwrap(), "surrogate-model");
+    assert!(
+        focus["action"]
+            .as_str()
+            .unwrap()
+            .contains("Research papers")
+    );
+    assert_eq!(focus["started"].as_str().unwrap(), "09:00");
+    assert_eq!(focus["date"].as_str().unwrap(), today.to_string());
+    assert!(!focus["carried"].as_bool().unwrap());
 
     // Find analysis-tool: should have last_paused with next and reason
     let analysis = projects
@@ -237,21 +255,53 @@ async fn orientation_carries_focus_and_last_paused() {
         "analysis-tool should have a last_paused"
     );
     assert_eq!(last_paused["project"].as_str().unwrap(), "analysis-tool");
+    assert!(
+        last_paused["action"]
+            .as_str()
+            .unwrap()
+            .contains("Run experiments")
+    );
     assert_eq!(last_paused["next"].as_str().unwrap(), "midpoint");
     assert_eq!(last_paused["reason"].as_str().unwrap(), "context switch");
 
-    // Other projects should not have last_paused
-    let surrogate = projects
-        .iter()
-        .find(|p| p["slug"].as_str().unwrap() == "surrogate-model")
-        .unwrap();
-    assert!(surrogate["last_paused"].is_null());
-
+    // Find other-project: should have null last_paused
     let other = projects
         .iter()
         .find(|p| p["slug"].as_str().unwrap() == "other-project")
         .unwrap();
-    assert!(other["last_paused"].is_null());
+    assert!(
+        other["last_paused"].is_null(),
+        "other-project should have null last_paused"
+    );
+}
+
+#[tokio::test]
+async fn orientation_focus_is_null_when_nothing_open() {
+    use cdno_domain::frontmatter::Context;
+    let today = today();
+    let server = server_with(|vault| {
+        vault
+            .create_project(
+                today.and_hms_opt(8, 0, 0).unwrap(),
+                "Test",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+    });
+
+    let result = server
+        .get_orientation(Parameters(GetOrientationInput { energy: None }))
+        .await
+        .expect("get_orientation");
+    let value = decode_json(&result);
+
+    // focus field must be present but null when nothing is open
+    assert!(value.get("focus").is_some(), "focus field must be present");
+    assert!(
+        value["focus"].is_null(),
+        "focus must be null when nothing is open"
+    );
 }
 
 // ---------------------------------------------------------------------

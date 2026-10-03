@@ -66,8 +66,7 @@ impl CuadernoServer {
             .with_vault(move |vault| vault.orientation_context(today))
             .await?
             .map_err(into_mcp_error)?;
-        let mut dto = OrientationContextDto::from(ctx.clone());
-        dto.focus = ctx.focus.map(|f| CurrentFocusDto::at(f, today));
+        let dto = OrientationContextDto::at(ctx, today);
         json_result(dto)
     }
 
