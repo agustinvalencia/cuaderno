@@ -14,8 +14,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   skip)"), with no confirm after it, and `--reason` is never prompted. `resume [--project <slug>]`
   re-anchors a carried focus or reopens the latest pause (or the named project's), then prints the
   pause's `next:` hint. With nothing to act on they say so plainly (`Nothing started — nothing to
-  pause.`) and exit non-zero; `resume` while another action is in focus names it and points at
-  `pause` and `switch`. `--json` gives `path` and `message`, and for `resume` a `resumed_from`
+  pause.`) and exit non-zero; `resume --project <p>` with nothing there names `<p>`; `resume` while the
+  same action is in focus says there is nothing to resume, and while another is, names it and points
+  at `pause` and `switch`. `--json` gives `path` and `message`, and for `resume` a `resumed_from`
   object. `docs/cli-ergonomics.md` names the skippable hint prompt as an exception to
   confirm-on-prompt.
 

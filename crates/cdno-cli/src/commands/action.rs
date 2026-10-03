@@ -164,7 +164,7 @@ pub enum ActionCommands {
     /// it has one. Refused while a different action is in focus.
     Resume {
         /// Resume the pause on this project instead of the latest one.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
     },
 
@@ -666,13 +666,31 @@ fn pause(
     interactive: bool,
     json: bool,
 ) -> Result<()> {
+    pause_asking(vault, at, next, reason, interactive, json, || {
+        prompt::prompt_text("Where to pick up (Enter to skip)")
+    })
+}
+
+/// [`pause`] with the hint question injected, so a test can drive the
+/// handler as an interactive run and count the questions without a pty.
+pub fn pause_asking(
+    vault: &Vault,
+    at: NaiveDateTime,
+    next: Option<String>,
+    reason: Option<String>,
+    interactive: bool,
+    json: bool,
+    ask: impl FnOnce() -> Result<String>,
+) -> Result<()> {
     // Refuse before asking for a hint nobody can use.
-    if vault.current_focus(at.date())?.is_none() {
+    if vault
+        .current_focus(at.date())
+        .context("reading the current focus")?
+        .is_none()
+    {
         anyhow::bail!(NO_FOCUS_TO_PAUSE);
     }
-    let next = pause_hint(next, interactive, || {
-        prompt::prompt_text("Where to pick up (Enter to skip)")
-    })?;
+    let next = pause_hint(next, interactive, ask)?;
     let outcome = match vault.pause_action(at, next.as_deref(), reason.as_deref()) {
         Ok(o) => o,
         Err(cdno_domain::error::DomainError::NoFocus) => anyhow::bail!(NO_FOCUS_TO_PAUSE),
@@ -718,9 +736,21 @@ fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool)
 
     let outcome = match vault.resume_action(at, project.as_deref()) {
         Ok(o) => o,
-        Err(DomainError::NoFocus) => {
-            anyhow::bail!("Nothing to resume \u{2014} nothing is carried over or paused.")
-        }
+        Err(DomainError::NoFocus) => match project.as_deref() {
+            Some(p) => {
+                anyhow::bail!("Nothing to resume on {p} \u{2014} no carried focus or pause there.")
+            }
+            None => anyhow::bail!("Nothing to resume \u{2014} nothing is carried over or paused."),
+        },
+        Err(DomainError::FocusOpen {
+            focus,
+            same_action: true,
+            ..
+        }) => anyhow::bail!(
+            "{} is already in focus on {} \u{2014} nothing to resume.",
+            crate::output::sanitise(&focus.title()),
+            focus.project,
+        ),
         Err(DomainError::FocusOpen { focus, .. }) => anyhow::bail!(
             "{} is already in focus on {}. Pause it first (`cdno action pause`), \
              or move on with `cdno action switch`.",

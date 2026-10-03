@@ -1127,11 +1127,16 @@ fn cdno_in(root: &Path) -> assert_cmd::Command {
     cmd
 }
 
-/// Today's daily note, whatever today is (the binary stamps its own clock).
-fn todays_daily(root: &Path) -> String {
-    let today = chrono::Local::now().date_naive();
-    fs::read_to_string(root.join(format!("journal/{}/daily/{}.md", today.format("%Y"), today)))
-        .expect("today's daily note")
+/// The daily note a verb reports in its `logged to <path>` line, so no
+/// test recomputes "today" against the binary's own clock.
+fn logged_daily(root: &Path, stdout: &[u8]) -> String {
+    let out = String::from_utf8_lossy(stdout);
+    let path = out
+        .lines()
+        .find_map(|l| l.split("logged to ").nth(1))
+        .unwrap_or_else(|| panic!("no `logged to` line in {out:?}"))
+        .trim();
+    fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 #[test]
@@ -1190,12 +1195,15 @@ fn pause_with_no_interactive_never_prompts() {
         .success();
     // Null stdin (`< /dev/null`) and `--no-interactive`: a prompt would
     // die in the prompt library or hang; neither is allowed.
-    cdno_in(dir.path())
+    let out = cdno_in(dir.path())
         .args(["--no-interactive", "action", "pause"])
         .write_stdin("")
         .assert()
-        .success();
-    let daily = todays_daily(dir.path());
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let daily = logged_daily(dir.path(), &out);
     assert!(
         daily.contains("action paused on [[x]] \u{2014} Run ablation (deep)"),
         "{daily}"
@@ -1250,13 +1258,16 @@ fn resume_prints_the_next_hint() {
             .assert()
             .success();
     }
-    cdno_in(dir.path())
+    let out = cdno_in(dir.path())
         .args(["--no-interactive", "action", "resume"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Resumed on x, logged to"))
-        .stdout(predicates::str::contains("next: pick up at step 3"));
-    assert!(todays_daily(dir.path()).contains("resumed [[x]]"));
+        .stdout(predicates::str::contains("next: pick up at step 3"))
+        .get_output()
+        .stdout
+        .clone();
+    assert!(logged_daily(dir.path(), &out).contains("resumed [[x]]"));
 }
 
 #[test]
@@ -1309,4 +1320,140 @@ fn resume_with_project_resumes_that_pause() {
         msg.contains("already in focus") && msg.contains("action switch"),
         "{msg}"
     );
+}
+
+/// Drive the pause handler as an interactive run, counting questions.
+fn interactive_pause(
+    root: &Path,
+    at: NaiveDateTime,
+    next: Option<&str>,
+    answer: &str,
+) -> (anyhow::Result<()>, usize) {
+    let (vault, _) = cdno_cli::bootstrap::open_vault(root).unwrap();
+    let mut asked = 0;
+    let r = action::pause_asking(
+        &vault,
+        at,
+        next.map(str::to_owned),
+        None,
+        true,
+        false,
+        || {
+            asked += 1;
+            Ok(answer.to_owned())
+        },
+    );
+    (r, asked)
+}
+
+#[test]
+fn the_pause_handler_asks_exactly_once_when_nothing_is_given() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), None, "step 3");
+    r.expect("pause");
+    assert_eq!(asked, 1);
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(daily.contains("next: step 3"), "{daily}");
+}
+
+#[test]
+fn the_pause_handler_never_asks_when_nothing_is_in_focus() {
+    let dir = vault_with_bullet();
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), None, "x");
+    assert!(r.is_err());
+    assert_eq!(asked, 0, "the refusal comes before the question");
+}
+
+#[test]
+fn the_pause_handler_never_asks_when_next_is_given() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let (r, asked) = interactive_pause(dir.path(), moment(2026, 5, 2, 11, 0), Some("given"), "x");
+    r.expect("pause");
+    assert_eq!(asked, 0);
+    let daily = fs::read_to_string(dir.path().join("journal/2026/daily/2026-05-02.md")).unwrap();
+    assert!(daily.contains("next: given"), "{daily}");
+}
+
+#[test]
+fn resuming_the_action_already_in_focus_says_nothing_to_resume() {
+    let dir = vault_with_bullet();
+    start(dir.path(), moment(2026, 5, 2, 10, 0), "x", "Run ablation");
+    let err = run_action(
+        dir.path(),
+        moment(2026, 5, 2, 10, 30),
+        ActionCommands::Resume { project: None },
+    )
+    .expect_err("already focused");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("already in focus") && msg.contains("nothing to resume"),
+        "{msg}"
+    );
+    assert!(!msg.contains("switch") && !msg.contains("pause"), "{msg}");
+}
+
+#[test]
+fn resume_with_a_project_that_has_nothing_names_it() {
+    let dir = vault_with_bullet();
+    let msg = |p: Option<&str>| {
+        let e = run_action(
+            dir.path(),
+            moment(2026, 5, 2, 10, 30),
+            ActionCommands::Resume {
+                project: p.map(str::to_owned),
+            },
+        )
+        .expect_err("nothing");
+        format!("{e:#}")
+    };
+    assert_eq!(
+        msg(Some("x")),
+        "Nothing to resume on x \u{2014} no carried focus or pause there."
+    );
+    assert_eq!(
+        msg(None),
+        "Nothing to resume \u{2014} nothing is carried over or paused."
+    );
+}
+
+#[test]
+fn pause_and_resume_report_in_json() {
+    let dir = vault_with_bullet();
+    let run = |args: &[&str]| -> serde_json::Value {
+        let out = cdno_in(dir.path())
+            .args(["--json", "action"])
+            .args(args)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        serde_json::from_slice(&out).expect("json")
+    };
+    run(&["start", "--project", "x", "--query", "Run ablation"]);
+    let p = run(&["pause", "--next", "step 3", "--reason", "lunch"]);
+    assert!(p["path"].is_string() && p["message"].as_str().unwrap().starts_with("Paused on x"));
+    let r = run(&["resume"]);
+    assert!(r["message"].as_str().unwrap().starts_with("Resumed on x"));
+    assert_eq!(r["resumed_from"]["kind"], "paused");
+    assert_eq!(r["resumed_from"]["next"], "step 3");
+    assert_eq!(r["resumed_from"]["reason"], "lunch");
+}
+
+#[test]
+fn resume_re_anchors_a_carried_focus_through_the_cli() {
+    let dir = vault_with_bullet();
+    let yesterday = chrono::Local::now().naive_local() - chrono::Duration::days(1);
+    start(dir.path(), yesterday, "x", "Run ablation");
+    let out = cdno_in(dir.path())
+        .args(["--no-interactive", "action", "resume"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("Resumed on x"))
+        .get_output()
+        .stdout
+        .clone();
+    assert!(logged_daily(dir.path(), &out).contains("resumed [[x]]"));
 }
