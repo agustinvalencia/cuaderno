@@ -172,7 +172,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `action paused on [[project]] — text` entry with optional `next:` and `reason:` lines, using the
   focus's own text read back from the log. It resolves nothing against the project map, so a focus
   on a since-parked project can be paused and the map is never touched; with nothing started it
-  fails with the new `DomainError::NoFocus` (`nothing is in focus or paused to act on`). No CLI or
+  fails with the new `DomainError::NoFocus`. No CLI or
   MCP verb calls it yet.
 
 - **The `paused` marker for the daily log (RFC 0005, #720).** `action paused on [[project]] — text`
