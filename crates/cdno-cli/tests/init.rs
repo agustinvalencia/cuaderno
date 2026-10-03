@@ -71,6 +71,29 @@ fn run_writes_default_config_with_five_project_cap() {
 }
 
 #[test]
+fn run_writes_focus_config_with_both_keys_documented() {
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).unwrap();
+
+    let config =
+        fs::read_to_string(dir.path().join(".cuaderno/config.toml")).expect("config.toml present");
+    // The commented [focus] section should be present.
+    assert!(
+        config.contains("# [focus]"),
+        "config should contain commented [focus] section"
+    );
+    // Both keys should be documented.
+    assert!(
+        config.contains("# carry_over_days = 1"),
+        "config should document carry_over_days"
+    );
+    assert!(
+        config.contains("# paused_lookback_days = 14"),
+        "config should document paused_lookback_days"
+    );
+}
+
+#[test]
 fn run_dumps_daily_template_byte_identical_to_embedded() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).unwrap();

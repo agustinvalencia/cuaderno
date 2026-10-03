@@ -1114,3 +1114,62 @@ fn a_derived_metric_may_not_derive_from_another_derived_one() {
     let err = config.validate_tracking().unwrap_err().to_string();
     assert!(err.contains("cost"), "{err}");
 }
+
+#[test]
+fn focus_section_defaults_to_one_and_fourteen() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Test\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.focus.carry_over_days, 1);
+    assert_eq!(config.focus.paused_lookback_days, 14);
+}
+
+#[test]
+fn focus_section_parses() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_days = 3
+paused_lookback_days = 21
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.focus.carry_over_days, 3);
+    assert_eq!(config.focus.paused_lookback_days, 21);
+}
+
+#[test]
+fn focus_section_rejects_an_unknown_key() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_day = 1
+"#,
+    );
+    let result = VaultConfig::load(dir.path());
+    assert!(result.is_err(), "Expected error but got success");
+    let err = result.unwrap_err();
+    // The error includes the source (toml::de::Error) which names the field.
+    // Walk the error chain to find it.
+    use std::error::Error;
+    let mut found = false;
+    let mut current: Option<&dyn Error> = Some(&err);
+    while let Some(e) = current {
+        if e.to_string().contains("carry_over_day") {
+            found = true;
+            break;
+        }
+        current = e.source();
+    }
+    assert!(found, "Error chain should name the typo 'carry_over_day'");
+}

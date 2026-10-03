@@ -5,6 +5,39 @@ use std::path::Path;
 
 use crate::error::ConfigError;
 
+// Per-field default functions for FocusConfig.
+fn default_carry_over_days() -> u32 {
+    1
+}
+
+fn default_paused_lookback_days() -> u32 {
+    14
+}
+
+/// The `[focus]` section: the windows the focus reader uses (RFC 0005).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FocusConfig {
+    /// How many days before today the focus reader also reads: with 1, a start
+    /// left open yesterday is still the focus today; 0 reads today only.
+    /// Default 1.
+    #[serde(default = "default_carry_over_days")]
+    pub carry_over_days: u32,
+    /// How many days back a paused action is still offered for resuming.
+    /// Default 14.
+    #[serde(default = "default_paused_lookback_days")]
+    pub paused_lookback_days: u32,
+}
+
+impl Default for FocusConfig {
+    fn default() -> Self {
+        Self {
+            carry_over_days: default_carry_over_days(),
+            paused_lookback_days: default_paused_lookback_days(),
+        }
+    }
+}
+
 /// Top-level vault configuration, loaded from `.cuaderno/config.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -49,6 +82,9 @@ pub struct VaultConfig {
     /// stewardship in the path).
     #[serde(default)]
     pub tracking: BTreeMap<String, TrackingSpec>,
+    /// The focus reader's windows (RFC 0005).
+    #[serde(default)]
+    pub focus: FocusConfig,
 }
 
 /// The `[vault]` section — basic vault metadata.
