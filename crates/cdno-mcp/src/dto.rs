@@ -48,6 +48,9 @@ pub struct ProjectSummaryDto {
     pub status: String,
     pub state_snippet: String,
     pub top_action: Option<TopActionDto>,
+    /// The project's most recent pause still open for resuming, with its
+    /// `next:` hint and `reason:` if given. Null when nothing is paused.
+    pub last_paused: Option<LastPauseDto>,
 }
 
 impl From<ProjectSummary> for ProjectSummaryDto {
@@ -57,6 +60,7 @@ impl From<ProjectSummary> for ProjectSummaryDto {
             status: project_status_str(p.status).to_owned(),
             state_snippet: p.state_snippet,
             top_action: p.top_action.map(Into::into),
+            last_paused: p.last_paused.map(Into::into),
         }
     }
 }
@@ -168,14 +172,20 @@ pub struct OrientationContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     pub projects: Vec<ProjectSummaryDto>,
     pub lapsed_habits: Vec<LapsedHabitDto>,
+    /// What is currently in focus: the most recent start, unless since
+    /// completed, dropped or paused. Null when nothing is open.
+    pub focus: Option<CurrentFocusDto>,
 }
 
-impl From<OrientationContext> for OrientationContextDto {
-    fn from(o: OrientationContext) -> Self {
+impl OrientationContextDto {
+    /// Build the orientation DTO from domain context and today's date,
+    /// setting the focus field from the context's own focus.
+    pub fn at(o: OrientationContext, today: NaiveDate) -> Self {
         Self {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
+            focus: o.focus.map(|f| CurrentFocusDto::at(f, today)),
         }
     }
 }
@@ -311,6 +321,12 @@ pub struct PauseResultDto {
     /// The focus that was paused.
     pub paused: CurrentFocusDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// Result of `switch_action` / `switch_unplanned_action`.
@@ -324,6 +340,12 @@ pub struct SwitchResultDto {
     /// The new focus.
     pub started: CurrentFocusDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// Result of `resume_action`.
@@ -337,6 +359,12 @@ pub struct ResumeResultDto {
     /// What was resumed: `kind` says whether a carried focus or a pause.
     pub resumed_from: ResumedFromDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -1040,6 +1068,10 @@ pub struct ProjectContextDto {
     /// `None` if the field is absent, the wikilink doesn't parse, or
     /// the target question has been deleted.
     pub core_question: Option<QuestionSummaryDto>,
+    /// The project's most recent pause still open for resuming
+    /// (`project`, `action`, `title`, `at`, `date`, `next`, `reason`),
+    /// or null when no pause is resumable.
+    pub last_paused: Option<LastPauseDto>,
 }
 
 // ---------------------------------------------------------------------
@@ -1373,6 +1405,12 @@ pub struct NoteToDailyResponse {
     /// bytes of the day's `## Notes`, which end with the entry just
     /// written (a long entry shows only the end of its body).
     pub verification: Option<WriteVerificationDto>,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 impl From<cdno_domain::NoteToDailyOutcome> for NoteToDailyResponse {
@@ -1384,6 +1422,7 @@ impl From<cdno_domain::NoteToDailyOutcome> for NoteToDailyResponse {
             target: o.target,
             log_line: o.log_line,
             verification: None,
+            focus: None,
         }
     }
 }
@@ -1522,6 +1561,12 @@ pub struct ProjectClosureDto {
     /// a promise to someone else does not end with the project.
     pub untouched_commitments: Vec<LinkedCommitmentDto>,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// An active standalone commitment linked to a project.
@@ -1538,6 +1583,20 @@ impl From<cdno_domain::LinkedCommitment> for LinkedCommitmentDto {
             due: c.due,
         }
     }
+}
+
+/// [`WriteResultDto`] for a tool that writes a daily-log line or changes a
+/// project map (RFC 0005 §5.5): the same fields, unchanged, plus `focus`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FocusedWriteResultDto {
+    #[serde(flatten)]
+    pub write: WriteResultDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 impl WriteResultDto {

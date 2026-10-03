@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Write results carry the focus (RFC 0005, #736).** The success payloads of `start_action`,
+  `start_unplanned_action`, `switch_action`, `switch_unplanned_action`, `pause_action`,
+  `resume_action`, `complete_action`, `drop_action`, `promote_action`, `add_action`,
+  `append_to_log`, `capture`, `note_to_daily`, `park_project`, `activate_project`,
+  `complete_project` and `drop_project` gain a `focus` field: the focus as `current_focus` reads
+  it right after the write, in the same shape, so an agent sees what is open without a second
+  call. `focus: null` means nothing is open, as `current_focus` returning null does. The focus is
+  read in the same blocking call that verifies the write, never a second one, and a focus that
+  cannot be read after the write landed comes back as `null` rather than as an error. Every
+  existing field is unchanged, and the tool catalogue and descriptions are untouched.
+
 - **MCP tools `pause_action`, `switch_action`, `switch_unplanned_action` and `resume_action` (RFC 0005, #735).**
   The focus verbs over MCP, with the split `start` has: `switch_action {project, query, next?,
   reason?}` for a bullet on the map and `switch_unplanned_action {project, title, energy, next?,
@@ -91,6 +102,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   in the same pass that reads its state. `get_project_full` similarly carries `last_paused` for
   the project it reads. These are domain-only fields, not exposed in `--json` output anywhere yet;
   MCP exposure comes later (#737) and the CLI decision later (#741).
+
+- **MCP `get_orientation` and `get_project_context` carry focus and last paused (RFC 0005, #737).**
+  `get_orientation` now returns `focus` (the current focus in the shape `CurrentFocusDto`, or null)
+  and each project carries `last_paused` (the project's most recent unresolved pause, or null).
+  `get_project_context` similarly carries `last_paused` for its project, so the person can pick up
+  a paused action without a second call to `get_orientation`. Both are additive: every existing
+  field is unchanged, nulls are present (not missing), and the tool descriptions state that these
+  fields exist. The focus is read inside the `get_orientation` handler in the same vault closure
+  that builds the context, using today's date.
 
 - **`Vault::last_paused` (RFC 0005, #728).** One pass over the daily notes from `today -
   paused_lookback_days` to `today` returns, per project, the most recent `paused` entry that no later
