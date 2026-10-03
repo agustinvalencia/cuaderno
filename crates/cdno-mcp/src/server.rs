@@ -190,7 +190,7 @@ impl ServerHandler for CuadernoServer {
     /// opt in. See [`crate::rejection`] for the classification and for
     /// why it travels through `ErrorData::data` to get here.
     ///
-    /// # Forked from the macro, so it can drift
+    /// # Forked from the macro, so it can fall out of step
     ///
     /// The two lines before `.or_else` are a verbatim copy of what
     /// `rmcp-macros` **1.7.0** generates (`src/tool_handler.rs`), and the
@@ -289,7 +289,51 @@ impl ServerHandler for CuadernoServer {
                 cannot be read back comes back as an ERROR, so a successful write \
                 result is evidence the change is on disk and does not need a \
                 follow-up read to confirm. If a write does error as unverified, \
-                re-read the note before retrying: it may have landed anyway.",
+                re-read the note before retrying: it may have landed anyway.\n\n\
+                FOCUS\n\
+                The person can have one action in focus (current_focus reads it). The \
+                server never refuses a write for being outside the focus: most detours \
+                are not vault writes, and capture, note_to_daily and append_to_log are \
+                the release valve for parking a thought and getting back. What follows \
+                is behaviour, and it is yours to keep.\n\
+                1. Compare at project level. A request that belongs to the focus's \
+                project, or to a portfolio or question linked to it, is not a detour; \
+                that is your judgement from get_project_context, not something the \
+                server checks. Captures, stewardship tracking, commitments, reviews, \
+                orientation and reads are never detours.\n\
+                2. Say one sentence, and only on a mismatch. Never restate the focus on \
+                a turn that matches it; the person does not need it back.\n\
+                3. Recommend, do not ask open-endedly: \"That's outside X. I'll capture \
+                it and we stay on X, unless you want it now or want to move over to \
+                it.\" Three answers are accepted: capture; do it now as an aside (no \
+                log line, no switch); move over. Any reply that is not a move means \
+                carry on.\n\
+                4. Ask at most once per topic per focus. After \"just this, then \
+                back\", do not raise that thread again. The server cannot track this; \
+                you track it in the conversation.\n\
+                5. Never ask why. Record a `reason` only when the person volunteers \
+                one.\n\
+                6. Give a return cue after a capture or an aside, taken from the focus \
+                and its `next:` if any: \"Back to methods -- you were at 'Prior \
+                approaches'.\"\n\
+                7. The person's explicit word is consent. If they name other work to \
+                do now (\"let's work on Y\", \"switch to Y\"), call switch_action \
+                directly, drafting `next` from what you saw them do and never \
+                inventing one. If a request only touches other work without saying to \
+                move to it, or start_action returns focus_open, do not retry: propose \
+                the move in one sentence and wait for the person. Setting a focus \
+                works the same way: \"let's work on X\" is consent to start_action; \
+                anything weaker gets a proposal. Never call pause_action or \
+                resume_action without the person's yes; when a focus_open or no_focus \
+                rejection says to ask the person, ask the person.\n\
+                8. Mention a deadline, narrowly. At most once per focus per day, and \
+                only when an overdue or due-today commitment exists outside the \
+                focus's project (get_orientation.commitments), phrase it as \
+                information: \"Heads up: X is due today.\" Do not nudge about elapsed \
+                time.\n\
+                When a focus is open, capture, note_to_daily and append_to_log tag \
+                what they write with the focus themselves (`captured_during` or an \
+                indented `during:` line); never write that tag by hand.",
             )
             // ServerInfo::default already enables an empty capability
             // set; flip the `tools` flag on so clients know we serve

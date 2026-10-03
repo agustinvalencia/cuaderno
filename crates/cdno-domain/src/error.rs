@@ -42,8 +42,9 @@ impl FocusRemedy {
 pub const FOCUS_OPEN_MESSAGE: &str =
     "An action is already in focus. Ask the person before switching; do not retry.";
 
-/// Message for a `NoFocus` rejection: nothing is open to act on.
-pub const NO_FOCUS_MESSAGE: &str = "Nothing is started.";
+/// Message for a `NoFocus` rejection: nothing is open to act on. Shared by
+/// the pause and resume verbs, so it names neither.
+pub const NO_FOCUS_MESSAGE: &str = "Nothing is in focus or paused.";
 
 impl DomainError {
     /// For a `FocusOpen`, its [`FocusRemedy`]; `None` for any other error.

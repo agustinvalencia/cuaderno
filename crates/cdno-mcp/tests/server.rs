@@ -573,3 +573,43 @@ fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
         );
     }
 }
+
+/// RFC 0005 §5.6: an agent with no skill loaded behaves per the detour
+/// protocol from the instructions alone, so the protocol's key phrases
+/// must be there, under a `FOCUS` heading, with the words the RFC bars
+/// from anything an agent paraphrases to the person kept out.
+#[test]
+fn instructions_carry_the_focus_protocol() {
+    let info = empty_server().get_info();
+    let instructions = info
+        .instructions
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+    assert!(
+        info.instructions
+            .as_deref()
+            .unwrap_or_default()
+            .contains("\nFOCUS\n"),
+        "the protocol sits under a FOCUS heading"
+    );
+    for phrase in [
+        "project level",
+        "once per topic",
+        "never ask why",
+        "return cue",
+        "ask the person",
+        "never refuses a write",
+    ] {
+        assert!(
+            instructions.contains(phrase),
+            "instructions must carry {phrase:?} (RFC 0005 §5.6)"
+        );
+    }
+    for banned in ["drift", "distraction", "off-task", "leak", "enforc"] {
+        assert!(
+            !instructions.contains(banned),
+            "instructions must not use {banned:?}"
+        );
+    }
+}

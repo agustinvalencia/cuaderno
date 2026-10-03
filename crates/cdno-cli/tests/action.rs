@@ -1785,7 +1785,7 @@ fn pause_and_resume_refusals_are_json_objects_under_json() {
     for verb in [["pause"], ["resume"]] {
         let v = run(&verb);
         assert_eq!(v["code"], "no_focus");
-        assert_eq!(v["message"], "Nothing is started.");
+        assert_eq!(v["message"], "Nothing is in focus or paused.");
         assert_eq!(v["details"], serde_json::json!({}));
     }
     cdno_in(dir.path())

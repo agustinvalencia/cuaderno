@@ -89,7 +89,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. Enforces the active-project cap — errors if the vault is already at the cap (park another first)."
+        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. Applies the active-project cap — errors if the vault is already at the cap (park another first)."
     )]
     pub async fn activate_project(
         &self,
