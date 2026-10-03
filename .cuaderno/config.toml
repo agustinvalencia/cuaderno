@@ -43,15 +43,17 @@ max_active_projects = 5
 # carry_over_days — how many days before today the focus reader also reads.
 # A start left open yesterday is still your focus this morning with the
 # default 1, unless a newer start or a matching close follows it; 0 reads
-# today's log only (the behaviour before RFC 0005).
+# today's log only (the behaviour before RFC 0005). Must not exceed
+# `max_window_days`.
 #
 # paused_lookback_days — how many days back a paused action is still offered
 # for resuming (orientation, project context, `cdno action resume`).
-# Default 14, which covers a weekend and most holidays.
+# Default 14, which covers a weekend and most holidays. Must not exceed
+# `max_window_days`.
 #
-# max_window_days — the maximum number of days the focus reader can look back.
-# Both carry_over_days and paused_lookback_days must not exceed this value.
-# Default 366.
+# max_window_days — the upper bound on `carry_over_days` and
+# `paused_lookback_days`. Config validation rejects either window key if it
+# exceeds this value. Default 366.
 #
 # [focus]
 # carry_over_days = 1

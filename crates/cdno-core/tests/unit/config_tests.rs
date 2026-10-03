@@ -1253,4 +1253,49 @@ max_window_days = 500
     let config = result.unwrap();
     assert_eq!(config.focus.carry_over_days, 400);
     assert_eq!(config.focus.max_window_days, 500);
+    assert!(config.validate_focus().is_ok());
+}
+
+#[test]
+fn a_window_equal_to_the_ceiling_is_accepted() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_days = 366
+max_window_days = 366
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_focus().is_ok());
+}
+
+#[test]
+fn max_window_days_zero_with_default_windows_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+max_window_days = 0
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let result = config.validate_focus();
+    assert!(
+        result.is_err(),
+        "Expected error for zero max_window_days with defaults"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("carry_over_days") && err.contains("the default"),
+        "Error should mention the default: {err}"
+    );
 }

@@ -889,15 +889,27 @@ impl VaultConfig {
     pub fn validate_focus(&self) -> Result<(), ConfigError> {
         let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidFocus(msg));
         if self.focus.carry_over_days > self.focus.max_window_days {
+            let default_hint = if self.focus.carry_over_days == 1 {
+                " (the default)"
+            } else {
+                ""
+            };
             return invalid(format!(
-                "[focus] carry_over_days = {} exceeds max_window_days = {}",
-                self.focus.carry_over_days, self.focus.max_window_days
+                "`[focus] carry_over_days` is {}{} but `max_window_days` is {}; \
+                 lower the window or raise `max_window_days`",
+                self.focus.carry_over_days, default_hint, self.focus.max_window_days
             ));
         }
         if self.focus.paused_lookback_days > self.focus.max_window_days {
+            let default_hint = if self.focus.paused_lookback_days == 14 {
+                " (the default)"
+            } else {
+                ""
+            };
             return invalid(format!(
-                "[focus] paused_lookback_days = {} exceeds max_window_days = {}",
-                self.focus.paused_lookback_days, self.focus.max_window_days
+                "`[focus] paused_lookback_days` is {}{} but `max_window_days` is {}; \
+                 lower the window or raise `max_window_days`",
+                self.focus.paused_lookback_days, default_hint, self.focus.max_window_days
             ));
         }
         Ok(())
