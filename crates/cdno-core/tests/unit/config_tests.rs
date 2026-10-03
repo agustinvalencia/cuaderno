@@ -1173,3 +1173,129 @@ carry_over_day = 1
     }
     assert!(found, "Error chain should name the typo 'carry_over_day'");
 }
+
+#[test]
+fn focus_max_window_defaults_to_366() {
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Test\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.focus.max_window_days, 366);
+}
+
+#[test]
+fn carry_over_days_above_the_ceiling_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_days = 400
+max_window_days = 366
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let result = config.validate_focus();
+    assert!(result.is_err(), "Expected error but got success");
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("carry_over_days") && err_str.contains("400") && err_str.contains("366"),
+        "Error should name the key, value, and limit: {err_str}"
+    );
+}
+
+#[test]
+fn paused_lookback_days_above_the_ceiling_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+paused_lookback_days = 500
+max_window_days = 366
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let result = config.validate_focus();
+    assert!(result.is_err(), "Expected error but got success");
+    let err = result.unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("paused_lookback_days")
+            && err_str.contains("500")
+            && err_str.contains("366"),
+        "Error should name the key, value, and limit: {err_str}"
+    );
+}
+
+#[test]
+fn a_raised_ceiling_allows_a_longer_window() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_days = 400
+max_window_days = 500
+"#,
+    );
+    let result = VaultConfig::load(dir.path());
+    assert!(result.is_ok(), "Expected success but got error: {result:?}");
+    let config = result.unwrap();
+    assert_eq!(config.focus.carry_over_days, 400);
+    assert_eq!(config.focus.max_window_days, 500);
+    assert!(config.validate_focus().is_ok());
+}
+
+#[test]
+fn a_window_equal_to_the_ceiling_is_accepted() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+carry_over_days = 366
+max_window_days = 366
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert!(config.validate_focus().is_ok());
+}
+
+#[test]
+fn max_window_days_zero_with_default_windows_is_rejected() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        r#"
+[vault]
+name = "Test"
+
+[focus]
+max_window_days = 0
+"#,
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let result = config.validate_focus();
+    assert!(
+        result.is_err(),
+        "Expected error for zero max_window_days with defaults"
+    );
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("`[focus] carry_over_days` is 1 but `max_window_days` is 0"),
+        "Error should name the key, its value and the ceiling: {err}"
+    );
+}

@@ -195,3 +195,51 @@ fn validate_rejects_a_malformed_ignore_glob() {
     let err = validate_config_str(raw).expect_err("should reject");
     assert!(!err.message.is_empty());
 }
+
+#[test]
+fn validate_rejects_carry_over_days_exceeding_the_ceiling() {
+    // The focus validation is called by TypeRegistry::validate during the
+    // parse-and-validate sequence, so validate_config_str must reject a
+    // config where carry_over_days > max_window_days.
+    let raw = "[focus]\ncarry_over_days = 400\nmax_window_days = 366\n";
+    let err = validate_config_str(raw).expect_err("should reject");
+    assert!(
+        err.message.contains("carry_over_days") && err.message.contains("400"),
+        "Error should name the key and value: {}",
+        err.message
+    );
+    // Semantic error, not positional.
+    assert_eq!(err.line, None);
+    assert_eq!(err.col, None);
+}
+
+#[test]
+fn validate_rejects_paused_lookback_days_exceeding_the_ceiling() {
+    let raw = "[focus]\npaused_lookback_days = 500\nmax_window_days = 366\n";
+    let err = validate_config_str(raw).expect_err("should reject");
+    assert!(
+        err.message.contains("paused_lookback_days") && err.message.contains("500"),
+        "Error should name the key and value: {}",
+        err.message
+    );
+    assert_eq!(err.line, None);
+    assert_eq!(err.col, None);
+}
+
+#[test]
+fn validate_accepts_a_window_equal_to_the_ceiling() {
+    let raw = "[focus]\ncarry_over_days = 366\nmax_window_days = 366\n";
+    assert!(validate_config_str(raw).is_ok());
+}
+
+#[test]
+fn validate_rejects_defaults_when_max_window_is_zero() {
+    let raw = "[focus]\nmax_window_days = 0\n";
+    let err = validate_config_str(raw).expect_err("should reject defaults against zero ceiling");
+    assert!(err.message.contains("carry_over_days"), "{}", err.message);
+    assert!(
+        err.message.contains("is 1 but `max_window_days` is 0"),
+        "{}",
+        err.message
+    );
+}

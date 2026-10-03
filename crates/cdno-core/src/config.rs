@@ -14,6 +14,10 @@ fn default_paused_lookback_days() -> u32 {
     14
 }
 
+fn default_max_window_days() -> u32 {
+    366
+}
+
 /// The `[focus]` section: the windows the focus reader uses (RFC 0005).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +31,11 @@ pub struct FocusConfig {
     /// Default 14.
     #[serde(default = "default_paused_lookback_days")]
     pub paused_lookback_days: u32,
+    /// The maximum number of days the focus reader can look back. Both
+    /// `carry_over_days` and `paused_lookback_days` must not exceed this
+    /// value. Default 366.
+    #[serde(default = "default_max_window_days")]
+    pub max_window_days: u32,
 }
 
 impl Default for FocusConfig {
@@ -34,6 +43,7 @@ impl Default for FocusConfig {
         Self {
             carry_over_days: default_carry_over_days(),
             paused_lookback_days: default_paused_lookback_days(),
+            max_window_days: default_max_window_days(),
         }
     }
 }
@@ -870,6 +880,27 @@ impl VaultConfig {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Validates the `[focus]` section: ensures that both `carry_over_days`
+    /// and `paused_lookback_days` do not exceed `max_window_days`.
+    pub fn validate_focus(&self) -> Result<(), ConfigError> {
+        let invalid = |msg: String| Err::<(), ConfigError>(ConfigError::InvalidFocus(msg));
+        if self.focus.carry_over_days > self.focus.max_window_days {
+            return invalid(format!(
+                "`[focus] carry_over_days` is {} but `max_window_days` is {}; \
+                 lower the window or raise `max_window_days`",
+                self.focus.carry_over_days, self.focus.max_window_days
+            ));
+        }
+        if self.focus.paused_lookback_days > self.focus.max_window_days {
+            return invalid(format!(
+                "`[focus] paused_lookback_days` is {} but `max_window_days` is {}; \
+                 lower the window or raise `max_window_days`",
+                self.focus.paused_lookback_days, self.focus.max_window_days
+            ));
         }
         Ok(())
     }

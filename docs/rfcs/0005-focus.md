@@ -442,9 +442,15 @@ because a Friday pause must survive the weekend and most holidays:
 
 ```toml
 [focus]
-carry_over_days     = 1
+carry_over_days      = 1
 paused_lookback_days = 14
+max_window_days      = 366
 ```
+
+Both windows are validated against `max_window_days` (default 366): a vault whose
+`carry_over_days` or `paused_lookback_days` exceeds it fails to open, naming the key, so a typo
+like `14000` cannot turn every focus read into thousands of missing-file checks. The ceiling is
+itself configurable (maintainer's decision, #753).
 
 `Vault::last_paused(today)` is one pass over at most `paused_lookback_days + 1` daily notes
 yielding every project's last pause (not one scan per project), in the shape
