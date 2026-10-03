@@ -32,9 +32,10 @@ use cdno_domain::frontmatter::{
 };
 use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    CompletedActionSource, CurrentFocus, DailyLogLine, LapsedHabit, OrientationContext,
-    PortfolioSummary, ProjectStateChange, ProjectSummary, QuestionSummary, SearchResultEntry,
-    StewardshipSummary, StewardshipVariant, TopAction, TrackingEntry,
+    CompletedActionSource, CurrentFocus, DailyLogLine, LapsedHabit, LastPause, OrientationContext,
+    PortfolioSummary, ProjectStateChange, ProjectSummary, QuestionSummary, ResumedFrom,
+    ResumedKind, SearchResultEntry, StewardshipSummary, StewardshipVariant, TopAction,
+    TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -202,16 +203,135 @@ pub struct CurrentFocusDto {
     pub action: String,
     /// When it was started, `HH:MM`, from the log line's own stamp.
     pub started: String,
+    /// The day that stamp belongs to, `YYYY-MM-DD` -- before today for a
+    /// focus carried over from an earlier day (RFC 0005 §5.2).
+    pub date: String,
+    /// True when `date` is not today: the focus was left open on an
+    /// earlier day. `resume_action` re-anchors it.
+    pub carried: bool,
+    /// Set only for a focus that `resume_action` re-anchored over the same
+    /// action: when the work was first started. `null` otherwise.
+    pub origin: Option<FocusOriginDto>,
 }
 
-impl From<CurrentFocus> for CurrentFocusDto {
-    fn from(f: CurrentFocus) -> Self {
+/// When a resumed focus was first started (RFC 0005 §5.3).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FocusOriginDto {
+    /// `YYYY-MM-DDTHH:MM`, the same format `cdno now --json` uses.
+    pub started_at: String,
+}
+
+impl CurrentFocusDto {
+    /// `today` is the day the caller is asking on: `carried` is "the
+    /// focus's date is not today", the same rule `cdno now --json` applies.
+    pub fn at(f: CurrentFocus, today: NaiveDate) -> Self {
         Self {
+            carried: f.date != today,
+            date: f.date.format("%Y-%m-%d").to_string(),
+            origin: f.origin.map(|o| FocusOriginDto {
+                started_at: o.format("%Y-%m-%dT%H:%M").to_string(),
+            }),
             project: f.project,
             action: f.action,
             started: f.started.format("%H:%M").to_string(),
         }
     }
+}
+
+/// An action paused and not yet reopened (RFC 0005 §5.5), in the shape
+/// `cdno now --json` gives `last_paused`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LastPauseDto {
+    pub project: String,
+    /// The action text as logged, the string `resume_action` re-anchors.
+    pub action: String,
+    /// `action` made readable: energy suffix dropped, wikilink reduced to its label.
+    pub title: String,
+    /// When it was paused, `YYYY-MM-DDTHH:MM`.
+    pub at: String,
+    /// The `next:` re-entry hint, if one was given.
+    pub next: Option<String>,
+    /// The `reason:` the pause was given, if any.
+    pub reason: Option<String>,
+}
+
+impl From<LastPause> for LastPauseDto {
+    fn from(p: LastPause) -> Self {
+        Self {
+            title: p.title(),
+            at: p.at.format("%Y-%m-%dT%H:%M").to_string(),
+            project: p.project,
+            action: p.action,
+            next: p.next,
+            reason: p.reason,
+        }
+    }
+}
+
+/// Where `resume_action`'s focus came from (RFC 0005 §5.3).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResumedFromDto {
+    /// `"carried"` (a focus left open on an earlier day, continued) or
+    /// `"paused"` (a pause reopened).
+    pub kind: String,
+    /// The day of the carried focus's open marker, or of the pause.
+    pub date: String,
+    /// The pause's `next:` hint; always null for a carried focus.
+    pub next: Option<String>,
+    /// The pause's `reason:`; always null for a carried focus.
+    pub reason: Option<String>,
+}
+
+impl From<ResumedFrom> for ResumedFromDto {
+    fn from(f: ResumedFrom) -> Self {
+        Self {
+            kind: match f.kind {
+                ResumedKind::Carried => "carried",
+                ResumedKind::Paused => "paused",
+            }
+            .to_owned(),
+            date: f.date.to_string(),
+            next: f.next,
+            reason: f.reason,
+        }
+    }
+}
+
+/// Result of `pause_action`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PauseResultDto {
+    /// The daily note the pause line was written to.
+    pub path: String,
+    pub message: String,
+    /// The focus that was paused.
+    pub paused: CurrentFocusDto,
+    pub verification: WriteVerificationDto,
+}
+
+/// Result of `switch_action` / `switch_unplanned_action`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SwitchResultDto {
+    pub path: String,
+    pub message: String,
+    /// The focus that was paused; null when nothing was open and the
+    /// switch was a plain start (a given `next` then had nothing to attach to).
+    pub paused: Option<CurrentFocusDto>,
+    /// The new focus.
+    pub started: CurrentFocusDto,
+    pub verification: WriteVerificationDto,
+}
+
+/// Result of `resume_action`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResumeResultDto {
+    pub path: String,
+    pub message: String,
+    /// The focus as `current_focus` now reads it. Read `action` back: with
+    /// `project`, a carried focus wins over the pause `get_orientation` showed.
+    pub resumed: CurrentFocusDto,
+    /// What was resumed: `kind` says whether a carried focus or a pause.
+    pub resumed_from: ResumedFromDto,
+    pub verification: WriteVerificationDto,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

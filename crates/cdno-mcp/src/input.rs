@@ -201,6 +201,61 @@ pub struct StartUnplannedActionInput {
     pub energy: String,
 }
 
+/// Input for `pause_action`. Names no project or query: there is exactly
+/// one focus, and it is the one being paused (RFC 0005 §5.1).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PauseActionInput {
+    /// Where to pick up again, in a short clause -- logged as `next:`.
+    /// Draft it from what you saw the person do; omit when unknown.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// Why the work was set aside -- logged as `reason:`.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Input for `switch_action`: the target is an existing bullet.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SwitchActionInput {
+    /// Project of the action to switch TO (not of the one being paused).
+    pub project: String,
+    /// Case-insensitive substring of the open bullet to switch to.
+    pub query: String,
+    /// Re-entry hint for the action being paused -- logged as `next:`.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// Why the paused action was set aside -- logged as `reason:`.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Input for `switch_unplanned_action`: the target bullet does not exist yet.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SwitchUnplannedActionInput {
+    /// Project of the action to switch TO (not of the one being paused).
+    pub project: String,
+    /// The work being switched to, as the bullet should read.
+    pub title: String,
+    /// One of `"deep"`, `"medium"`, `"light"`.
+    pub energy: String,
+    /// Re-entry hint for the action being paused -- logged as `next:`.
+    #[serde(default)]
+    pub next: Option<String>,
+    /// Why the paused action was set aside -- logged as `reason:`.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+/// Input for `resume_action`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ResumeActionInput {
+    /// Restrict the resume to this project (its carried focus, else its
+    /// latest pause). Omit for the carried focus, else the latest pause
+    /// of any project.
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
 /// Input for `drop_action` (GH #559) — like [`ActionQueryInput`] but
 /// carries the optional reason the drop is worth recording for.
 #[derive(Debug, Deserialize, JsonSchema)]

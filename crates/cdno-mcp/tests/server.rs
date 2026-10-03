@@ -98,6 +98,11 @@ fn advertised_catalogue_matches_expected_surface() {
         "promote_action",
         "start_action",
         "start_unplanned_action",
+        // Focus verbs (RFC 0005, #735).
+        "pause_action",
+        "switch_action",
+        "switch_unplanned_action",
+        "resume_action",
         "complete_action",
         "drop_action",
         "add_milestone",
@@ -138,7 +143,7 @@ fn advertised_catalogue_matches_expected_surface() {
     ];
     expected.sort();
     assert_eq!(got, expected, "advertised tool set drifted");
-    assert_eq!(tools.len(), 60);
+    assert_eq!(tools.len(), 64);
 }
 
 /// `read_note` is a read, so it rides the context router onto the

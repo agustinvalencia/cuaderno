@@ -14,10 +14,13 @@ use cdno_domain::vault::Revision;
 use cdno_domain::{DailySection, MonthlySection, TrackingEntryDraft, WeeklySection};
 
 use crate::context::{refuse_reference_outside_the_vault, resolve_note_reference};
-use crate::dto::{NoteToDailyResponse, ReviseNoteResponse};
+use crate::dto::{
+    CurrentFocusDto, NoteToDailyResponse, PauseResultDto, ResumeResultDto, ResumedFromDto,
+    ReviseNoteResponse, SwitchResultDto,
+};
 use crate::input::*;
 
-use crate::util::{into_mcp_error, invalid_argument, json_result};
+use crate::util::{into_mcp_error, into_mcp_error_attempting, invalid_argument, json_result};
 
 use crate::server::CuadernoServer;
 use crate::verify::WriteShape;
@@ -499,10 +502,11 @@ impl CuadernoServer {
         Parameters(input): Parameters<StartActionInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let at = chrono::Local::now().naive_local();
+        let attempted = serde_json::json!({ "project": input.project, "query": input.query });
         let path = self
             .with_vault(move |vault| vault.start_action(at, &input.project, &input.query))
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(|e| into_mcp_error_attempting(e, attempted))?;
         let message = format!("Started action, logged to {}", path);
         self.verified_write(
             path,
@@ -522,16 +526,140 @@ impl CuadernoServer {
         let energy = EnergyLevel::from_str(&input.energy)
             .map_err(|e| invalid_argument("energy", &e.to_string()))?;
         let at = chrono::Local::now().naive_local();
+        let attempted = serde_json::json!({ "project": input.project, "title": input.title });
         let path = self
             .with_vault(move |vault| {
                 vault.start_unplanned_action(at, &input.project, &input.title, energy)
             })
             .await?
-            .map_err(into_mcp_error)?
+            .map_err(|e| into_mcp_error_attempting(e, attempted))?
             .primary;
         let message = format!("Added to {} and started", path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
+    }
+
+    #[tool(
+        description = "Acts on the CURRENT focus; takes no project or query. Sets the action in focus aside without finishing it: logs `- **HH:MM**: action paused on [[project]] \u{2014} <the focus's own text>` to today's daily note, with optional indented `next:` and `reason:` lines. The text logged is the focus's, read back from the log -- nothing is matched against the project map, so a focus on a since-parked project can still be paused -- and the bullet stays on the map untouched. After a pause `current_focus` returns null; the pause stays resumable with `resume_action` for the `[focus] paused_lookback_days` window, and its `next:` line is what a later `resume_action` hands back. Pass `next` whenever you know where the work stood -- draft it from what you saw the person do, in a short clause; a re-entry hint is worth more than the pause line itself. `reason` records why it was set aside. With nothing in focus this is refused with code `no_focus`; do not retry, tell the person nothing is started. Call it only on the person's word: pausing is their decision, not yours."
+    )]
+    pub async fn pause_action(
+        &self,
+        Parameters(input): Parameters<PauseActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let outcome = self
+            .with_vault(move |vault| {
+                vault.pause_action(at, input.next.as_deref(), input.reason.as_deref())
+            })
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!("Paused action, logged to {}", outcome.path);
+        let reported = outcome.path.to_string();
+        let paused = CurrentFocusDto::at(outcome.paused, at.date());
+        self.verified_write_with(
+            outcome.path,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+            move |verification| PauseResultDto {
+                path: reported,
+                message,
+                paused,
+                verification,
+            },
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Move on from the CURRENT focus to an action that is ALREADY on a project map, in one commit: pauses what is in focus (logging `action paused on ...` with the optional `next:` and `reason:` lines for it) and starts the target (`started ...`), so the daily log reads as a pause followed by a start. `project` and `query` name the action to switch TO, matched by substring exactly as `start_action` matches; the one being paused is never named, it is whatever `current_focus` shows. Use this when `start_action` was refused with code `focus_open` AND the person has said to switch -- never switch on your own judgment; the refusal's message says to ask first. Pass `next` to leave a re-entry hint on the paused action, drafted from what you saw the person do. With nothing in focus it is a plain start and `next`/`reason` have nothing to attach to (the result's `paused` is null). Switching to the action already in focus is refused with code `focus_open` and remedy `already_focused`. A query that matches nothing or several bullets errors as it does for `start_action`, and nothing is written. For work not on the map yet use `switch_unplanned_action`."
+    )]
+    pub async fn switch_action(
+        &self,
+        Parameters(input): Parameters<SwitchActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let attempted = serde_json::json!({ "project": input.project, "query": input.query });
+        let outcome = self
+            .with_vault(move |vault| {
+                vault.switch_action(
+                    at,
+                    &input.project,
+                    &input.query,
+                    input.next.as_deref(),
+                    input.reason.as_deref(),
+                )
+            })
+            .await?
+            .map_err(|e| into_mcp_error_attempting(e, attempted))?;
+        let message = format!("Switched focus, logged to {}", outcome.primary);
+        self.switch_result(
+            at,
+            outcome,
+            message,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+        )
+        .await
+    }
+
+    #[tool(
+        description = "Move on from the CURRENT focus to work that is on NO project map yet, in one commit: pauses what is in focus (with the optional `next:` and `reason:` lines), appends the new action to `project`'s `## Next Actions`, and starts it -- the unplanned counterpart of `switch_action`, split from it for the reason `start_unplanned_action` is split from `start_action`: a query that matches nothing must never become a new action silently. `project` is the project of the NEW action; the one being paused is whatever `current_focus` shows and is never named. Use it only when the person has said to switch (a refused start says to ask first). `energy` is one of `\"deep\"`, `\"medium\"`, `\"light\"`. A `title` that duplicates an open bullet's text makes both unresolvable by substring, so check the map first if the work may already be listed. With nothing in focus it is a plain unplanned start and `paused` in the result is null. Switching to the action already in focus is refused with code `focus_open`."
+    )]
+    pub async fn switch_unplanned_action(
+        &self,
+        Parameters(input): Parameters<SwitchUnplannedActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let energy = EnergyLevel::from_str(&input.energy)
+            .map_err(|e| invalid_argument("energy", &e.to_string()))?;
+        let at = chrono::Local::now().naive_local();
+        let attempted = serde_json::json!({ "project": input.project, "title": input.title });
+        let outcome = self
+            .with_vault(move |vault| {
+                vault.switch_unplanned_action(
+                    at,
+                    &input.project,
+                    &input.title,
+                    energy,
+                    input.next.as_deref(),
+                    input.reason.as_deref(),
+                )
+            })
+            .await?
+            .map_err(|e| into_mcp_error_attempting(e, attempted))?;
+        let message = format!("Added to {} and switched", outcome.primary);
+        self.switch_result(at, outcome, message, WriteShape::Rewritten)
+            .await
+    }
+
+    #[tool(
+        description = "Take up work again: re-anchors a focus carried over from an earlier day, or reopens the latest pause, and logs `- **HH:MM**: resumed [[project]] \u{2014} <text>` to today's daily note. The text comes from the log, never from the project map, so it takes no query or title; `project` is optional and only narrows the search to that project. With no `project`: the carried focus if there is one, else the most recent pause within the `[focus] paused_lookback_days` window. With `project`: that project's carried focus if the slot holds one, else its latest pause -- the one `get_orientation` shows beside its top action. When that project also carries a focus, the focus wins over the pause, so READ `resumed_from.kind` (`carried` or `paused`) and `resumed.action` BACK to the person rather than assuming the pause you were shown. `resumed_from.next` is the re-entry hint the pause left: read it to the person on re-entry. A different action already in focus is refused with code `focus_open` (never an automatic switch: pause it or `switch_action` first, on the person's word); the same action already started today is refused with remedy `already_focused`; nothing carried or paused is refused with code `no_focus`. Call it only on the person's yes."
+    )]
+    pub async fn resume_action(
+        &self,
+        Parameters(input): Parameters<ResumeActionInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let at = chrono::Local::now().naive_local();
+        let outcome = self
+            .with_vault(move |vault| vault.resume_action(at, input.project.as_deref()))
+            .await?
+            .map_err(into_mcp_error)?;
+        let message = format!(
+            "Resumed on {}, logged to {}",
+            outcome.resumed.project, outcome.path
+        );
+        let reported = outcome.path.to_string();
+        let resumed = CurrentFocusDto::at(outcome.resumed, at.date());
+        let resumed_from = ResumedFromDto::from(outcome.from);
+        self.verified_write_with(
+            outcome.path,
+            WriteShape::AppendedToSection(cdno_domain::DAILY_LOGS_SECTION),
+            move |verification| ResumeResultDto {
+                path: reported,
+                message,
+                resumed,
+                resumed_from,
+                verification,
+            },
+        )
+        .await
     }
 
     #[tool(
@@ -889,5 +1017,32 @@ impl CuadernoServer {
         let message = format!("{verb} {} on {}", section.heading(), path);
         self.verified_write(path, message, WriteShape::Rewritten)
             .await
+    }
+}
+
+impl CuadernoServer {
+    /// Shared tail of the two switch tools: verify the write and build the
+    /// payload with both foci.
+    async fn switch_result(
+        &self,
+        at: chrono::NaiveDateTime,
+        outcome: cdno_domain::SwitchOutcome,
+        message: String,
+        shape: WriteShape,
+    ) -> Result<CallToolResult, ErrorData> {
+        let reported = outcome.primary.to_string();
+        let today = at.date();
+        let paused = outcome.paused.map(|f| CurrentFocusDto::at(f, today));
+        let started = CurrentFocusDto::at(outcome.started, today);
+        self.verified_write_with(outcome.primary, shape, move |verification| {
+            SwitchResultDto {
+                path: reported,
+                message,
+                paused,
+                started,
+                verification,
+            }
+        })
+        .await
     }
 }

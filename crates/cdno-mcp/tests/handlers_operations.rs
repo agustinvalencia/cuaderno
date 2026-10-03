@@ -26,11 +26,12 @@ use cdno_mcp::server::{
     CreateProjectInput, CreateQuestionInput, CreateStewardshipInput, CreateTrackingEntryInput,
     DiscardInboxItemInput, DropActionInput, DropProjectInput, FileToPortfolioInput,
     LinkPortfolioToProjectInput, LinkPortfolioToQuestionInput, NoteToDailyInput, OpenItemsChoice,
-    ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput, ReadMonthlyNoteInput, ReadNoteInput,
-    ReadWeeklyNoteInput, ResolveWaitingOnInput, ReviseNoteInput, SetCoreQuestionInput,
-    SetFrontmatterInput, SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput,
-    UpdateProjectStateInput, UpsertDailySectionInput, UpsertMonthlySectionInput,
-    UpsertWeeklySectionInput,
+    PauseActionInput, ProjectSlugInput, PromoteActionInput, ReadDailyNoteInput,
+    ReadMonthlyNoteInput, ReadNoteInput, ReadWeeklyNoteInput, ResolveWaitingOnInput,
+    ResumeActionInput, ReviseNoteInput, SetCoreQuestionInput, SetFrontmatterInput,
+    SetQuestionStatusInput, StartActionInput, StartUnplannedActionInput, SwitchActionInput,
+    SwitchUnplannedActionInput, UpdateProjectStateInput, UpsertDailySectionInput,
+    UpsertMonthlySectionInput, UpsertWeeklySectionInput,
 };
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 use rmcp::handler::server::wrapper::Parameters;
@@ -3119,4 +3120,241 @@ async fn drop_project_drop_without_hash_is_refused_with_the_list() {
 
     assert_eq!(rejection_of(&err)["code"], "project_has_open_items");
     assert!(store.exists(&vp("projects/widget.md")).unwrap());
+}
+
+// --- pause / switch / resume (RFC 0005, #735) --------------------------
+
+/// Today at `h:m`, the day the handlers (which read the real clock) stamp.
+fn today_at(h: u32, m: u32) -> NaiveDateTime {
+    chrono::Local::now()
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap())
+}
+
+/// A project with two open bullets, the first already in focus since 09:10.
+fn server_with_focus() -> (CuadernoServer, Arc<dyn VaultStore>) {
+    server_with(|vault, _s| {
+        vault
+            .create_project(
+                moment(2026, 5, 1, 9, 0),
+                "Surrogate model",
+                Context::Work,
+                None,
+            )
+            .unwrap();
+        for title in ["Draft methods section", "Run ablation"] {
+            vault
+                .add_action(
+                    moment(2026, 5, 1, 9, 5),
+                    "surrogate-model",
+                    title,
+                    EnergyLevel::Deep,
+                )
+                .unwrap();
+        }
+        vault
+            .start_action(today_at(9, 10), "surrogate-model", "Draft methods")
+            .unwrap();
+    })
+}
+
+fn todays_daily(store: &Arc<dyn VaultStore>) -> String {
+    let today = chrono::Local::now().date_naive();
+    store
+        .read_file(&vp(&format!(
+            "journal/{}/daily/{}.md",
+            today.format("%Y"),
+            today.format("%Y-%m-%d")
+        )))
+        .expect("daily written")
+}
+
+#[tokio::test]
+async fn pause_action_logs_the_pause_and_returns_the_paused_focus() {
+    let (server, store) = server_with_focus();
+    let result = server
+        .pause_action(Parameters(PauseActionInput {
+            next: Some("rerun with the new seed".to_owned()),
+            reason: Some("meeting".to_owned()),
+        }))
+        .await
+        .expect("pause_action");
+    let payload = decode_json(&result);
+    assert_eq!(payload["paused"]["project"], "surrogate-model");
+    assert_eq!(payload["paused"]["action"], "Draft methods section (deep)");
+    assert_eq!(payload["paused"]["started"], "09:10");
+    assert_eq!(payload["paused"]["carried"], false);
+    assert!(payload["paused"]["origin"].is_null());
+    assert!(payload["verification"]["verified"].is_string());
+
+    let body = todays_daily(&store);
+    assert!(
+        body.contains(
+            "action paused on [[surrogate-model]] \u{2014} Draft methods section (deep)\n  next: rerun with the new seed\n  reason: meeting"
+        ),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn pause_action_with_nothing_in_focus_is_a_no_focus_rejection() {
+    let (server, _store) = server_with_project();
+    let err = server
+        .pause_action(Parameters(PauseActionInput {
+            next: None,
+            reason: None,
+        }))
+        .await
+        .expect_err("nothing to pause");
+    assert_eq!(rejection_of(&err)["code"], "no_focus");
+}
+
+#[tokio::test]
+async fn switch_action_pauses_the_focus_and_starts_the_target() {
+    let (server, store) = server_with_focus();
+    let result = server
+        .switch_action(Parameters(SwitchActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Run ablation".to_owned(),
+            next: Some("section 3 next".to_owned()),
+            reason: None,
+        }))
+        .await
+        .expect("switch_action");
+    let payload = decode_json(&result);
+    assert_eq!(payload["paused"]["action"], "Draft methods section (deep)");
+    assert_eq!(payload["started"]["action"], "Run ablation (deep)");
+
+    let body = todays_daily(&store);
+    let paused = body
+        .find("action paused on [[surrogate-model]] \u{2014} Draft methods section (deep)")
+        .unwrap_or_else(|| panic!("{body}"));
+    let started = body
+        .find("started [[surrogate-model]] \u{2014} Run ablation (deep)")
+        .unwrap_or_else(|| panic!("{body}"));
+    assert!(paused < started, "pause, then start:\n{body}");
+    assert!(body.contains("  next: section 3 next"), "{body}");
+}
+
+#[tokio::test]
+async fn switch_unplanned_action_adds_the_bullet_pauses_and_starts_it() {
+    let (server, store) = server_with_focus();
+    let result = server
+        .switch_unplanned_action(Parameters(SwitchUnplannedActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "light".to_owned(),
+            next: None,
+            reason: Some("build is red".to_owned()),
+        }))
+        .await
+        .expect("switch_unplanned_action");
+    let payload = decode_json(&result);
+    assert_eq!(payload["paused"]["action"], "Draft methods section (deep)");
+    assert_eq!(payload["started"]["action"], "Fix the CI badge (light)");
+
+    let map = store
+        .read_file(&vp("projects/surrogate-model.md"))
+        .expect("map readable");
+    assert!(map.contains("- [ ] Fix the CI badge (light)"), "{map}");
+    let body = todays_daily(&store);
+    assert!(body.contains("  reason: build is red"), "{body}");
+    assert!(
+        body.contains("started [[surrogate-model]] \u{2014} Fix the CI badge (light)"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn resume_action_reopens_a_pause_and_reports_where_it_came_from() {
+    let (server, store) = server_with_focus();
+    server
+        .pause_action(Parameters(PauseActionInput {
+            next: Some("rerun with the new seed".to_owned()),
+            reason: None,
+        }))
+        .await
+        .expect("pause_action");
+
+    let result = server
+        .resume_action(Parameters(ResumeActionInput {
+            project: Some("surrogate-model".to_owned()),
+        }))
+        .await
+        .expect("resume_action");
+    let payload = decode_json(&result);
+    assert_eq!(payload["resumed"]["action"], "Draft methods section (deep)");
+    assert_eq!(payload["resumed_from"]["kind"], "paused");
+    assert_eq!(
+        payload["resumed_from"]["next"], "rerun with the new seed",
+        "{payload}"
+    );
+    assert!(payload["resumed_from"]["reason"].is_null());
+    assert_eq!(
+        payload["resumed_from"]["date"],
+        chrono::Local::now().date_naive().to_string()
+    );
+
+    let body = todays_daily(&store);
+    assert!(
+        body.contains("resumed [[surrogate-model]] \u{2014} Draft methods section (deep)"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn start_action_rejection_carries_attempted() {
+    let (server, _store) = server_with_focus();
+    let err = server
+        .start_action(Parameters(StartActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Run ablation".to_owned(),
+        }))
+        .await
+        .expect_err("a second start must be refused");
+
+    // The whole fixture the CLI's `--json` is compared against too. The
+    // handlers read the real clock, so the focus seeded at 09:10 today is
+    // not carried and only the fixture's date is today's rather than the
+    // literal one.
+    let mut fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/focus_open_rejection.json"))
+            .expect("fixture parses");
+    fixture["details"]["focus"]["date"] =
+        serde_json::json!(chrono::Local::now().date_naive().to_string());
+    assert_eq!(rejection_of(&err), fixture);
+}
+
+#[tokio::test]
+async fn unplanned_and_switch_rejections_carry_attempted_in_the_cli_shape() {
+    let (server, _store) = server_with_focus();
+    let err = server
+        .start_unplanned_action(Parameters(StartUnplannedActionInput {
+            project: "surrogate-model".to_owned(),
+            title: "Fix the CI badge".to_owned(),
+            energy: "light".to_owned(),
+        }))
+        .await
+        .expect_err("refused");
+    assert_eq!(
+        rejection_of(&err)["details"]["attempted"],
+        serde_json::json!({ "project": "surrogate-model", "title": "Fix the CI badge" })
+    );
+
+    // Switching to the action already in focus is refused likewise.
+    let err = server
+        .switch_action(Parameters(SwitchActionInput {
+            project: "surrogate-model".to_owned(),
+            query: "Draft methods".to_owned(),
+            next: None,
+            reason: None,
+        }))
+        .await
+        .expect_err("refused");
+    let rejection = rejection_of(&err);
+    assert_eq!(rejection["details"]["remedy"], "already_focused");
+    assert_eq!(
+        rejection["details"]["attempted"],
+        serde_json::json!({ "project": "surrogate-model", "query": "Draft methods" })
+    );
 }

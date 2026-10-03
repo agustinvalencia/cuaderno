@@ -36,6 +36,22 @@ pub(crate) fn into_mcp_error(e: DomainError) -> ErrorData {
     ErrorData::internal_error(e.to_string(), data)
 }
 
+/// [`into_mcp_error`] for a start or switch: a `focus_open` rejection also
+/// carries `details.attempted`, what the caller asked for, in the shape
+/// `cdno action ... --json` gives (`{project, query}` or `{project, title}`).
+/// Any other error passes through unchanged.
+pub(crate) fn into_mcp_error_attempting(e: DomainError, attempted: serde_json::Value) -> ErrorData {
+    let mut data = crate::rejection::envelope(&e);
+    if let Some(rejection) = data
+        .as_mut()
+        .and_then(|d| d.get_mut(crate::rejection::MARKER))
+        && rejection["code"] == "focus_open"
+    {
+        rejection["details"]["attempted"] = attempted;
+    }
+    ErrorData::internal_error(e.to_string(), data)
+}
+
 /// Build an InvalidParams error pointing at a specific input field.
 /// Used by handlers that accept enum-typed strings (e.g. the `domain`
 /// filter on `get_active_questions`) and need to reject a value that
