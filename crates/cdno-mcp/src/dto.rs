@@ -48,6 +48,8 @@ pub struct ProjectSummaryDto {
     pub status: String,
     pub state_snippet: String,
     pub top_action: Option<TopActionDto>,
+    /// The project's most recent pause still open for resuming, with its
+    /// `next:` hint and `reason:` if given. Null when nothing is paused.
     pub last_paused: Option<LastPauseDto>,
 }
 
@@ -170,16 +172,20 @@ pub struct OrientationContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     pub projects: Vec<ProjectSummaryDto>,
     pub lapsed_habits: Vec<LapsedHabitDto>,
+    /// What is currently in focus: the most recent start, unless since
+    /// completed, dropped or paused. Null when nothing is open.
     pub focus: Option<CurrentFocusDto>,
 }
 
-impl From<OrientationContext> for OrientationContextDto {
-    fn from(o: OrientationContext) -> Self {
+impl OrientationContextDto {
+    /// Build the orientation DTO from domain context and today's date,
+    /// setting the focus field from the context's own focus.
+    pub fn at(o: OrientationContext, today: NaiveDate) -> Self {
         Self {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
-            focus: None, // Will be filled by the handler
+            focus: o.focus.map(|f| CurrentFocusDto::at(f, today)),
         }
     }
 }
@@ -1062,10 +1068,9 @@ pub struct ProjectContextDto {
     /// `None` if the field is absent, the wikilink doesn't parse, or
     /// the target question has been deleted.
     pub core_question: Option<QuestionSummaryDto>,
-    /// The most recent paused action for this project, when one exists
-    /// within `paused_lookback_days` (RFC 0005 §5.5). Allows the person
-    /// to re-enter a paused action through `resume_action` without a
-    /// second call to `get_orientation`.
+    /// The project's most recent pause still open for resuming
+    /// (`project`, `action`, `title`, `at`, `date`, `next`, `reason`),
+    /// or null when no pause is resumable. Null when nothing is paused.
     pub last_paused: Option<LastPauseDto>,
 }
 
