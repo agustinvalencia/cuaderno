@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries the current focus (RFC 0005 §5.5)."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null."
     )]
     pub async fn get_orientation(
         &self,
@@ -62,16 +62,12 @@ impl CuadernoServer {
         // the suggestion locally. Same separation the CLI uses (see
         // `commands/orient.rs::suggestion`).
         let today = chrono::Local::now().date_naive();
-        let (ctx, focus) = self
-            .with_vault(move |vault| {
-                let ctx = vault.orientation_context(today)?;
-                let focus = vault.current_focus(today)?;
-                Ok::<_, DomainError>((ctx, focus))
-            })
+        let ctx = self
+            .with_vault(move |vault| vault.orientation_context(today))
             .await?
             .map_err(into_mcp_error)?;
-        let mut dto = OrientationContextDto::from(ctx);
-        dto.focus = focus.map(|f| CurrentFocusDto::at(f, today));
+        let mut dto = OrientationContextDto::from(ctx.clone());
+        dto.focus = ctx.focus.map(|f| CurrentFocusDto::at(f, today));
         json_result(dto)
     }
 
@@ -282,7 +278,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), the resolved core_question summary when the project sets one, and the last paused action for this project (RFC 0005 §5.5). Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
+        description = "Full context for a single project: typed frontmatter, the body of the project map (capped to a generous 20k-char safety valve — a normal map is far shorter; when it bites, the cut is marked with a trailing \u{2026} and the full body is one `read_note` away), recent daily-log mentions (past 30 days, bare or qualified wikilinks, capped to the 50 most-recent — full history one `read_daily_note` away), backlinks grouped by source note type (both body and frontmatter wikilinks; each group capped to 100), the resolved core_question summary when the project sets one, and the project's most recent pause still open for resuming (with its `next:` hint), or null. Resolves the slug wherever the project lives: active in `projects/`, parked in `projects/_parked/`, or completed or dropped in `projects/_done/<year>/`."
     )]
     pub async fn get_project_context(
         &self,
