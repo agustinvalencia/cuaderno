@@ -8,6 +8,21 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **`cdno action switch`, and `start` refuses while something is in focus (RFC 0005, #733).**
+  `switch` takes `start`'s `--project`/`--query` (or `--unplanned` with `--title` and `--energy`)
+  plus `--next` and `--reason`, pauses the focus and starts the target in one commit, and with
+  nothing open says `Nothing was open — started <title>.` (adding `(--next ignored: nothing to
+  attach it to)` when a hint was given). A prompted switch shows `pause <X>, start <Y>` and
+  confirms; the bullet picker leaves out the bullet in focus; a missing `--next` is asked once
+  after the confirm. `start` while another action is in focus now fails, naming it and the exact
+  `cdno action switch …` command (`cdno action resume` when it is the same action carried over
+  from an earlier day; nothing to do when it was started today). In a terminal it then asks
+  `Switch to it instead?` (default no) and, on yes, runs the switch without asking for `--next` or
+  `--reason`. Under `--json`, `start`, `pause`, `resume` and `switch` print the rejection object
+  (`code`, `message`, `details`) on stdout and exit non-zero; its shape is checked in at
+  `crates/cdno-mcp/tests/fixtures/focus_open_rejection.json`. `start` with nothing open is
+  unchanged.
+
 - **`cdno action pause` and `cdno action resume` (RFC 0005, #732).** `pause [--next <text>]
   [--reason <text>]` logs `action paused on [[slug]] — <text>` for the current focus and takes no
   project or query; in a terminal a missing `--next` is asked once ("Where to pick up (Enter to
