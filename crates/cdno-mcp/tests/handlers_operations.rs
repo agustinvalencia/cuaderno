@@ -3856,3 +3856,35 @@ async fn a_failing_focus_read_yields_null_not_an_error() {
             .unwrap()
     );
 }
+
+/// `note_to_daily` with a back-dated `date` writes to that day but reads the
+/// focus on today's clock, so its `focus` is what `current_focus` returns, not
+/// the focus as of the earlier day (which, outside the window, would be null).
+#[tokio::test]
+async fn note_to_daily_back_dated_still_reads_todays_focus() {
+    let (server, _store) = server_with_focus();
+    let three_days_ago = chrono::Local::now()
+        .date_naive()
+        .checked_sub_days(chrono::Days::new(3))
+        .unwrap();
+    let result = server
+        .note_to_daily(Parameters(NoteToDailyInput {
+            date: Some(three_days_ago),
+            heading: "Loss scaling".to_owned(),
+            body: "Scale the loss before the backward pass.".to_owned(),
+        }))
+        .await
+        .expect("note_to_daily");
+    let payload = decode_json(&result);
+    assert!(
+        payload["path"]
+            .as_str()
+            .unwrap()
+            .contains(&three_days_ago.to_string()),
+        "written to the back-dated day: {payload}"
+    );
+    let focus = &payload["focus"];
+    assert!(!focus.is_null(), "{payload}");
+    assert_eq!(focus["action"], "Draft methods section (deep)", "{payload}");
+    assert_eq!(focus, &current_focus_json(&server).await);
+}
