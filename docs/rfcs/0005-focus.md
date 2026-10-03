@@ -442,11 +442,13 @@ because a Friday pause must survive the weekend and most holidays:
 
 ```toml
 [focus]
-carry_over_days     = 1
+carry_over_days      = 1
 paused_lookback_days = 14
+max_window_days      = 366
 ```
 
-`Vault::last_paused(today)` is one pass over at most `paused_lookback_days + 1` daily notes
+Both `carry_over_days` and `paused_lookback_days` must not exceed `max_window_days`, a ceiling that
+prevents the reader from looking too far back into history. `Vault::last_paused(today)` is one pass over at most `paused_lookback_days + 1` daily notes
 yielding every project's last pause (not one scan per project), in the shape
 `daily_log_mentions` and `weekly_logs` already use; days with no note cost nothing. A pause is
 no longer offered once a later `started`, `resumed`, `action done on` or `action dropped on` of

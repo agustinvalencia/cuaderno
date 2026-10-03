@@ -82,7 +82,7 @@ fn run_writes_focus_config_with_both_keys_documented() {
         config.contains("# [focus]"),
         "config should contain commented [focus] section"
     );
-    // Both keys should be documented.
+    // All keys should be documented.
     assert!(
         config.contains("# carry_over_days = 1"),
         "config should document carry_over_days"
@@ -90,6 +90,10 @@ fn run_writes_focus_config_with_both_keys_documented() {
     assert!(
         config.contains("# paused_lookback_days = 14"),
         "config should document paused_lookback_days"
+    );
+    assert!(
+        config.contains("# max_window_days = 366"),
+        "config should document max_window_days"
     );
 }
 

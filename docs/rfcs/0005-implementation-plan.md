@@ -360,6 +360,35 @@ commented template `cdno init` writes (the block in `.cuaderno/config.toml` is t
 **Correct means.** The two windows exist, default as the RFC says, and a typo cannot silently
 disable either.
 
+### T5a — Ceiling on the window
+
+**What.** In `crates/cdno-core/src/config.rs`, `FocusConfig` gains `max_window_days: u32` (default
+366, same per-field `default = "…"` pattern as `carry_over_days`). Validation: `carry_over_days`
+or `paused_lookback_days` greater than `max_window_days` is a hard config error whose message names
+the offending key, its value, and the limit (e.g. "`[focus] carry_over_days = 400` exceeds
+`max_window_days = 366`"). Put it where `VaultConfig`'s existing validation runs: a `validate_focus`
+method, called by `TypeRegistry::validate` after `validate_tracking`. Document both keys and the
+ceiling in the `[focus]` comment block of both `crates/cdno-cli/templates/default_config.toml` and
+the repo's `.cuaderno/config.toml`.
+
+**Deliverable.** The field, defaults, validation, template comment, tests.
+
+**Depends on.** T5.
+
+**Complexity.** M.
+
+**Probes.**
+- `cargo test -p cdno-core --test unit -- unit::config_tests` passes with
+  `focus_max_window_defaults_to_366` (absent section), `carry_over_days_above_the_ceiling_is_rejected`
+  (carry_over_days = 400, max_window_days = 366, error message names the key and both values),
+  `paused_lookback_days_above_the_ceiling_is_rejected` (paused_lookback_days = 500, max_window_days = 366),
+  and `a_raised_ceiling_allows_a_longer_window` (max_window_days = 500, carry_over_days = 400 loads).
+- `cargo test -p cdno-cli --test init -- run_writes_focus_config_with_both_keys_documented` passes
+  with max_window_days documented in the template (add assertion for `# max_window_days = 366`).
+
+**Correct means.** The ceiling exists, defaults as the RFC says, and validation prevents both
+window keys from exceeding it.
+
 ### T6 — The cross-day walk
 
 **What.** In `context.rs`, `current_focus(date)` becomes: read the daily notes for

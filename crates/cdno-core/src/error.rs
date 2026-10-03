@@ -44,6 +44,11 @@ pub enum ConfigError {
     /// [`InvalidSchema`]: Self::InvalidSchema
     #[error("invalid tracking declaration: {0}")]
     InvalidTracking(String),
+
+    /// A `[focus]` declaration is structurally invalid (a window that exceeds
+    /// the configured ceiling).
+    #[error("invalid focus configuration: {0}")]
+    InvalidFocus(String),
 }
 
 /// Errors from the surgical config editor ([`crate::config_edit`], #365

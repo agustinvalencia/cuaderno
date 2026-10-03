@@ -49,9 +49,14 @@ max_active_projects = 5
 # for resuming (orientation, project context, `cdno action resume`).
 # Default 14, which covers a weekend and most holidays.
 #
+# max_window_days — the maximum number of days the focus reader can look back.
+# Both carry_over_days and paused_lookback_days must not exceed this value.
+# Default 366.
+#
 # [focus]
 # carry_over_days = 1
 # paused_lookback_days = 14
+# max_window_days = 366
 
 # A declared custom type: the concept library (RFC 0002). Delete this block if you
 # do not want one; nothing else depends on it.
