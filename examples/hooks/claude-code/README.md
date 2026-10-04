@@ -26,12 +26,12 @@ One warm run of `cdno now --line` takes about 21–30 milliseconds on the repo's
 
 ## Installation
 
-1. Copy `focus.sh` to a location on your PATH, or note its absolute path. The command in settings must use an absolute path (e.g., `/Users/you/...`) or `$HOME/...`. Ensure the script is executable (`chmod +x focus.sh`).
+1. Note `focus.sh`'s absolute path (Claude Code runs it by the path in `command`, so it does not need to be on your PATH). Use an absolute path or `$HOME/...` — a `command` without `args` runs through `sh -c`, so `$HOME` expands. Make sure the script is executable (`chmod +x focus.sh`).
 
 2. Merge the contents of `settings.snippet.json` into your Claude Code settings:
 
    - **Global settings** (`~/.claude/settings.json`): Add or merge the `hooks` object. If you already have other hooks, add this entry to the existing `UserPromptSubmit` array, or create it if absent.
-   - **Project-local settings** (`.claude/settings.json` in your project root): Do the same, scoped to your project.
+   - **Project-local settings**: the script and vault paths are machine-specific, so prefer `.claude/settings.local.json` (not committed) over `.claude/settings.json`.
 
    Example merge for global settings (replace `/absolute/path/to/...` with the actual path to your copied script):
 
@@ -59,6 +59,15 @@ One warm run of `cdno now --line` takes about 21–30 milliseconds on the repo's
    ```
 
    If the variable is unset or empty, the hook prints nothing and exits cleanly.
+
+   The hook inherits the environment of the process that launched Claude Code. An export in your
+   shell profile reaches a `claude` started from that shell, but an IDE launched from the desktop
+   may not see it — and the hook then silently prints nothing. Either launch from a shell that has
+   the variable, or set it in the `env` key of your Claude Code settings.
+
+Claude Code gives a `UserPromptSubmit` command hook 30 seconds by default (a `timeout` field
+overrides it); the worst realistic wait here is the 5-second vault lock, so no wrapper is needed.
+A timeout does not block the prompt; only exit code 2 would, and this script never returns it.
 
 ## Behaviour on error
 

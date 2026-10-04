@@ -10,8 +10,8 @@ fi
 
 # Run cdno now --line with stderr suppressed (reconciliation warnings from
 # unparseable notes in the vault). Capture output and always succeed.
-# If cdno is not on PATH or exits non-zero, output remains empty.
-output=$(cdno now --line --vault "$CUADERNO_VAULT_PATH" 2>/dev/null) || true
+# If cdno is not on PATH or exits non-zero, anything it printed is discarded.
+output=$(cdno now --line --vault "$CUADERNO_VAULT_PATH" 2>/dev/null) || output=""
 
 # Print output only if non-empty.
 if [ -n "$output" ]; then
