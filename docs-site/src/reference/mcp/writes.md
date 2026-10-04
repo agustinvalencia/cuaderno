@@ -74,6 +74,9 @@ the content.
 | `capture` | `text` | Drop a raw note into `inbox/`. ([`cdno capture`](../cli/capture.md)) |
 | `discard_inbox_item` | `slug` | Clear a triaged capture (slug from `triage_inbox`). |
 
+When a focus is open, `append_to_log`, `capture`, `note_to_daily` and `discard_inbox_item` tag what
+they write with it; see [The `during:` tag](#the-during-tag).
+
 ## Evidence
 
 | Tool | Inputs | Effect |
@@ -88,8 +91,9 @@ the content.
 | `set_core_question` | `project`, `core_question?`, `clear?` | Set the project's core question (bare `questions/<domain>/<slug>` target, not `[[…]]`); `clear: true` detaches. Auto-logs the previous value. |
 | `add_action` | `project`, `title`, `energy`, `with_note?`, `vars?` | Append a next action; `with_note` also scaffolds a manifest note (`vars` applies only then). |
 | `promote_action` | `project`, `query`, `vars?` | Promote a bullet to a manifest note (substring match). |
-| `start_action` | `project`, `query` | Log that work on an existing bullet is starting. Logs the **resolved** bullet text, so the later close pairs with it. Errors when `query` matches nothing — it will not create the action. |
+| `start_action` | `project`, `query` | Log that work on an existing bullet is starting. Logs the **resolved** bullet text, so the later close pairs with it. Errors when `query` matches nothing — it will not create the action. Refused with `focus_open` while another action is in focus ([below](#rejections-focus_open-and-no_focus)). |
 | `start_unplanned_action` | `project`, `title`, `energy` | Add the bullet **and** start it, in one commit, for work that was on no map. Separate from `start_action` on purpose: a fallback would turn a typo into a new action. |
+| `pause_action`, `switch_action`, `switch_unplanned_action`, `resume_action` | see [Focus tools](#focus-tools) | Move the one focus slot: set it aside, move to another action, or pick work up again. |
 | `complete_action` | `project`, `query` | Complete an action; archives its note if any. |
 | `drop_action` | `project`, `query`, `reason?` | Close an action **without** recording it as done (superseded, abandoned, reprioritised); archives its note as `status: dropped`. |
 | `add_milestone` | `project`, `title`, `target_date?`, `hard?` | Add a milestone; `hard` counts it in commitments and requires `target_date`. Omit `target_date` for a condition-gated milestone (`target: TBD`), which stays out of commitments. |
@@ -97,6 +101,105 @@ the content.
 | `drop_milestone` | `project`, `query`, `reason?` | Remove a milestone, with the lines indented beneath it, **without** recording it as met (superseded, mis-typed, not happening); logs `milestone dropped on`. Completed bullets are never matched. |
 | `add_waiting_on` | `project`, `description` | Add a waiting-on blocker. |
 | `resolve_waiting_on` | `project`, `query` | Resolve a waiting-on item (substring match). |
+
+## Focus tools
+
+Four tools move the focus, the one "what I am on" slot that [`current_focus`](reads.md#focus-fields)
+reads back. They are the MCP forms of [`cdno action pause`, `switch` and `resume`](../cli/action.md).
+Each writes one entry in today's `## Logs` and, like every write, is [verified](#every-write-is-verified).
+
+| Tool | Inputs | Effect |
+|------|--------|--------|
+| `pause_action` | `next?`, `reason?` | Sets the **current focus** aside without finishing it. Takes no project or query: it pauses whatever `current_focus` shows, with nothing matched against the map. Logs `action paused on [[slug]] — <text>` with optional indented `next:` and `reason:` lines. Result adds `paused` (the focus that was paused). |
+| `switch_action` | `project`, `query`, `next?`, `reason?` | Pauses the current focus and starts an action already on the map, in one commit. `project` and `query` name the action to switch **to**; `next` and `reason` describe the one set aside. With nothing in focus it is a plain start and `paused` is `null`. |
+| `switch_unplanned_action` | `project`, `title`, `energy`, `next?`, `reason?` | The same, for work on no map yet: adds the bullet and starts it. Separate from `switch_action` for the reason `start_unplanned_action` is separate from `start_action`: a query that matches nothing must never become a new action. |
+| `resume_action` | `project?` | Re-anchors a focus carried over from an earlier day, or reopens the latest pause within `paused_lookback_days`; with `project`, that project's carried focus, else its latest pause. Logs `resumed [[slug]] — <text>`. |
+
+`switch_action` and `switch_unplanned_action` return `paused` (the focus that was set aside, or
+`null`) and `started` (the new focus). `resume_action` returns `resumed` (the focus now open) and
+`resumed_from`:
+
+```json
+{"resumed": {"project": "surrogate-model", "action": "Draft the methods section (deep)",
+             "started": "11:12", "date": "2026-10-04", "carried": false, "origin": null},
+ "resumed_from": {"kind": "paused", "date": "2026-10-04",
+                  "next": "pick up at Prior approaches", "reason": "call"}}
+```
+
+`resumed_from.kind` is `carried` or `paused`, `next` and `reason` are the pause's (always `null` for a
+carried focus). With `project`, a carried focus wins over that project's pause, so read `kind` and
+`resumed.action` back to the person rather than assuming the pause they were shown, and read
+`next` out as the re-entry cue. `pause_action` and `resume_action` are for the person's word:
+the tool descriptions tell an agent never to call them unasked.
+
+### Rejections: `focus_open` and `no_focus`
+
+Two refusals are returned as coded rejections, so an agent can act on them without parsing prose.
+Nothing is written.
+
+`focus_open` comes from `start_action`, `start_unplanned_action`, `switch_action`,
+`switch_unplanned_action` and `resume_action`:
+
+```json
+{"code": "focus_open",
+ "message": "An action is already in focus. Ask the person before switching; do not retry.",
+ "details": {"focus": {"project": "surrogate-model", "action": "Draft the methods section (deep)",
+                       "started": "09:10", "date": "2026-10-04", "carried": false},
+             "attempted": {"project": "other-project", "query": "CI"},
+             "same_action": false,
+             "remedy": "switch_action"}}
+```
+
+| `details` key | Meaning |
+|---------------|---------|
+| `focus` | What is open: `project`, `action`, `started`, `date`, `carried`. |
+| `attempted` | What the call asked for: `{project, query}`, or `{project, title}` for an unplanned form. Absent from `resume_action`'s rejection, which attempts no target. |
+| `same_action` | `true` when the call named the action that is already in focus. |
+| `remedy` | The tool to call, on the person's word: `switch_action` (something else is in focus), `resume_action` (the same action, carried over from an earlier day), or `already_focused` (the same action, started today: nothing to do). |
+
+The message tells the agent to ask the person before switching and not to retry. The server never
+switches on its own.
+
+`no_focus` comes from `pause_action` (`Nothing is in focus to pause.`) and `resume_action` (`Nothing
+to resume: no focus carried over and no pause.`), with empty `details`. Tell the person there is
+nothing to act on rather than retrying.
+
+### `focus` on write results
+
+The success payload of these seventeen tools carries a `focus` field: `start_action`,
+`start_unplanned_action`, `switch_action`, `switch_unplanned_action`, `pause_action`,
+`resume_action`, `complete_action`, `drop_action`, `promote_action`, `add_action`, `append_to_log`,
+`capture`, `note_to_daily`, `park_project`, `activate_project`, `complete_project` and
+`drop_project`. It is the focus as [`current_focus`](reads.md#focus-fields) reads it right after the
+write, so an agent sees what is open without a second call: the same shape, and `null` means
+nothing is open. It is read in the same call that verifies the write, and a focus that cannot be
+read after a write has landed comes back as `null` rather than as an error, because an error would
+tell the agent that a successful write failed. Every other write tool's result is unchanged.
+
+The server never refuses a write for being outside the focus. How an agent should behave when a
+request is, is stated once in the server's instructions rather than in each tool description: compare
+at project level, say one sentence only on a mismatch, offer to capture it, and treat the person's
+explicit "let's switch to Y" as consent. See [Focus](../../concepts/contexts-and-energy.md#focus).
+
+### The `during:` tag
+
+When a focus is open at write time, a carried one included, the writes that park a thought say which
+project it was written during:
+
+- `append_to_log` and `note_to_daily` append an indented continuation to the log line:
+
+  ```text
+  - **11:12**: checked the mesh
+    during: [[surrogate-model]]
+  ```
+
+  (`note_to_daily` also echoes the tag on a second line of the `log_line` it returns.)
+- `capture` adds `captured_during: surrogate-model` to the new inbox item's frontmatter.
+- `discard_inbox_item` copies that tag from the item onto the log line it writes, so it outlives the
+  file.
+
+With no focus open nothing is written differently, and a focus that cannot be read writes untagged
+rather than failing. The tag is written by the server; an agent does not add it to its own text.
 
 ## Commitments and tracking
 

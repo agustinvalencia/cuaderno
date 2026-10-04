@@ -788,7 +788,7 @@ The project map is the primary mutable note. To prevent loss of historical conte
 
 This ensures no information is lost while keeping the project map clean and focused on the present.
 
-**Exceptions to the `was:`/`now:` shape.** Three further line families record changes without copying the old text:
+**Exceptions to the `was:`/`now:` shape.** Five further line families record changes without copying the old text:
 
 - **Revisions of mutable custom notes** such as concepts (§5.12). `revise_note` and `cdno note revise` write, in the same transaction as the note, `revised [[<path>]] — <reason>` for a whole-body revision or `revised [[<path>#<Heading>]] — <reason>` for a one-section upsert; the path has no `.md`, the anchor is the raw heading text, and the reason is required and flattened to one line. A revision that leaves the text unchanged writes and logs nothing.
 
@@ -808,6 +808,23 @@ This ensures no information is lost while keeping the project map clean and focu
   - **17:20**: project dropped on [[surrogate-model]] — Surrogate Model for Turbulence Simulations
     reason: funding moved to the coupled solver
   ```
+
+- **Focus markers.** The focus (RFC 0005) is the one open `started` or `resumed` marker in the look-back window, and the log is its only store. `cdno action start` writes `started [[<slug>]] — <bullet text>`; `complete` and `drop` write the closes `action done on` and `action dropped on`; and two markers record leaving an action without finishing it and coming back:
+
+  - `paused`: `action paused on [[<slug>]] — <text>` closes the open start the way a completion does, with optional indented `next:` (where to pick up) and `reason:` continuation lines. `cdno action pause` and `pause_action` write it from the focus's own text; nothing is matched against the project map, and the bullet stays where it is. A switch is a `paused` line followed by a `started` line, with no marker of its own.
+  - `resumed`: `resumed [[<slug>]] — <text>` is an *open* marker, read as close-plus-reopen at its own stamp, so the look-back window counts from the resume. It is written by `cdno action resume` and `resume_action`, which take the text from the log rather than the map.
+  - `promoted`: the existing `action promoted on [[<slug>]] — "<title>" -> [[actions/<new-slug>]]` line is now read back, as a rename of the open focus (its text becomes `[[actions/<new-slug>]] (energy)`, its start time kept), so promoting a bullet between a start and its close no longer loses the focus. Nothing new is written for it.
+
+  ```markdown
+  - **10:40**: action paused on [[surrogate-model]] — Draft the methods section (deep)
+    next: pick up at "Prior approaches"
+    reason: a collaborator is blocked on CI
+  - **14:05**: resumed [[surrogate-model]] — Draft the methods section (deep)
+  ```
+
+  The reader holds one slot: a newer open marker displaces an older one for good, a close empties the slot only when its `(project, text)` is the slot's, and `[focus] carry_over_days` (default 1) sets how many days back it reads. The parser requires the `- **HH:MM**: ` stamp and the em dash, and `cdno lint` reports a near-miss `started`, `paused`, `resumed` or `promoted` line it would skip. `next:` and `reason:` read back, trimmed, as `last_paused` (`paused_lookback_days`, default 14) on the orientation and project-context reads.
+
+- **The `during:` tag.** While a focus is open (a carried one included), a log line written by `cdno log`, `cdno log note`, `append_to_log` and `note_to_daily` gets an indented `during: [[<project-slug>]]` continuation, and `cdno capture` / `capture` writes `captured_during: <project-slug>` into the new inbox item's frontmatter. Triage (`cdno triage`, `discard_inbox_item`) copies the item's tag onto its own log line, so the tag outlives the file. The continuation sits below the line's head, so no reader of the heads sees it; it is how a later review can tell where a captured thought came from.
 
 **The trade-off.** A project's Current State is a small snapshot, so copying the old text into the log is cheap and makes the log self-contained. A concept's body can be pages long and is revised often, so copying it would bury the daily sequence under prose. Mutable custom notes therefore keep their history through the daily log line, which records *when* and *why*, not through a diff of *what*: the old text is left to version control, when the vault is kept under it, rather than copied into the log. Edits made outside cuaderno, in an editor, are legitimate because markdown is the source of truth, but they leave no log line; that is a limit of the invariant, not something lint enforces.
 
@@ -1151,6 +1168,19 @@ cdno action complete surrogate-model \
 cdno action list surrogate-model
                          # Show the project's bullets and any
                          # attached notes, with status
+cdno action start --project surrogate-model --query "ablation"
+                         # Put an action in the one focus slot;
+                         # refused while another is in focus
+cdno action pause --next "pick up at the figures"
+                         # Set the focused action aside (no project
+                         # or query: it pauses the current focus)
+cdno action switch --project surrogate-model --query "feature set C"
+                         # Pause the focus and start another, in one commit
+cdno action resume
+                         # Re-anchor a carried focus, or reopen the
+                         # latest pause, and print its next: hint
+cdno now [--json | --line]
+                         # What is in focus, or the last pause
 ```
 
 The default form is the inline bullet — typing `--note` is the friction surface that keeps the heavy form exceptional. Tasks-as-atomic-actions ("email Florian") never get notes; the friction enforces this informally rather than via lint rejection (which would be too brittle). See §5.11.
@@ -1322,6 +1352,19 @@ promote_action(project, query, vars?)
   → finds a matching bullet, creates an action note
     from the template, and rewrites the bullet to
     wikilink the new note
+
+start_action(project, query) / start_unplanned_action(project, title, energy)
+  → logs `started`; refused with `focus_open` while another action is in focus
+
+pause_action(next?, reason?)
+  → pauses the current focus (no project or query); `no_focus` when nothing is open
+
+switch_action(project, query, next?, reason?) / switch_unplanned_action(project, title, energy, next?, reason?)
+  → pauses the current focus and starts the target, in one commit
+
+resume_action(project?)
+  → re-anchors a carried focus or reopens the latest pause; returns `resumed_from`
+  → these six and eleven other writes (seventeen in all) return a `focus` field: the current_focus read-back
 
 complete_action(project, query)
   → removes the bullet, logs completion to daily,

@@ -8,6 +8,20 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Documentation for focus (RFC 0005, #741).** The user guide covers every verb and field the RFC
+  added: `cdno action pause`, `switch` and `resume` and the `start` refusal (with its `--json`
+  object and the `Switch to it instead?` offer), the three shapes of `cdno now` with its `--json`
+  fields and `--line` contract, the `[focus]` keys (`carry_over_days`, `paused_lookback_days`,
+  `max_window_days`), a Focus section in the concepts, the daily-loop and action tutorials, the MCP
+  focus tools, the `focus` field on the seventeen write results that carry it, `last_paused` on the
+  orientation and project-context reads, the `focus_open` and `no_focus` rejections with their
+  remedies, and the `during:` / `captured_during` tag on `log`, `capture`, `triage` and the MCP
+  writes. Troubleshooting drops "names the wrong action" and gains the one-slot case under "says
+  nothing is started", "says I'm still on yesterday's thing" and "`action start` refuses with
+  `focus_open`". `docs/design.md`, `CLAUDE.md` and `STATUS.md` list the `paused` and `resumed`
+  markers, name `promoted` as read back, and describe the `during:` continuation; tool counts read
+  64. `cdno orient` does not render the focus or last pause (use `cdno now`).
+
 - **The shipped skills use the focus (RFC 0005, #740).** `daily-orientation` drops its "no stored
   focus" notes and reads `get_orientation.focus`; after the greeting, wins and due-soon it makes a
   carried focus the one recommended pick ("pick it up there, or pause it with a note on where you

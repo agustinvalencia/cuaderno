@@ -70,6 +70,42 @@ fallback would turn every typo into a new action, silently.
 Promoting an action between starting it and closing it is fine: promotion *rewrites* the bullet,
 and `cdno now` follows it to the new note, keeping the original start time.
 
+## Pause, switch and resume
+
+Only one action is in focus at a time, so starting a second while the first is open is refused, with
+the command that does what you meant:
+
+```text
+$ cdno action start --project surrogate-model --query "feature set B"
+Error: Profile the assembly step is already in focus on surrogate-model (since 09:30).
+To move on to this instead: cdno action switch --project surrogate-model --query 'feature set B'
+Or complete or pause it first.
+```
+
+There are three ways to leave an action without finishing it, and they say different things:
+
+```bash
+# Stopping for now; leave yourself a note on where you were.
+cdno action pause --next 'pick up at the profiler output' --reason "meeting"
+
+# Moving to something else right now; pauses the open one and starts the new one together.
+cdno action switch --project surrogate-model --query "feature set B" \
+    --next 'profiler output half read'
+
+# Coming back, later today or after a night's sleep.
+cdno action resume
+```
+
+`resume` prints the `next:` you left, and brings the action back into focus as of now. Unlike
+`drop`, a pause does not close the bullet: it stays on the map and you can still `complete` it later.
+`switch` is a pause immediately followed by a start, and shows in the log as exactly that. In a
+terminal, `pause` and `switch` ask once where to pick up; press Enter to skip.
+
+A start left open overnight is still your focus in the morning (`cdno now` says
+`since Saturday 14:05`). `cdno action resume` makes it today's; otherwise it lapses after a day. See
+[Focus](../concepts/contexts-and-energy.md#focus) for the idea and
+[`action`](../reference/cli/action.md) for every flag.
+
 Two open bullets with identical text cannot be told apart by a substring query, so neither can be
 closed until one is edited. This is not specific to starting; `action add` twice does the same.
 

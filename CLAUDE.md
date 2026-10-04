@@ -171,6 +171,16 @@ RFC 0004 adds the project closures: `project completed [[<slug>]] — <title>` a
 `project dropped on [[<slug>]] — <title>` (with an indented `reason:` line when one is given), and
 the child lines a drop cascade writes carry `reason: project dropped`, followed by ` (<reason>)` when
 the drop was given one.
+RFC 0005 adds the focus markers to the family: `action paused on [[<slug>]] — <text>` (with indented
+`next:` and `reason:` lines when given) and `resumed [[<slug>]] — <text>` (an open marker, read as
+close-plus-reopen at its own stamp), and it reads back the existing `action promoted on [[<slug>]] —
+"<title>" -> [[actions/<new-slug>]]` line as a rename of the open focus rather than writing anything
+new. `Vault::current_focus` folds `started`, `resumed`, the three closes and `promoted` through one
+slot over the `[focus] carry_over_days` window (`vault/context.rs`), and `cdno lint` shares the
+prefix list, so a new marker belongs in both. A `during: [[<slug>]]` continuation line, written under
+a `log`, `log note`, `append_to_log` or `note_to_daily` line while a focus is open (and
+`captured_during:` in an inbox item's frontmatter, which a triage-discard line copies whatever is in
+focus at discard time), names the project the thought arose during; it lives below the head, so the readers of heads never see it.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

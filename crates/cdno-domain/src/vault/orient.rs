@@ -37,7 +37,8 @@ pub struct OrientationContext {
     pub lapsed_habits: Vec<LapsedHabit>,
     /// The action currently in focus, if any. Carried so the morning
     /// view shows the current work without a second call. Not exposed in
-    /// CLI JSON output; exposure in MCP and CLI are decided later in RFC 0005.
+    /// CLI JSON output: MCP exposes it, and `cdno orient` leaves it unrendered
+    /// (`cdno now` shows the focus).
     #[serde(skip)]
     pub focus: Option<CurrentFocus>,
 }

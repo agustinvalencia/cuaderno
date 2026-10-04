@@ -38,7 +38,8 @@ pub struct ProjectSummary {
     /// The most recent paused action for this project, when one exists
     /// within `paused_lookback_days`. Carried here so orientation
     /// consumers get it in the same pass that reads the log. Not exposed
-    /// in CLI JSON output; exposure in MCP and CLI are decided later in RFC 0005.
+    /// in CLI JSON output: MCP exposes it, and `cdno orient` leaves it unrendered
+    /// (`cdno now` shows the last pause).
     #[serde(skip)]
     pub last_paused: Option<LastPause>,
 }
