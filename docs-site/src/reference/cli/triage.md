@@ -18,6 +18,10 @@ Only the [global options](overview.md#global-options). `triage` ignores `--json`
 - **Non-interactive** (piped or `--no-interactive`) — just **lists** what's pending, without changing
   anything.
 
+A capture's `captured_during` tag outlives the file. When triage clears an item, whether you discarded it or kept it as an
+action, the log line it writes (`triaged inbox item … -- discarded: …`) carries the item's tag as a `during: [[<slug>]]`
+continuation, copied from the item rather than from whatever is in focus at triage time.
+
 ## Examples
 
 ```bash

@@ -37,10 +37,24 @@ $ cdno now
 On surrogate-model — Draft the methods section (deep), since 09:30 (1h 30m).
 ```
 
-A start carried over from an earlier day names it (`since Monday 14:05 (18h 55m)`), and one
-re-anchored with `action resume` reads `picked up 08:50 today (started Monday 14:05)`. A day more than
-six days back is shown as a date (`2026-09-22 14:05`), since a weekday name would be ambiguous. With nothing
-open it says so, and shows the most recent open pause:
+`cdno now` has three shapes.
+
+**Something is in focus.** The line above. A start carried over from an earlier day names it
+(`since Saturday 14:05 (21h 7m)`), and the elapsed time counts across midnight.
+
+**A focus that was picked up again.** One re-anchored with
+[`action resume`](action.md#cdno-action-resume) reads the new time first and keeps the original:
+
+```bash
+$ cdno now
+On surrogate-model — Draft the methods section (deep), picked up 08:50 today (started Saturday 14:05).
+```
+
+A day more than six days back is shown as a date (`2026-09-22 14:05`), since a weekday name would be
+ambiguous.
+
+**Nothing in focus.** It says so, and shows the most recent pause that nothing has picked up since,
+with its re-entry hint:
 
 ```bash
 $ cdno now
@@ -48,14 +62,42 @@ Nothing started.
 Last paused: surrogate-model — Draft the methods section (10:40), next: pick up at "Prior approaches"
 ```
 
-`--line` prints one sanitised line of at most 160 characters for a prompt segment or hook —
-`Focus: surrogate-model — Draft the methods section (since 09:30)`, or `Focus: none (last paused:
-…)`. It prints nothing and exits 0 when no vault is found or anything goes wrong.
+The pause is looked for in the last [`paused_lookback_days`](../configuration.md#focus) days
+(default 14), so a Friday pause is still there on Monday. Pick it up with
+[`cdno action resume`](action.md#cdno-action-resume).
 
-`--json` emits `project`, `action`, `title`, `note`, `energy`, `started`, `started_at`, `date`,
-`carried`, `origin`, `elapsed_minutes` and `last_paused`. Every key is always there and is `null` when
-it has no value (all of them but `last_paused` when nothing is open), so a caller can test one field
-without first branching on the shape of the document.
+### `--line`
+
+`--line` prints one sanitised line of at most 160 characters for a prompt segment or hook:
+
+```text
+Focus: surrogate-model — Draft the methods section (since 09:30)
+Focus: none (last paused: surrogate-model — Draft the methods section, next: pick up at "Prior approaches")
+```
+
+Control characters are stripped and an over-long line is cut. It prints nothing and exits 0 when no
+vault is found or anything goes wrong, so it can sit in a prompt without ever breaking it. With
+`--json` as well, `--line` wins. The [Claude Code hook example](https://github.com/agustinvalencia/cuaderno/tree/main/examples/hooks/claude-code)
+runs it before every prompt.
+
+### `--json`
+
+| Key | Meaning |
+|-----|---------|
+| `project`, `action` | The focus's project slug and its bullet text exactly as logged (energy suffix and all). |
+| `title` | The bullet text without link and energy suffix, for display. For an attached note it is the last segment of the note's slug. |
+| `note` | The attached action note's path (`actions/<slug>`), or `null` for an inline bullet. |
+| `energy` | `deep`, `medium` or `light`. |
+| `started` | `HH:MM` of the open marker. Kept for compatibility. |
+| `started_at`, `date` | The marker's full datetime (`2026-10-04T09:30`) and its day. |
+| `carried` | `true` when `date` is not today. |
+| `origin` | `{started_at}` of the earlier start a `resume` continues, else `null`. |
+| `elapsed_minutes` | Minutes since `started_at`, across midnight. |
+| `last_paused` | The most recent unresolved pause: `project`, `action`, `title`, `at`, `next`, `reason`. Present whether or not something is in focus; `null` when there is none. |
+
+Every key is always there and is `null` when it has no value (all of them but `last_paused` when
+nothing is in focus), so a caller can test one field without first branching on the shape of the
+document.
 
 The `action` field is the bullet text exactly as logged, energy suffix and all. That is the same
 string [`cdno action complete`](action.md#cdno-action-complete) matches, which is why the pairing
@@ -67,5 +109,8 @@ works.
 
 ## See also
 
-- [`action start`](action.md#cdno-action-start) — what puts something here.
+- [Focus](../../concepts/contexts-and-energy.md#focus) — the idea behind the slot and the window.
+- [`action start`](action.md#cdno-action-start) — what puts something here;
+  [`pause`](action.md#cdno-action-pause), [`switch`](action.md#cdno-action-switch) and
+  [`resume`](action.md#cdno-action-resume) move it.
 - [`orient`](orient.md) — what to begin when nothing is open.

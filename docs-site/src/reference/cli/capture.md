@@ -25,6 +25,11 @@ cdno capture "does Chen 2025 use the same preconditioner?"
 cdno capture "ask IT about the cluster quota" --json
 ```
 
+When an action is in [focus](../../concepts/contexts-and-energy.md#focus), the new inbox item's
+frontmatter gets `captured_during: <project-slug>`, recording where your attention was when the
+thought arrived. It is the one thing capture adds on its own; with nothing in focus the item is
+exactly what you typed.
+
 Capture is meant to be frictionless — no fields, no decisions. Classify later during
 [triage](../../tutorials/inbox-and-triage.md).
 

@@ -17,7 +17,7 @@ Two binaries serve the same tool catalogue:
 
 ## The tool surface
 
-The server advertises **60 tools**. This reference groups them by purpose:
+The server advertises **64 tools**. This reference groups them by purpose:
 
 | Group | Page | What's in it |
 |-------|------|--------------|
@@ -27,6 +27,15 @@ The server advertises **60 tools**. This reference groups them by purpose:
 
 Every tool returns typed JSON; the shapes mirror the CLI's [`--json`](../json-output.md) output, so a
 client gets the same structures whichever surface it uses.
+
+## Focus
+
+Four of the write tools (`pause_action`, `switch_action`, `switch_unplanned_action`, `resume_action`)
+move the one "what I am on" slot that `current_focus` reads, and seventeen write results carry a
+`focus` field so the focus rides along without a second call. The server never refuses a write for
+being outside the focus; it refuses only a second `start` while the slot is taken, with a coded
+`focus_open` rejection. See [Write tools](writes.md#focus-tools) and
+[Focus](../../concepts/contexts-and-energy.md#focus).
 
 ## Conventions
 

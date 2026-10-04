@@ -42,7 +42,7 @@ ordering. See [Frontmatter fields](frontmatter.md).
 
 ## `cdno now` says nothing is started, but I started something
 
-Two causes, and [`cdno lint`](cli/lint.md) tells them apart.
+Three causes, and [`cdno lint`](cli/lint.md) tells the first apart from the rest.
 
 If you wrote the log line **by hand**, it is almost certainly not in the shape the readers accept.
 It has to be exactly:
@@ -54,21 +54,58 @@ It has to be exactly:
 The `- ` bullet and the `**HH:MM**: ` stamp are what make it a log entry at all, and the separator
 must be a real em dash (U+2014), not a hyphen. A near-miss is skipped in silence by design — prose
 beginning "started something" must never register as a focus — so `cdno lint` reports it instead,
-naming the line and the likely cause. Run it and fix what it points at.
+naming the line and the likely cause. Run it and fix what it points at. The same goes for `paused`,
+`resumed` and `action promoted on` lines.
 
 Otherwise, check the date. The focus is read from today's daily note and the
 `[focus] carry_over_days` days before it (default 1, so yesterday's too); a start logged earlier than
-that and never closed does not carry over.
+that and never closed has expired. Pick the work up with
+[`cdno action resume`](cli/action.md#cdno-action-resume) (it also finds a recent pause), or start it
+again.
 
-## `cdno now` names the wrong action
+The third cause surprises people who remember the older behaviour: **focus is one slot**. If you
+started X, then started Y, and finished Y, nothing is in focus. X was displaced the moment Y began,
+and closing Y does not bring it back, because nobody chose to go back to it. Start X again, or, if
+you paused it along the way, `cdno action resume`. Logs written before the slot rule read the same
+way, so a day that used to report X as the focus now reports none.
 
-After a [`cdno action promote`](cli/action.md#cdno-action-promote), `cdno now` follows the bullet to
-its new note (`[[actions/<slug>]] (deep)`) by reading the `action promoted on` line promotion logs.
-If it still names the old bullet text, that line is missing or not in the writers' shape (a
-`- **HH:MM**: ` stamp, an em dash U+2014, `"title" -> [[actions/<slug>]]`), or the started bullet
-carried no `(deep)`/`(medium)`/`(light)` suffix. `cdno lint` reports a near-miss line and names the
-cause. If the promoted title differs from the started text without its `(energy)` suffix, the two are different actions and the
-focus stays where it was.
+## `cdno now` says I'm still on yesterday's thing
+
+The focus survives midnight on purpose: a start left open yesterday is still the focus this morning,
+with the day named (`since Saturday 14:05`). That is the one-day window,
+[`carry_over_days`](configuration.md#focus). You have three ways out:
+
+- It is still what you are doing: `cdno action resume` re-anchors it to today (`picked up 08:50
+  today (started Saturday 14:05)`) and keeps it from expiring tomorrow.
+- You stopped but will come back: `cdno action pause --next "…"`, and `resume` brings the hint back.
+- You do not want anything to carry overnight: set `carry_over_days = 0` in `.cuaderno/config.toml`
+  and the focus is read from today's note only.
+
+Finishing it with `cdno action complete` or `drop` clears it as ever.
+
+## `action start` refuses with `focus_open`
+
+Something is already in focus, and starting a second thing would leave the log silent about the
+move. The message names what is open and the command to run:
+
+```text
+Error: Draft the methods section is already in focus on surrogate-model (since 09:30).
+To move on to this instead: cdno action switch --project other-project --query CI
+Or complete or pause it first.
+```
+
+`cdno action switch` pauses what is open and starts the new action in one step; `cdno action pause`
+then `start` does the same in two. If the open focus is the action you are trying to start, `start`
+says so: nothing to do when it was started today, and `cdno action resume` when it was carried over
+from an earlier day.
+
+This is most often noticed the first morning after upgrading. A start left open yesterday and never
+closed is now carried into today, so the first `start` of the day is refused where it used to stack
+silently. Resume it, pause it, complete it, or switch. If you would rather keep the old behaviour,
+set `carry_over_days = 0`.
+
+Over MCP the refusal is a `focus_open` rejection with a `remedy`; see
+[Write tools](mcp/writes.md#rejections-focus_open-and-no_focus).
 
 ## A prompt appears when I wanted automation (or vice versa)
 

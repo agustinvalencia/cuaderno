@@ -76,6 +76,7 @@ Alongside, the vault says out loud something that was already true: **`cdno sear
 | **5 — Tauri UI** | `cdno-tauri` backend, React frontend (Tailwind v4 + shadcn-style, Recharts), Home / Weekly / Commitments views | **Retired and removed** (#597, #601). It was completed through M0–M10 — every view, the app shell, `⌘⇧C` capture, a menu-bar tray, live refresh — and shipped as a Homebrew cask. The owner did not use it, and it cost about 38,000 lines and a disproportionate share of CI and review. Every capability it held reached the CLI first: `cdno config` (#598), `cdno templates` (#599) and `cdno watch` (#600). The `pre-desktop-removal` tag marks `84db8ca`, the last commit containing it; revisiting the desktop is possible but unscheduled, and nothing should be planned around it returning. |
 | **6 — Extended UI + HTTP** | Monthly / Portfolio / Stewardship views, HTTP transport, periodic reconciliation | **Partly retired.** The HTTP Streamable transport, Access-JWT auth and periodic reconciliation are complete and live (#304, #305). The extended views landed as Phase 5 milestones M7–M9 and went with the desktop app (#601). |
 | **7 — Migration** | `cdno migrate --from-mdv` interactive importer | Not started |
+| **RFC 0005 — Focus** | A deliberate, persistent "what I am on" that agents respect: `paused` / `resumed` markers; `cdno action pause / switch / resume` and the MCP `pause_action`, `switch_action`, `switch_unplanned_action`, `resume_action`; `start` refused while the slot is taken (`focus_open`, `no_focus`); a one-slot reader over a `[focus] carry_over_days` window with `paused_lookback_days` and `max_window_days`; promotion read as a rename; `focus` on 17 MCP write results and on `get_orientation`, `last_paused` on orientation projects and `get_project_context`; `during:` / `captured_during` tagging; `cdno now` in three shapes with `--json` and `--line`; server instructions, a Claude Code hook example and the skills | **Complete** (RFC #718; issues #720–#741, #746, #753, #759, #767; PRs #743–#774). `cdno orient` does not render the focus or last pause (`cdno now` does); the weekly-review metrics (focus time, pauses, `during:` sources) and `detour_budget` are deferred to a later RFC. |
 
 ## Phase 4 detail
 
@@ -122,11 +123,15 @@ Alongside, the vault says out loud something that was already true: **`cdno sear
 | `activate_project` | Wired (#166; errors at the active cap; also brings back a closed project, RFC 0004) |
 | `complete_project` | Wired (RFC 0004; refused with `project_has_open_items` while anything is open) |
 | `drop_project` | Wired (RFC 0004; `open_items: "drop"` with the refusal's `open_items_hash` cascades) |
+| `pause_action` | Wired (RFC 0005; acts on the current focus, takes no project or query; `no_focus` when nothing is open) |
+| `switch_action` | Wired (RFC 0005; pause plus start in one commit; `focus_open` when the target is already in focus) |
+| `switch_unplanned_action` | Wired (RFC 0005; the unplanned form, adds the bullet and starts it) |
+| `resume_action` | Wired (RFC 0005; re-anchors a carried focus or reopens a pause; payload carries `resumed_from`) |
 | `set_question_status` | Wired (#166; `active`/`parked`/`answered`/`retired`) |
 | `add_periodic_commitment` | Wired (#166; recurrence + next date) |
 | `search_notes` | Wired (#172; FTS5 content search, optional note-type / date / portfolio filters) |
 
-**All 60 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 60 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
+**All 64 tools are wired through to the domain** — context reads, daily/weekly/monthly note access, the write operations, structural creation, lifecycle transitions, and the generic frontmatter setter. The authoritative catalogue is the sorted-set assertion in `crates/cdno-mcp/tests/server.rs`, not a count maintained by hand here: the breakdown this sentence used to enumerate summed to 42 while the pin asserted 52 — ten tools behind. No stubs remain. All 64 are advertised in `tools/list` with full schemas, so Claude can discover them at startup. The lifecycle group is split into its own `#[tool_router]` (in `lifecycle.rs`), merged in `CuadernoServer::new` — the first slice of the handler-group split.
 
 ## What works today
 
@@ -135,9 +140,9 @@ Reachable from the terminal via `cdno`:
 - `init` — scaffold a vault
 - `log` / `lint` / `capture` — daily-log writes, validation, inbox capture; `log note` writes a dated, headed entry into the daily `## Notes` section and points at it from `## Logs` (RFC 0002, #654)
 - `project create / state / core-question / park / activate / complete / drop / list [--closed] / show / milestone {add,done,drop} / waiting {add,resolve}` — closing a project moves it to `projects/_done/<year>/` and is refused while an action or milestone is open; `drop` can let them go with it (RFC 0004). Parking and reactivating keep a project's milestones and hard deadlines indexed, and the commitments register reads a project's own dates only while it is active, so a parked or closed project's deadlines leave `commitments` and `orient` until it is activated again (#611, #674, #675)
-- `action add / start / promote / complete / drop / list` (bullet form + manifest note form)
+- `action add / start / pause / switch / resume / promote / complete / drop / list` (bullet form + manifest note form); `pause`, `switch` and `resume` move the one focus slot, and `start` is refused while it is taken (RFC 0005)
 - `commit create / complete / drop / reschedule` and `commitments` aggregated view
-- `orient` / `status` / `now` — morning views and the current focus
+- `orient` / `status` / `now` — morning views and the current focus (`now` also shows the last pause, and has `--json` and `--line`)
 - `portfolio create / list / show` and `file` (file evidence into a portfolio; `--attach <path>` files a non-markdown artefact — PDF/image/video — by copying it in and scaffolding a linked evidence stub, `--move` to relocate instead, #154)
 - `question create / park / answer / retire / activate` and `questions` (active grouped by domain)
 - `stewardship create / list / show / add-periodic / complete-periodic` and `track <activity>`

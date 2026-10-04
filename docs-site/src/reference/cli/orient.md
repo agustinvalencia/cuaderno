@@ -16,6 +16,10 @@ In a terminal this then offers to open one of the projects it just listed, print
 project show` would and asking again until you press Esc. Piped output, `--no-interactive`, and
 `--json` skip the prompt. See [Colour and interactivity](../colour-and-interactivity.md).
 
+`orient` does not show what is in [focus](../../concepts/contexts-and-energy.md#focus) or the last
+thing you paused, and neither field is in its `--json`: run [`cdno now`](now.md) for those. The MCP
+[`get_orientation`](../mcp/reads.md) does carry both, because an agent has no other cheap way to know.
+
 ## Options
 
 | Flag | Description |

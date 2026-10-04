@@ -18,6 +18,10 @@ suggestion; pass `--energy light` on a low day.
 
 Want just the project snapshot without commitments? Use [`cdno status`](../reference/cli/status.md).
 
+If you left something open yesterday, `cdno now` still shows it this morning, with the day named. Pick
+it up with `cdno action resume`, or set it aside with `cdno action pause --next "…"` and choose
+something else. `orient` itself does not list the focus or your paused work; `cdno now` does.
+
 ## Through the day: act and log
 
 As you work, two verbs carry most of the weight.
@@ -58,16 +62,33 @@ cdno action complete --project surrogate-model --query "feature set B"
 
 ```bash
 $ cdno now
-surrogate-model since 09:30 · 1h 30m
-  Profile the assembly step (medium)
+On surrogate-model — Profile the assembly step (medium), since 09:30 (1h 30m).
 ```
 
 There is no state behind that — it replays today's journal and yesterday's (the
 `[focus] carry_over_days` window in `.cuaderno/config.toml`), so a start made here,
-or by an agent over MCP all count equally, and completing or dropping the action clears it. With
-nothing open it says so rather than printing an empty frame. See
+or by an agent over MCP all count equally, and completing, dropping or pausing the action clears it.
+With nothing open it says so, and shows the last thing you paused and the note you left yourself. See
 [`cdno now`](../reference/cli/now.md) for the full shape, including what a start typed by hand has to
 look like.
+
+**When the day changes direction**, say so rather than stacking one thing on another. Starting a
+second action while one is open is refused; the way through is a verb:
+
+```bash
+# Stopping for now, with a note to your future self:
+cdno action pause --next 'pick up at "Prior approaches"'
+
+# Moving to something else right now (a pause and a start together):
+cdno action switch --project other-project --query "CI"
+
+# Coming back; prints the note you left:
+cdno action resume
+```
+
+Each one is a line in the journal, so the record shows when you moved and, if you said, why. When
+you capture a thought while something is in focus, the inbox item remembers which project you were on.
+See [Focus](../concepts/contexts-and-energy.md#focus).
 
 ## Evening: close
 
@@ -82,7 +103,8 @@ cdno log "good focus day; pick up assembly profiling tomorrow"
 ```
 
 That's it. The journal now holds a faithful record of the day, your projects reflect reality, and
-tomorrow's `orient` will pick up where you left off.
+tomorrow's `orient` will pick up where you left off. Anything still in focus at midnight is carried
+into tomorrow, and `cdno action pause` is the way to put it down on purpose.
 
 ## Letting Claude run the loop
 

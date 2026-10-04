@@ -83,6 +83,21 @@ cdno log note --heading "Woodbury identity" --body-file woodbury.md --json
 
 Cite the entry elsewhere as `[[<target>]]`.
 
+## Focus tag
+
+When an action is in [focus](../../concepts/contexts-and-energy.md#focus), a carried one included,
+`cdno log` and `cdno log note` append an indented continuation naming its project to the line they
+write, so a later review can see where a thought came from:
+
+```text
+- **11:12**: checked the mesh
+  during: [[surrogate-model]]
+```
+
+With nothing in focus the line is written as given. If the focus window cannot be read the line is
+written untagged rather than the command failing. The tag sits below the entry's head, so it never
+affects how `cdno now` reads the log.
+
 ## Related MCP tool
 
 [`append_to_log`](../mcp/writes.md#logging-capture-triage) — the same operation for AI clients;
