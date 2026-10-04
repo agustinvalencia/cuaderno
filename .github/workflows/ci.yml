@@ -66,7 +66,15 @@ jobs:
       # toolchains and installed system libraries before it could run.
       # With the package gone the exclusions would name nothing, and
       # `--exclude` on an absent package is an error rather than a no-op.
-      - run: cargo tarpaulin --workspace --out xml
+      #
+      # `--engine llvm`: the default ptrace engine plants breakpoints into the
+      # running test binaries from the debug line tables, and a breakpoint at
+      # a bad address segfaults the process on first execution of that code —
+      # it did, deterministically, in `handlers_operations` once RFC 0005's
+      # T16 changed an async handler's layout, while every native test
+      # passed. The LLVM engine instruments at compile time instead, so code
+      # layout cannot break it.
+      - run: cargo tarpaulin --workspace --engine llvm --out xml
       - uses: codecov/codecov-action@v5
         with:
           files: cobertura.xml
