@@ -91,7 +91,7 @@ One action can be in focus; it is read from the log, not stored. The vault never
 7. **Consent is the person's explicit word.** "Let's work on Y" is a decision: call `switch_action` (focus open) or `start_action` (none), drafting `next` from what you saw them do and never inventing it. Anything weaker gets a one-sentence proposal. `pause_action` and `resume_action` always wait for a yes. After `focus_open`, never retry; follow the refusal's `remedy`.
 8. **Heads-up, narrowly.** At most once per focus per day, and only when a commitment outside the focus's project is overdue or due today: "Heads up: *X* is due today." Information, not a nudge; no elapsed-time reminders.
 
-**Wording.** The log says `paused`, `resumed`, `started`. What the agent says to the person is "move over", "pick up", "capture". Keep the framing about continuity and wins ("pick it up where you left it"), never about fault.
+**Wording.** The log says `paused`, `resumed`, `started`, `during`. What the agent says to the person is "move over", "pick up", "capture". Keep the framing about continuity and wins ("pick it up where you left it"), never about fault.
 
 ## Language Patterns
 

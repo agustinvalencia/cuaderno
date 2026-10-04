@@ -18,7 +18,7 @@ The lowest-friction skill in the set. Goal: get the thought out of the user's he
 - Capture lands in **today's daily log** via `append_to_log(text)` — a single timestamped line under `## Logs`. This is the RLM chronological-capture surface; it's the right home for a fleeting thought.
 - `capture(text)` exists: it writes the text verbatim as an item under `inbox/` for later triage. It stays the exception here — `append_to_log` is the default, and the right home for a fleeting thought. Reach for `capture` only when the person says "inbox" or "for triage", or the thing is plainly a to-sort item rather than a moment in the day.
 - **Focus tagging is the server's job.** When a focus is open, `append_to_log` and `capture` record it themselves (an indented `during: [[slug]]` line under the log entry, or `captured_during:` on the inbox item). Never write a `during:` or `captured_during:` tag by hand, and don't mention focus in the captured text.
-- Every write result carries `focus` — the same value `current_focus` returns, or `null` when nothing is open. Read it from the result; no second call.
+- The write results of `append_to_log`, `capture` and `note_to_daily` carry `focus` — the same value `current_focus` returns, or `null` when nothing is open. Read it from the result; no second call.
 
 ## MCP Tools Used
 

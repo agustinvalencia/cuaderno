@@ -23,7 +23,7 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 - **Pre-planned content is readable.** `read_daily_note(date?)` returns the day's markdown (or `exists: false` when none yet). Scan it for an already-written `## Intention` or `## Agenda` (from a prior session, weekly-planning, or close-day) before writing — don't clobber the user's earlier thinking.
 - **History is append-only.** `## Logs` only grows, via `append_to_log(text)` (single timestamped lines). Never try to write `Logs`/`Notes` through `upsert_daily_section`.
 - **Focus is read from the log, never stored.** `get_orientation.focus` is the same value `current_focus` returns: `{ project, action, started, date, carried, origin }` or `null`. `carried: true` means it was left open on an earlier day. It is changed only by the focus tools (`start_action`, `resume_action`, `pause_action`, `switch_action`), each on the person's word, and each writes its own log line. Never write a focus line with `append_to_log`.
-- **The server never refuses a write for being outside the focus**, and it refuses a second `start_action` while one is open (`focus_open`). On `focus_open`, don't retry: follow the refusal's `remedy` and ask the person first.
+- **The server never refuses a write for being outside the focus**, and it refuses a second `start_action` while one is open (`focus_open`). On `focus_open`, don't retry: follow the refusal's `remedy` (`already_focused`: carry on, ask nothing; `resume_action` or `switch_action`: ask the person first).
 - **Calendar is a separate MCP** (`apple-calendar`). If unavailable, skip the schedule and ask once — never block.
 
 ## MCP Tools Used
@@ -34,10 +34,12 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 | `get_weekly_context` | cdno-mcp | Recently completed actions (for the wins line + standup) |
 | `read_daily_note` | cdno-mcp | Check for pre-planned intention/agenda before writing |
 | `upsert_daily_section` | cdno-mcp | Persist the Standup / Intention / Agenda sections |
-| `resume_action` | cdno-mcp | Pick a carried focus (or the latest pause) up again, on the person's yes |
-| `start_action` | cdno-mcp | Start the one action the person picked, when nothing is carried |
-| `switch_action` | cdno-mcp | Move from a carried focus to a different action the person named |
-| `pause_action` | cdno-mcp | Set a carried focus aside, on the person's yes |
+| `resume_action` | cdno-mcp | Pick a carried focus (or, when nothing is open, a project's latest pause) up again, on the person's yes |
+| `start_action` | cdno-mcp | Start the action the person picked, when nothing is open |
+| `start_unplanned_action` | cdno-mcp | Same, for work not on the project map yet (title + energy) |
+| `switch_action` | cdno-mcp | Move from the open focus to a different action the person named or accepted |
+| `switch_unplanned_action` | cdno-mcp | Same, for work not on the map yet |
+| `pause_action` | cdno-mcp | Set the open focus aside, on the person's yes |
 | `today_schedule` | apple-calendar | Today's meetings and events |
 | `find_free_slots` | apple-calendar | Available deep-work windows |
 
@@ -96,7 +98,7 @@ Compose a short standup from the gathered context and persist it. Don't ask — 
 
 ```markdown
 **Yesterday** — [N] action(s) done: [[ACTION-slug|title]] when `slug` is non-null, otherwise the bare title, …  (or "light day, no tracked completions")
-**Today** — starting [[project-slug]]: [top action]  (or "picking up [[project-slug]]: [action]" when a focus is carried)
+**Today** — [one neutral line: the day's shape or due-soon; the pick is not decided yet — step 9 records it through the focus tools, and you may re-upsert this line afterwards]
 **Due soon** — [commitment titles, or "none"]
 ```
 
@@ -114,9 +116,11 @@ Recommend, don't open-question. This comes AFTER the greeting, the wins and what
 How's your energy — deep, medium, or light?
 ```
 
-Then surface exactly ONE pick, in this order:
+Then surface exactly ONE pick, in this order. Key on whether a focus is OPEN (`get_orientation.focus` non-null), then on whether it was carried:
 
-**a. A carried focus** (`get_orientation.focus` with `carried: true`) is the recommended pick, framed as continuity, with pausing as the alternative. Use the action's readable title (drop the energy suffix and any link syntax), the day it was started (`date`, as "yesterday" or the weekday) and `started`:
+**Open today** (`focus.carried: false`). No offer: name it ("You're already on [title] since [started]") and carry on to step 7. Nothing to resume or pause; a start or resume would be refused (`already_focused`).
+
+**a. Carried** (`focus.carried: true`) is the recommended pick, framed as continuity, with pausing as the alternative. Use the action's readable title (drop the energy suffix and link syntax; for a promoted action written `[[actions/<slug>]] (energy)`, use the last segment of the slug, never "actions/<slug>"), the day it was started (`date`, as "yesterday" or the weekday) and `started`:
 
 ```
 Yesterday you were mid-way through [title] on [project] (since [started]).
@@ -125,14 +129,14 @@ I suggest picking it up there (Recommended), or pausing it with a note on where 
 
 If the focus is deep (`action` ends `(deep)`) and they said light, lead with the pause instead: "That's a deep one and today sounds light — want to pause it with a note on where you got to, and start something lighter? Or pick it up anyway." Their call; offer, don't push.
 
-**b. No carried focus, but the project you'd recommend has a `last_paused`.** Offer to pick that up, and quote `last_paused.next` when it is present (never invent one):
+**b. Nothing open, and the project you'd recommend has a `last_paused`.** (With a focus open, `resume_action(project)` is refused, so this applies only when `focus` is null.) Offer to pick that up, and quote `last_paused.next` when it is present (never invent one):
 
 ```
 You paused [title] on [project] [yesterday / on date]. You left yourself: "[next]".
 I suggest picking it up there (Recommended).
 ```
 
-**c. Otherwise** match energy to a project whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any active project with a top action):
+**c. Otherwise** (nothing open, no pause to offer) match energy to a project whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any active project with a top action):
 
 ```
 I'd start with:
@@ -140,7 +144,7 @@ I'd start with:
   (current state: [state_snippet])
 ```
 
-A focus already open today (`carried: false`) needs no offer: name it ("You're already on [title] since [started]") and carry on to step 7. Let them pick another, but offer the one — don't list all.
+Let them pick another, but offer the one — don't list all.
 
 ### 7. Reality-check the calendar, then persist the agenda
 
@@ -194,13 +198,14 @@ If they skip it, that's fine — leave the section unwritten.
 
 What the person said in step 6 decides the call. Each of these writes its own `started` / `resumed` / `paused` line, so there is no separate day-start line to write.
 
-- **"Yes" to picking up a carried focus or a paused action** → `resume_action` (add `project: "<slug>"` for a pause offered under step 6b). Read `resumed_from.kind` and `resumed.action` back, since a carried focus wins over a pause, and read `resumed_from.next` to them when it is set: "Picked up [title] — you left yourself: '[next]'."
-- **An explicit pick of an action on the map** ("let's work on Y", "start Y") → `start_action(project, query)` when nothing is carried; `switch_action(project, query)` when a focus is carried (it pauses the old one first). Pass `next` to `switch_action` only if you know where the old one stood — never invent it.
+- **"Yes" to picking up a carried focus (6a), or naming that same action ("let's do methods")** → `resume_action`. **"Yes" to a pause offered under 6b** → `resume_action(project: "<slug>")`. Read `resumed_from.kind` and `resumed.action` back, since a carried focus wins over a pause, and read `resumed_from.next` to them when it is set: "Picked up [title] — you left yourself: '[next]'."
+- **A plain "yes" to the 6c pick, or to the pick offered after "pause it"** → `start_action(project, query)` with the project's slug and a distinctive substring of its `top_action.text`; `switch_action` with the same arguments if a focus is open.
+- **The person names other work** ("let's work on Y", "start Y") → `start_action(project, query)` when nothing is open; `switch_action(project, query)` when a focus is open (it pauses the old one first). Pass `next` to `switch_action` only if you know where the old one stood — never invent it.
 - **"Pause it"** → `pause_action`, with `next` only if they say where they got to (ask once, in a clause; no answer means no `next`), then offer the one pick from step 6c.
-- **A pick that isn't on the map yet** → `start_unplanned_action` (or `switch_unplanned_action` with a focus carried), with a title and an energy.
-- **No answer, or "not yet"** → write nothing; the carried focus stays as it is.
+- **A pick that isn't on the map yet** → `start_unplanned_action` when nothing is open, `switch_unplanned_action` when a focus is open, with a title and an energy.
+- **No answer, or "not yet"** → write nothing; an open focus stays as it is.
 
-Never write a prose `append_to_log` line about a start, a pick-up or a focus; the focus tools write the real marker. On `focus_open`, don't retry: follow the refusal's `remedy` and ask them first.
+Never write a prose `append_to_log` line about a start, a pick-up or a focus; the focus tools write the real marker. On `focus_open`, don't retry: follow the refusal's `remedy`. `already_focused` means carry on and ask nothing; for a `resume_action` or `switch_action` remedy, ask the person first.
 
 ### 10. Launch with momentum
 
@@ -216,7 +221,7 @@ Go get it. I'm here if you need me.
 - Don't ask open-ended "what do you want to do?" — recommend.
 - Don't write `Logs`/`Notes` via `upsert_daily_section` — they're append-only; the call is rejected. Log lines go through `append_to_log`.
 - Don't overwrite a pre-filled Intention or Agenda — acknowledge or merge (you read them in step 1).
-- Don't call `resume_action`, `pause_action` or `switch_action` without the person's yes, and don't open with the focus: greeting, wins and due-soon come first.
+- Don't call `resume_action` or `pause_action` without the person's yes, and `switch_action` only on their word, and don't open with the focus: greeting, wins and due-soon come first.
 - Don't write a day-start or focus line with `append_to_log` — the focus tools write the log line.
 - Don't build a rigid minute-by-minute timeline. Don't silently overschedule.
 - Don't shame a quiet yesterday. Don't manufacture fake wins.
