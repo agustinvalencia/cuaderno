@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/examples/hooks/claude-code/focus.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
