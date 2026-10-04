@@ -309,7 +309,8 @@ max_window_days = 366
 | `max_window_days` | `366` | A ceiling on the two windows. A vault whose `carry_over_days` or `paused_lookback_days` exceeds it fails to open, with an error naming the key, its value and the ceiling, so a typo like `14000` cannot turn every read into thousands of file checks. Raise it if you really want a longer window. |
 
 Both windows are read from the daily log each time; nothing is cached, so changing a value takes
-effect on the next command. See [`cdno now`](cli/now.md) and
+effect on the next `cdno` command. A running MCP server keeps the config it started with, so
+restart it (reconnect the client) for an agent to see the change. See [`cdno now`](cli/now.md) and
 [Troubleshooting](troubleshooting.md#cdno-now-says-im-still-on-yesterdays-thing).
 
 ## Templates

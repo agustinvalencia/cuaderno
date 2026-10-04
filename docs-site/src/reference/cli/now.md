@@ -42,13 +42,16 @@ On surrogate-model — Draft the methods section (deep), since 09:30 (1h 30m).
 **Something is in focus.** The line above. A start carried over from an earlier day names it
 (`since Saturday 14:05 (21h 7m)`), and the elapsed time counts across midnight.
 
-**A focus that was picked up again.** One re-anchored with
-[`action resume`](action.md#cdno-action-resume) reads the new time first and keeps the original:
+**A carried focus that was picked up again.** A focus carried over from an earlier day and
+re-anchored with [`action resume`](action.md#cdno-action-resume) reads the new time first and keeps the original:
 
 ```bash
 $ cdno now
 On surrogate-model — Draft the methods section (deep), picked up 08:50 today (started Saturday 14:05).
 ```
+
+Resuming a *pause* shows the plain `since HH:MM` shape, because the pause had already closed the
+earlier start.
 
 A day more than six days back is shown as a date (`2026-09-22 14:05`), since a weekday name would be
 ambiguous.

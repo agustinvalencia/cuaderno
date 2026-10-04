@@ -78,7 +78,7 @@ the command that does what you meant:
 ```text
 $ cdno action start --project surrogate-model --query "feature set B"
 Error: Profile the assembly step is already in focus on surrogate-model (since 09:30).
-To move on to this instead: cdno action switch --project surrogate-model --query feature set B
+To move on to this instead: cdno action switch --project surrogate-model --query 'feature set B'
 Or complete or pause it first.
 ```
 

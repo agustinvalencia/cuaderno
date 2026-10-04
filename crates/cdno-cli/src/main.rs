@@ -255,7 +255,8 @@ enum Commands {
     },
 
     /// Manage actions: add (with optional --note), promote a bullet to
-    /// a manifest note, complete, and list.
+    /// a manifest note, start, switch, pause and resume the focus,
+    /// complete, drop, and list.
     Action {
         #[command(subcommand)]
         subcommand: ActionCommands,

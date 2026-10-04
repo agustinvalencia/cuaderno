@@ -85,13 +85,15 @@ paused action stops being offered once something later started, resumed, finishe
 promoted it. Promoting a bullet while it is in focus is fine: the focus follows it to the new note.
 
 **With an assistant.** Over [MCP](../reference/mcp/writes.md#focus-tools) the focus rides along on
-the reads and on most write results, so an agent knows what you are on without asking. The server
+the reads and on the results of seventeen write tools, so an agent knows what you are on without asking. The server
 never refuses a write for being outside the focus. The agent's job is to notice a change of subject
-and say it in one sentence, offering to capture the thought and stay, or to move over if you say so,
-and to give you a cue to get back (`next:` is what it reads out). It does not ask you why.
+and say it in one sentence, offering to capture the thought and stay, to do it now as an aside, or to move over if you say
+so, and to give you a cue to get back (`next:` is what it reads out). It raises a given topic at
+most once per focus, never asks you why, and never pauses or resumes without your yes.
 
 **The `during:` tag.** While a focus is open, a log line written by `cdno log`, an inbox capture, and
-a `## Notes` entry are tagged with its project: `during: [[surrogate-model]]` under the log line,
+a `## Notes` entry (on its `noted` pointer line in `## Logs`) are tagged with its project:
+`during: [[surrogate-model]]` under the log line,
 `captured_during: surrogate-model` in an inbox item. The tag is what lets a later review see where
 captures came from, and it survives triage because the discard line copies it.
 

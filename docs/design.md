@@ -788,7 +788,7 @@ The project map is the primary mutable note. To prevent loss of historical conte
 
 This ensures no information is lost while keeping the project map clean and focused on the present.
 
-**Exceptions to the `was:`/`now:` shape.** Four further line families record changes without copying the old text:
+**Exceptions to the `was:`/`now:` shape.** Five further line families record changes without copying the old text:
 
 - **Revisions of mutable custom notes** such as concepts (§5.12). `revise_note` and `cdno note revise` write, in the same transaction as the note, `revised [[<path>]] — <reason>` for a whole-body revision or `revised [[<path>#<Heading>]] — <reason>` for a one-section upsert; the path has no `.md`, the anchor is the raw heading text, and the reason is required and flattened to one line. A revision that leaves the text unchanged writes and logs nothing.
 
@@ -809,7 +809,7 @@ This ensures no information is lost while keeping the project map clean and focu
     reason: funding moved to the coupled solver
   ```
 
-- **Focus markers.** The focus (§5.11, RFC 0005) is the one open `started` or `resumed` marker in the look-back window, and the log is its only store. `cdno action start` writes `started [[<slug>]] — <bullet text>`; `complete` and `drop` write the closes `action done on` and `action dropped on`; and two markers record leaving an action without finishing it and coming back:
+- **Focus markers.** The focus (RFC 0005) is the one open `started` or `resumed` marker in the look-back window, and the log is its only store. `cdno action start` writes `started [[<slug>]] — <bullet text>`; `complete` and `drop` write the closes `action done on` and `action dropped on`; and two markers record leaving an action without finishing it and coming back:
 
   - `paused`: `action paused on [[<slug>]] — <text>` closes the open start the way a completion does, with optional indented `next:` (where to pick up) and `reason:` continuation lines. `cdno action pause` and `pause_action` write it from the focus's own text; nothing is matched against the project map, and the bullet stays where it is. A switch is a `paused` line followed by a `started` line, with no marker of its own.
   - `resumed`: `resumed [[<slug>]] — <text>` is an *open* marker, read as close-plus-reopen at its own stamp, so the look-back window counts from the resume. It is written by `cdno action resume` and `resume_action`, which take the text from the log rather than the map.
@@ -1364,7 +1364,7 @@ switch_action(project, query, next?, reason?) / switch_unplanned_action(project,
 
 resume_action(project?)
   → re-anchors a carried focus or reopens the latest pause; returns `resumed_from`
-  → these tools and 13 other writes return a `focus` field: the current_focus read-back
+  → these six and eleven other writes (seventeen in all) return a `focus` field: the current_focus read-back
 
 complete_action(project, query)
   → removes the bullet, logs completion to daily,

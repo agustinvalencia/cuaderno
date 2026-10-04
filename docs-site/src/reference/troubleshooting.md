@@ -79,7 +79,8 @@ with the day named (`since Saturday 14:05`). That is the one-day window,
   today (started Saturday 14:05)`) and keeps it from expiring tomorrow.
 - You stopped but will come back: `cdno action pause --next "…"`, and `resume` brings the hint back.
 - You do not want anything to carry overnight: set `carry_over_days = 0` in `.cuaderno/config.toml`
-  and the focus is read from today's note only.
+  and the focus is read from today's note only. A running MCP server keeps the config it started
+  with, so restart it (reconnect the client) for an agent to see the change.
 
 Finishing it with `cdno action complete` or `drop` clears it as ever.
 
@@ -102,7 +103,7 @@ from an earlier day.
 This is most often noticed the first morning after upgrading. A start left open yesterday and never
 closed is now carried into today, so the first `start` of the day is refused where it used to stack
 silently. Resume it, pause it, complete it, or switch. If you would rather keep the old behaviour,
-set `carry_over_days = 0`.
+set `carry_over_days = 0` (and restart a running MCP server, which keeps the config it started with).
 
 Over MCP the refusal is a `focus_open` rejection with a `remedy`; see
 [Write tools](mcp/writes.md#rejections-focus_open-and-no_focus).
