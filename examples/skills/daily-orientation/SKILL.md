@@ -118,7 +118,7 @@ How's your energy — deep, medium, or light?
 
 Then surface exactly ONE pick, in this order. Key on whether a focus is OPEN (`get_orientation.focus` non-null), then on whether it was carried:
 
-**Open today** (`focus.carried: false`). No offer: name it ("You're already on [title] since [started]") and carry on to step 7. Nothing to resume or pause; a start or resume would be refused (`already_focused`).
+**Open today** (`focus.carried: false`). No offer: name it ("You're already on [title] since [started]") and carry on to step 7. No offer needed; a start or resume of this same action would be refused (`already_focused`). The person can still pause it or switch to other work (step 9).
 
 **a. Carried** (`focus.carried: true`) is the recommended pick, framed as continuity, with pausing as the alternative. Use the action's readable title (drop the energy suffix and link syntax; for a promoted action written `[[actions/<slug>]] (energy)`, use the last segment of the slug, never "actions/<slug>"), the day it was started (`date`, as "yesterday" or the weekday) and `started`:
 
