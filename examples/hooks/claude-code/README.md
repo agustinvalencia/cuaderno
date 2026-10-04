@@ -2,7 +2,7 @@
 
 ## What this does
 
-This hook runs `cdno now --line` before each user prompt in Claude Code, injecting one line of context into every turn so agents see your current focus without being asked. The injected line looks like:
+This hook runs `cdno now --line` before each user prompt in Claude Code, injecting one line of context into every turn so agents see your current focus without being asked. Claude Code adds the hook's output to the conversation as context for that turn. The injected line looks like:
 
 ```
 Focus: surrogate-model — Implement surrogate-model analysis (since 10:15)
@@ -22,26 +22,30 @@ The CLI's discovery process walks **upward** from the current working directory 
 
 ## Performance cost
 
-One warm run of `cdno now --line` on a typical vault takes 20–100 milliseconds. On a vault with several hundred actions or a slow disk, reconciliation of the index can add up to ~5 seconds if another process holds the vault lock and the index is stale. This is rare; the hook prints nothing and returns successfully even when it stalls.
+One warm run of `cdno now --line` takes about 21–30 milliseconds on the repo's dev vault (release build). Larger vaults will incur higher costs as the journal grows. If another process holds the vault's write lock while the index is stale, `cdno now --line` waits up to 5 seconds for the lock before timing out and returning. This is rare; the hook prints nothing and exits successfully even in this scenario.
 
 ## Installation
 
-1. Copy `focus.sh` to a location on your PATH, or note its absolute path.
+1. Copy `focus.sh` to a location on your PATH, or note its absolute path. The command in settings must use an absolute path (e.g., `/Users/you/...`) or `$HOME/...`. Ensure the script is executable (`chmod +x focus.sh`).
 
 2. Merge the contents of `settings.snippet.json` into your Claude Code settings:
 
    - **Global settings** (`~/.claude/settings.json`): Add or merge the `hooks` object. If you already have other hooks, add this entry to the existing `UserPromptSubmit` array, or create it if absent.
    - **Project-local settings** (`.claude/settings.json` in your project root): Do the same, scoped to your project.
 
-   Example merge for global settings (replace `path/to/focus.sh` with the actual path):
+   Example merge for global settings (replace `/absolute/path/to/...` with the actual path to your copied script):
 
    ```json
    {
      "hooks": {
        "UserPromptSubmit": [
          {
-           "type": "command",
-           "command": "path/to/focus.sh"
+           "hooks": [
+             {
+               "type": "command",
+               "command": "/absolute/path/to/examples/hooks/claude-code/focus.sh"
+             }
+           ]
          }
        ]
      }
@@ -63,7 +67,7 @@ The hook always exits with code 0, even if:
 - `CUADERNO_VAULT_PATH` is unset or empty — prints nothing
 - `cdno` is not on PATH — prints nothing
 - `cdno now --line` fails — prints nothing
-- The vault is being written to by another process — may stall up to ~5 seconds, then print nothing or the current focus
+- The vault's write lock is held by another process — waits up to 5 seconds for the lock before timing out, then prints nothing or the current focus
 
 This design ensures the hook can never block or break a turn.
 

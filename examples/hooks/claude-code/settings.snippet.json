@@ -2,8 +2,12 @@
   "hooks": {
     "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "path/to/focus.sh"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/examples/hooks/claude-code/focus.sh"
+          }
+        ]
       }
     ]
   }

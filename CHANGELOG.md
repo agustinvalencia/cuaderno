@@ -222,14 +222,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - **Claude Code hook example: inject the current focus into every turn (RFC 0005, #739).** A
   `UserPromptSubmit` hook script (`examples/hooks/claude-code/focus.sh`) runs `cdno now --line`
   before each prompt, injecting one line into every Claude Code turn so agents see the focus
-  without being asked. The hook always exits 0 and prints nothing when the vault is not set,
-  cdno is not on PATH, or the command fails, so it never breaks a turn. A settings fragment
-  and README explain how to merge the hook into `~/.claude/settings.json` or a project's local
-  settings, why `--vault` or `CUADERNO_VAULT_PATH` is required (CLI discovery walks upward
-  from the session's cwd, which is the project being coded in, not the vault), the measured
-  cost (~20–100 milliseconds on a warm start; up to ~5 seconds if another process holds the
-  lock), and the protocol the agent follows when it sees the line. This is what makes RFC §5.6
-  behaviour rather than advice.
+  without being asked. Claude Code adds the hook's output to the conversation as context for that
+  turn. The hook always exits 0 and prints nothing when the vault is not set, cdno is not on PATH,
+  or the command fails, so it never breaks a turn. A settings fragment and README explain how to
+  merge the hook into `~/.claude/settings.json` or a project's local settings, why `--vault` or
+  `CUADERNO_VAULT_PATH` is required (CLI discovery walks upward from the session's cwd, which is
+  the project being coded in, not the vault), the measured cost (about 21–30 milliseconds on a
+  warm start with a small vault; larger vaults cost more), and the lock timeout (up to 5 seconds
+  if another process holds the vault's write lock). This is what makes RFC §5.6 behaviour rather
+  than advice.
 
 ### Fixed
 
