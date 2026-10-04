@@ -6,8 +6,8 @@ Two example [Claude Agent Skills](https://agentskills.io/specification) showing 
 
 | Example | Shows |
 |---------|-------|
-| [`quick-capture`](quick-capture/SKILL.md) | The minimal shape — a single MCP tool (`append_to_log`), zero-friction, one job done well. |
-| [`daily-orientation`](daily-orientation/SKILL.md) | The full pattern — several context reads (`get_orientation`, `get_weekly_context`, `read_daily_note`), writes (`upsert_daily_section`, `append_to_log`), a second MCP server (calendar) used with graceful degradation, and a multi-step interaction flow. |
+| [`quick-capture`](quick-capture/SKILL.md) | The minimal shape — one job done well, zero-friction: `append_to_log` by default, `capture` for the inbox, and a return cue when a focus is open. |
+| [`daily-orientation`](daily-orientation/SKILL.md) | The full pattern — several context reads (`get_orientation`, `get_weekly_context`, `read_daily_note`), writes (`upsert_daily_section`, and the focus tools `start_action`, `resume_action`, `switch_action`, `pause_action`), a second MCP server (calendar) used with graceful degradation, and a multi-step interaction flow. |
 
 `references/` holds the shared design notes both skills link to (interaction principles, calendar conventions, linking rules).
 

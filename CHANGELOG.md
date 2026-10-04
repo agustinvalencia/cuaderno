@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **The shipped skills use the focus (RFC 0005, #740).** `daily-orientation` drops its "no stored
+  focus" notes and reads `get_orientation.focus`; after the greeting, wins and due-soon it makes a
+  carried focus the one recommended pick ("pick it up there, or pause it with a note on where you
+  got to"), quotes a project's `last_paused.next` when that is the pick, suggests the pause for a
+  deep focus on a light day, and on the person's word calls `resume_action`, `start_action`,
+  `switch_action` or `pause_action` in place of the old prose "Started the day" log line.
+  `quick-capture` stops claiming the inbox is not exposed (`capture` is), keeps `append_to_log` as
+  the default, never writes the `during:` tag itself, and gives a return cue when the write result
+  carries a focus. `references/ADHD-PRINCIPLES.md` gains a "Focus and moving over" section with
+  the eight points of RFC §5.6 and the wording rule.
+
 - **Server instructions carry the detour protocol (RFC 0005, #738).** The `with_instructions` text
   now opens with a terse `FOCUS` section holding the eight points of RFC §5.6 (compare at project
   level, one sentence only on a mismatch, recommend capture and accept an aside or a move, once per
