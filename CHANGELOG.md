@@ -8,6 +8,17 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Write results carry the focus (RFC 0005, #736).** The success payloads of `start_action`,
+  `start_unplanned_action`, `switch_action`, `switch_unplanned_action`, `pause_action`,
+  `resume_action`, `complete_action`, `drop_action`, `promote_action`, `add_action`,
+  `append_to_log`, `capture`, `note_to_daily`, `park_project`, `activate_project`,
+  `complete_project` and `drop_project` gain a `focus` field: the focus as `current_focus` reads
+  it right after the write, in the same shape, so an agent sees what is open without a second
+  call. `focus: null` means nothing is open, as `current_focus` returning null does. The focus is
+  read in the same blocking call that verifies the write, never a second one, and a focus that
+  cannot be read after the write landed comes back as `null` rather than as an error. Every
+  existing field is unchanged, and the tool catalogue and descriptions are untouched.
+
 - **MCP tools `pause_action`, `switch_action`, `switch_unplanned_action` and `resume_action` (RFC 0005, #735).**
   The focus verbs over MCP, with the split `start` has: `switch_action {project, query, next?,
   reason?}` for a bullet on the map and `switch_unplanned_action {project, title, energy, next?,

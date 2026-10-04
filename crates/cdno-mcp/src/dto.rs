@@ -311,6 +311,12 @@ pub struct PauseResultDto {
     /// The focus that was paused.
     pub paused: CurrentFocusDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// Result of `switch_action` / `switch_unplanned_action`.
@@ -324,6 +330,12 @@ pub struct SwitchResultDto {
     /// The new focus.
     pub started: CurrentFocusDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// Result of `resume_action`.
@@ -337,6 +349,12 @@ pub struct ResumeResultDto {
     /// What was resumed: `kind` says whether a carried focus or a pause.
     pub resumed_from: ResumedFromDto,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -1373,6 +1391,12 @@ pub struct NoteToDailyResponse {
     /// bytes of the day's `## Notes`, which end with the entry just
     /// written (a long entry shows only the end of its body).
     pub verification: Option<WriteVerificationDto>,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 impl From<cdno_domain::NoteToDailyOutcome> for NoteToDailyResponse {
@@ -1384,6 +1408,7 @@ impl From<cdno_domain::NoteToDailyOutcome> for NoteToDailyResponse {
             target: o.target,
             log_line: o.log_line,
             verification: None,
+            focus: None,
         }
     }
 }
@@ -1522,6 +1547,12 @@ pub struct ProjectClosureDto {
     /// a promise to someone else does not end with the project.
     pub untouched_commitments: Vec<LinkedCommitmentDto>,
     pub verification: WriteVerificationDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 /// An active standalone commitment linked to a project.
@@ -1538,6 +1569,20 @@ impl From<cdno_domain::LinkedCommitment> for LinkedCommitmentDto {
             due: c.due,
         }
     }
+}
+
+/// [`WriteResultDto`] for a tool that writes a daily-log line or changes a
+/// project map (RFC 0005 §5.5): the same fields, unchanged, plus `focus`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FocusedWriteResultDto {
+    #[serde(flatten)]
+    pub write: WriteResultDto,
+    /// The focus as `current_focus` reads it right after this write, in the
+    /// same read-back (RFC 0005 §5.5). `null` means nothing is open, the
+    /// same as `current_focus` returning null. A focus that cannot be read
+    /// after the write landed is also null, never an error: the write
+    /// succeeded, and `current_focus` reports the read failure itself.
+    pub focus: Option<CurrentFocusDto>,
 }
 
 impl WriteResultDto {
