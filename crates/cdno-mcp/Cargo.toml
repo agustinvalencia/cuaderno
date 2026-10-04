@@ -88,8 +88,3 @@ toml = { workspace = true }
 # cdno-cli is a dev-dep so the e2e subprocess test can seed a vault
 # via `cdno init` before launching cdno-mcp against it.
 cdno-cli = { path = "../cdno-cli" }
-
-[lints.rust]
-# `tarpaulin_include` is tarpaulin's exclusion marker: never set by any
-# build, so `cfg(not(tarpaulin_include))` is always true (see lifecycle.rs).
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin_include)'] }
