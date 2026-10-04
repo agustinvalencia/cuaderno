@@ -18,7 +18,10 @@ use clap::Subcommand;
 use clap_complete::engine::ArgValueCompleter;
 
 use cdno_domain::frontmatter::{ActionStatus, EnergyLevel};
-use cdno_domain::{ActionListEntry, AttachedAction, FOCUS_OPEN_MESSAGE, NO_FOCUS_MESSAGE, Vault};
+use cdno_domain::{
+    ActionListEntry, AttachedAction, FOCUS_OPEN_MESSAGE, NO_FOCUS_TO_PAUSE_MESSAGE,
+    NO_FOCUS_TO_RESUME_MESSAGE, Vault,
+};
 
 use crate::bootstrap;
 use crate::completions;
@@ -1260,13 +1263,21 @@ pub fn pause_asking(
         .context("reading the current focus")?
         .is_none()
     {
-        return no_focus(json, NO_FOCUS_TO_PAUSE.to_owned());
+        return no_focus(
+            json,
+            NO_FOCUS_TO_PAUSE_MESSAGE,
+            NO_FOCUS_TO_PAUSE.to_owned(),
+        );
     }
     let next = pause_hint(next, interactive, ask)?;
     let outcome = match vault.pause_action(at, next.as_deref(), reason.as_deref()) {
         Ok(o) => o,
         Err(cdno_domain::error::DomainError::NoFocus) => {
-            return no_focus(json, NO_FOCUS_TO_PAUSE.to_owned());
+            return no_focus(
+                json,
+                NO_FOCUS_TO_PAUSE_MESSAGE,
+                NO_FOCUS_TO_PAUSE.to_owned(),
+            );
         }
         Err(e) => return Err(e).context("pausing action"),
     };
@@ -1313,6 +1324,7 @@ fn resume(vault: &Vault, at: NaiveDateTime, project: Option<String>, json: bool)
         Err(DomainError::NoFocus) => {
             return no_focus(
                 json,
+                NO_FOCUS_TO_RESUME_MESSAGE,
                 match project.as_deref().map(str::trim) {
                     Some(p) => format!(
                         "Nothing to resume on {p} \u{2014} no carried focus or pause there."
@@ -1419,11 +1431,13 @@ pub fn focus_open_rejection(
     object
 }
 
-/// The `no_focus` rejection object.
-pub fn no_focus_rejection() -> serde_json::Value {
+/// The `no_focus` rejection object, with the refused verb's own `message`
+/// (`NO_FOCUS_TO_PAUSE_MESSAGE` or `NO_FOCUS_TO_RESUME_MESSAGE`), the text
+/// the MCP rejection carries for the same verb.
+pub fn no_focus_rejection(message: &str) -> serde_json::Value {
     serde_json::json!({
         "code": "no_focus",
-        "message": NO_FOCUS_MESSAGE,
+        "message": message,
         "details": {},
     })
 }
@@ -1438,9 +1452,9 @@ fn reject_json(value: serde_json::Value) -> Result<()> {
 
 /// "Nothing is open to act on": the `no_focus` object under `--json`,
 /// else `text` as the error.
-fn no_focus(json: bool, text: String) -> Result<()> {
+fn no_focus(json: bool, message: &str, text: String) -> Result<()> {
     if json {
-        reject_json(no_focus_rejection())?;
+        reject_json(no_focus_rejection(message))?;
     }
     anyhow::bail!(text)
 }

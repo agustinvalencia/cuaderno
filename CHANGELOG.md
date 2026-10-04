@@ -8,6 +8,24 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- **Server instructions carry the detour protocol (RFC 0005, #738).** The `with_instructions` text
+  now opens with a terse `FOCUS` section holding the eight points of RFC §5.6 (compare at project
+  level, one sentence only on a mismatch, recommend capture and accept an aside or a move, once per
+  topic per focus, never ask why, a return cue, the person's explicit word as consent (`switch_action`
+  with a focus open, `start_action` without), no retry after `focus_open` and its `remedy`
+  followed, a narrow due-today mention, no elapsed-time nudges)
+  and states that the server never refuses a write for being outside the focus. It comes first
+  because Claude Code cuts server instructions at 2048 characters by default; the section ends
+  within the first 1450, and the existing guidance follows it unchanged. `current_focus`,
+  `start_action` and `switch_action` point at it; `capture`, `append_to_log` and `note_to_daily`
+  say the `captured_during` / `during:` tag is written for the agent; `lint` names `resumed` among
+  the focus markers it checks. A `no_focus` refusal now names its verb, in the MCP rejection and in
+  `cdno action pause|resume --json` alike: "Nothing is in focus to pause." (true even when a
+  resumable pause exists) and "Nothing to resume: no focus carried over and no pause."; the
+  `DomainError::NoFocus` text becomes "nothing to act on: pause needs an action in focus, resume a
+  carried focus or a pause". Six comments, one debug log line and two descriptions in `cdno-mcp`
+  that used words the RFC bars from agent-facing text were reworded.
+
 - **Write results carry the focus (RFC 0005, #736).** The success payloads of `start_action`,
   `start_unplanned_action`, `switch_action`, `switch_unplanned_action`, `pause_action`,
   `resume_action`, `complete_action`, `drop_action`, `promote_action`, `add_action`,
@@ -155,7 +173,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
   `action paused on [[project]] — text` entry with optional `next:` and `reason:` lines, using the
   focus's own text read back from the log. It resolves nothing against the project map, so a focus
   on a since-parked project can be paused and the map is never touched; with nothing started it
-  fails with the new `DomainError::NoFocus` (`nothing is in focus or paused to act on`). No CLI or
+  fails with the new `DomainError::NoFocus`. No CLI or
   MCP verb calls it yet.
 
 - **The `paused` marker for the daily log (RFC 0005, #720).** `action paused on [[project]] — text`

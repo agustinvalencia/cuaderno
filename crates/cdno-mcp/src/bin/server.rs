@@ -27,7 +27,7 @@
 //!   the initial exposure soak and permanently scoped deployments.
 //!
 //! **Be precise about what the interlock guarantees** (2026-07-05
-//! security review): the enforced property is *"this process only
+//! security review): the guaranteed property is *"this process only
 //! accepts connections arriving on its own loopback interface"* — it
 //! is **not** "impossible to expose unauthenticated". Anything that
 //! bridges the loopback port outward (an ad-hoc `cloudflared tunnel
@@ -88,7 +88,7 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 /// Request-body cap for `/mcp`. Tool arguments are JSON text — the
 /// largest legitimate payloads are evidence-note bodies filed via
 /// `file_to_portfolio`, comfortably under this. Anything bigger is
-/// hostile or broken. (Enforced with `RequestBodyLimitLayer`, which
+/// hostile or broken. (Applied with `RequestBodyLimitLayer`, which
 /// wraps the body itself; see the module docs for why axum's default
 /// limit doesn't cover rmcp's raw-body path.)
 const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -542,7 +542,7 @@ fn spawn_reconcile_loop(
                     } else {
                         tracing::debug!(
                             scanned = report.scanned,
-                            "periodic reconciliation: no drift"
+                            "periodic reconciliation: nothing changed"
                         );
                     }
                 }

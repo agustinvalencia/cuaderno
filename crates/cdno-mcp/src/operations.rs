@@ -20,7 +20,10 @@ use crate::dto::{
 };
 use crate::input::*;
 
-use crate::util::{into_mcp_error, into_mcp_error_attempting, invalid_argument, json_result};
+use crate::util::{
+    into_mcp_error, into_mcp_error_attempting, into_mcp_error_no_focus, invalid_argument,
+    json_result,
+};
 
 use crate::server::CuadernoServer;
 use crate::verify::WriteShape;
@@ -28,7 +31,7 @@ use crate::verify::WriteShape;
 #[tool_router(router = operations_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist. `## Logs` is the sequence of one-line events; for worked-out substance (a derivation, a procedure, a page of reasoning) use `note_to_daily`, which writes the entry under `## Notes` and this pointer line for you. The entry is stamped with the vault clock (`- **HH:MM**: <text>`), so pass the text alone; a time you prefix yourself is stamped twice. Link as you write: wikilink every vault note the line names (`[[slug]]`), and render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather than a bare `#N`. An unlinked line is invisible to the vault graph."
+        description = "Append a single line to today's daily log entry, creating the daily note if it doesn't yet exist. `## Logs` is the sequence of one-line events; for worked-out substance (a derivation, a procedure, a page of reasoning) use `note_to_daily`, which writes the entry under `## Notes` and this pointer line for you. The entry is stamped with the vault clock (`- **HH:MM**: <text>`), so pass the text alone; a time you prefix yourself is stamped twice. Link as you write: wikilink every vault note the line names (`[[slug]]`), and render every forge reference (issue, MR/PR, epic, commit, repo file) as a markdown link rather than a bare `#N`. An unlinked line is invisible to the vault graph. When a focus is open the server writes the indented `during: [[slug]]` tag under the line for you; never write one by hand."
     )]
     pub async fn append_to_log(
         &self,
@@ -53,7 +56,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Capture a raw line into the inbox for later triage -- zero-friction quick capture, the counterpart to `append_to_log` for thoughts that aren't a dated log entry. The text is stored verbatim under `inbox/`; routing it into a task/note happens later."
+        description = "Capture a raw line into the inbox for later triage -- zero-friction quick capture, the counterpart to `append_to_log` for thoughts that aren't a dated log entry. The text is stored verbatim under `inbox/`; routing it into a task/note happens later. When a focus is open the server writes `captured_during: <slug>` into the item's frontmatter for you; never write one by hand."
     )]
     pub async fn capture(
         &self,
@@ -496,7 +499,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Start work on an action that is ALREADY on the project map: matches the open bullet by substring `query` and logs `- **HH:MM**: started [[project]] — <bullet>` to today's daily note. `current_focus` requires that whole shape -- the `- **HH:MM**: ` stamp AND the em dash (U+2014) -- so a line composed by hand without both is invisible to it. What gets logged is the RESOLVED bullet text, not your query, so the later `complete_action` or `drop_action` logs matching text and `current_focus` clears. `promote_action` rewrites the bullet it matches, and the focus follows it to the new note, so promoting between the start and the close is safe. Errors with `INTERNAL_ERROR` when `query` matches no open bullet, and on an ambiguous match (several bullets contain it) -- the message lists the candidates; re-call with enough text to pick one. For work that is NOT on the map yet, use `start_unplanned_action` instead: this tool will not create a bullet, deliberately, because a fallback would turn a typo into a new action silently."
+        description = "Start work on an action that is ALREADY on the project map: matches the open bullet by substring `query` and logs `- **HH:MM**: started [[project]] — <bullet>` to today's daily note. `current_focus` requires that whole shape -- the `- **HH:MM**: ` stamp AND the em dash (U+2014) -- so a line composed by hand without both is invisible to it. What gets logged is the RESOLVED bullet text, not your query, so the later `complete_action` or `drop_action` logs matching text and `current_focus` clears. `promote_action` rewrites the bullet it matches, and the focus follows it to the new note, so promoting between the start and the close is safe. Errors with `INTERNAL_ERROR` when `query` matches no open bullet, and on an ambiguous match (several bullets contain it) -- the message lists the candidates; re-call with enough text to pick one. For work that is NOT on the map yet, use `start_unplanned_action` instead: this tool will not create a bullet, deliberately, because a fallback would turn a typo into a new action silently. Before acting on a request outside the focus, read the FOCUS section of the server instructions."
     )]
     pub async fn start_action(
         &self,
@@ -542,7 +545,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Acts on the CURRENT focus; takes no project or query. Sets the action in focus aside without finishing it: logs `- **HH:MM**: action paused on [[project]] \u{2014} <the focus's own text>` to today's daily note, with optional indented `next:` and `reason:` lines. The text logged is the focus's, read back from the log -- nothing is matched against the project map, so a focus on a since-parked project can still be paused -- and the bullet stays on the map untouched. After a pause `current_focus` returns null; the pause stays resumable with `resume_action` for the `[focus] paused_lookback_days` window, and its `next:` line is what a later `resume_action` hands back. Pass `next` whenever you know where the work stood -- draft it from what you saw the person do, in a short clause; a re-entry hint is worth more than the pause line itself. `reason` records why it was set aside. With nothing in focus this is refused with code `no_focus`; do not retry, tell the person nothing is started. Call it only on the person's word: pausing is their decision, not yours."
+        description = "Acts on the CURRENT focus; takes no project or query. Sets the action in focus aside without finishing it: logs `- **HH:MM**: action paused on [[project]] \u{2014} <the focus's own text>` to today's daily note, with optional indented `next:` and `reason:` lines. The text logged is the focus's, read back from the log -- nothing is matched against the project map, so a focus on a since-parked project can still be paused -- and the bullet stays on the map untouched. After a pause `current_focus` returns null; the pause stays resumable with `resume_action` for the `[focus] paused_lookback_days` window, and its `next:` line is what a later `resume_action` hands back. Pass `next` whenever you know where the work stood -- draft it from what you saw the person do, in a short clause; a re-entry hint is worth more than the pause line itself. `reason` records why it was set aside. With nothing in focus this is refused with code `no_focus`; do not retry, tell the person nothing is in focus. Call it only on the person's word: pausing is their decision, not yours."
     )]
     pub async fn pause_action(
         &self,
@@ -554,7 +557,7 @@ impl CuadernoServer {
                 vault.pause_action(at, input.next.as_deref(), input.reason.as_deref())
             })
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(|e| into_mcp_error_no_focus(e, cdno_domain::NO_FOCUS_TO_PAUSE_MESSAGE))?;
         let message = format!("Paused action, logged to {}", outcome.path);
         let reported = outcome.path.to_string();
         let paused = CurrentFocusDto::at(outcome.paused, at.date());
@@ -574,7 +577,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Move on from the CURRENT focus to an action that is ALREADY on a project map, in one commit: pauses what is in focus (logging `action paused on ...` with the optional `next:` and `reason:` lines for it) and starts the target (`started ...`), so the daily log reads as a pause followed by a start. `project` and `query` name the action to switch TO, matched by substring exactly as `start_action` matches; the one being paused is never named, it is whatever `current_focus` shows. Use this when `start_action` was refused with code `focus_open` AND the person has said to switch -- never switch on your own judgment; the refusal's message says to ask first. Pass `next` to leave a re-entry hint on the paused action, drafted from what you saw the person do. With nothing in focus it is a plain start and `next`/`reason` have nothing to attach to (the result's `paused` is null). Switching to the action already in focus is refused with code `focus_open`: remedy `already_focused` when it was started today (nothing to do), `resume_action` when it carried over from an earlier day (call `resume_action` then). A query that matches nothing or several bullets errors as it does for `start_action`, and nothing is written. For work not on the map yet use `switch_unplanned_action`."
+        description = "Move on from the CURRENT focus to an action that is ALREADY on a project map, in one commit: pauses what is in focus (logging `action paused on ...` with the optional `next:` and `reason:` lines for it) and starts the target (`started ...`), so the daily log reads as a pause followed by a start. `project` and `query` name the action to switch TO, matched by substring exactly as `start_action` matches; the one being paused is never named, it is whatever `current_focus` shows. Use this when `start_action` was refused with code `focus_open` AND the person has said to switch -- never switch on your own judgment; the refusal's message says to ask first. Pass `next` to leave a re-entry hint on the paused action, drafted from what you saw the person do. With nothing in focus it is a plain start and `next`/`reason` have nothing to attach to (the result's `paused` is null). Switching to the action already in focus is refused with code `focus_open`: remedy `already_focused` when it was started today (nothing to do), `resume_action` when it carried over from an earlier day (call `resume_action` then). A query that matches nothing or several bullets errors as it does for `start_action`, and nothing is written. For work not on the map yet use `switch_unplanned_action`. Before acting on a request outside the focus, read the FOCUS section of the server instructions."
     )]
     pub async fn switch_action(
         &self,
@@ -647,7 +650,7 @@ impl CuadernoServer {
         let outcome = self
             .with_vault(move |vault| vault.resume_action(at, input.project.as_deref()))
             .await?
-            .map_err(into_mcp_error)?;
+            .map_err(|e| into_mcp_error_no_focus(e, cdno_domain::NO_FOCUS_TO_RESUME_MESSAGE))?;
         let message = format!(
             "Resumed on {}, logged to {}",
             outcome.resumed.project, outcome.path
@@ -890,7 +893,7 @@ impl CuadernoServer {
     /// accepts an empty body and writes a bare `### heading`, and a
     /// later CLI verb decides for itself whether to demand substance.
     #[tool(
-        description = "Write worked-out substance (a derivation, a procedure, a page of reasoning) to a daily note (defaults to today) as one entry per call: `### <heading>` followed by `body`, appended under the day's `## Notes`. The pointer line `noted [[journal/<year>/daily/<date>#<heading>]] (<links>)`, listing the body's wikilinks, is written to `## Logs` for you in the same write, so do not log it again with `append_to_log`. Keep `## Logs` for one-line events and put the substance here. The heading must be unique within the day, must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), and must not contain `[`, `]`, `|`, `#` or inline markup (bold, italics, code) nor start with `^`; such headings are refused with code `history_entry_heading_invalid`. Headings inside the body must be level 3 or deeper (a `#` or `##` line is refused) and are held to the same uniqueness rule as the entry heading, so a pasted derivation with its own `## Proof` must be demoted first. Wikilink the vault notes the body names (`[[slug]]`). End an entry that could be reused beyond today with the tag `#concept` on the body's last line, so the review can find it as a candidate for promotion to a concept note; if you find `#concept` entries on the same subject on two or more dates (`search_notes` says how to look, and each entry must be read, since the hits alone do not show the subject), offer to promote them into one concept note with `create_custom_note` and `origin`. The returned `target` is the entry's anchored link: cite it as `[[<target>]]`, for example from a concept's `origin`."
+        description = "Write worked-out substance (a derivation, a procedure, a page of reasoning) to a daily note (defaults to today) as one entry per call: `### <heading>` followed by `body`, appended under the day's `## Notes`. The pointer line `noted [[journal/<year>/daily/<date>#<heading>]] (<links>)`, listing the body's wikilinks, is written to `## Logs` for you in the same write, so do not log it again with `append_to_log`. Keep `## Logs` for one-line events and put the substance here. The heading must be unique within the day, must not reuse a daily section name (`Standup`, `Intention`, `Agenda`, `Meeting`, `Notes`, `Logs`), and must not contain `[`, `]`, `|`, `#` or inline markup (bold, italics, code) nor start with `^`; such headings are refused with code `history_entry_heading_invalid`. Headings inside the body must be level 3 or deeper (a `#` or `##` line is refused) and are held to the same uniqueness rule as the entry heading, so a pasted derivation with its own `## Proof` must be demoted first. Wikilink the vault notes the body names (`[[slug]]`). End an entry that could be reused beyond today with the tag `#concept` on the body's last line, so the review can find it as a candidate for promotion to a concept note; if you find `#concept` entries on the same subject on two or more dates (`search_notes` says how to look, and each entry must be read, since the hits alone do not show the subject), offer to promote them into one concept note with `create_custom_note` and `origin`. The returned `target` is the entry's anchored link: cite it as `[[<target>]]`, for example from a concept's `origin`. When a focus is open the server adds the indented `during: [[slug]]` tag to the pointer line for you; never write one by hand."
     )]
     pub async fn note_to_daily(
         &self,

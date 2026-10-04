@@ -59,8 +59,8 @@
 //! the day it was written.
 
 use cdno_core::error::{ManipulationError, StoreError, ValidationError};
+use cdno_domain::FOCUS_OPEN_MESSAGE;
 use cdno_domain::error::DomainError;
-use cdno_domain::{FOCUS_OPEN_MESSAGE, NO_FOCUS_MESSAGE};
 use rmcp::ErrorData;
 use rmcp::model::{CallToolResult, Content};
 use serde::Serialize;
@@ -152,15 +152,17 @@ pub(crate) enum RejectionCode {
 ///
 /// Most codes use the domain error's own `Display` text, carried inside the
 /// payload rather than only in the protocol envelope — that envelope is
-/// exactly what the client in #560 throws away. Two codes (`focus_open`,
-/// `no_focus`) use RFC-specified text instead (RFC 0005 §5.1 and the remedy
-/// rule): the domain's wording names what the agent should do, while the
-/// MCP rejection must say what the person must do, so the agent can read
-/// the fix without parsing prose.
+/// exactly what the client in #560 throws away. `focus_open` uses
+/// RFC-specified text instead (RFC 0005 §5.1 and the remedy rule): the
+/// domain's wording names what the agent should do, while the MCP rejection
+/// must say what the person must do, so the agent can read the fix without
+/// parsing prose. `no_focus` keeps the domain's verb-neutral text here; the
+/// pause and resume handlers replace it with their verb's own message
+/// ([`crate::util::into_mcp_error_no_focus`]), since no one sentence is true
+/// for both.
 fn rejection_message(code: RejectionCode, e: &DomainError) -> String {
     match code {
         RejectionCode::FocusOpen => FOCUS_OPEN_MESSAGE.to_string(),
-        RejectionCode::NoFocus => NO_FOCUS_MESSAGE.to_string(),
         _ => e.to_string(),
     }
 }
@@ -1004,7 +1006,7 @@ mod tests {
         let payload = classify(&DomainError::NoFocus).expect("no_focus is caller-actionable");
 
         assert_eq!(payload["code"], "no_focus");
-        assert_eq!(payload["message"], "Nothing is started.");
+        assert_eq!(payload["message"], DomainError::NoFocus.to_string());
         assert_eq!(payload["details"], json!({}));
     }
 

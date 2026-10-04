@@ -573,3 +573,117 @@ fn concept_method_clauses_are_pinned_on_the_tool_descriptions() {
         );
     }
 }
+
+/// Claude Code's default cut for server instructions and for each tool
+/// description (`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`); text past it never
+/// reaches the agent.
+const CLIENT_CUT: usize = 2048;
+
+/// RFC 0005 §5.6: an agent with no skill loaded behaves per the detour
+/// protocol from the instructions alone, so the protocol's key phrases must
+/// be there, under a `FOCUS` heading, inside the first [`CLIENT_CUT`]
+/// characters, with the words the RFC bars from anything an agent
+/// paraphrases to the person kept out.
+#[test]
+fn instructions_carry_the_focus_protocol() {
+    let info = empty_server().get_info();
+    let full = info.instructions.as_deref().unwrap_or_default();
+    let seen: String = full.chars().take(CLIENT_CUT).collect();
+    assert!(
+        seen.starts_with("FOCUS\n"),
+        "the protocol comes first, under a FOCUS heading: {seen}"
+    );
+    let seen = seen.to_lowercase();
+    for phrase in [
+        "project level",
+        "one sentence",
+        "capture it and we stay on",
+        "an aside now",
+        "once per topic",
+        "never ask why",
+        "return cue",
+        "explicit word is consent",
+        "call switch_action if a focus is open, start_action if not",
+        "your judgement from get_project_context",
+        "ask at most once per topic",
+        "switch_action",
+        "never retry",
+        "ask the person",
+        "`remedy`",
+        "already_focused",
+        "need their yes",
+        "never refuses a write",
+        "heads up",
+        "no elapsed-time nudges",
+    ] {
+        assert!(
+            seen.contains(phrase),
+            "the first {CLIENT_CUT} chars of the instructions must carry {phrase:?} \
+             (RFC 0005 §5.6)"
+        );
+    }
+    let full = full.to_lowercase();
+    for banned in ["drift", "distraction", "off-task", "leak", "enforc"] {
+        assert!(
+            !full.contains(banned),
+            "instructions must not use {banned:?}"
+        );
+    }
+}
+
+/// RFC 0005 §6.4: the focus tools point at the FOCUS section, and the
+/// writes that tag a detour say the tag is written for the agent. Each
+/// sentence must sit in the description, inside the client's cut.
+#[test]
+fn focus_pointers_are_in_the_tool_descriptions() {
+    const POINTER: &str = "Before acting on a request outside the focus, read the FOCUS section of the server instructions.";
+    for (name, sentence) in [
+        ("current_focus", POINTER),
+        ("start_action", POINTER),
+        ("switch_action", POINTER),
+        (
+            "capture",
+            "When a focus is open the server writes `captured_during: <slug>` into the item's \
+             frontmatter for you; never write one by hand.",
+        ),
+        (
+            "append_to_log",
+            "When a focus is open the server writes the indented `during: [[slug]]` tag under \
+             the line for you; never write one by hand.",
+        ),
+        (
+            "note_to_daily",
+            "When a focus is open the server adds the indented `during: [[slug]]` tag to the \
+             pointer line for you; never write one by hand.",
+        ),
+    ] {
+        let desc = description_of(name);
+        let at = desc
+            .find(sentence)
+            .unwrap_or_else(|| panic!("'{name}' must say {sentence:?}: {desc}"));
+        assert!(
+            desc[..at + sentence.len()].chars().count() <= CLIENT_CUT,
+            "'{name}': the sentence must sit inside the first {CLIENT_CUT} chars"
+        );
+    }
+
+    // Every description fits the client's cut, except these, which were
+    // over it before RFC 0005 and are not its to shorten.
+    let over_before = ["create_custom_note"];
+    for tool in empty_server().advertised_tools() {
+        let len = tool
+            .description
+            .as_deref()
+            .unwrap_or_default()
+            .chars()
+            .count();
+        if over_before.contains(&tool.name.as_ref()) {
+            continue;
+        }
+        assert!(
+            len <= CLIENT_CUT,
+            "tool '{}' description is {len} chars, past the {CLIENT_CUT}-char client cut",
+            tool.name
+        );
+    }
+}
