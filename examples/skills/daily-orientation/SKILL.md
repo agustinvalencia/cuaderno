@@ -3,7 +3,7 @@ name: daily-orientation
 description: Start the day with a low-friction, calendar-aware orientation. Surfaces commitments due soon, suggests ONE project to start with, reality-checks the day against your actual free time, and persists a standup, intention, and agenda to the daily note. ADHD-friendly — minimal overwhelm, maximum momentum. Use when the user says good morning, wants to start their day, asks what's on the agenda, or says "orient me", "standup", or "daily standup".
 metadata:
   author: cuaderno
-  version: "1.1"
+  version: "1.2"
 compatibility: Requires the cuaderno MCP server (cdno-mcp) with a vault configured. Calendar awareness additionally uses the apple-calendar MCP server; the skill degrades gracefully without it.
 ---
 
@@ -22,7 +22,8 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 - **Planning sections persist.** `upsert_daily_section(section, content)` writes the daily note's `Standup`, `Intention`, or `Agenda` section (create-or-replace). Any other section name — including the append-only `Logs`/`Notes` — is rejected. Use it to persist the standup, intention, and agenda.
 - **Pre-planned content is readable.** `read_daily_note(date?)` returns the day's markdown (or `exists: false` when none yet). Scan it for an already-written `## Intention` or `## Agenda` (from a prior session, weekly-planning, or close-day) before writing — don't clobber the user's earlier thinking.
 - **History is append-only.** `## Logs` only grows, via `append_to_log(text)` (single timestamped lines). Never try to write `Logs`/`Notes` through `upsert_daily_section`.
-- **No stored "focus".** The skill *suggests* one project from `get_orientation`; it does not read or write a focus marker.
+- **Focus is read from the log, never stored.** `get_orientation.focus` is the same value `current_focus` returns: `{ project, action, started, date, carried, origin }` or `null`. `carried: true` means it was left open on an earlier day. It is changed only by the focus tools (`start_action`, `resume_action`, `pause_action`, `switch_action`), each on the person's word, and each writes its own log line. Never write a focus line with `append_to_log`.
+- **The server never refuses a write for being outside the focus**, and it refuses a second `start_action` while one is open (`focus_open`). On `focus_open`, don't retry: follow the refusal's `remedy` and ask the person first.
 - **Calendar is a separate MCP** (`apple-calendar`). If unavailable, skip the schedule and ask once — never block.
 
 ## MCP Tools Used
@@ -33,7 +34,10 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 | `get_weekly_context` | cdno-mcp | Recently completed actions (for the wins line + standup) |
 | `read_daily_note` | cdno-mcp | Check for pre-planned intention/agenda before writing |
 | `upsert_daily_section` | cdno-mcp | Persist the Standup / Intention / Agenda sections |
-| `append_to_log` | cdno-mcp | Log a short "day started" line to the daily log |
+| `resume_action` | cdno-mcp | Pick a carried focus (or the latest pause) up again, on the person's yes |
+| `start_action` | cdno-mcp | Start the one action the person picked, when nothing is carried |
+| `switch_action` | cdno-mcp | Move from a carried focus to a different action the person named |
+| `pause_action` | cdno-mcp | Set a carried focus aside, on the person's yes |
 | `today_schedule` | apple-calendar | Today's meetings and events |
 | `find_free_slots` | apple-calendar | Available deep-work windows |
 
@@ -43,12 +47,13 @@ What the cuaderno MCP can and can't do here, so steps stay bound to real tools:
 
 Call in parallel; don't dump raw output on the user:
 
-- `get_orientation` — `{ commitments, projects, lapsed_habits }`.
+- `get_orientation` — `{ commitments, projects, lapsed_habits, focus }`.
   - `commitments[]`: `{ date, title, source: { kind, slug }, is_overdue }`. `kind` ∈ `project_milestone | stewardship | standalone_commitment | action_note`.
-  - `projects[]`: `{ slug, status, state_snippet, top_action: { text, energy } | null }`. `energy` ∈ `deep | medium | light` or absent.
+  - `projects[]`: `{ slug, status, state_snippet, top_action: { text, energy } | null, last_paused: { project, action, title, at, date, next, reason } | null }`. `energy` ∈ `deep | medium | light` or absent. `last_paused` is that project's latest pause not yet picked up again; `next` is the re-entry hint it left, or null.
+  - `focus`: `{ project, action, started, date, carried, origin } | null`. `action` is the logged text with its energy suffix, e.g. `Fit baseline (deep)`.
   - `lapsed_habits[]`: `{ stewardship, detail }`.
 - `get_weekly_context` — read `completed_actions[]` (`{ slug, project, title, completed, path, source }`); keep those completed yesterday/today for the wins line + standup. `source` is `bullet` or `note`. **A bullet carries `slug: null` and `path: null`, and the bullet is the DEFAULT form of an action — so null is the common case, not the exception.** Every entry has `title` and `project`.
-- `read_daily_note` (today) — if `exists`, scan `markdown` for an existing `## Intention` and `## Agenda`. Store what's there; it changes steps 6–8 (acknowledge, don't re-ask or overwrite).
+- `read_daily_note` (today) — if `exists`, scan `markdown` for an existing `## Intention` and `## Agenda`. Store what's there; it changes steps 7–8 (acknowledge, don't re-ask or overwrite).
 - `today_schedule` (apple-calendar) — today's events. On error, note calendar unavailable and continue.
 - `find_free_slots` for today (apple-calendar) — free windows. Same graceful-degrade rule.
 
@@ -91,7 +96,7 @@ Compose a short standup from the gathered context and persist it. Don't ask — 
 
 ```markdown
 **Yesterday** — [N] action(s) done: [[ACTION-slug|title]] when `slug` is non-null, otherwise the bare title, …  (or "light day, no tracked completions")
-**Today** — starting [[project-slug]]: [top action]
+**Today** — starting [[project-slug]]: [top action]  (or "picking up [[project-slug]]: [action]" when a focus is carried)
 **Due soon** — [commitment titles, or "none"]
 ```
 
@@ -101,15 +106,33 @@ upsert_daily_section(section: "Standup", content: "<standup markdown>")
 
 Adapt for sparse days without judgement — just state the facts.
 
-### 6. Ask energy, suggest ONE project
+### 6. Ask energy, suggest ONE pick
 
-Recommend, don't open-question. Ask energy first (one word), then bias the suggestion:
+Recommend, don't open-question. This comes AFTER the greeting, the wins and what's due (steps 2–4) — never lead with the focus. Ask energy first (one word):
 
 ```
 How's your energy — deep, medium, or light?
 ```
 
-Match energy to a project whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any active project with a top action). Surface exactly ONE:
+Then surface exactly ONE pick, in this order:
+
+**a. A carried focus** (`get_orientation.focus` with `carried: true`) is the recommended pick, framed as continuity, with pausing as the alternative. Use the action's readable title (drop the energy suffix and any link syntax), the day it was started (`date`, as "yesterday" or the weekday) and `started`:
+
+```
+Yesterday you were mid-way through [title] on [project] (since [started]).
+I suggest picking it up there (Recommended), or pausing it with a note on where you got to.
+```
+
+If the focus is deep (`action` ends `(deep)`) and they said light, lead with the pause instead: "That's a deep one and today sounds light — want to pause it with a note on where you got to, and start something lighter? Or pick it up anyway." Their call; offer, don't push.
+
+**b. No carried focus, but the project you'd recommend has a `last_paused`.** Offer to pick that up, and quote `last_paused.next` when it is present (never invent one):
+
+```
+You paused [title] on [project] [yesterday / on date]. You left yourself: "[next]".
+I suggest picking it up there (Recommended).
+```
+
+**c. Otherwise** match energy to a project whose `top_action.energy` fits (deep top-action for deep energy, etc.; fall back to any active project with a top action):
 
 ```
 I'd start with:
@@ -117,11 +140,11 @@ I'd start with:
   (current state: [state_snippet])
 ```
 
-Let them pick another, but offer the one — don't list all.
+A focus already open today (`carried: false`) needs no offer: name it ("You're already on [title] since [started]") and carry on to step 7. Let them pick another, but offer the one — don't list all.
 
 ### 7. Reality-check the calendar, then persist the agenda
 
-Use the calendar data to show the day's true shape and match the suggested action to a real free block.
+Use the calendar data to show the day's true shape and match the picked action to a real free block.
 
 **If events + free slots are available:**
 ```
@@ -167,19 +190,17 @@ upsert_daily_section(section: "Intention", content: "<intention text>")
 
 If they skip it, that's fine — leave the section unwritten.
 
-### 9. Log the start (silent)
+### 9. Act on their answer
 
-A single timestamped line in the daily log, so the day's start is in the history:
-```
-append_to_log(text: "Started the day — focus [[<project-slug>]]: <top action>.")
-```
+What the person said in step 6 decides the call. Each of these writes its own `started` / `resumed` / `paused` line, so there is no separate day-start line to write.
 
-If step 1 found the note already set up ahead of time (a pre-filled `## Intention` or `## Agenda`), say so in the line, so the history shows today was planned, not improvised:
-```
-append_to_log(text: "Started the day on a pre-planned note — focus [[<project-slug>]]: <top action>.")
-```
+- **"Yes" to picking up a carried focus or a paused action** → `resume_action` (add `project: "<slug>"` for a pause offered under step 6b). Read `resumed_from.kind` and `resumed.action` back, since a carried focus wins over a pause, and read `resumed_from.next` to them when it is set: "Picked up [title] — you left yourself: '[next]'."
+- **An explicit pick of an action on the map** ("let's work on Y", "start Y") → `start_action(project, query)` when nothing is carried; `switch_action(project, query)` when a focus is carried (it pauses the old one first). Pass `next` to `switch_action` only if you know where the old one stood — never invent it.
+- **"Pause it"** → `pause_action`, with `next` only if they say where they got to (ask once, in a clause; no answer means no `next`), then offer the one pick from step 6c.
+- **A pick that isn't on the map yet** → `start_unplanned_action` (or `switch_unplanned_action` with a focus carried), with a title and an energy.
+- **No answer, or "not yet"** → write nothing; the carried focus stays as it is.
 
-Don't try to reconstruct *when* it was planned from this note — the daily note can't tell you (log lines are time-only, and the planning happened elsewhere). The dated record of "created this note ahead of time" belongs in the planning day's own log, written by the planning skill when it happens — not back-dated here.
+Never write a prose `append_to_log` line about a start, a pick-up or a focus; the focus tools write the real marker. On `focus_open`, don't retry: follow the refusal's `remedy` and ask them first.
 
 ### 10. Launch with momentum
 
@@ -195,7 +216,8 @@ Go get it. I'm here if you need me.
 - Don't ask open-ended "what do you want to do?" — recommend.
 - Don't write `Logs`/`Notes` via `upsert_daily_section` — they're append-only; the call is rejected. Log lines go through `append_to_log`.
 - Don't overwrite a pre-filled Intention or Agenda — acknowledge or merge (you read them in step 1).
-- Don't reference a stored "focus" — cuaderno has none; you're suggesting.
+- Don't call `resume_action`, `pause_action` or `switch_action` without the person's yes, and don't open with the focus: greeting, wins and due-soon come first.
+- Don't write a day-start or focus line with `append_to_log` — the focus tools write the log line.
 - Don't build a rigid minute-by-minute timeline. Don't silently overschedule.
 - Don't shame a quiet yesterday. Don't manufacture fake wins.
 - Don't block on a missing calendar — degrade to asking once.
@@ -203,13 +225,13 @@ Go get it. I'm here if you need me.
 ## Edge cases
 
 ### Starting later in the day
-"Late" is by the clock, not a judgement. Greet by time of day: morning before 12:00, afternoon 12:00–17:00, evening after 17:00. When the first orientation of the day lands in the afternoon or later there's less runway to plan, so compress: greet for the time of day ("Hey — it's [Day] afternoon, let's orient quick"), show only calendar time from now onward, and shrink the ask to one action. Still write the standup, suggest one action, and log a line. No shame for a later start — just less day left.
+"Late" is by the clock, not a judgement. Greet by time of day: morning before 12:00, afternoon 12:00–17:00, evening after 17:00. When the first orientation of the day lands in the afternoon or later there's less runway to plan, so compress: greet for the time of day ("Hey — it's [Day] afternoon, let's orient quick"), show only calendar time from now onward, and shrink the ask to one action. Still write the standup and suggest one action. No shame for a later start — just less day left.
 
 ### Nothing active
 No active projects: offer `/create-project`. No commitments and no actions: "Clean slate — what's one thing worth a dent today?"
 
 ### Quick mode
-If the user seems rushed or says "quick"/"fast": greeting + the single most time-sensitive thing (overdue commitment, else the suggested action) + write the standup silently + log a line. Skip energy, agenda, intention. Movement over process.
+If the user seems rushed or says "quick"/"fast": greeting + the single most time-sensitive thing (overdue commitment, else the suggested action) + write the standup silently. With a carried focus, make the one suggestion the pick-up, in a line. Skip energy, agenda, intention. Movement over process.
 
 ## Greeting variations
 
