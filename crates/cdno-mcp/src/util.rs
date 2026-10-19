@@ -76,17 +76,6 @@ pub(crate) fn invalid_argument(field: &str, reason: &str) -> ErrorData {
     ErrorData::invalid_params(format!("invalid '{field}': {reason}"), None)
 }
 
-/// Compute the Monday of the ISO-8601 week containing `date`. ISO
-/// week (Mon-Sun) rather than locale week so behaviour is identical
-/// across deployments. Duplicates the domain's internal helper of the
-/// same name; kept here rather than re-exporting it because each
-/// handler may want a different windowing strategy in future.
-pub(crate) fn monday_of_iso_week(date: chrono::NaiveDate) -> chrono::NaiveDate {
-    use chrono::Datelike;
-    let days_since_monday = date.weekday().num_days_from_monday() as i64;
-    date - chrono::Duration::days(days_since_monday)
-}
-
 /// Parse a `period` lookback string into a `from` date relative to
 /// `today`. Recognised shapes:
 ///

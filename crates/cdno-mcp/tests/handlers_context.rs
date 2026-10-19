@@ -2520,3 +2520,200 @@ async fn get_monthly_context_includes_parked_and_closed_projects() {
         "parked"
     );
 }
+
+// ---------------------------------------------------------------------
+// Review-context differential (RFC 0006 T3)
+// ---------------------------------------------------------------------
+//
+// The JSON of `get_weekly_context` and `get_monthly_context` over one
+// fixture vault, captured from `main` before the composition moved into
+// the domain, and checked in under `tests/fixtures/`. The handlers read
+// the real clock, so the vault is seeded relative to today and every
+// date in the payload is normalised to an offset from today (`week_of`,
+// which depends on the weekday, to `{monday}`; a `/YYYY/` path folder to
+// `/{year}/`). Set `CDNO_BLESS_FIXTURES=1` to rewrite the captures.
+
+/// A vault touching every slice of both review contexts: logs and a
+/// state change today, an inline-bullet completion today, a note-backed
+/// completion ten days ago, a project completed today, one dropped ten
+/// days ago, one dropped forty days ago (outside both windows), one
+/// parked, an active question, a portfolio with evidence, a stewardship
+/// and two commitments (one inside the weekly lookahead, one inside the
+/// monthly lookahead only).
+fn server_with_review_fixture() -> CuadernoServer {
+    use cdno_domain::frontmatter::EnergyLevel;
+
+    let now = today().and_hms_opt(9, 0, 0).unwrap();
+    let ten_ago = today() - chrono::Duration::days(10);
+    let long_ago = (today() - chrono::Duration::days(40))
+        .and_hms_opt(9, 0, 0)
+        .unwrap();
+    let let_go = || cdno_domain::OpenItems::Drop {
+        expected: None,
+        hash_required: false,
+    };
+
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    store
+        .write_file(
+            &VaultPath::new(format!(
+                "actions/_done/{}/old-win.md",
+                ten_ago.format("%Y")
+            ))
+            .unwrap(),
+            &format!(
+                "---\ntype: action\nstatus: completed\nproject: live\nenergy: deep\nmilestone: null\ndue: null\ncreated: {c}\ncompleted: {d}\nblocker: null\ncriteria: null\ntags: []\n---\n\n# Old win\n",
+                c = long_ago.date().format("%Y-%m-%d"),
+                d = ten_ago.format("%Y-%m-%d"),
+            ),
+        )
+        .unwrap();
+    seed_daily_with_log(&store, ten_ago, "a line from ten days ago");
+    let (vault, _r) = Vault::new(Arc::clone(&store), index, VaultConfig::default()).unwrap();
+
+    for title in ["Shipped", "Old", "Mid", "Shelved", "Live"] {
+        vault
+            .create_project(long_ago, title, Context::Work, None)
+            .unwrap();
+    }
+    vault
+        .drop_project(long_ago, "shipped", None, let_go())
+        .unwrap();
+    vault.complete_project(now, "shipped").unwrap();
+    vault.drop_project(long_ago, "old", None, let_go()).unwrap();
+    vault
+        .drop_project(
+            ten_ago.and_hms_opt(9, 0, 0).unwrap(),
+            "mid",
+            Some("superseded"),
+            let_go(),
+        )
+        .unwrap();
+    vault.park_project(now, "shelved").unwrap();
+    vault
+        .update_project_state(now, "live", "the parser is in; boundary handling next")
+        .unwrap();
+    vault
+        .add_action(now, "live", "Write the boundary tests", EnergyLevel::Deep)
+        .unwrap();
+    vault
+        .complete_action(now, "live", "Write the boundary tests")
+        .unwrap();
+    vault.log_to_daily_note(now, "reviewed the week").unwrap();
+    vault
+        .create_question(long_ago, QuestionDomain::Research, "What truly matters?")
+        .unwrap();
+    vault
+        .create_portfolio(long_ago, "Does X beat Y?", Some("live"))
+        .unwrap();
+    vault
+        .file_evidence(
+            now,
+            "does-x-beat-y",
+            "bench run",
+            "projects/live",
+            "X won by 3%",
+        )
+        .unwrap();
+    vault
+        .create_stewardship_flat(long_ago, "Health", Context::Personal)
+        .unwrap();
+    vault
+        .create_commitment(
+            now,
+            "Send the draft",
+            today() + chrono::Duration::days(5),
+            Context::Work,
+            Some("live"),
+            None,
+        )
+        .unwrap();
+    vault
+        .create_commitment(
+            now,
+            "Renew the licence",
+            today() + chrono::Duration::days(30),
+            Context::Personal,
+            None,
+            None,
+        )
+        .unwrap();
+    CuadernoServer::new(Arc::new(vault))
+}
+
+/// Normalise every date in `text` to an offset from today, and every
+/// `/YYYY/` folder to `/{year}/`.
+fn normalise_dates(text: &str) -> String {
+    let mut out = text.to_owned();
+    for offset in -60i64..=60 {
+        let date = (today() + chrono::Duration::days(offset))
+            .format("%Y-%m-%d")
+            .to_string();
+        let token = match offset {
+            0 => "{today}".to_owned(),
+            o if o > 0 => format!("{{today+{o}}}"),
+            o => format!("{{today{o}}}"),
+        };
+        out = out.replace(&date, &token);
+    }
+    // Byte-wise, copying bytes through untouched: `/` and digits are
+    // ASCII, so a match never splits a multibyte character.
+    let bytes = out.as_bytes();
+    let mut folded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'/'
+            && i + 5 < bytes.len()
+            && bytes[i + 1..i + 5].iter().all(u8::is_ascii_digit)
+            && bytes[i + 5] == b'/'
+        {
+            folded.extend_from_slice(b"/{year}");
+            i += 5;
+        } else {
+            folded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(folded).expect("only ASCII was replaced")
+}
+
+/// Compare `value`, normalised, with the checked-in capture `name`.
+fn assert_matches_capture(mut value: serde_json::Value, name: &str) {
+    if value.get("week_of").is_some() {
+        value["week_of"] = serde_json::Value::String("{monday}".to_owned());
+    }
+    let actual = normalise_dates(&serde_json::to_string_pretty(&value).unwrap()) + "\n";
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    if std::env::var("CDNO_BLESS_FIXTURES").as_deref() == Ok("1") {
+        std::fs::write(&path, &actual).unwrap();
+    }
+    let expected = std::fs::read_to_string(&path).expect("checked-in capture");
+    assert_eq!(actual, expected, "{name} differs from the capture on main");
+}
+
+#[tokio::test]
+async fn get_weekly_context_matches_the_capture_from_main() {
+    let server = server_with_review_fixture();
+    let value = decode_json(
+        &server
+            .get_weekly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_weekly_context"),
+    );
+    assert_matches_capture(value, "weekly_context.json");
+}
+
+#[tokio::test]
+async fn get_monthly_context_matches_the_capture_from_main() {
+    let server = server_with_review_fixture();
+    let value = decode_json(
+        &server
+            .get_monthly_context(Parameters(EmptyInput::default()))
+            .await
+            .expect("get_monthly_context"),
+    );
+    assert_matches_capture(value, "monthly_context.json");
+}

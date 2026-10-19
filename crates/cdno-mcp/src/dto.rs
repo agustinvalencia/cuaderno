@@ -26,6 +26,7 @@ use chrono::{NaiveDate, NaiveTime};
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use cdno_core::path::VaultPath;
 use cdno_domain::frontmatter::{
     ActionStatus, EnergyLevel, EvidenceFrontmatter, PortfolioFrontmatter, ProjectStatus,
     QuestionDomain, QuestionStatus, StewardshipFrontmatter,
@@ -823,6 +824,27 @@ pub struct WeeklyContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
 }
 
+impl From<cdno_domain::WeeklyContext> for WeeklyContextDto {
+    /// Bounds the two slices the domain hands over whole: `logs` is
+    /// capped to the [`WEEKLY_LOGS_MAX`] most-recent lines here, and each
+    /// `state_changes` body is cut to its gist by
+    /// [`ProjectStateChangeDto`]'s `From`. Both are token-safety concerns
+    /// of this interface, not of the domain.
+    fn from(ctx: cdno_domain::WeeklyContext) -> Self {
+        Self {
+            week_of: ctx.week_of,
+            logs: cap_recent_logs(
+                ctx.logs.into_iter().map(Into::into).collect(),
+                WEEKLY_LOGS_MAX,
+            ),
+            completed_actions: ctx.completed_actions.into_iter().map(Into::into).collect(),
+            closed_projects: ctx.closed_projects.into_iter().map(Into::into).collect(),
+            state_changes: ctx.state_changes.into_iter().map(Into::into).collect(),
+            commitments: ctx.commitments.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // Monthly context — composes seven slices for the
 // `get_monthly_context` MCP tool. Design §11 calls this the
@@ -881,6 +903,23 @@ pub struct MonthlyContextDto {
     pub slots: ProjectSlotsDto,
 }
 
+impl From<cdno_domain::MonthlyContext> for MonthlyContextDto {
+    fn from(ctx: cdno_domain::MonthlyContext) -> Self {
+        Self {
+            since: ctx.since,
+            completed_actions: ctx.completed_actions.into_iter().map(Into::into).collect(),
+            closed_projects: ctx.closed_projects.into_iter().map(Into::into).collect(),
+            parked_projects: ctx.parked_projects.into_iter().map(Into::into).collect(),
+            active_questions: ctx.active_questions.into_iter().map(Into::into).collect(),
+            portfolios: ctx.portfolios.into_iter().map(Into::into).collect(),
+            stuck_projects: ctx.stuck_projects.into_iter().map(Into::into).collect(),
+            stewardships: ctx.stewardships.into_iter().map(Into::into).collect(),
+            commitments: ctx.commitments.into_iter().map(Into::into).collect(),
+            slots: ctx.slots.into(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------
 // Project context — composes the full project map, recent daily-log
 // mentions, backlinks grouped by source type, and (when set)
@@ -922,6 +961,24 @@ impl From<cdno_domain::frontmatter::ProjectFrontmatter> for ProjectFrontmatterDt
 pub struct ProjectListEntryDto {
     pub slug: String,
     pub frontmatter: ProjectFrontmatterDto,
+}
+
+impl From<(VaultPath, cdno_domain::frontmatter::ProjectFrontmatter)> for ProjectListEntryDto {
+    /// Build a row from a domain `(path, frontmatter)` pair: the slug is
+    /// the file stem (`projects/<slug>.md` for active,
+    /// `projects/_parked/<slug>.md` for parked).
+    fn from((path, fm): (VaultPath, cdno_domain::frontmatter::ProjectFrontmatter)) -> Self {
+        let slug = path
+            .as_path()
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        Self {
+            slug,
+            frontmatter: fm.into(),
+        }
+    }
 }
 
 /// The `list_projects` payload: active and parked projects plus the
