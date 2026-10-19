@@ -354,6 +354,33 @@ pub enum DomainError {
     #[error("a custom template already exists at {path} — pass force to overwrite it")]
     TemplateAlreadyExists { path: String },
 
+    /// The vault records a newer major method version than this binary
+    /// implements, as re-read under the write lock (RFC 0006 §8.4). Writes
+    /// are refused; reads keep working.
+    #[error(
+        "this vault follows RLM {vault}, a newer major version than the RLM {binary} this cdno \
+         implements \u{2014} upgrade cdno to write to it; reads keep working"
+    )]
+    MethodVersionAhead {
+        vault: cdno_core::config::MethodVersion,
+        binary: cdno_core::config::MethodVersion,
+    },
+
+    /// The vault records an older major method version than this binary
+    /// implements, as re-read under the write lock. `vault` is `None` when
+    /// the vault is unstamped, which is read as 1.0. Writes are refused until
+    /// the vault is migrated.
+    #[error(
+        "this vault {}, an older major version than the RLM {binary} this cdno implements \
+         \u{2014} run `cdno migrate --dry-run` to see what migrating it changes, then \
+         `cdno migrate`, before writing to it",
+        crate::error::describe_vault_method_version(*.vault)
+    )]
+    VaultNeedsMigration {
+        vault: Option<cdno_core::config::MethodVersion>,
+        binary: cdno_core::config::MethodVersion,
+    },
+
     #[error(transparent)]
     Validation(#[from] ValidationError),
 
@@ -395,6 +422,21 @@ pub(crate) fn describe_project_status(
         (ProjectStatus::Parked, _) => "parked".to_owned(),
         (closed_status, Some(date)) => format!("{} on {date}", closed_status.as_str()),
         (closed_status, None) => closed_status.as_str().to_owned(),
+    }
+}
+
+/// How [`DomainError::VaultNeedsMigration`] names the vault's version:
+/// `follows RLM 0.9`, or `is unstamped (read as 1.0)` for a vault with no
+/// recorded version, so an unstamped vault is never said to follow 1.0.
+pub(crate) fn describe_vault_method_version(
+    vault: Option<cdno_core::config::MethodVersion>,
+) -> String {
+    match vault {
+        Some(version) => format!("follows RLM {version}"),
+        None => format!(
+            "is unstamped (read as {})",
+            crate::method_version::UNSTAMPED_READS_AS
+        ),
     }
 }
 

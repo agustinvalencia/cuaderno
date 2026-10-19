@@ -1399,3 +1399,43 @@ fn an_unknown_vault_key_still_loads() {
         Some(MethodVersion { major: 9, minor: 9 })
     );
 }
+
+#[test]
+fn method_version_from_str_reads_only_the_vault_key() {
+    // The write gate's re-read (RFC 0006 T7a): every problem `load` would
+    // reject elsewhere in the file is ignored, a wrongly typed sibling key
+    // in `[vault]` included, and so is a `method_version` in any other place.
+    let v2_0 = MethodVersion { major: 2, minor: 0 };
+    let toml = "\
+method_version = \"7.0\"
+ignore = [\"a[\"]
+
+[vault]
+name = 42
+max_active_projects = \"five\"
+method_version = \"2.0\"
+
+[focus]
+carry_over_day = 1
+method_version = \"8.0\"
+
+[note_types.concept]
+folder = \"\"
+";
+    assert!(
+        toml::from_str::<VaultConfig>(toml).is_err(),
+        "the fixture must be a config `load` rejects"
+    );
+    assert_eq!(method_version_from_str(toml).unwrap(), Some(v2_0));
+
+    // A version anywhere but `[vault]` is not the vault's.
+    let elsewhere = "method_version = \"2.0\"\n\n[focus]\nmethod_version = \"2.0\"\n";
+    assert_eq!(method_version_from_str(elsewhere).unwrap(), None);
+
+    // But the buffer must still be TOML.
+    let err = method_version_from_str("[vault\nmethod_version = \"2.0\"\n").unwrap_err();
+    assert!(
+        matches!(err, cdno_core::error::ConfigError::MethodVersion { .. }),
+        "got: {err:?}"
+    );
+}

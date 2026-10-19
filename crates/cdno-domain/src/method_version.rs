@@ -12,3 +12,72 @@ use cdno_core::config::MethodVersion;
 
 /// The Research Logbook Method version this binary implements.
 pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 0 };
+
+/// The version an unstamped vault (no config file, or no
+/// `[vault] method_version` key) is read as when it is compared with a
+/// binary's. Unstamped stays distinct from a vault stamped 1.0 wherever the
+/// difference is recorded; only the comparison reads the two alike.
+pub const UNSTAMPED_READS_AS: MethodVersion = MethodVersion { major: 1, minor: 0 };
+
+/// How a vault's method version stands against a binary's: the one
+/// comparison, so no interface crate compares versions itself.
+///
+/// An unstamped vault is compared as [`UNSTAMPED_READS_AS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodSkew {
+    /// The vault is on the binary's version.
+    Equal,
+    /// The vault is on an older minor version of the binary's major.
+    OlderMinor,
+    /// The vault is on a newer minor version of the binary's major.
+    NewerMinor,
+    /// The vault is on an older major version.
+    OlderMajor,
+    /// The vault is on a newer major version.
+    NewerMajor,
+}
+
+impl MethodSkew {
+    /// Compare a vault's recorded version (`None` when unstamped) with a
+    /// binary's.
+    pub fn between(binary: MethodVersion, vault: Option<MethodVersion>) -> Self {
+        use std::cmp::Ordering;
+        let vault = vault.unwrap_or(UNSTAMPED_READS_AS);
+        match (
+            vault.major.cmp(&binary.major),
+            vault.minor.cmp(&binary.minor),
+        ) {
+            (Ordering::Greater, _) => MethodSkew::NewerMajor,
+            (Ordering::Less, _) => MethodSkew::OlderMajor,
+            (Ordering::Equal, Ordering::Greater) => MethodSkew::NewerMinor,
+            (Ordering::Equal, Ordering::Less) => MethodSkew::OlderMinor,
+            (Ordering::Equal, Ordering::Equal) => MethodSkew::Equal,
+        }
+    }
+}
+
+/// Whether a write may proceed in a vault, as [`method_gate`] decides it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Writes proceed: the vault is on the binary's major version (a newer
+    /// or an older minor, unstamped, or equal).
+    Allow,
+    /// The vault is on a newer major version than the binary: writes are
+    /// refused and reads keep working. The remedy is to upgrade cdno.
+    MethodVersionAhead,
+    /// The vault is on an older major version than the binary: writes are
+    /// refused until the vault is migrated (`cdno migrate --dry-run`).
+    VaultNeedsMigration,
+}
+
+/// Decide whether a binary implementing `binary` may write to a vault that
+/// records `vault` (`None` when unstamped, compared as
+/// [`UNSTAMPED_READS_AS`]). Pure: `Vault::transaction()` applies it to the
+/// version it re-reads from disk under the write lock (RFC 0006 §8.4).
+pub fn method_gate(binary: MethodVersion, vault: Option<MethodVersion>) -> Gate {
+    match MethodSkew::between(binary, vault) {
+        MethodSkew::NewerMajor => Gate::MethodVersionAhead,
+        MethodSkew::OlderMajor => Gate::VaultNeedsMigration,
+        MethodSkew::Equal | MethodSkew::OlderMinor | MethodSkew::NewerMinor => Gate::Allow,
+    }
+}

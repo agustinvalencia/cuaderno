@@ -50,11 +50,16 @@ pub enum ConfigError {
     #[error("invalid focus configuration: {0}")]
     InvalidFocus(String),
 
-    /// `[vault] method_version` could not be read from a config buffer by
-    /// [`crate::config::method_version_from_str`]: the buffer is not TOML, or
-    /// the value is not `major.minor`. The source carries the reason.
-    #[error("could not read `[vault] method_version` from config")]
-    MethodVersion { source: toml::de::Error },
+    /// `[vault] method_version` could not be read from the config file's text
+    /// by [`crate::config::method_version_from_str`]: the text is not TOML, or
+    /// the value is not `major.minor`. The message itself names the file, the
+    /// key and the reason, because the write gate's refusal reaches an MCP
+    /// client as this top-level message alone (no source chain).
+    #[error(
+        "could not read `[vault] method_version` from {}: {reason}",
+        crate::paths::CONFIG_FILE
+    )]
+    MethodVersion { reason: toml::de::Error },
 }
 
 /// Errors from the surgical config editor ([`crate::config_edit`], #365
