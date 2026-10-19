@@ -649,6 +649,110 @@ fn start_logs_the_resolved_bullet_not_the_query() {
     );
 }
 
+fn park(root: &Path, at: NaiveDateTime, slug: &str) {
+    project::run(
+        root,
+        at,
+        ProjectCommands::Park {
+            slug: Some(slug.to_owned()),
+        },
+        true,
+        false,
+    )
+    .expect("park");
+}
+
+#[test]
+fn add_on_a_parked_project_succeeds() {
+    // RFC 0006 §8.1: next actions go on a parked map in place.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Add {
+            project: Some("shelved".to_owned()),
+            title: Some("Reread the reviews".to_owned()),
+            energy: Some(EnergyLevel::Light),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add on a parked map");
+
+    let body = fs::read_to_string(dir.path().join("projects/_parked/shelved.md")).unwrap();
+    assert!(
+        body.contains("- [ ] Reread the reviews (light)"),
+        "bullet on the parked map:\n{body}"
+    );
+    assert!(
+        !dir.path().join("projects/shelved.md").exists(),
+        "stays parked"
+    );
+}
+
+#[test]
+fn start_on_a_parked_project_is_still_refused() {
+    // Starting work needs an active map: the bullet is there, but a
+    // parked map is set down, and picking it up means activating it.
+    let dir = vault();
+    create_project(
+        dir.path(),
+        moment(2026, 5, 2, 9, 0),
+        "Shelved",
+        Context::Work,
+    );
+    action::run(
+        dir.path(),
+        moment(2026, 5, 2, 9, 10),
+        ActionCommands::Add {
+            project: Some("shelved".to_owned()),
+            title: Some("Reread the reviews".to_owned()),
+            energy: Some(EnergyLevel::Light),
+            note: false,
+            var: vec![],
+        },
+        true,
+        false,
+    )
+    .expect("add");
+    park(dir.path(), moment(2026, 5, 2, 9, 30), "shelved");
+
+    let err = action::run(
+        dir.path(),
+        moment(2026, 5, 2, 10, 0),
+        ActionCommands::Start {
+            project: Some("shelved".to_owned()),
+            query: Some("Reread".to_owned()),
+            unplanned: false,
+            title: None,
+            energy: None,
+        },
+        true,
+        false,
+    )
+    .expect_err("a start on a parked map must be refused");
+    assert!(
+        format!("{err:#}").contains("parked"),
+        "the refusal names the parked map: {err:#}"
+    );
+    let daily = dir.path().join("journal/2026/daily/2026-05-02.md");
+    let log = fs::read_to_string(&daily).unwrap_or_default();
+    assert!(
+        !log.contains("started [[shelved]]"),
+        "nothing started:\n{log}"
+    );
+}
+
 #[test]
 fn start_refuses_an_action_that_is_not_on_the_map() {
     // The #568 change: a start names a bullet. Free text could be

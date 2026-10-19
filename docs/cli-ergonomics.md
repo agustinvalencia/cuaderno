@@ -268,7 +268,7 @@ New pickers should use `Select::raw_prompt()`, which returns the chosen
 *index*. The older pickers in `prompt.rs` recover the index by searching
 the label list for the returned string, which silently selects the wrong
 row when two labels are equal — a real hazard for search hits and
-question text. `drill_down` and `prompt_any_project` already do; the rest
+question text. `drill_down` and `prompt_open_project` already do; the rest
 are worth migrating.
 
 ## Status

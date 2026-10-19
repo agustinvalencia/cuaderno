@@ -33,8 +33,8 @@ pub enum ActionCommands {
     /// Append a next action to a project. `--note` creates a manifest
     /// note alongside the bullet and wikilinks it.
     Add {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Action title.
         #[arg(long)]
@@ -56,8 +56,8 @@ pub enum ActionCommands {
     /// Promote an existing plain bullet to a wikilinked manifest note.
     /// Substring-matches the bullet text; energy is inherited.
     Promote {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the bullet to promote.
         #[arg(long)]
@@ -153,8 +153,8 @@ pub enum ActionCommands {
     /// match. A wikilinked bullet also archives its note to
     /// `actions/_done/<year>/`.
     Complete {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the action to complete.
         #[arg(long)]
@@ -166,8 +166,8 @@ pub enum ActionCommands {
     /// abandoned or reprioritised. A wikilinked bullet also archives its
     /// note to `actions/_done/<year>/`, stamped `status: dropped`.
     Drop {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
         /// Substring matching the action to drop.
         #[arg(long)]
@@ -209,8 +209,8 @@ pub enum ActionCommands {
     /// List a project's open action bullets, with the attached-note
     /// status (active / blocked / completed / dropped) inline when present.
     List {
-        /// Project slug.
-        #[arg(long, add = ArgValueCompleter::new(completions::complete_active_project))]
+        /// Project slug (active or parked).
+        #[arg(long, add = ArgValueCompleter::new(completions::complete_any_project))]
         project: Option<String>,
     },
 }
@@ -341,7 +341,7 @@ fn add(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let title = prompt::gather_or_error(title, "title", interactive, &mut prompted, || {
         prompt::prompt_text("Title")
@@ -1080,7 +1080,7 @@ fn promote(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1129,7 +1129,7 @@ fn complete(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1191,7 +1191,7 @@ fn drop_verb(
 ) -> Result<()> {
     let mut prompted = false;
     let project = prompt::gather_or_error(project, "project", interactive, &mut prompted, || {
-        prompt::prompt_project(vault)
+        prompt::prompt_open_project(vault)
     })?;
     let query = prompt::gather_or_error(query, "query", interactive, &mut prompted, || {
         let entries = vault
@@ -1464,7 +1464,7 @@ fn list(vault: &Vault, project: Option<String>, interactive: bool, json: bool) -
     // project, since nothing is being mutated.
     let project = match project {
         Some(p) => p,
-        None if interactive => prompt::prompt_project(vault)?,
+        None if interactive => prompt::prompt_open_project(vault)?,
         None => return Err(prompt::missing_flag("project")),
     };
     let entries = vault.list_actions(&project).context("listing actions")?;

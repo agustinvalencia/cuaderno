@@ -106,8 +106,9 @@ fn open_vault_at(root: &Path) -> Option<Vault> {
 // matching style (zsh fuzzy, fish prefix-only, bash prefix-with-case).
 // ---------------------------------------------------------------------
 
-/// Active project slugs. Used by `--project` on action verbs and the
-/// project-update `--slug` verbs (state, milestone, waiting).
+/// Active project slugs. Used by the verbs that still need an active map
+/// (RFC 0006 §8.1): `action start --project`, `action switch --project`
+/// and `project park --slug`.
 pub fn complete_active_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(vault) = try_open_vault() else {
         return Vec::new();
@@ -146,10 +147,12 @@ pub fn complete_reactivatable_project(_current: &OsStr) -> Vec<CompletionCandida
     out
 }
 
-/// Active + parked project slugs (the union). Used by `cdno project
-/// show` and `cdno project park` so the picker isn't startled when
-/// the user reaches for a non-active project by accident — the
-/// domain still enforces eligibility at execute time.
+/// Active + parked project slugs (the union). Used by every verb that
+/// accepts a parked map: `project show`, `complete` and `drop`, `action
+/// resume`, and the project-body verbs RFC 0006 §8.1 opened to parked
+/// maps (state, core question, milestones, waiting-on, `action
+/// add`/`complete`/`drop`/`promote`/`list`). The domain still enforces
+/// eligibility at execute time.
 pub fn complete_any_project(_current: &OsStr) -> Vec<CompletionCandidate> {
     let Some(vault) = try_open_vault() else {
         return Vec::new();

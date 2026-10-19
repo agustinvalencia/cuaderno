@@ -52,7 +52,7 @@ Update the Current State section. The previous state is auto-logged to today's d
 
 | Flag | Description |
 |------|-------------|
-| `--slug <SLUG>` | Project slug. |
+| `--slug <SLUG>` | Active or parked project slug. |
 | `--text <TEXT>` | The new state text. |
 
 ```bash
@@ -84,7 +84,7 @@ Move an active project to `projects/_parked/`, freeing a slot against the five-p
 
 | Flag | Description |
 |------|-------------|
-| `--slug <SLUG>` | Project slug. |
+| `--slug <SLUG>` | Active project slug. |
 
 ```bash
 cdno project park --slug surrogate-model
