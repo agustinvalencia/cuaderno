@@ -1823,15 +1823,15 @@ async fn get_stewardship_tracking_returns_aggregated_series() {
     );
     // Seed before opening the vault: `Vault::new` reconciles the index from
     // the store, and a note written afterwards is invisible to it.
-    for (day, weight) in [(6, 82.5), (13, 82.0)] {
+    // Dated relative to today so the entries stay inside the default
+    // look-back window whenever the suite runs.
+    for (days_ago, weight) in [(13, 82.5), (6, 82.0)] {
+        let date = (today() - chrono::Duration::days(days_ago)).format("%Y-%m-%d");
         store
             .write_file(
-                &VaultPath::new(format!(
-                    "stewardships/health/tracking/2026-07-{day:02}-body.md"
-                ))
-                .unwrap(),
+                &VaultPath::new(format!("stewardships/health/tracking/{date}-body.md")).unwrap(),
                 &format!(
-                    "---\ntype: tracking\nstewardship: health\nactivity: body\ndate: 2026-07-{day:02}\nweight: {weight}\n---\n\n# body\n"
+                    "---\ntype: tracking\nstewardship: health\nactivity: body\ndate: {date}\nweight: {weight}\n---\n\n# body\n"
                 ),
             )
             .unwrap();
@@ -2303,38 +2303,30 @@ async fn get_project_context_reads_a_closed_project() {
 async fn project_context_carries_last_paused() {
     use cdno_domain::frontmatter::{Context, EnergyLevel};
     use cdno_mcp::server::ProjectSlugInput;
-    let server = server_with(|vault| {
+    // Stamped relative to now so the pause stays inside the look-back
+    // window whenever the suite runs.
+    let now = chrono::Local::now().naive_local();
+    let two_days_ago = now - chrono::Duration::days(2);
+    let yesterday = now - chrono::Duration::days(1);
+    let server = server_with(move |vault| {
         vault
-            .create_project(
-                moment(2026, 10, 3, 8, 0),
-                "Surrogate model",
-                Context::Work,
-                None,
-            )
+            .create_project(two_days_ago, "Surrogate model", Context::Work, None)
             .unwrap();
 
         // Pause an action on the project
         vault
             .add_action(
-                moment(2026, 10, 2, 10, 0),
+                two_days_ago,
                 "surrogate-model",
                 "Run experiments",
                 EnergyLevel::Medium,
             )
             .unwrap();
         vault
-            .start_action(
-                moment(2026, 10, 2, 10, 0),
-                "surrogate-model",
-                "Run experiments",
-            )
+            .start_action(two_days_ago, "surrogate-model", "Run experiments")
             .unwrap();
         vault
-            .pause_action(
-                moment(2026, 10, 3, 8, 30),
-                Some("at phase 2"),
-                Some("time limit"),
-            )
+            .pause_action(yesterday, Some("at phase 2"), Some("time limit"))
             .unwrap();
     });
 
@@ -2358,7 +2350,10 @@ async fn project_context_carries_last_paused() {
     );
     assert_eq!(last_paused["next"].as_str().unwrap(), "at phase 2");
     assert_eq!(last_paused["reason"].as_str().unwrap(), "time limit");
-    assert_eq!(last_paused["date"].as_str().unwrap(), "2026-10-03");
+    assert_eq!(
+        last_paused["date"].as_str().unwrap(),
+        yesterday.date().format("%Y-%m-%d").to_string()
+    );
 }
 
 /// A vault with one project completed today, one dropped 40 days ago (out
