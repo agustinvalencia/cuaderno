@@ -241,7 +241,7 @@ impl Vault {
     /// must not be widened: `write_note_raw`, template eject and save
     /// (`save_template`, which `templates sync` writes through), and
     /// `save_config_raw`. The migration runner takes the lock without the
-    /// gate, through [`Vault::transaction_ungated`].
+    /// gate, through its own `transaction_ungated` (`vault/migrate.rs`).
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
         let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let recorded = self.recorded_method_version()?;
@@ -257,20 +257,5 @@ impl Vault {
                 binary: METHOD_VERSION,
             }),
         }
-    }
-
-    /// A transaction that takes the vault write lock, exactly as
-    /// [`Vault::transaction`] does, but skips the method-version gate.
-    ///
-    /// Its only caller is the migration runner (`vault/migrate.rs`), and it
-    /// must stay that way. The runner has to write to the vaults the gate
-    /// refuses (one on an older major, which `cdno migrate` is the one way
-    /// across) and checks the version itself, re-read under this same lock;
-    /// every other write goes through the gated [`Vault::transaction`].
-    pub(in crate::vault) fn transaction_ungated(&self) -> Result<VaultTransaction, DomainError> {
-        Ok(VaultTransaction::new(
-            Arc::clone(&self.store),
-            Arc::clone(&self.index),
-        )?)
     }
 }
