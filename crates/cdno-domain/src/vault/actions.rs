@@ -107,11 +107,11 @@ impl Vault {
     /// wikilinks the note — `- [ ] [[actions/<slug>]] (<energy>)` —
     /// rather than carrying the action text inline.
     ///
-    /// The parent project is resolved and validated first, so a parked
-    /// or missing project fails before any file is staged. Returns the
-    /// path of the new action note.
+    /// The parent project is resolved and validated first (active or
+    /// parked), so a closed or missing project fails before any file is
+    /// staged. Returns the path of the new action note.
     ///
-    /// Errors: parked → `ProjectNotActive`, missing project →
+    /// Errors: closed or misfiled → `ProjectNotActive`, missing project →
     /// `Store(NotFound)`, slug collision on the note →
     /// `Store(AlreadyExists)`.
     pub fn add_action_with_note(
@@ -139,7 +139,7 @@ impl Vault {
         // creation (#196). The project is validated under the lock; a bad
         // project errors and the uncommitted transaction rolls back.
         let mut tx = self.transaction()?;
-        let (project_path, mut doc) = self.resolve_active_project(project)?;
+        let (project_path, mut doc) = self.resolve_open_project(project)?;
         let note_path =
             self.create_action_note(&mut tx, at, project, title, energy, None, None, prompted)?;
         let action_slug = action_slug_from_path(&note_path);

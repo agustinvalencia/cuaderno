@@ -22,10 +22,21 @@
 //!   cap site reads.
 //!
 //! This file holds the things every submodule needs: the section-name
-//! constants, the shared `resolve_active_project` lookup, the
+//! constants, the shared `resolve_open_project` and
+//! `resolve_active_project` lookups, the
 //! `rewrite_field_in_frontmatter` helper used by park/activate, the
 //! `core_question_yaml` renderer shared by create and set, and the
 //! slug helpers shared across error paths.
+//!
+//! **Which resolver a verb uses** (RFC 0006 §7.1, §8.1). Every verb that
+//! writes or reads a project's body picks one of two resolvers. A parked
+//! map is a complete map, so the default is [`Vault::resolve_open_project`]:
+//! an active map at `projects/` or a parked one at `projects/_parked/`,
+//! folder and status agreeing. Next actions, state, milestones, waiting-on,
+//! the core question, promotion and listing all use it. Only starting,
+//! switching or resuming work, and parking, need an active map and use
+//! [`Vault::resolve_active_project`]: a map you start work on is a map that
+//! counts. Closed and misfiled maps are refused by both.
 
 use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
@@ -216,7 +227,9 @@ impl Vault {
 
     /// Resolve a project slug to its active file plus parsed
     /// markdown, or surface the right error when it isn't active.
-    /// Used by every mutation that operates on the project body.
+    /// Used only by the verbs that need a map that counts: starting,
+    /// switching or resuming work, and parking (RFC 0006 §8.1). Every
+    /// other body verb uses [`Vault::resolve_open_project`].
     ///
     /// A project counts as active only when its frontmatter says so
     /// *and* it sits directly at `projects/<slug>.md`; anything else
@@ -228,6 +241,36 @@ impl Vault {
         let location = self.locate_project(slug)?;
         let active_path = VaultPath::new(format!("{}/{slug}.md", cdno_core::paths::PROJECTS))?;
         if location.frontmatter.status != ProjectStatus::Active || location.path != active_path {
+            return Err(not_active(slug, &location.frontmatter));
+        }
+
+        let doc = MarkdownDocument::parse(location.raw)?;
+        Ok((location.path, doc))
+    }
+
+    /// Resolve a project slug to an open map, folder and frontmatter
+    /// agreeing: an active map at `projects/<slug>.md` or a parked one at
+    /// `projects/_parked/<slug>.md` (RFC 0006 §7.1, §8.1). This is
+    /// [`Vault::resolve_closable_project`] without the closed arm. Used by
+    /// every project-body verb except the ones that need an active map.
+    ///
+    /// Errors: a closed map, or a misfiled one (such as `status: parked`
+    /// at `projects/`), is `ProjectNotActive` carrying its status; a
+    /// missing slug is `Store(NotFound)` with the available-projects hint;
+    /// a slug at two locations is `AmbiguousProject`.
+    pub(super) fn resolve_open_project(
+        &self,
+        slug: &str,
+    ) -> Result<(VaultPath, MarkdownDocument), DomainError> {
+        let location = self.locate_project(slug)?;
+        let expected = match location.frontmatter.status {
+            ProjectStatus::Active => cdno_core::paths::PROJECTS,
+            ProjectStatus::Parked => cdno_core::paths::PROJECTS_PARKED,
+            ProjectStatus::Completed | ProjectStatus::Dropped => {
+                return Err(not_active(slug, &location.frontmatter));
+            }
+        };
+        if location.path != VaultPath::new(format!("{expected}/{slug}.md"))? {
             return Err(not_active(slug, &location.frontmatter));
         }
 

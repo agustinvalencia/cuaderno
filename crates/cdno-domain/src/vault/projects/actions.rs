@@ -410,9 +410,11 @@ impl Vault {
     /// Resume work: one `resumed [[slug]] — <text>` line in the daily log,
     /// which re-anchors the focus at `at` (RFC 0005 §5.3, D9).
     ///
-    /// The text comes from the log, never from the map, so this resolves
-    /// nothing against the project map, like [`Vault::pause_action`]. What is
-    /// resumed:
+    /// The text comes from the log, never from the map. Unlike
+    /// [`Vault::pause_action`], which stays free, the project the chosen
+    /// target names must still be an active map: picking up work set down
+    /// on a map that has since been parked is working on it, and a map you
+    /// start work on is a map that counts (RFC 0006 §7.1). What is resumed:
     ///
     /// - The carried focus — [`Vault::current_focus`] dated before `at`'s
     ///   day — if there is one and it is on `project` (any project when
@@ -434,7 +436,11 @@ impl Vault {
     /// over a carried focus would displace it with no pause line, so it is
     /// refused like one open today); no pause to resume and a focus already
     /// anchored today on `project` (any project when `project` is `None`) →
-    /// [`DomainError::FocusOpen`] with `same_action` (already focused).
+    /// [`DomainError::FocusOpen`] with `same_action` (already focused). Those
+    /// are about the slot and win; only then is the target's project
+    /// resolved as active: a carried focus or a pause on a map since parked
+    /// or closed → [`DomainError::ProjectNotActive`], on one since removed →
+    /// `Store(NotFound)`.
     pub fn resume_action(
         &self,
         at: NaiveDateTime,
@@ -490,6 +496,12 @@ impl Vault {
                 }
             },
         };
+
+        // The slot checks above win; the target's map must still count
+        // before anything is staged (RFC 0006 §8.1): a since-parked or
+        // since-closed map is `ProjectNotActive`, a since-removed one
+        // `NotFound`.
+        self.resolve_active_project(&slug)?;
 
         let entry = format_resumed_log_entry(&slug, &action);
         let path = self.stage_daily_log(at, &entry, &mut tx)?;
@@ -616,14 +628,16 @@ impl Vault {
     /// makes this verb write a third file, where a caller-side rebuild
     /// would silently keep journalling two.
     ///
-    /// Errors: parked → `ProjectNotActive`, missing → `Store(NotFound)`,
-    /// whitespace-only action → `EmptyField`. The first two mirror
-    /// [`Vault::add_action`]; the blank check does not — `add_action` has
-    /// none and will write `- [ ]  (deep)` — this mirrors `start_action`,
-    /// since starting nameless work is the failure #568 is about. There
-    /// is no not-found or ambiguity error here: the action is being
-    /// created, so there is nothing to match against. An action already in
-    /// focus → [`DomainError::FocusOpen`], checked before anything is written.
+    /// Errors: parked → `ProjectNotActive` (starting work needs an active
+    /// map, though [`Vault::add_action`] takes a parked one), missing →
+    /// `Store(NotFound)`, whitespace-only action → `EmptyField`. The
+    /// not-found mirrors [`Vault::add_action`]; the blank check does not —
+    /// `add_action` has none and will write `- [ ]  (deep)` — this mirrors
+    /// `start_action`, since starting nameless work is the failure #568 is
+    /// about. There is no not-found or ambiguity error here: the action is
+    /// being created, so there is nothing to match against. An action
+    /// already in focus → [`DomainError::FocusOpen`], checked before
+    /// anything is written.
     ///
     /// Whitespace inside `action` is flattened, as [`flatten_reason`]
     /// does for a drop reason and for the same reason: an interior
@@ -661,9 +675,9 @@ impl Vault {
         Ok(WriteOutcome::written(path, touched))
     }
 
-    /// Append a next action to an active project, also recording the
-    /// addition in today's daily log so a planning session leaves a
-    /// trace.
+    /// Append a next action to an open (active or parked) project, also
+    /// recording the addition in today's daily log so a planning session
+    /// leaves a trace.
     ///
     /// The new line takes the form `- [ ] <action> (<energy>)`, placed
     /// at the end of the `## Next Actions` section. Section formatting
@@ -671,8 +685,9 @@ impl Vault {
     /// the previous content, and the section ends with a blank line so
     /// the next heading stays cleanly separated.
     ///
-    /// Errors mirror `update_project_state`: parked → `ProjectNotActive`,
-    /// missing → `Store(NotFound)`, missing section → `Manipulation`.
+    /// Errors mirror `update_project_state`: closed or misfiled →
+    /// `ProjectNotActive`, missing → `Store(NotFound)`, missing section →
+    /// `Manipulation`.
     pub fn add_action(
         &self,
         at: NaiveDateTime,
@@ -681,7 +696,7 @@ impl Vault {
         energy: EnergyLevel,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let action_text = action.trim();
         let bullet = format!("- [ ] {action_text} ({})", energy.as_str());
@@ -712,11 +727,11 @@ impl Vault {
         Ok(path)
     }
 
-    /// Remove an open action from an active project, logging the
-    /// completion to today's daily note. Closed `- [x]` lines are
-    /// ignored — only `- [ ]` bullets are candidates, because a
-    /// closed line was already manually checked and shouldn't be
-    /// silently swept away by a substring query.
+    /// Remove an open action from an open (active or parked) project,
+    /// logging the completion to today's daily note. Closed `- [x]` lines
+    /// are ignored — only `- [ ]` bullets are candidates, because a closed
+    /// line was already manually checked and shouldn't be silently swept
+    /// away by a substring query.
     ///
     /// `query` is matched case-insensitively as a substring against
     /// each open action's text (the `(<energy>)` suffix is stripped
@@ -737,7 +752,7 @@ impl Vault {
         query: &str,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -770,8 +785,9 @@ impl Vault {
         Ok(WriteOutcome::written(path, touched))
     }
 
-    /// Remove an open action from an active project **without claiming
-    /// it was done** (#559), logging the drop to today's daily note.
+    /// Remove an open action from an open (active or parked) project
+    /// **without claiming it was done** (#559), logging the drop to today's
+    /// daily note.
     ///
     /// `complete_action` was the only verb that removed a bullet, and it
     /// writes `action done on [[slug]] — <text>`. So an action that was
@@ -803,7 +819,7 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -845,7 +861,7 @@ impl Vault {
     ///   guessed so an authoring bug is visible.
     /// - `ActionNotFound` / `AmbiguousAction` — same disambiguation as
     ///   `complete_action`.
-    /// - parked project → `ProjectNotActive`; missing project →
+    /// - closed or misfiled project → `ProjectNotActive`; missing project →
     ///   `Store(NotFound)`; slug collision on the new note →
     ///   `Store(AlreadyExists)`.
     pub fn promote_action(
@@ -872,7 +888,7 @@ impl Vault {
         // read-modify-write (find the bullet, spin the note, rewrite the
         // bullet) serialises under one write lock (#196).
         let mut tx = self.transaction()?;
-        let (project_path, mut doc) = self.resolve_active_project(slug)?;
+        let (project_path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(NEXT_ACTIONS_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -932,19 +948,19 @@ impl Vault {
         Ok(note_path)
     }
 
-    /// List the open action bullets of an active project, resolving
-    /// any wikilink bullets to their attached note's current status.
+    /// List the open action bullets of an open (active or parked) project,
+    /// resolving any wikilink bullets to their attached note's current
+    /// status.
     ///
     /// Read-only: no writes, no daily log. A wikilink to a note that's
-    /// since been archived (moved to `_done/<year>/`) or genuinely
-    /// missing surfaces as `attached: None`; the bullet text itself
-    /// still carries the wikilink so the caller can flag drift.
-    /// Errors with `ProjectNotActive` on parked projects (listing
-    /// queued work on a parked project is rarely useful — activate it
-    /// first) and propagates any malformed-frontmatter parse errors
-    /// from the attached notes.
+    /// since been archived (moved to `_done/<year>/`) or genuinely missing
+    /// surfaces as `attached: None`; the bullet text itself still carries
+    /// the wikilink so the caller can flag drift. Errors with
+    /// `ProjectNotActive` on closed or misfiled projects (a parked map is a
+    /// complete map, RFC 0006 §7.1) and propagates any
+    /// malformed-frontmatter parse errors from the attached notes.
     pub fn list_actions(&self, slug: &str) -> Result<Vec<ActionListEntry>, DomainError> {
-        let (_path, doc) = self.resolve_active_project(slug)?;
+        let (_path, doc) = self.resolve_open_project(slug)?;
         let Ok(section) = doc.section(NEXT_ACTIONS_SECTION) else {
             return Ok(Vec::new());
         };

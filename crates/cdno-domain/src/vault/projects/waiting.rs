@@ -1,7 +1,7 @@
-//! `add_waiting_on` / `resolve_waiting_on`: mutate the
-//! `## Waiting On` section of an active project. Waiting-on items
-//! are informational blockers (no checkbox), not actionable; the
-//! `(nothing yet)` placeholder is round-tripped on add and remove.
+//! `add_waiting_on` / `resolve_waiting_on`: mutate the `## Waiting On`
+//! section of an open (active or parked) project. Waiting-on items are
+//! informational blockers (no checkbox), not actionable; the `(nothing
+//! yet)` placeholder is round-tripped on add and remove.
 
 use chrono::NaiveDateTime;
 
@@ -36,7 +36,7 @@ impl Vault {
         description: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let description = description.trim();
         let bullet = format!("- {description}");
@@ -78,7 +78,7 @@ impl Vault {
         query: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(WAITING_ON_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();

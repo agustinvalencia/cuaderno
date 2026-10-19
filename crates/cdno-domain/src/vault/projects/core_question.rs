@@ -1,6 +1,6 @@
-//! `set_core_question`: change an active project's `core_question:`
-//! frontmatter after creation, auto-logging the previous value to
-//! today's daily note in a single committed transaction.
+//! `set_core_question`: change an open (active or parked) project's
+//! `core_question:` frontmatter after creation, auto-logging the previous
+//! value to today's daily note in a single committed transaction.
 //!
 //! `core_question` is a first-class project field — it is in
 //! `NoteType::Project`'s `frontmatter_order`, typed on
@@ -33,7 +33,7 @@ use super::super::index_entry::build_index_entry_for;
 use super::rewrite_field_in_frontmatter;
 
 impl Vault {
-    /// Set (or clear) an active project's `core_question:`.
+    /// Set (or clear) an open (active or parked) project's `core_question:`.
     ///
     /// `core_question` is the wikilink *target* (e.g.
     /// `"questions/research/foo"`), matching `create_project`'s
@@ -46,8 +46,8 @@ impl Vault {
     ///   carries `[[`/`]]`. Surfaced rather than stripped, so a caller
     ///   passing the wrapped form learns the convention instead of
     ///   silently getting a double-wrapped link.
-    /// - [`DomainError::ProjectNotActive`] — the project is parked, or
-    ///   its frontmatter `status` is not `active`.
+    /// - [`DomainError::ProjectNotActive`] — the project is closed, or
+    ///   its folder and frontmatter `status` disagree.
     /// - [`StoreError::NotFound`](cdno_core::error::StoreError::NotFound)
     ///   — no such project.
     /// - [`DomainError::MissingFrontmatterField`] — the note has no
@@ -91,7 +91,7 @@ impl Vault {
         };
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, doc) = self.resolve_active_project(slug)?;
+        let (path, doc) = self.resolve_open_project(slug)?;
 
         // The existing value as it sits in the frontmatter, wikilink
         // wrapping and all — that is what the `was:` line should show,

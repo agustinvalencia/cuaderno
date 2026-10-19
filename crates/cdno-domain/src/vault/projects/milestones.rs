@@ -1,6 +1,6 @@
-//! `add_milestone` / `complete_milestone` / `drop_milestone`: mutate
-//! the `## Milestones` checklist of an active project. Hard milestones
-//! emitted here are wire-compatible with
+//! `add_milestone` / `complete_milestone` / `drop_milestone`: mutate the
+//! `## Milestones` checklist of an open (active or parked) project. Hard
+//! milestones emitted here are wire-compatible with
 //! `cdno_core::markdown::extract_hard_deadlines`, so the commitments
 //! aggregation query (#32) picks them up automatically.
 
@@ -109,7 +109,7 @@ impl Vault {
         }
 
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let date_str = match target_date {
             Some(date) => date.format("%Y-%m-%d").to_string(),
@@ -163,7 +163,7 @@ impl Vault {
         query: &str,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(MILESTONES_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();
@@ -223,10 +223,10 @@ impl Vault {
     /// #564 settles that a correction is simply a drop with no reason,
     /// rather than a second verb.
     ///
-    /// Errors mirror `complete_milestone`: parked → `ProjectNotActive`,
-    /// missing project → `Store(NotFound)`, missing section →
-    /// `Manipulation`, no match → `MilestoneNotFound`, several matches →
-    /// `AmbiguousMilestone`.
+    /// Errors mirror `complete_milestone`: closed or misfiled →
+    /// `ProjectNotActive`, missing project → `Store(NotFound)`, missing
+    /// section → `Manipulation`, no match → `MilestoneNotFound`, several
+    /// matches → `AmbiguousMilestone`.
     pub fn drop_milestone(
         &self,
         at: NaiveDateTime,
@@ -235,7 +235,7 @@ impl Vault {
         reason: Option<&str>,
     ) -> Result<VaultPath, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let section = doc.section(MILESTONES_SECTION)?;
         let lines: Vec<&str> = section.split('\n').collect();

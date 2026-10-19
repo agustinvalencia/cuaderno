@@ -288,7 +288,8 @@ activate X, drop X, activate A — four commands and two `activated` lines recor
 that never happened, the "record lies" problem this RFC exists to fix.
 
 The rule becomes: **verbs that change a project's plan need it active; verbs that end it accept
-active or parked.** `resolve_active_project` stays the gate for every body verb (§9, Q1).
+active or parked.** `resolve_active_project` stays the gate for every body verb (§9, Q1; amended
+by RFC 0006 §7.1, see Q1).
 
 ### 5.2 One closure model
 
@@ -717,7 +718,9 @@ closed project. Linked standalone commitments are still never touched (D4).
 **Q1 — Should `drop_action` / `drop_milestone` accept a parked project?** (#611, first
 candidate.) **No.** Once S1 lands a parked project's dates stop nagging, so the pruning case is
 gone, and D8 covers the ending case. The rule is one line: verbs that change a project's plan need
-it active; verbs that end it accept active or parked.
+it active; verbs that end it accept active or parked. *Amended by RFC 0006 §7.1: a parked map now
+takes plan writes and keeps its hard dates in the register, and the stale-nag problem this answer
+solved with the freeze is solved by live dates plus `drop_milestone` on the parked map (#611).*
 
 **Q2 — Carrying an open action forward to another project.** #667 mentions "explicitly carried
 forward". There is no move-action verb, and `rlm.md` settles that a drop is re-decided rather than

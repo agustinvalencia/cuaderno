@@ -87,10 +87,13 @@ pub enum DomainError {
         max: usize,
     },
 
-    /// The project exists but not as an active map at `projects/<slug>.md`.
-    /// `status` is its frontmatter's, so a caller can tell parked from
-    /// completed from dropped (and, when it reads `active`, a map filed in
-    /// the wrong folder); `closed` is its closure date when it has one.
+    /// The project exists but not as a map the verb accepts: an active map
+    /// at `projects/<slug>.md` for the verbs that start, switch or resume
+    /// work and for parking, an active or parked one (folder and status
+    /// agreeing) for every other project verb. `status` is its
+    /// frontmatter's, so a caller can tell parked from completed from
+    /// dropped (and, when it reads `active`, a map filed in the wrong
+    /// folder); `closed` is its closure date when it has one.
     #[error(
         "project is not active: {slug} ({})",
         crate::error::describe_project_status(*.status, *.closed)
@@ -441,9 +444,11 @@ pub enum DomainError {
     Config(#[from] ConfigError),
 }
 
-/// How [`DomainError::ProjectNotActive`] names a project's state: `parked`,
-/// `completed on 2026-09-29`, `dropped on …`, or, for a map whose status
-/// says `active` but which is not at `projects/<slug>.md`, the mismatch.
+/// How [`DomainError::ProjectNotActive`] names a project's state: `parked`
+/// with the verbs that need an active map (a parked map takes every other
+/// project write, RFC 0006 §8.1), `completed on 2026-09-29`, `dropped on …`,
+/// or, for a map whose status says `active` but which is not at
+/// `projects/<slug>.md`, the mismatch.
 pub(crate) fn describe_project_status(
     status: crate::frontmatter::ProjectStatus,
     closed: Option<chrono::NaiveDate>,
@@ -451,7 +456,9 @@ pub(crate) fn describe_project_status(
     use crate::frontmatter::ProjectStatus;
     match (status, closed) {
         (ProjectStatus::Active, _) => "marked active but not at projects/<slug>.md".to_owned(),
-        (ProjectStatus::Parked, _) => "parked".to_owned(),
+        (ProjectStatus::Parked, _) => "parked \u{2014} starting, switching or resuming work \
+                                        needs an active map, and so does parking"
+            .to_owned(),
         (closed_status, Some(date)) => format!("{} on {date}", closed_status.as_str()),
         (closed_status, None) => closed_status.as_str().to_owned(),
     }
