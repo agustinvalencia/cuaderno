@@ -6,6 +6,10 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: creating a project at the cap creates it parked, and the cap is checked on activation (design §5.3 and the business-rules page corrected); the agent-facing text no longer calls a deliverable an 'outcome' (RFC 0006 §8.0).
+
 ## [0.42.0] - 2026-10-04
 
 ### Added

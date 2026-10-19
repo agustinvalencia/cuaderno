@@ -572,7 +572,8 @@ pub struct ClosedProjectDto {
     pub slug: String,
     pub title: String,
     pub context: String,
-    /// `"completed"` or `"dropped"`.
+    /// The closure: `"completed"` or `"dropped"`. Never a parent; the wire field
+    /// keeps its name (RFC 0006 §8.3).
     pub outcome: String,
     pub closed_on: NaiveDate,
 }
