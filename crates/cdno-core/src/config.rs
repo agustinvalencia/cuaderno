@@ -227,7 +227,7 @@ pub fn method_version_from_str(toml: &str) -> Result<Option<MethodVersion>, Conf
 
     toml::from_str::<VersionOnly>(toml)
         .map(|parsed| parsed.vault.method_version)
-        .map_err(|source| ConfigError::MethodVersion { source })
+        .map_err(|reason| ConfigError::MethodVersion { reason })
 }
 
 /// How a Current State update that exceeds [`VaultMeta::max_state_chars`]

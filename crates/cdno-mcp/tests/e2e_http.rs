@@ -251,6 +251,71 @@ async fn note_to_daily_writes_the_entry_and_its_pointer_over_http() {
     assert!(pointer_at > logs, "pointer outside ## Logs:\n{note}");
 }
 
+/// The write gate re-reads the method version under the lock (RFC 0006
+/// §8.4, T7a): a long-running server, which loaded its config once at
+/// start, refuses a write once the vault on disk is stamped past its major.
+#[tokio::test]
+async fn a_write_after_the_vault_is_stamped_past_the_server_is_refused() {
+    let dir = TempDir::new().expect("tempdir");
+    make_vault(dir.path());
+    let server = HttpServer::spawn(Some(dir.path()), &[]);
+    let client = reqwest::Client::new();
+
+    let (status, resp) = post_mcp(
+        &client,
+        server.port,
+        &json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {
+                "name": "create_project",
+                "arguments": { "title": "Gate probe", "context": "work" }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(resp["result"]["isError"], json!(false), "{resp}");
+
+    // Stamp the vault one major past the server, behind its back.
+    let binary = cdno_domain::METHOD_VERSION;
+    let ahead = format!("{}.0", binary.major + 1);
+    let config_path = dir.path().join(".cuaderno/config.toml");
+    let config = std::fs::read_to_string(&config_path).expect("config on disk");
+    let line = format!("method_version = \"{binary}\"");
+    assert!(config.contains(&line), "init wrote no {line}:\n{config}");
+    std::fs::write(
+        &config_path,
+        config.replace(&line, &format!("method_version = \"{ahead}\"")),
+    )
+    .expect("rewrite config");
+    let map_path = dir.path().join("projects/gate-probe.md");
+    let map_before = std::fs::read_to_string(&map_path).expect("map on disk");
+
+    let (_status, resp) = post_mcp(
+        &client,
+        server.port,
+        &json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {
+                "name": "add_action",
+                "arguments": { "project": "gate-probe", "title": "Write the probe", "energy": "light" }
+            }
+        }),
+    )
+    .await;
+    let message = resp["error"]["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the write was not refused: {resp}"));
+    for needle in [format!("RLM {ahead}"), format!("RLM {binary}")] {
+        assert!(message.contains(&needle), "{needle:?} not in: {message}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&map_path).expect("map on disk"),
+        map_before,
+        "the refused write changed the map"
+    );
+}
+
 #[tokio::test]
 async fn read_only_mode_hides_every_mutating_tool() {
     let dir = TempDir::new().expect("tempdir");

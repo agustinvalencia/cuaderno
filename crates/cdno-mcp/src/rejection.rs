@@ -45,7 +45,8 @@
 //!
 //! The rest of `StoreError` (`PermissionDenied`, `Io`, `LockTimeout`,
 //! `OutsideVault`) is machinery, as are `Index`, `Transaction`, `Config`,
-//! `Template` and `Parse`. `Path` stays mechanical too: MCP tools take
+//! `Template`, `Parse`, and the method-version gate's `MethodVersionAhead`
+//! and `VaultNeedsMigration`. `Path` stays mechanical too: MCP tools take
 //! slugs, never paths, so a `PathError` means the *server* built a bad
 //! path, not that the caller passed one.
 //!
@@ -531,6 +532,14 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         | DomainError::Path(_)
         | DomainError::Template(_)
         | DomainError::Config(_) => return None,
+
+        // The method-version gate (RFC 0006 §8.4): the vault and the
+        // binary disagree on the method's major version, which only an
+        // upgrade or a migration changes, never a different argument. The
+        // message names both versions and the remedy.
+        DomainError::MethodVersionAhead { .. } | DomainError::VaultNeedsMigration { .. } => {
+            return None;
+        }
     };
 
     let message = rejection_message(code, e);
@@ -772,6 +781,26 @@ mod tests {
             )))
             .is_none(),
             "a contended write lock is a retry, not a different argument"
+        );
+
+        // The method-version gate (RFC 0006 §8.4): only an upgrade or a
+        // migration changes the outcome, never a different argument.
+        let version = |major, minor| cdno_core::config::MethodVersion { major, minor };
+        assert!(
+            classify(&DomainError::MethodVersionAhead {
+                vault: version(2, 0),
+                binary: version(1, 0),
+            })
+            .is_none(),
+            "a vault on a newer major is an upgrade, not a different argument"
+        );
+        assert!(
+            classify(&DomainError::VaultNeedsMigration {
+                vault: Some(version(0, 9)),
+                binary: version(1, 0),
+            })
+            .is_none(),
+            "a vault on an older major is a migration, not a different argument"
         );
     }
 
