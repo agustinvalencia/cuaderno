@@ -18,7 +18,7 @@ use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
     MonthlyContextDto, MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS,
     PROJECT_MENTIONS_MAX, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
-    ProjectListEntryDto, ProjectSlotsDto, QuestionSummaryDto, ReadNoteResponse, SearchResultDto,
+    ProjectListEntryDto, QuestionSummaryDto, ReadNoteResponse, SearchResultDto,
     StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
     WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
@@ -51,7 +51,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, the active-project `slots` against the configured cap (the same object `list_projects` returns), and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null."
     )]
     pub async fn get_orientation(
         &self,
@@ -126,8 +126,7 @@ impl CuadernoServer {
             stuck,
             stewardships,
             commitments,
-            active_count,
-            cap,
+            slots,
         ) = self
             .with_vault(move |vault| {
                 let completed = vault.completed_actions_between(since, today)?;
@@ -140,8 +139,7 @@ impl CuadernoServer {
                 let stewardships = vault.list_stewardships(today)?;
                 // Six-week (42-day) lookahead per design §11.
                 let commitments = vault.commitments(today, 42)?;
-                let active_count = vault.active_projects()?.len();
-                let cap = vault.config().vault.max_active_projects;
+                let slots = vault.slot_usage()?;
                 Ok::<_, DomainError>((
                     completed,
                     closed,
@@ -151,8 +149,7 @@ impl CuadernoServer {
                     stuck,
                     stewardships,
                     commitments,
-                    active_count,
-                    cap,
+                    slots,
                 ))
             })
             .await?
@@ -168,10 +165,7 @@ impl CuadernoServer {
             stuck_projects: stuck.into_iter().map(Into::into).collect(),
             stewardships: stewardships.into_iter().map(Into::into).collect(),
             commitments: commitments.into_iter().map(Into::into).collect(),
-            slots: ProjectSlotsDto {
-                active: active_count,
-                cap,
-            },
+            slots: slots.into(),
         })
     }
 
@@ -183,7 +177,7 @@ impl CuadernoServer {
         Parameters(input): Parameters<ListProjectsInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let include_closed = input.include_closed;
-        let (active, parked, closed, cap) = self
+        let (active, parked, closed, slots) = self
             .with_vault(move |vault| {
                 let active = vault.active_projects()?;
                 let parked = vault.parked_projects()?;
@@ -192,20 +186,16 @@ impl CuadernoServer {
                 } else {
                     None
                 };
-                let cap = vault.config().vault.max_active_projects;
-                Ok::<_, DomainError>((active, parked, closed, cap))
+                let slots = vault.slot_usage()?;
+                Ok::<_, DomainError>((active, parked, closed, slots))
             })
             .await?
             .map_err(into_mcp_error)?;
-        let slots = ProjectSlotsDto {
-            active: active.len(),
-            cap,
-        };
         json_result(ProjectListDto {
             active: active.into_iter().map(project_list_entry).collect(),
             parked: parked.into_iter().map(project_list_entry).collect(),
             closed: closed.map(|c| c.into_iter().map(project_list_entry).collect()),
-            slots,
+            slots: slots.into(),
         })
     }
 

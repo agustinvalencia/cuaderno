@@ -8,9 +8,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `get_orientation` and `cdno orient --json` carry `slots` (active projects against the cap), matching
+  `list_projects`; the cap count has one home in the domain (RFC 0006 §8.0).
 - A vault records the version of the Research Logbook Method it follows: `cdno init` writes
   `[vault] method_version`; a vault without it is unstamped and read as RLM 1.0. The method
   version is separate from cdno's own version (RFC 0006 §8.4).
+
 
 ### Changed
 

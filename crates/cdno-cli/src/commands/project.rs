@@ -649,8 +649,8 @@ fn close(
         }
     };
 
-    let in_use = vault.active_projects()?.len();
-    let cap = vault.config().vault.max_active_projects;
+    let slots = vault.slot_usage()?;
+    let (in_use, cap) = (slots.counted, slots.cap);
     let mut message = match closing {
         Closing::Complete => format!("Completed {slug}. {in_use} of {cap} slots in use."),
         Closing::Drop { .. } => format!("Dropped {slug}. {in_use} of {cap} slots in use."),

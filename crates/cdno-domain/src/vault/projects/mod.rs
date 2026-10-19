@@ -18,6 +18,8 @@
 //! - [`waiting`] — `add_waiting_on`, `resolve_waiting_on` for the
 //!   `## Waiting On` section, with `(nothing yet)` placeholder
 //!   round-tripping.
+//! - [`slots`] — `slot_usage`, the active-project cap count every
+//!   cap site reads.
 //!
 //! This file holds the things every submodule needs: the section-name
 //! constants, the shared `resolve_active_project` lookup, the
@@ -43,6 +45,7 @@ mod core_question;
 mod lifecycle;
 mod milestones;
 mod open_items;
+mod slots;
 pub(crate) mod state;
 mod summary;
 mod waiting;
@@ -56,6 +59,7 @@ pub use closing::ProjectClosureOutcome;
 pub use open_items::{
     LinkedCommitment, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
 };
+pub use slots::SlotUsage;
 pub use summary::{ProjectSummary, TopAction};
 
 /// The heading whose body holds the project's narrative state.

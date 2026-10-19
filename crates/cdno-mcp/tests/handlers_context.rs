@@ -304,6 +304,34 @@ async fn orientation_focus_is_null_when_nothing_open() {
     );
 }
 
+#[tokio::test]
+async fn orientation_carries_slots_matching_list_projects() {
+    // The morning read shows the slot budget, and it is the same object
+    // `list_projects` returns: one count, one home (RFC 0006 §8.0). A
+    // parked map holds no slot, so two created and one parked is 1 of 5.
+    use cdno_domain::frontmatter::Context;
+    let server = server_with(|v| {
+        v.create_project(moment(2026, 5, 1, 9, 0), "Alpha", Context::Work, None)
+            .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Beta", Context::Work, None)
+            .unwrap();
+        v.park_project(moment(2026, 5, 2, 9, 0), "beta").unwrap();
+    });
+
+    let orientation = server
+        .get_orientation(Parameters(GetOrientationInput { energy: None }))
+        .await
+        .expect("get_orientation");
+    let listing = server
+        .list_projects(Parameters(ListProjectsInput::default()))
+        .await
+        .expect("list_projects");
+    let slots = decode_json(&orientation)["slots"].clone();
+
+    assert_eq!(slots, serde_json::json!({ "active": 1, "cap": 5 }));
+    assert_eq!(slots, decode_json(&listing)["slots"]);
+}
+
 // ---------------------------------------------------------------------
 // get_active_questions
 // ---------------------------------------------------------------------

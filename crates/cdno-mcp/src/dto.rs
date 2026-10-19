@@ -34,7 +34,7 @@ use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
     CompletedActionSource, CurrentFocus, DailyLogLine, LapsedHabit, LastPause, OrientationContext,
     PortfolioSummary, ProjectStateChange, ProjectSummary, QuestionSummary, ResumedFrom,
-    ResumedKind, SearchResultEntry, StewardshipSummary, StewardshipVariant, TopAction,
+    ResumedKind, SearchResultEntry, SlotUsage, StewardshipSummary, StewardshipVariant, TopAction,
     TrackingEntry,
 };
 
@@ -172,6 +172,9 @@ pub struct OrientationContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     pub projects: Vec<ProjectSummaryDto>,
     pub lapsed_habits: Vec<LapsedHabitDto>,
+    /// Active-project slots against the cap, the same object
+    /// `list_projects` returns.
+    pub slots: ProjectSlotsDto,
     /// What is currently in focus: the most recent start, unless since
     /// completed, dropped or paused. Null when nothing is open.
     pub focus: Option<CurrentFocusDto>,
@@ -185,6 +188,7 @@ impl OrientationContextDto {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
+            slots: o.slots.into(),
             focus: o.focus.map(|f| CurrentFocusDto::at(f, today)),
         }
     }
@@ -795,6 +799,15 @@ pub struct ProjectSlotsDto {
     pub active: usize,
     /// Configured cap (`max_active_projects` in vault config).
     pub cap: u8,
+}
+
+impl From<SlotUsage> for ProjectSlotsDto {
+    fn from(s: SlotUsage) -> Self {
+        Self {
+            active: s.active,
+            cap: s.cap,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
