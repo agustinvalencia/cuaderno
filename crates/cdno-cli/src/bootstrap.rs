@@ -6,7 +6,7 @@
 //! rather than opening one.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::{Context, Result, bail};
 use cdno_core::config::VaultConfig;
@@ -14,7 +14,8 @@ use cdno_core::index::{SqliteIndex, VaultIndex};
 use cdno_core::paths;
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
-use cdno_domain::Vault;
+use cdno_domain::method_version::UNSTAMPED_READS_AS;
+use cdno_domain::{MethodSkew, MethodStatus, Vault};
 
 /// Walk upward from `start` looking for a `.cuaderno/` marker.
 /// Returns the directory containing it, or `None` if no vault is found.
@@ -104,5 +105,74 @@ pub fn open_vault(root: &Path) -> Result<(Vault, ReconciliationReport)> {
         }
     }
 
+    // Record the vault's method version for the skew notice, never print
+    // it: shell completion opens the vault through here on every Tab, so a
+    // notice printed here would smear across the prompt. `main` prints it
+    // after the command, from the dispatch (RFC 0006 plan T9).
+    if let Ok(status) = vault.method_status() {
+        record_method_status(status);
+    }
+
     Ok((vault, report))
+}
+
+/// The method status of the first vault this process opened, held for the
+/// skew notice `main` prints after a command has run. Process-global because
+/// every command opens its own vault inside its handler; the first open
+/// wins, so a command that opens the vault twice is told once.
+static METHOD_STATUS: Mutex<Option<MethodStatus>> = Mutex::new(None);
+
+fn record_method_status(status: MethodStatus) {
+    let mut slot = METHOD_STATUS.lock().unwrap_or_else(PoisonError::into_inner);
+    if slot.is_none() {
+        *slot = Some(status);
+    }
+}
+
+/// Take the method status recorded by [`open_vault`], if a vault was opened
+/// since the last take. `None` when no vault was opened, or its version
+/// could not be read (the open itself reports a malformed version).
+pub fn take_method_status() -> Option<MethodStatus> {
+    METHOD_STATUS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+}
+
+/// The one-line skew notice for `status`, or `None` when there is nothing to
+/// say. Two cases, neither with a count of anything (RFC 0006 §8.1: counting
+/// on every invocation is the wrong cost):
+///
+/// - the vault's effective version (unstamped reads as 1.0) is below this
+///   binary's: it names both versions and points at `cdno migrate --dry-run`;
+/// - the vault is on a newer minor: worded as `cdno lint`'s warning, since
+///   writes proceed (the gate allows a newer minor).
+///
+/// A newer major prints nothing here: every write is refused with the gate's
+/// own message, which already names the remedy.
+pub fn method_notice(status: &MethodStatus) -> Option<String> {
+    let binary = status.binary;
+    match status.skew {
+        MethodSkew::OlderMinor | MethodSkew::OlderMajor => {
+            let recorded = match status.vault {
+                Some(version) => format!("records RLM {version}"),
+                None => format!("is unstamped (read as {UNSTAMPED_READS_AS})"),
+            };
+            Some(format!(
+                "notice: this vault {recorded}; this cdno implements RLM {binary} \u{2014} \
+                 `cdno migrate --dry-run` shows what changes"
+            ))
+        }
+        MethodSkew::NewerMinor => {
+            let follows = match status.vault {
+                Some(version) => format!("follows RLM {version}"),
+                None => format!("is unstamped (read as {UNSTAMPED_READS_AS})"),
+            };
+            Some(format!(
+                "notice: this vault {follows}, a newer minor version than the RLM {binary} this \
+                 cdno implements \u{2014} writes proceed; upgrade cdno for the practices it adds"
+            ))
+        }
+        MethodSkew::Equal | MethodSkew::NewerMajor => None,
+    }
 }
