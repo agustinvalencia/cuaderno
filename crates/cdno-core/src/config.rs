@@ -118,6 +118,18 @@ pub struct VaultMeta {
     ///
     /// [`update_project_state`]: ../../cdno_domain/vault/struct.Vault.html
     pub state_overflow: StateOverflow,
+    /// The version of the Research Logbook Method the vault follows
+    /// (`method_version = "1.0"`, RFC 0006 §8.4): the method's, not cdno's.
+    /// Written by `cdno init` and changed only by `cdno migrate`.
+    ///
+    /// `None` is unstamped: a vault with no config file, or no key, which is
+    /// read as RLM 1.0. A malformed value is a load error naming the key.
+    ///
+    /// The key lives in `[vault]` because this table denies no unknown
+    /// fields, so every released binary ignores it; it must never move to a
+    /// table that denies them, as `[focus]` does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method_version: Option<MethodVersion>,
 }
 
 impl Default for VaultMeta {
@@ -129,8 +141,93 @@ impl Default for VaultMeta {
             // Single source of truth for the default policy: the enum's
             // `#[default]`, so the two can't drift.
             state_overflow: StateOverflow::default(),
+            method_version: None,
         }
     }
+}
+
+/// A version of the Research Logbook Method, `major.minor` (RFC 0006 §7.4).
+///
+/// One spelling: two dot-separated unsigned integers, `"1.1"`. No patch
+/// component and no `v` prefix: a method version tracks the method's text,
+/// where a minor change leaves every existing page readable and a major one
+/// asks for a page to be rewritten or moved. Ordered by major, then minor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MethodVersion {
+    pub major: u16,
+    pub minor: u16,
+}
+
+impl std::fmt::Display for MethodVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl std::str::FromStr for MethodVersion {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let malformed =
+            || format!("`{raw}` is not a method version: expected `major.minor`, e.g. \"1.1\"");
+        let part = |s: &str| {
+            // Digits only: `u16::from_str` alone would accept a leading `+`.
+            if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(malformed());
+            }
+            s.parse::<u16>().map_err(|_| malformed())
+        };
+        let (major, minor) = raw.split_once('.').ok_or_else(malformed)?;
+        let version = MethodVersion {
+            major: part(major)?,
+            minor: part(minor)?,
+        };
+        // One version, one spelling: a leading zero (`01.1`) would give
+        // 1.1 a second form that `Display` never writes back.
+        if version.to_string() != raw {
+            return Err(malformed());
+        }
+        Ok(version)
+    }
+}
+
+impl<'de> Deserialize<'de> for MethodVersion {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(|reason| {
+            serde::de::Error::custom(format!("invalid `[vault] method_version`: {reason}"))
+        })
+    }
+}
+
+impl Serialize for MethodVersion {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+/// Read `[vault] method_version` alone from a `config.toml` buffer.
+///
+/// Every other key is ignored, so an unrelated config problem does not change
+/// the answer (RFC 0006 T7a re-reads the version under the write lock with
+/// this). `Ok(None)` is unstamped: no `[vault]` table, or no key in it. A
+/// buffer that is not TOML, or a malformed version, is an error.
+pub fn method_version_from_str(toml: &str) -> Result<Option<MethodVersion>, ConfigError> {
+    #[derive(Deserialize)]
+    struct VersionOnly {
+        #[serde(default)]
+        vault: VaultVersionOnly,
+    }
+
+    #[derive(Deserialize, Default)]
+    struct VaultVersionOnly {
+        #[serde(default)]
+        method_version: Option<MethodVersion>,
+    }
+
+    toml::from_str::<VersionOnly>(toml)
+        .map(|parsed| parsed.vault.method_version)
+        .map_err(|source| ConfigError::MethodVersion { source })
 }
 
 /// How a Current State update that exceeds [`VaultMeta::max_state_chars`]
