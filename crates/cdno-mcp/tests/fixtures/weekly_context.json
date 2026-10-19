@@ -1,0 +1,83 @@
+{
+  "closed_projects": [
+    {
+      "closed_on": "{today}",
+      "context": "work",
+      "outcome": "completed",
+      "slug": "shipped",
+      "title": "Shipped"
+    }
+  ],
+  "commitments": [
+    {
+      "context": "work",
+      "date": "{today+5}",
+      "is_overdue": false,
+      "source": {
+        "kind": "standalone_commitment",
+        "slug": "send-the-draft"
+      },
+      "title": "Send the draft"
+    }
+  ],
+  "completed_actions": [
+    {
+      "completed": "{today}",
+      "path": null,
+      "project": "live",
+      "slug": null,
+      "source": "bullet",
+      "title": "Write the boundary tests"
+    }
+  ],
+  "logs": [
+    {
+      "date": "{today}",
+      "text": "project completed [[shipped]] — Shipped",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "project [[shelved]] parked",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "state on [[live]]; was: New project. No work done yet.; now: the parser is in; boundary handling next",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "action added to [[live]] — Write the boundary tests (deep)",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "action done on [[live]] — Write the boundary tests (deep)",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "reviewed the week",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "commitment created [[send-the-draft]] — Send the draft (due {today+5})",
+      "time": "09:00:00"
+    },
+    {
+      "date": "{today}",
+      "text": "commitment created [[renew-the-licence]] — Renew the licence (due {today+30})",
+      "time": "09:00:00"
+    }
+  ],
+  "state_changes": [
+    {
+      "date": "{today}",
+      "new_state": "the parser is in; boundary handling next",
+      "project": "live"
+    }
+  ],
+  "week_of": "{monday}"
+}

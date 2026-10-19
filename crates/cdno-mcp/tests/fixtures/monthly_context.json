@@ -1,0 +1,105 @@
+{
+  "active_questions": [
+    {
+      "domain": "research",
+      "question_text": "What truly matters?",
+      "slug": "what-truly-matters",
+      "status": "active",
+      "updated": "{today-40}"
+    }
+  ],
+  "closed_projects": [
+    {
+      "closed_on": "{today-10}",
+      "context": "work",
+      "outcome": "dropped",
+      "slug": "mid",
+      "title": "Mid"
+    },
+    {
+      "closed_on": "{today}",
+      "context": "work",
+      "outcome": "completed",
+      "slug": "shipped",
+      "title": "Shipped"
+    }
+  ],
+  "commitments": [
+    {
+      "context": "work",
+      "date": "{today+5}",
+      "is_overdue": false,
+      "source": {
+        "kind": "standalone_commitment",
+        "slug": "send-the-draft"
+      },
+      "title": "Send the draft"
+    },
+    {
+      "context": "personal",
+      "date": "{today+30}",
+      "is_overdue": false,
+      "source": {
+        "kind": "standalone_commitment",
+        "slug": "renew-the-licence"
+      },
+      "title": "Renew the licence"
+    }
+  ],
+  "completed_actions": [
+    {
+      "completed": "{today-10}",
+      "path": "actions/_done/{year}/old-win.md",
+      "project": "live",
+      "slug": "old-win",
+      "source": "note",
+      "title": "Old win"
+    },
+    {
+      "completed": "{today}",
+      "path": null,
+      "project": "live",
+      "slug": null,
+      "source": "bullet",
+      "title": "Write the boundary tests"
+    }
+  ],
+  "parked_projects": [
+    {
+      "frontmatter": {
+        "closed": null,
+        "context": "work",
+        "core_question": null,
+        "created": "{today-40}",
+        "status": "parked"
+      },
+      "slug": "shelved"
+    }
+  ],
+  "portfolios": [
+    {
+      "evidence_count": 1,
+      "last_updated": "{today}",
+      "question": "Does X beat Y?",
+      "slug": "does-x-beat-y",
+      "staleness_days": 0
+    }
+  ],
+  "since": "{today-30}",
+  "slots": {
+    "active": 1,
+    "cap": 5
+  },
+  "stewardships": [
+    {
+      "context": "personal",
+      "last_tracking_date": null,
+      "name": "Health",
+      "slug": "health",
+      "staleness_days": null,
+      "tracking_count": 0,
+      "variant": "flat"
+    }
+  ],
+  "stuck_projects": []
+}

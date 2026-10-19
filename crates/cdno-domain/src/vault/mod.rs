@@ -43,6 +43,7 @@ mod links;
 mod lint;
 mod log;
 mod monthly;
+mod monthly_context;
 mod normalise;
 mod note_ref;
 mod notes;
@@ -62,6 +63,7 @@ mod template_sync;
 mod templating;
 mod tracking;
 mod weekly;
+mod weekly_context;
 mod write_outcome;
 
 /// The level-2 heading of a daily note's running history. Shared across
@@ -109,6 +111,7 @@ pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
 pub use monthly::{MonthlyNoteView, MonthlySection};
+pub use monthly_context::MonthlyContext;
 pub use normalise::NormaliseReport;
 pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
 pub use notes::NoteView;
@@ -133,6 +136,7 @@ pub use templating::{
 };
 pub use tracking::TrackingEntryDraft;
 pub use weekly::{WeeklyNoteView, WeeklySection};
+pub use weekly_context::WeeklyContext;
 pub use write_outcome::WriteOutcome;
 
 // Re-exported for the targeted test in `tests/unit/projects_tests.rs`

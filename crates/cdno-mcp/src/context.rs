@@ -11,22 +11,21 @@ use rmcp::{tool, tool_router};
 use cdno_core::index::NoteCandidate;
 use cdno_core::path::VaultPath;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{ProjectFrontmatter, QuestionDomain};
+use cdno_domain::frontmatter::QuestionDomain;
 use cdno_domain::{Miss, RefResolution, SearchFilters, Vault};
 
 use crate::dto::{
     CommitmentEntryDto, CurrentFocusDto, DailyNoteViewDto, InboxItemDto, LintReportDto,
     MonthlyContextDto, MonthlyNoteViewDto, OrientationContextDto, PROJECT_BODY_MAX_CHARS,
     PROJECT_MENTIONS_MAX, PortfolioDetailDto, ProjectContextDto, ProjectListDto,
-    ProjectListEntryDto, QuestionSummaryDto, ReadNoteResponse, SearchResultDto,
-    StewardshipTrackingDto, TrackingSpecDto, VaultSchemaDto, WEEKLY_LOGS_MAX, WeeklyContextDto,
-    WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
+    QuestionSummaryDto, ReadNoteResponse, SearchResultDto, StewardshipTrackingDto, TrackingSpecDto,
+    VaultSchemaDto, WeeklyContextDto, WeeklyNoteViewDto, cap_recent_logs, truncate_chars,
 };
 
 use crate::input::*;
 
 use crate::util::{
-    into_mcp_error, invalid_argument, json_result, monday_of_iso_week, parse_period_into_from_date,
+    into_mcp_error, invalid_argument, json_result, parse_period_into_from_date,
     parse_question_slug_from_wikilink,
 };
 
@@ -78,33 +77,13 @@ impl CuadernoServer {
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let today = chrono::Local::now().date_naive();
-        let monday = monday_of_iso_week(today);
-        let sunday = monday + chrono::Duration::days(6);
-
-        let (logs, completed, closed, state_changes, commitments) = self
-            .with_vault(move |vault| {
-                let logs = vault.weekly_logs(today)?;
-                let completed = vault.completed_actions_between(monday, sunday)?;
-                let closed = vault.closed_projects_between(monday, sunday)?;
-                let state_changes = vault.project_state_changes_between(monday, sunday)?;
-                let commitments = vault.commitments(today, 14)?;
-                Ok::<_, DomainError>((logs, completed, closed, state_changes, commitments))
-            })
+        let ctx = self
+            .with_vault(move |vault| vault.weekly_context(today))
             .await?
             .map_err(into_mcp_error)?;
-
-        // Bound the two unbounded slices before serialising (GH #298):
-        // `state_changes` bodies are truncated per-entry in the DTO's
-        // `From` impl; `logs` is capped to the most-recent lines here.
-        let logs = cap_recent_logs(logs.into_iter().map(Into::into).collect(), WEEKLY_LOGS_MAX);
-        json_result(WeeklyContextDto {
-            week_of: monday,
-            logs,
-            completed_actions: completed.into_iter().map(Into::into).collect(),
-            closed_projects: closed.into_iter().map(Into::into).collect(),
-            state_changes: state_changes.into_iter().map(Into::into).collect(),
-            commitments: commitments.into_iter().map(Into::into).collect(),
-        })
+        // The DTO bounds the two unbounded slices before serialising
+        // (GH #298): the 100-line log cap and the state gist.
+        json_result(WeeklyContextDto::from(ctx))
     }
 
     #[tool(
@@ -115,58 +94,11 @@ impl CuadernoServer {
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
         let today = chrono::Local::now().date_naive();
-        let since = today - chrono::Duration::days(30);
-
-        let (
-            completed,
-            closed,
-            parked,
-            active_questions,
-            portfolios,
-            stuck,
-            stewardships,
-            commitments,
-            slots,
-        ) = self
-            .with_vault(move |vault| {
-                let completed = vault.completed_actions_between(since, today)?;
-                let closed = vault.closed_projects_between(since, today)?;
-                let parked = vault.parked_projects()?;
-                let active_questions = vault.active_questions()?;
-                let portfolios = vault.list_portfolios(today)?;
-                // Design §11: "project stuck-check, unchanged >2 weeks" — 14 days.
-                let stuck = vault.stuck_projects(today, 14)?;
-                let stewardships = vault.list_stewardships(today)?;
-                // Six-week (42-day) lookahead per design §11.
-                let commitments = vault.commitments(today, 42)?;
-                let slots = vault.slot_usage()?;
-                Ok::<_, DomainError>((
-                    completed,
-                    closed,
-                    parked,
-                    active_questions,
-                    portfolios,
-                    stuck,
-                    stewardships,
-                    commitments,
-                    slots,
-                ))
-            })
+        let ctx = self
+            .with_vault(move |vault| vault.monthly_context(today))
             .await?
             .map_err(into_mcp_error)?;
-
-        json_result(MonthlyContextDto {
-            since,
-            completed_actions: completed.into_iter().map(Into::into).collect(),
-            closed_projects: closed.into_iter().map(Into::into).collect(),
-            parked_projects: parked.into_iter().map(project_list_entry).collect(),
-            active_questions: active_questions.into_iter().map(Into::into).collect(),
-            portfolios: portfolios.into_iter().map(Into::into).collect(),
-            stuck_projects: stuck.into_iter().map(Into::into).collect(),
-            stewardships: stewardships.into_iter().map(Into::into).collect(),
-            commitments: commitments.into_iter().map(Into::into).collect(),
-            slots: slots.into(),
-        })
+        json_result(MonthlyContextDto::from(ctx))
     }
 
     #[tool(
@@ -192,9 +124,9 @@ impl CuadernoServer {
             .await?
             .map_err(into_mcp_error)?;
         json_result(ProjectListDto {
-            active: active.into_iter().map(project_list_entry).collect(),
-            parked: parked.into_iter().map(project_list_entry).collect(),
-            closed: closed.map(|c| c.into_iter().map(project_list_entry).collect()),
+            active: active.into_iter().map(Into::into).collect(),
+            parked: parked.into_iter().map(Into::into).collect(),
+            closed: closed.map(|c| c.into_iter().map(Into::into).collect()),
             slots: slots.into(),
         })
     }
@@ -622,20 +554,4 @@ fn unresolved_note_ref(reference: &str, miss: Miss) -> ErrorData {
         message,
         serde_json::json!({ "what": reference, "miss": kind }),
     )
-}
-
-/// Build a `list_projects` row from a domain `(path, frontmatter)`
-/// pair: the slug is the file stem (`projects/<slug>.md` for active,
-/// `projects/_parked/<slug>.md` for parked).
-fn project_list_entry((path, fm): (VaultPath, ProjectFrontmatter)) -> ProjectListEntryDto {
-    let slug = path
-        .as_path()
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_owned();
-    ProjectListEntryDto {
-        slug,
-        frontmatter: fm.into(),
-    }
 }
