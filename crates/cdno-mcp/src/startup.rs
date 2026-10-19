@@ -16,7 +16,7 @@
 
 use std::fmt::Display;
 
-use cdno_domain::Vault;
+use cdno_domain::{MethodStatus, Vault};
 use chrono::{DateTime, TimeZone};
 
 /// The resolved local UTC offset and a sample local timestamp, formatted
@@ -57,17 +57,20 @@ pub fn log_local_time() {
 }
 
 /// Log the vault's newer-minor method-version notice at `WARN`, once per
-/// process ([`Vault::take_method_notice`]). Through `tracing`, so to
-/// stderr: stdout is the JSON-RPC channel. Nothing is logged when the vault
-/// is on this binary's version, an older one, or unstamped.
+/// `Vault` ([`Vault::take_method_notice`]), and each binary opens one at
+/// start. Through `tracing`, so to stderr: stdout is the JSON-RPC channel.
+/// Nothing is logged when the vault is on this binary's version, an older
+/// one, or unstamped (read as 1.0, never a newer minor).
 pub fn log_method_notice(vault: &Vault) {
-    if let Some(status) = vault.take_method_notice() {
-        let vault_version = status
-            .vault
-            .map_or_else(|| "unstamped".to_owned(), |v| v.to_string());
+    if let Some(MethodStatus {
+        vault: Some(vault_version),
+        binary,
+        ..
+    }) = vault.take_method_notice()
+    {
         tracing::warn!(
             vault_method_version = %vault_version,
-            binary_method_version = %status.binary,
+            binary_method_version = %binary,
             "this vault follows a newer minor version of the Research Logbook Method than this \
              cdno implements; writes proceed, upgrade cdno for the practices it adds"
         );

@@ -8,7 +8,8 @@
 //! write lock; [`Vault::method_status`] reports it.
 //!
 //! A vault on a newer minor version is allowed, and made visible once per
-//! process through [`Vault::take_method_notice`] (plan T7b).
+//! `Vault` through [`Vault::take_method_notice`] (plan T7b); a binary opens
+//! one `Vault` per start, so that is once per start.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -35,7 +36,7 @@ pub struct MethodStatus {
 
 /// The newer-minor skew notice: recorded by `Vault::new` from the config
 /// loaded at open and again by the write gate whenever its re-read finds a
-/// newer minor, and yielded once per process by
+/// newer minor, and yielded once per `Vault` by
 /// [`Vault::take_method_notice`].
 ///
 /// Both halves are `Sync` (a `Mutex` and an `AtomicBool`, never a `Cell`):
@@ -64,7 +65,7 @@ impl MethodNotice {
 }
 
 impl Vault {
-    /// The newer-minor skew notice, once per process: `Some` the first
+    /// The newer-minor skew notice, once per `Vault`: `Some` the first
     /// time it is asked for after a newer minor has been recorded (at open,
     /// or by a write's re-read), `None` before that and ever after. The
     /// MCP binaries log it at start.

@@ -2754,34 +2754,59 @@ fn lint_warns_on_active_project_with_closed_date() {
 // The vault's method version against this binary's (RFC 0006 §8.4, T7b)
 // ---------------------------------------------------------------------
 
-/// A vault whose config, on disk and as loaded at open, records `version`,
-/// linted. The binary is 1.0, so 1.1 is a newer minor and 2.0 a newer major.
-fn lint_a_vault_on(version: cdno_core::config::MethodVersion) -> cdno_domain::LintReport {
+const CONFIG_TOML: &str = ".cuaderno/config.toml";
+
+/// A vault opened at the binary's own version (on disk and as loaded), with
+/// `notes` seeded, whose config file is then rewritten to `config_text`
+/// after `Vault::new`, as another process would. Lint must see the file as
+/// it is now, not the version loaded at open. The binary is 1.0, so 1.1 is
+/// a newer minor, 2.0 a newer major and 0.5 an older major.
+fn lint_after_restamping(notes: &[(&str, &str)], config_text: &str) -> cdno_domain::LintReport {
     assert_eq!(
         cdno_domain::METHOD_VERSION,
         cdno_core::config::MethodVersion { major: 1, minor: 0 },
         "the probe assumes a 1.0 binary"
     );
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(
+            &vp(CONFIG_TOML),
+            &format!(
+                "[vault]\nmethod_version = \"{}\"\n",
+                cdno_domain::METHOD_VERSION
+            ),
+        )
+        .unwrap();
+    for (path, body) in notes {
+        store.write_file(&vp(path), body).unwrap();
+    }
     let mut config = VaultConfig::default();
-    config.vault.method_version = Some(version);
-    let vault = vault_with_notes(
-        &[(
-            ".cuaderno/config.toml",
-            &format!("[vault]\nmethod_version = \"{version}\"\n"),
-        )],
-        config,
-    );
+    config.vault.method_version = Some(cdno_domain::METHOD_VERSION);
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, config).expect("Vault::new succeeded");
+
+    store.write_file(&vp(CONFIG_TOML), config_text).unwrap();
     vault.lint_all_notes().expect("lint succeeds")
+}
+
+fn stamped_config(major: u16, minor: u16) -> String {
+    format!("[vault]\nmethod_version = \"{major}.{minor}\"\n")
+}
+
+/// The one row on the config file, asserting it is the only row.
+fn the_config_row(report: &cdno_domain::LintReport) -> &cdno_domain::LintIssue {
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    let issue = &report.issues[0];
+    assert_eq!(issue.path, vp(CONFIG_TOML));
+    issue
 }
 
 #[test]
 fn a_newer_minor_vault_is_a_warning_on_the_config() {
-    let newer_minor = cdno_core::config::MethodVersion { major: 1, minor: 1 };
-    let report = lint_a_vault_on(newer_minor);
+    let report = lint_after_restamping(&[], &stamped_config(1, 1));
 
-    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
-    let issue = &report.issues[0];
-    assert_eq!(issue.path, vp(".cuaderno/config.toml"));
+    let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Warning);
     for needle in ["RLM 1.1", "RLM 1.0", "newer minor", "writes proceed"] {
         assert!(
@@ -2791,22 +2816,72 @@ fn a_newer_minor_vault_is_a_warning_on_the_config() {
     }
 
     // The binary's own version is clean.
-    assert!(lint_a_vault_on(cdno_domain::METHOD_VERSION).is_clean());
+    assert!(lint_after_restamping(&[], &stamped_config(1, 0)).is_clean());
 }
 
 #[test]
 fn a_newer_major_vault_is_an_error() {
-    let newer_major = cdno_core::config::MethodVersion { major: 2, minor: 0 };
-    let report = lint_a_vault_on(newer_major);
+    let report = lint_after_restamping(&[], &stamped_config(2, 0));
 
-    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
-    let issue = &report.issues[0];
-    assert_eq!(issue.path, vp(".cuaderno/config.toml"));
+    let issue = the_config_row(&report);
     assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
-    for needle in ["RLM 2.0", "RLM 1.0", "newer major", "upgrade"] {
+    for needle in ["RLM 2.0", "RLM 1.0", "newer major", "upgrade cdno"] {
         assert!(
             issue.message.contains(needle),
             "{needle:?} not in: {issue:?}"
+        );
+    }
+
+    // An older major refuses writes too, so it is an Error, naming the
+    // migration.
+    let report = lint_after_restamping(&[], &stamped_config(0, 5));
+    let issue = the_config_row(&report);
+    assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
+    for needle in ["RLM 0.5", "older major", "cdno migrate --dry-run"] {
+        assert!(
+            issue.message.contains(needle),
+            "{needle:?} not in: {issue:?}"
+        );
+    }
+}
+
+#[test]
+fn a_malformed_method_version_is_an_error_row_and_lint_carries_on() {
+    // A note with its own problem, so the rest of the pass is seen to run.
+    let notes = [(
+        "strange.md",
+        "---\ntype: bogus\ntitle: Mystery\n---\n# Body\n",
+    )];
+    for (config_text, reason) in [
+        (
+            "[vault]\nmethod_version = \"1.1.0\"\n",
+            "`1.1.0` is not a method version",
+        ),
+        ("[vault\nmethod_version = \"1.0\"\n", "TOML parse error"),
+    ] {
+        let report = lint_after_restamping(&notes, config_text);
+
+        let config_rows: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.path == vp(CONFIG_TOML))
+            .collect();
+        assert_eq!(config_rows.len(), 1, "{:?}", report.issues);
+        let issue = config_rows[0];
+        assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
+        for needle in [CONFIG_TOML, "`[vault] method_version`", reason] {
+            assert!(
+                issue.message.contains(needle),
+                "{needle:?} not in: {issue:?}"
+            );
+        }
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.path == vp("strange.md") && i.message.contains("unknown note type")),
+            "the rest of the pass did not run: {:?}",
+            report.issues
         );
     }
 }

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use chrono::{NaiveDate, NaiveTime};
 
 use cdno_core::config::IgnoreSet;
+use cdno_core::error::ConfigError;
 use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
@@ -16,7 +17,7 @@ use cdno_core::store::VaultStore;
 
 use crate::error::{DomainError, describe_vault_method_version};
 use crate::lint::{LintIssue, LintReport};
-use crate::method_version::MethodSkew;
+use crate::method_version::{MethodSkew, UNSTAMPED_READS_AS};
 use crate::note_type::NoteType;
 
 use super::commitments::{parse_periodic_line, split_at_next_marker};
@@ -68,8 +69,10 @@ impl Vault {
     ///   key the built-in has gained since it was customised (a `Warning`
     ///   naming `cdno templates sync`, #699).
     /// - the vault's method version against this binary's, as
-    ///   [`Vault::method_status`] reads it: a newer minor is a `Warning` on
-    ///   `.cuaderno/config.toml`, a newer major an `Error` (RFC 0006 §8.4).
+    ///   [`Vault::method_status`] reads it from disk: a newer minor is a
+    ///   `Warning` on `.cuaderno/config.toml`; a newer or an older major,
+    ///   whose writes the gate refuses, an `Error`; a version that cannot be
+    ///   read an `Error`, and the pass carries on (RFC 0006 §8.4).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -1249,33 +1252,46 @@ impl Vault {
 }
 
 impl Vault {
-    /// One row on `.cuaderno/config.toml` when the vault is on a newer
-    /// method version than this binary, from [`Vault::method_status`]: a
-    /// newer minor is a `Warning` (writes proceed), a newer major an
-    /// `Error` (writes are refused). Older versions are `cdno migrate`'s
-    /// business, not lint's.
+    /// At most one row on `.cuaderno/config.toml`, from
+    /// [`Vault::method_status`], which re-reads the file: a newer minor is a
+    /// `Warning` (writes proceed); a newer or an older major is an `Error`
+    /// worded as the write gate's refusal, since writes are refused. A
+    /// version that cannot be read (a file that is no longer TOML, a
+    /// malformed value) is an `Error` carrying the config error's message,
+    /// which names the key, and never aborts the pass: a long-running
+    /// server's config can be edited under it.
     fn method_version_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
-        let status = self.method_status()?;
-        let vault = describe_vault_method_version(status.vault);
-        let binary = status.binary;
-        let path = || VaultPath::new(CONFIG_FILE);
+        let path = VaultPath::new(CONFIG_FILE)?;
+        let status = match self.method_status() {
+            Ok(status) => status,
+            Err(err @ DomainError::Config(ConfigError::MethodVersion { .. })) => {
+                return Ok(vec![LintIssue::error(path, err.to_string())]);
+            }
+            Err(err) => return Err(err),
+        };
+        let (vault, binary) = (status.vault, status.binary);
         Ok(match status.skew {
             MethodSkew::NewerMinor => vec![LintIssue::warning(
-                path()?,
+                path,
                 format!(
-                    "this vault {vault}, a newer minor version than the RLM {binary} this cdno \
-                     implements \u{2014} writes proceed; upgrade cdno for the practices it adds"
+                    "this vault {}, a newer minor version than the RLM {binary} this cdno \
+                     implements \u{2014} writes proceed; upgrade cdno for the practices it adds",
+                    describe_vault_method_version(vault)
                 ),
             )],
             MethodSkew::NewerMajor => vec![LintIssue::error(
-                path()?,
-                format!(
-                    "this vault {vault}, a newer major version than the RLM {binary} this cdno \
-                     implements \u{2014} writes are refused until cdno is upgraded; reads keep \
-                     working"
-                ),
+                path,
+                DomainError::MethodVersionAhead {
+                    vault: vault.unwrap_or(UNSTAMPED_READS_AS),
+                    binary,
+                }
+                .to_string(),
             )],
-            MethodSkew::Equal | MethodSkew::OlderMinor | MethodSkew::OlderMajor => Vec::new(),
+            MethodSkew::OlderMajor => vec![LintIssue::error(
+                path,
+                DomainError::VaultNeedsMigration { vault, binary }.to_string(),
+            )],
+            MethodSkew::Equal | MethodSkew::OlderMinor => Vec::new(),
         })
     }
 }
