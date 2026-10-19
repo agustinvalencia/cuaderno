@@ -66,6 +66,7 @@
 - [commit](reference/cli/commit.md)
 - [lint](reference/cli/lint.md)
 - [reindex](reference/cli/reindex.md)
+- [migrate](reference/cli/migrate.md)
 - [normalise](reference/cli/normalise.md)
 - [completions](reference/cli/completions.md)
 

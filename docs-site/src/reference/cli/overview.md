@@ -59,6 +59,7 @@ and `--json` all behave exactly as they did before. See
   result, and **run non-interactively** (so prompts can't corrupt the JSON on a terminal).
   `project complete` and `drop` add what was let go, and print a refusal object and exit `1` while
   items are open (see [JSON output](../json-output.md)).
+- **`migrate`** emits its report, the plan with `--dry-run` (see [`migrate`](migrate.md)).
 - **Maintenance / interactive / bootstrap commands** (`init`, `lint`, `reindex`, `normalise`,
   `triage`, `review`, `weekly`, `monthly`) ignore `--json`.
 
@@ -93,5 +94,6 @@ The CLI's JSON shapes match the [MCP server](../mcp/overview.md) DTOs. See
 | [`commit`](commit.md) | Manage standalone commitments |
 | [`lint`](lint.md) | Validate the vault |
 | [`reindex`](reindex.md) | Rebuild the index |
+| [`migrate`](migrate.md) | Record this cdno's method version in the vault |
 | [`normalise`](normalise.md) | Reorder frontmatter |
 | [`completions`](completions.md) | Shell-completion scripts |

@@ -19,6 +19,28 @@ pub const METHOD_VERSION: MethodVersion = MethodVersion { major: 1, minor: 0 };
 /// difference is recorded; only the comparison reads the two alike.
 pub const UNSTAMPED_READS_AS: MethodVersion = MethodVersion { major: 1, minor: 0 };
 
+/// A vault's recorded method version in words: `RLM 1.0`, or
+/// `unstamped (read as 1.0)` for a vault that records none, so an unstamped
+/// vault is never said to be at 1.0. The one owner of that wording; the
+/// sentence forms build on it.
+pub fn describe_method_version(vault: Option<MethodVersion>) -> String {
+    match vault {
+        Some(version) => format!("RLM {version}"),
+        None => format!("unstamped (read as {UNSTAMPED_READS_AS})"),
+    }
+}
+
+/// The sentence for a vault on a newer minor version than `binary`: writes
+/// proceed, and upgrading cdno brings the practices it adds. `cdno lint`'s
+/// warning and the CLI's skew notice both say it, so it has one owner.
+pub fn newer_minor_message(vault: Option<MethodVersion>, binary: MethodVersion) -> String {
+    format!(
+        "this vault {}, a newer minor version than the RLM {binary} this cdno implements \
+         \u{2014} writes proceed; upgrade cdno for the practices it adds",
+        crate::error::describe_vault_method_version(vault)
+    )
+}
+
 /// How a vault's method version stands against a binary's: the one
 /// comparison, so no interface crate compares versions itself.
 ///

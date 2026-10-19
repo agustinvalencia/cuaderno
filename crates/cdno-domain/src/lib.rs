@@ -20,10 +20,13 @@ pub use bootstrap::{BootstrapError, OpenedVault, open_vault};
 pub use cdno_core::template::TemplateSource;
 pub use error::{
     FOCUS_OPEN_MESSAGE, FocusRemedy, NO_FOCUS_TO_PAUSE_MESSAGE, NO_FOCUS_TO_RESUME_MESSAGE,
+    describe_vault_method_version,
 };
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
-pub use method_version::{METHOD_VERSION, MethodSkew};
+pub use method_version::{
+    METHOD_VERSION, MethodSkew, describe_method_version, newer_minor_message,
+};
 pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
