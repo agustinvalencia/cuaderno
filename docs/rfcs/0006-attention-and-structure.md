@@ -25,7 +25,7 @@
 
 The Research Logbook Method caps active projects (default five, `max_active_projects`) to bound
 attention, and the cap is right. But in practice the cap is felt as too tight, people raise it
-(the maintainer's own vault went from 5 to 6 as a stopgap), and, worse, they stop writing some
+(one vault went from 5 to 6 as a stopgap), and, worse, they stop writing some
 work down at all because there is no slot for it. A method whose premise is externalisation has
 produced an incentive not to externalise. That cannot be fixed by tuning a number.
 
@@ -36,38 +36,40 @@ the others. The cap is the symptom; the flat taxonomy under it is the cause.
 
 ## 2. Observations
 
-These are the specimens. They come from one vault over four months, anonymised; the claim is
-that they are typical of anyone running the method over a mixed life, not peculiar to that
-vault. Each is stated as what the user wanted and what the method made them do instead.
+These are the specimens. **They are invented.** Each keeps only the shape of a situation seen in
+one vault over four months (bounded or long-horizon; mine to move or someone else's; started or
+not) and none of its particulars, so nothing below describes any real undertaking. The claim is
+that the shapes are typical of anyone running the method over a mixed life. Each is stated as
+what the user wanted and what the method made them do instead.
 
-**O1. A quiet project that still needs its map.** A side project (as it happens, this
-repository) gets little of the user's own time on weekdays. Agents move it forward; the user
-reviews, decides and steers at weekends. It needs a project map: its Current State is updated,
+**O1. A quiet project that still needs its map.** A hobby codebase gets little of the user's
+own time on weekdays. Agents move it forward; the user reviews, decides and steers at weekends. It needs a project map: its Current State is updated,
 next actions live on it, `during:` lines and focus point at it. But holding a full attention
 slot for it is wrong, and parking it is worse: parking reads as "I stopped", drops the map out
 of every view, and bringing it back needs a free slot. The user kept it active and complained
 about the cap.
 
-**O2. One work programme, several maps.** A research programme at work split, naturally and
-correctly, into three project maps: a library, a method study, and a demonstrator. They have
+**O2. One programme, several maps.** A tabletop game being brought to print split, naturally
+and correctly, into three project maps: the rulebook, the artwork commission, and the print
+run. They have
 different Current States, different tempos and different collaborators; one map with milestones
 would have been a worse model. The three maps consume three of five slots, with no relation
 between them that any view can see, and the orientation screen lists them as three unrelated
 projects.
 
 **O3. Work created parked, then refused.** A project that genuinely had not started yet (a
-supervision that begins in some months) was created parked because the slots were full. The
+choir season that begins next spring) was created parked because the slots were full. The
 user then wanted to pre-stage its first next actions. `add_action` refuses on a parked project
 (`ProjectNotActive`), so the actions were written into a daily note instead, where no view will
 find them. Parking was the right lifecycle answer and the wrong structural one.
 
 **O4. Work never written down.** The user holds, outside the vault, a list of six undertakings
-they have not created because there is no slot: finishing a degree (which would split into two
-examinations and an administrative tail), a second ceremony for an event already held, with its
-own legal follow-up abroad that would spawn children; a possible further degree, which if it
-starts would spawn several projects of its own; a room renovation; learning the local language;
-a residency or citizenship application. These are the clearest evidence: the method is pushing
-real work out of the system.
+they have not created because there is no slot: restoring a wooden dinghy (which would split
+into the hull, the rigging, and registration with the harbour); a family recipe book, with a
+photograph archive alongside it that would spawn children of its own; a possible move of a
+sports club's website to a new host, which if it starts would spawn several projects; a garden
+pond; learning the cello; a planning application for a shed, which is mostly waiting on the
+council. These are the clearest evidence: the method is pushing real work out of the system.
 
 **O5. The cap drifted and nobody noticed.** The vault's config was raised from 5 to 6 as an
 experiment and left uncommitted; the remote MCP server stayed at 5; the vault had six active
@@ -76,7 +78,7 @@ and hard to defend gets nudged.
 
 **O6. Cadence mismatch in the reviews.** The daily orientation and the weekly review ask the
 same question of every active project ("did it move, why not"). A weekend project, a
-weekday-only one and a bureaucratic one that moves once a quarter all get the same daily
+weekday-only one and a planning application that moves once a quarter all get the same daily
 pressure. The user's response was to want to hide some of them, which is O1 again from the
 review's side.
 
@@ -122,7 +124,7 @@ user's head (O4).
 reason.** Inquiry has three levels: evidence, portfolio, question; `docs/design.md` says a
 question sits above projects, may spawn several over time, and outlives them. Operations has
 action, project, nothing. But operational outcomes also outlive and spawn several bounded
-deliverables (a degree, a residency, a work programme, a renovation in phases). The method's
+deliverables (a boat restoration, a book, a website migration, a renovation in phases). The method's
 binary, "projects end, stewardships do not", misses the third case: an outcome that ends, but
 over years and through several maps. The current answer, milestones inside one project, holds
 only while the children share one Current State, one tempo and one set of collaborators. When
@@ -130,14 +132,14 @@ they do not, the user splits the map (O2) and the cap punishes them for modellin
 
 **D3. Status is an overloaded enum.** `active` means, at once: counts, is shown, accepts
 writes, and is mine to move. `parked` negates all of it. Each new real situation then wants a
-new variant (a state for "agents move it", a state for "waiting on an institution", a state for
+new variant (a state for "agents move it", a state for "waiting on a planning office", a state for
 "weekends only", a state for "not yet started"). That does not scale, and it muddles two kinds
 of fact. *Who holds the ball* is a genuine state: it changes at a moment, the change deserves
 its log line, and the review should ask a different question afterwards. *Cadence* is an
 attribute. *Counts toward the cap* should be derived from the rest, never stored.
 
 **D4. The cap has no theory of its unit.** "Five projects" assumes projects are commensurable
-units of attention. A two-year degree and a weekend of cleaning both satisfy "bounded, with a
+units of attention. A two-year boat restoration and a weekend of tidying the shed both satisfy "bounded, with a
 deliverable". Kanban limits work because cards are sized; RLM never says what size a project
 is, so the cap measures the wrong thing and feels arbitrary in both directions: too tight for
 small things (O1, O3), meaningless for huge ones (O4).
@@ -218,7 +220,7 @@ reading is kept in §6.
 
 ### 5.5 A third open lifecycle state between `active` and `parked`
 
-Working name `delegated`; the maintainer's design note of 2026-10-14. The map stays fully
+Working name `delegated`; an earlier design note. The map stays fully
 usable (J1 kept: state updates log, next actions live on it, focus and `during:` can point at
 it) but it does not count toward the cap (J2 off) and the reviews do not ask why it did not
 move (J3 changed: they ask "what came back, what needs my decision"). Three transitions, each
@@ -304,7 +306,7 @@ budget. The repair should not open the door to a variant per situation (D3).
 - **D5. What should parking stop removing?** (P1.) At minimum, structural writes on a parked
   map (O3). Whether a parked map's milestones should return to the register is #611 and is
   separate.
-- **D6. Should the diagnostic in the 2026-10-14 note be run before §5 is written?** "Of the
+- **D6. Should the diagnostic in that earlier note (5.5) be run before §5 is written?** "Of the
   current active projects, which would stop counting under the P2 definition today?" If one,
   the definition earns its place and the cap stays at five. If three, the cap is simply too
   low and no definition will hide it.
