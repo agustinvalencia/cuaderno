@@ -11,6 +11,7 @@ mod unit {
     mod frontmatter_tests;
     mod links_tests;
     mod lint_tests;
+    mod migrate_tests;
     mod monthly_tests;
     mod normalise_tests;
     mod note_ref_tests;

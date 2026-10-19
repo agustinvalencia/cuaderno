@@ -540,6 +540,14 @@ pub(crate) fn classify(e: &DomainError) -> Option<Value> {
         DomainError::MethodVersionAhead { .. } | DomainError::VaultNeedsMigration { .. } => {
             return None;
         }
+
+        // The migration runner's refusals (RFC 0006 §8.4). `cdno migrate` is
+        // CLI-only, so no MCP tool reaches them, and no different argument
+        // changes them: a migration step's own plan, a concurrent config
+        // edit, a config that would not reopen.
+        DomainError::MigrationTouchesProtectedPath { .. }
+        | DomainError::ConfigChangedDuringMigration
+        | DomainError::MigrationStampInvalid { .. } => return None,
     };
 
     let message = rejection_message(code, e);

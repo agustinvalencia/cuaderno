@@ -44,6 +44,7 @@ mod links;
 mod lint;
 mod log;
 mod method_status;
+mod migrate;
 mod monthly;
 mod normalise;
 mod note_ref;
@@ -111,6 +112,10 @@ pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
 pub use method_status::MethodStatus;
+pub use migrate::{
+    FILE_MIGRATIONS, FileMigration, MigrationPlan, MigrationReport, MigrationStep,
+    VAULT_MIGRATED_PREFIX,
+};
 pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use normalise::NormaliseReport;
 pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
@@ -225,7 +230,8 @@ impl Vault {
     /// The known raw writes bypass the gate as they bypass the lock, and
     /// must not be widened: `write_note_raw`, template eject and save
     /// (`save_template`, which `templates sync` writes through), and
-    /// `save_config_raw`.
+    /// `save_config_raw`. The migration runner takes the lock without the
+    /// gate, through [`Vault::transaction_ungated`].
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
         let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let recorded = self.recorded_method_version()?;
@@ -240,5 +246,20 @@ impl Vault {
                 binary: METHOD_VERSION,
             }),
         }
+    }
+
+    /// A transaction that takes the vault write lock, exactly as
+    /// [`Vault::transaction`] does, but skips the method-version gate.
+    ///
+    /// Its only caller is the migration runner (`vault/migrate.rs`), and it
+    /// must stay that way. The runner has to write to the vaults the gate
+    /// refuses (one on an older major, which `cdno migrate` is the one way
+    /// across) and checks the version itself, re-read under this same lock;
+    /// every other write goes through the gated [`Vault::transaction`].
+    pub(in crate::vault) fn transaction_ungated(&self) -> Result<VaultTransaction, DomainError> {
+        Ok(VaultTransaction::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.index),
+        )?)
     }
 }
