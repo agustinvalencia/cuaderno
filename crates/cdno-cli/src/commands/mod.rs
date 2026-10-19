@@ -8,6 +8,7 @@ pub mod frontmatter;
 pub mod init;
 pub mod lint;
 pub mod log;
+pub mod migrate;
 pub mod monthly;
 pub mod normalise;
 pub mod note;

@@ -392,3 +392,43 @@ fn intercept_returns_closed_and_parked_slugs_for_project_activate() {
         "labelled with its outcome:\n{stdout}"
     );
 }
+
+#[test]
+fn completion_in_a_skewed_vault_prints_nothing_on_stderr() {
+    // A vault on a newer minor method version gets a notice after a command
+    // runs, but never at Tab time: a line on stderr there would smear across
+    // the user's prompt on every keypress (RFC 0006 plan T9).
+    let vault = init_vault();
+    let cfg = vault.path().join(".cuaderno/config.toml");
+    let content = std::fs::read_to_string(&cfg).unwrap();
+    let binary = cdno_domain::METHOD_VERSION;
+    let stamped = format!("method_version = \"{binary}\"");
+    assert!(
+        content.contains(&stamped),
+        "init stamps the vault:\n{content}"
+    );
+    let newer = format!("method_version = \"{}.{}\"", binary.major, binary.minor + 1);
+    std::fs::write(&cfg, content.replace(&stamped, &newer)).unwrap();
+
+    // The same vault does print the notice after a real command, so the
+    // silence below is the completion path's, not a vault without skew.
+    let ran = cdno()
+        .current_dir(vault.path())
+        .args(["orient", "--json"])
+        .assert()
+        .success();
+    assert!(
+        !ran.get_output().stderr.is_empty(),
+        "the skewed vault prints its notice after a command"
+    );
+
+    let output = cdno()
+        .current_dir(vault.path())
+        .env("COMPLETE", "zsh")
+        .env("_CLAP_COMPLETE_INDEX", "4")
+        .args(["--", "cdno", "action", "add", "--project", ""])
+        .assert()
+        .success();
+    let stderr = std::str::from_utf8(&output.get_output().stderr).unwrap();
+    assert_eq!(stderr, "", "completion printed on stderr");
+}

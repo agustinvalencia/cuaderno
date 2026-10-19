@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- `cdno migrate [--dry-run]` records the method version this cdno implements in the vault and
+  runs any file migrations; a vault on an older or newer method version than this cdno gets a
+  one-line notice on stderr (RFC 0006 §8.4).
 - A method-migration runner: an ordered, append-only list of file migrations keyed by major
   version (empty for RLM 1.1), run in one transaction under the write lock, never touching
   journal notes, and stamping the version last (RFC 0006 §8.4).

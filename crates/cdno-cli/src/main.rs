@@ -67,6 +67,7 @@ struct Cli {
     /// Read verbs (`commitments`, `questions`, `status`, `now`, `orient`,
     /// `search`, `open`, and the `list`/`show` verbs of `project`, `portfolio`,
     /// `stewardship`, plus `action list`) emit their listing/detail;
+    /// `migrate` emits its report (the plan with `--dry-run`);
     /// write verbs (`log`, `capture`, `file`, `track`, `note create`, and
     /// the create/update verbs of `project`, `action`, `portfolio`,
     /// `stewardship`, `question`, `commit`) emit a `{path, message}`
@@ -131,6 +132,17 @@ enum Commands {
     /// Rebuild the SQLite index from scratch off the markdown source of
     /// truth. The recovery path for a corrupt or stale index.
     Reindex,
+
+    /// Record the Research Logbook Method version this cdno implements in
+    /// the vault (`[vault] method_version`), running any file migrations
+    /// and logging `vault migrated` in today's daily note. Run with
+    /// `--dry-run` first to see exactly what would change; nothing is
+    /// prompted or confirmed. A vault on a newer version is refused.
+    Migrate {
+        /// Print what would change, and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// Watch the vault and reconcile the index whenever a note changes
     /// outside cdno, so edits made in another editor reach `search`,
@@ -467,6 +479,38 @@ fn main() -> Result<()> {
     // The single point where colour is decided: every renderer asks
     // `output::style` from here on, and nothing else threads a flag.
     cdno_cli::output::style::init(cli.color);
+    let notice = shows_method_notice(&cli.command);
+    let result = dispatch(cli);
+    // The method-version skew notice, once per run, after the command has
+    // opened its vault and finished (so it never lands inside a prompt or
+    // in the middle of a listing). From here and never from
+    // `bootstrap::open_vault`, which shell completion also calls on every
+    // Tab (RFC 0006 plan T9). Printed whether or not the command succeeded.
+    if notice
+        && let Some(status) = bootstrap::take_method_status()
+        && let Some(line) = bootstrap::method_notice(&status)
+    {
+        eprintln!("{line}");
+    }
+    result
+}
+
+/// Whether a command is followed by the method-version skew notice. Not
+/// `migrate` (it is the remedy, and says the versions itself), `init` (it
+/// stamps a fresh vault), `completions` (script emission; the Tab-time
+/// intercept never reaches here), nor `now --line` (a shell-prompt segment,
+/// run on every prompt, which must stay silent like completion).
+fn shows_method_notice(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Migrate { .. }
+            | Commands::Init { .. }
+            | Commands::Completions { .. }
+            | Commands::Now { line: true }
+    )
+}
+
+fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Init { path } => {
             let target = match path {
@@ -507,6 +551,10 @@ fn main() -> Result<()> {
         Commands::Reindex => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
             commands::reindex::run(&root)
+        }
+        Commands::Migrate { dry_run } => {
+            let root = resolve_vault_root_or_error(cli.vault.as_deref())?;
+            commands::migrate::run(&root, Local::now().naive_local(), dry_run, cli.json)
         }
         Commands::Watch => {
             let root = resolve_vault_root_or_error(cli.vault.as_deref())?;

@@ -487,15 +487,12 @@ pub(crate) fn method_version_ahead_message(
 /// How [`DomainError::VaultNeedsMigration`] names the vault's version:
 /// `follows RLM 0.9`, or `is unstamped (read as 1.0)` for a vault with no
 /// recorded version, so an unstamped vault is never said to follow 1.0.
-pub(crate) fn describe_vault_method_version(
-    vault: Option<cdno_core::config::MethodVersion>,
-) -> String {
+/// Public so the CLI's skew notice names the version in the same words.
+pub fn describe_vault_method_version(vault: Option<cdno_core::config::MethodVersion>) -> String {
+    let described = crate::method_version::describe_method_version(vault);
     match vault {
-        Some(version) => format!("follows RLM {version}"),
-        None => format!(
-            "is unstamped (read as {})",
-            crate::method_version::UNSTAMPED_READS_AS
-        ),
+        Some(_) => format!("follows {described}"),
+        None => format!("is {described}"),
     }
 }
 
