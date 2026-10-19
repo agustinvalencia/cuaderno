@@ -2749,3 +2749,64 @@ fn lint_warns_on_active_project_with_closed_date() {
         "{rows:?}"
     );
 }
+
+// ---------------------------------------------------------------------
+// The vault's method version against this binary's (RFC 0006 §8.4, T7b)
+// ---------------------------------------------------------------------
+
+/// A vault whose config, on disk and as loaded at open, records `version`,
+/// linted. The binary is 1.0, so 1.1 is a newer minor and 2.0 a newer major.
+fn lint_a_vault_on(version: cdno_core::config::MethodVersion) -> cdno_domain::LintReport {
+    assert_eq!(
+        cdno_domain::METHOD_VERSION,
+        cdno_core::config::MethodVersion { major: 1, minor: 0 },
+        "the probe assumes a 1.0 binary"
+    );
+    let mut config = VaultConfig::default();
+    config.vault.method_version = Some(version);
+    let vault = vault_with_notes(
+        &[(
+            ".cuaderno/config.toml",
+            &format!("[vault]\nmethod_version = \"{version}\"\n"),
+        )],
+        config,
+    );
+    vault.lint_all_notes().expect("lint succeeds")
+}
+
+#[test]
+fn a_newer_minor_vault_is_a_warning_on_the_config() {
+    let newer_minor = cdno_core::config::MethodVersion { major: 1, minor: 1 };
+    let report = lint_a_vault_on(newer_minor);
+
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    let issue = &report.issues[0];
+    assert_eq!(issue.path, vp(".cuaderno/config.toml"));
+    assert_eq!(issue.severity, cdno_domain::LintSeverity::Warning);
+    for needle in ["RLM 1.1", "RLM 1.0", "newer minor", "writes proceed"] {
+        assert!(
+            issue.message.contains(needle),
+            "{needle:?} not in: {issue:?}"
+        );
+    }
+
+    // The binary's own version is clean.
+    assert!(lint_a_vault_on(cdno_domain::METHOD_VERSION).is_clean());
+}
+
+#[test]
+fn a_newer_major_vault_is_an_error() {
+    let newer_major = cdno_core::config::MethodVersion { major: 2, minor: 0 };
+    let report = lint_a_vault_on(newer_major);
+
+    assert_eq!(report.issues.len(), 1, "{:?}", report.issues);
+    let issue = &report.issues[0];
+    assert_eq!(issue.path, vp(".cuaderno/config.toml"));
+    assert_eq!(issue.severity, cdno_domain::LintSeverity::Error);
+    for needle in ["RLM 2.0", "RLM 1.0", "newer major", "upgrade"] {
+        assert!(
+            issue.message.contains(needle),
+            "{needle:?} not in: {issue:?}"
+        );
+    }
+}

@@ -11,10 +11,12 @@ use cdno_core::extractors::{extract_wikilinks, resolve_wikilinks};
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::markdown::MarkdownDocument;
 use cdno_core::path::VaultPath;
+use cdno_core::paths::CONFIG_FILE;
 use cdno_core::store::VaultStore;
 
-use crate::error::DomainError;
+use crate::error::{DomainError, describe_vault_method_version};
 use crate::lint::{LintIssue, LintReport};
+use crate::method_version::MethodSkew;
 use crate::note_type::NoteType;
 
 use super::commitments::{parse_periodic_line, split_at_next_marker};
@@ -65,6 +67,9 @@ impl Vault {
     /// - a custom override of a built-in template that lacks a frontmatter
     ///   key the built-in has gained since it was customised (a `Warning`
     ///   naming `cdno templates sync`, #699).
+    /// - the vault's method version against this binary's, as
+    ///   [`Vault::method_status`] reads it: a newer minor is a `Warning` on
+    ///   `.cuaderno/config.toml`, a newer major an `Error` (RFC 0006 §8.4).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
@@ -320,6 +325,7 @@ impl Vault {
         issues.extend(self.tracking_record_order_issues()?);
         issues.extend(self.focus_marker_issues()?);
         issues.extend(self.stale_template_issues()?);
+        issues.extend(self.method_version_issues()?);
 
         Ok(LintReport { issues })
     }
@@ -1239,5 +1245,37 @@ impl Vault {
             }
         }
         Ok(issues)
+    }
+}
+
+impl Vault {
+    /// One row on `.cuaderno/config.toml` when the vault is on a newer
+    /// method version than this binary, from [`Vault::method_status`]: a
+    /// newer minor is a `Warning` (writes proceed), a newer major an
+    /// `Error` (writes are refused). Older versions are `cdno migrate`'s
+    /// business, not lint's.
+    fn method_version_issues(&self) -> Result<Vec<LintIssue>, DomainError> {
+        let status = self.method_status()?;
+        let vault = describe_vault_method_version(status.vault);
+        let binary = status.binary;
+        let path = || VaultPath::new(CONFIG_FILE);
+        Ok(match status.skew {
+            MethodSkew::NewerMinor => vec![LintIssue::warning(
+                path()?,
+                format!(
+                    "this vault {vault}, a newer minor version than the RLM {binary} this cdno \
+                     implements \u{2014} writes proceed; upgrade cdno for the practices it adds"
+                ),
+            )],
+            MethodSkew::NewerMajor => vec![LintIssue::error(
+                path()?,
+                format!(
+                    "this vault {vault}, a newer major version than the RLM {binary} this cdno \
+                     implements \u{2014} writes are refused until cdno is upgraded; reads keep \
+                     working"
+                ),
+            )],
+            MethodSkew::Equal | MethodSkew::OlderMinor | MethodSkew::OlderMajor => Vec::new(),
+        })
     }
 }

@@ -357,6 +357,10 @@ async fn serve() -> Result<()> {
             tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
         })?;
 
+        // A vault on a newer minor method version is said so once, at start
+        // (RFC 0006 §8.4).
+        cdno_mcp::startup::log_method_notice(&opened.vault);
+
         if args.reconcile_interval_secs > 0 {
             spawn_reconcile_loop(
                 opened.store.clone(),

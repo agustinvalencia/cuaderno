@@ -8,6 +8,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- A vault on a newer minor method version than this cdno is reported once per start and by
+  `cdno lint` (a warning; a newer major is an error) (RFC 0006 §8.4).
 - Writes re-read the vault's method version under the write lock: a vault on a newer major version
   refuses writes (reads keep working), so a long-running server learns of a migration without a
   restart (RFC 0006 §8.4).
