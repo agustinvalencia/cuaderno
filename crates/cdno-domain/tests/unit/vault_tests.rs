@@ -298,6 +298,50 @@ fn a_write_after_an_external_major_stamp_is_refused_and_writes_nothing() {
 }
 
 #[test]
+fn a_write_to_a_vault_on_an_older_major_is_refused_and_writes_nothing() {
+    let (vault, store) = stamped_vault();
+    let map_before = store.read_file(&project_path()).unwrap();
+    let daily_before = store.read_file(&daily_path()).unwrap();
+
+    // 0.9 is an older major than the binary's 1.0.
+    let behind = version(0, 9);
+    assert_eq!(
+        METHOD_VERSION,
+        version(1, 0),
+        "the probe assumes a 1.0 binary"
+    );
+    store.write_file(&config_path(), &stamped(behind)).unwrap();
+
+    let err = add_probe_action(&vault).expect_err("an older major must refuse the write");
+    match &err {
+        DomainError::VaultNeedsMigration { vault, binary } => {
+            assert_eq!(*vault, Some(behind));
+            assert_eq!(*binary, METHOD_VERSION);
+        }
+        other => panic!("expected VaultNeedsMigration, got: {other:?}"),
+    }
+    let message = err.to_string();
+    for needle in ["RLM 0.9", "RLM 1.0", "cdno migrate --dry-run"] {
+        assert!(message.contains(needle), "{needle:?} not in: {message}");
+    }
+
+    assert_eq!(store.read_file(&project_path()).unwrap(), map_before);
+    assert_eq!(store.read_file(&daily_path()).unwrap(), daily_before);
+
+    // An unstamped vault is never said to follow 1.0 (only reachable with a
+    // 2.0 binary, so the message is checked directly).
+    let unstamped = DomainError::VaultNeedsMigration {
+        vault: None,
+        binary: version(2, 0),
+    }
+    .to_string();
+    assert!(
+        unstamped.contains("is unstamped (read as 1.0)") && !unstamped.contains("follows"),
+        "{unstamped}"
+    );
+}
+
+#[test]
 fn reads_keep_working_on_a_newer_major() {
     let (_vault, store) = stamped_vault();
     let ahead = version(METHOD_VERSION.major + 1, 0);
@@ -372,11 +416,15 @@ fn an_unrelated_config_edit_does_not_block_writes() {
 #[test]
 fn a_config_that_is_not_toml_on_reread_refuses_the_write() {
     // A file that is no longer TOML and, by the same rule, a malformed
-    // version: both refuse with a config error naming the file, never a
-    // fallback to the version loaded at open.
-    for broken in [
-        "[vault\nmethod_version = \"1.0\"\n",
-        "[vault]\nmethod_version = \"1.0.0\"\n",
+    // version: both refuse with a config error whose own message (all an MCP
+    // client sees) names the file, the key and the reason, never a fallback
+    // to the version loaded at open.
+    for (broken, reason) in [
+        ("[vault\nmethod_version = \"1.0\"\n", "TOML parse error"),
+        (
+            "[vault]\nmethod_version = \"1.0.0\"\n",
+            "`1.0.0` is not a method version",
+        ),
     ] {
         let (vault, store) = stamped_vault();
         let map_before = store.read_file(&project_path()).unwrap();
@@ -384,13 +432,13 @@ fn a_config_that_is_not_toml_on_reread_refuses_the_write() {
 
         let err = add_probe_action(&vault).expect_err("an unreadable version must refuse");
         assert!(
-            matches!(err, DomainError::Config(ConfigError::Parse { .. })),
-            "expected a config parse error for {broken:?}, got: {err:?}"
+            matches!(err, DomainError::Config(ConfigError::MethodVersion { .. })),
+            "expected a method-version config error for {broken:?}, got: {err:?}"
         );
-        assert!(
-            err.to_string().contains(CONFIG),
-            "the error must name the file: {err}"
-        );
+        let message = err.to_string();
+        for needle in [CONFIG, "`[vault] method_version`", reason] {
+            assert!(message.contains(needle), "{needle:?} not in: {message}");
+        }
         assert_eq!(store.read_file(&project_path()).unwrap(), map_before);
     }
 }

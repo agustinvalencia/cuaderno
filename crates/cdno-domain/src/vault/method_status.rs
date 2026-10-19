@@ -7,11 +7,7 @@
 //! `Vault::transaction()` applies the gate to this read, taken under the
 //! write lock; [`Vault::method_status`] reports it.
 
-use std::path::PathBuf;
-
 use cdno_core::config::{MethodVersion, method_version_from_str};
-use cdno_core::error::ConfigError;
-use cdno_core::paths::CONFIG_FILE;
 
 use super::Vault;
 use super::config::read_config_from;
@@ -51,20 +47,14 @@ impl Vault {
     /// No config file, or no key, is `Ok(None)` (unstamped), as
     /// [`read_config_from`] already reads absence as empty. Every other key
     /// is ignored, so an unrelated config problem does not block a write. A
-    /// file that is no longer TOML, or a malformed version, is a config
-    /// error naming the file: never a fallback to the version loaded at open.
+    /// file that is no longer TOML, or a malformed version, is
+    /// [`ConfigError::MethodVersion`](cdno_core::error::ConfigError::MethodVersion),
+    /// whose message names the file, the key and the reason: never a
+    /// fallback to the version loaded at open.
     pub(in crate::vault) fn recorded_method_version(
         &self,
     ) -> Result<Option<MethodVersion>, DomainError> {
         let document = read_config_from(&*self.store)?;
-        method_version_from_str(&document.content).map_err(|err| {
-            DomainError::Config(match err {
-                ConfigError::MethodVersion { source } => ConfigError::Parse {
-                    path: PathBuf::from(CONFIG_FILE),
-                    source,
-                },
-                other => other,
-            })
-        })
+        Ok(method_version_from_str(&document.content)?)
     }
 }

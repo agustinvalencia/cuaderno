@@ -782,6 +782,26 @@ mod tests {
             .is_none(),
             "a contended write lock is a retry, not a different argument"
         );
+
+        // The method-version gate (RFC 0006 §8.4): only an upgrade or a
+        // migration changes the outcome, never a different argument.
+        let version = |major, minor| cdno_core::config::MethodVersion { major, minor };
+        assert!(
+            classify(&DomainError::MethodVersionAhead {
+                vault: version(2, 0),
+                binary: version(1, 0),
+            })
+            .is_none(),
+            "a vault on a newer major is an upgrade, not a different argument"
+        );
+        assert!(
+            classify(&DomainError::VaultNeedsMigration {
+                vault: Some(version(0, 9)),
+                binary: version(1, 0),
+            })
+            .is_none(),
+            "a vault on an older major is a migration, not a different argument"
+        );
     }
 
     /// `StoreError` straddles the line, so the split inside it is pinned

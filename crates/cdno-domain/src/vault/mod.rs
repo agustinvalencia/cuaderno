@@ -229,15 +229,14 @@ impl Vault {
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
         let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let recorded = self.recorded_method_version()?;
-        let vault = recorded.unwrap_or(UNSTAMPED_READS_AS);
         match method_gate(METHOD_VERSION, recorded) {
             Gate::Allow => Ok(tx),
             Gate::MethodVersionAhead => Err(DomainError::MethodVersionAhead {
-                vault,
+                vault: recorded.unwrap_or(UNSTAMPED_READS_AS),
                 binary: METHOD_VERSION,
             }),
             Gate::VaultNeedsMigration => Err(DomainError::VaultNeedsMigration {
-                vault,
+                vault: recorded,
                 binary: METHOD_VERSION,
             }),
         }
