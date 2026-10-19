@@ -43,6 +43,10 @@ async fn main() -> Result<()> {
         tracing::error!(error = %e, vault_root = %root.display(), "failed to open vault");
     })?;
 
+    // A vault on a newer minor method version is said so once, at start
+    // (RFC 0006 §8.4).
+    cdno_mcp::startup::log_method_notice(&opened.vault);
+
     let server = CuadernoServer::new(Arc::new(opened.vault));
     // Derive the count from the merged router rather than hardcoding it,
     // so the startup log can't fall out of sync as tools are added.

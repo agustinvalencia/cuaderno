@@ -157,6 +157,8 @@ pub struct Vault {
     pub(in crate::vault) store: Arc<dyn VaultStore>,
     pub(in crate::vault) index: Arc<dyn VaultIndex>,
     pub(in crate::vault) config: VaultConfig,
+    /// The newer-minor method-version notice (RFC 0006 §8.4).
+    method_notice: method_status::MethodNotice,
 }
 
 impl Vault {
@@ -178,11 +180,14 @@ impl Vault {
         // stored on `Vault` below already carries the canonical form.
         crate::type_registry::TypeRegistry::validate(&mut config)?;
         let report = reconcile(&store, &index, &ignore)?;
+        let method_notice = method_status::MethodNotice::default();
+        method_notice.record(config.vault.method_version);
         Ok((
             Self {
                 store,
                 index,
                 config,
+                method_notice,
             },
             report,
         ))
@@ -222,7 +227,8 @@ impl Vault {
     /// migration. No config file, or no key, is unstamped and the write
     /// proceeds; a config that is no longer TOML, or a malformed version,
     /// refuses the write with a config error. On refusal the transaction
-    /// drops, releasing the lock, before anything is buffered.
+    /// drops, releasing the lock, before anything is buffered. A newer
+    /// minor is allowed and recorded for [`Vault::take_method_notice`].
     ///
     /// Reconciliation is not gated: it builds its own `VaultTransaction`
     /// in `cdno-core`, so a vault on a newer major still opens and reads.
@@ -233,6 +239,7 @@ impl Vault {
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
         let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let recorded = self.recorded_method_version()?;
+        self.method_notice.record(recorded);
         match method_gate(METHOD_VERSION, recorded) {
             Gate::Allow => Ok(tx),
             Gate::MethodVersionAhead => Err(DomainError::MethodVersionAhead {
