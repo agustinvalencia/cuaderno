@@ -12,7 +12,7 @@ use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
 use chrono::{NaiveDate, NaiveDateTime};
 
-use super::support::FailingStore;
+use super::support::{FailingStore, lint_day};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -100,7 +100,7 @@ fn creates_a_note_without_a_template_by_synthesising_one() {
     assert!(content.contains("role: advisor"), "{content}");
     assert!(content.contains("# Ada Lovelace"), "{content}");
     // The synthesised note must lint clean (required field present, known type).
-    let report = vault.lint_all_notes().unwrap();
+    let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
 
@@ -307,7 +307,7 @@ fn synthesised_frontmatter_is_yaml_safe() {
         .expect("create with a tricky value");
 
     // The note reconciles and lints clean (required `name` genuinely present).
-    let report = vault.lint_all_notes().unwrap();
+    let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 
     // The value survives verbatim as a string — no injected `injected:` key.
@@ -737,7 +737,7 @@ fn body_is_inserted_after_the_h1_of_the_synthesised_note() {
         "{content}"
     );
     // The H1 still names the note, and the note lints clean.
-    let report = vault.lint_all_notes().unwrap();
+    let report = vault.lint_all_notes(lint_day()).unwrap();
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
 

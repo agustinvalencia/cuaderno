@@ -15,7 +15,9 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 use serde_json::json;
 
-use cdno_domain::{FILE_MIGRATIONS, METHOD_VERSION, MigrationReport, describe_method_version};
+use cdno_domain::{
+    CommitmentSource, FILE_MIGRATIONS, METHOD_VERSION, MigrationReport, describe_method_version,
+};
 
 use crate::bootstrap;
 
@@ -24,7 +26,7 @@ use crate::bootstrap;
 pub fn run(root: &Path, at: NaiveDateTime, dry_run: bool, json: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
     let report = if dry_run {
-        vault.plan_migration(METHOD_VERSION, FILE_MIGRATIONS)?
+        vault.plan_migration(at.date(), METHOD_VERSION, FILE_MIGRATIONS)?
     } else {
         vault.migrate(at, METHOD_VERSION, FILE_MIGRATIONS)?
     };
@@ -121,9 +123,21 @@ fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String 
     if report.read_through.is_empty() {
         out.push_str("  read-through: none\n");
     } else {
-        out.push_str("  read-through (drop or re-date each):\n");
+        out.push_str(
+            "  read-through (hard dates on parked maps, overdue first; drop or re-date each):\n",
+        );
         for entry in &report.read_through {
-            out.push_str(&format!("    {}  {}\n", entry.date, entry.title));
+            let (kind, map) = match &entry.source {
+                CommitmentSource::ProjectMilestone(slug) => ("hard milestone", slug),
+                CommitmentSource::ActionNote(slug) => ("action due", slug),
+                CommitmentSource::Stewardship(slug)
+                | CommitmentSource::StandaloneCommitment(slug) => ("date", slug),
+            };
+            let overdue = if entry.is_overdue { ", overdue" } else { "" };
+            out.push_str(&format!(
+                "    {}  {}  ({kind} on [[{map}]]{overdue})\n",
+                entry.date, entry.title
+            ));
         }
     }
     out

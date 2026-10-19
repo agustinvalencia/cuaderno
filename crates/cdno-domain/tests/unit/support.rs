@@ -165,3 +165,11 @@ impl VaultStore for RacingStore {
         self.inner.import_external(src, dest)
     }
 }
+
+/// The `today` the lint calls of the suite pass: a day before every date the
+/// fixtures write, so no date reads as overdue and the parked read-through
+/// rule (RFC 0006 §8.1, plan T12) stays out of tests about the other rules.
+/// The read-through's own tests pass the day they mean.
+pub fn lint_day() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()
+}

@@ -250,7 +250,9 @@ fn the_dry_run_reports_the_steps_and_the_stamp_and_writes_nothing() {
     let (vault, _index) = open(store.clone());
     let before = snapshot(&*store);
 
-    let planned = vault.plan_migration(version(2, 0), &[REWORD]).unwrap();
+    let planned = vault
+        .plan_migration(at().date(), version(2, 0), &[REWORD])
+        .unwrap();
     assert_eq!(snapshot(&*store), before, "the dry run wrote something");
     assert_eq!(planned.steps[0].writes, vec![path(PROJECT)]);
     assert_eq!(
@@ -571,7 +573,9 @@ fn a_step_that_plans_a_journal_note_is_refused_before_anything_is_written() {
         ];
 
         for result in [
-            vault.plan_migration(version(2, 0), &steps).map(|_| ()),
+            vault
+                .plan_migration(at().date(), version(2, 0), &steps)
+                .map(|_| ()),
             vault.migrate(at(), version(2, 0), &steps).map(|_| ()),
         ] {
             match result {
@@ -658,7 +662,7 @@ fn a_newer_vault_is_refused() {
         let before = snapshot(&*store);
 
         for result in [
-            vault.plan_migration(METHOD_VERSION, FILE_MIGRATIONS),
+            vault.plan_migration(at().date(), METHOD_VERSION, FILE_MIGRATIONS),
             vault.migrate(at(), METHOD_VERSION, FILE_MIGRATIONS),
         ] {
             match result {

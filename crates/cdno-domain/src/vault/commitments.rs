@@ -41,6 +41,29 @@ use super::stewardships::{PERIODIC_COMMITMENTS_SECTION, stewardship_slug_from_pa
 /// than accumulating unbounded history.
 const OVERDUE_LOOKBACK_DAYS: i64 = 30;
 
+/// What sources 1 and 4 of the register share across one query: both read
+/// the owning project map, for the context an entry inherits and the
+/// status that decides whether it surfaces.
+#[derive(Debug, Default)]
+pub(in crate::vault) struct ProjectDateCache {
+    /// Context and status per project map path, so N milestones (or
+    /// actions) on one project read and parse it once. `None` records a
+    /// map that failed to read or parse, so a broken map is retried zero
+    /// times.
+    contexts: HashMap<VaultPath, Option<(Context, ProjectStatus)>>,
+    /// Map path per `action.project` slug, filled lazily so each distinct
+    /// slug is located on the disk once per query rather than once per
+    /// action note. `None` records a slug that resolves nowhere (or
+    /// ambiguously).
+    paths: HashMap<String, Option<VaultPath>>,
+}
+
+/// The register's status filter for sources 1 and 4: an open map, active or
+/// parked (a parked map's hard date is still a promise, RFC 0006 §7.1).
+fn is_open(status: ProjectStatus) -> bool {
+    matches!(status, ProjectStatus::Active | ProjectStatus::Parked)
+}
+
 /// One dated commitment in the aggregated view produced by
 /// [`Vault::commitments`]. The `source` records where it came from so
 /// callers (orient, the commitments CLI) can group or label entries.
@@ -672,52 +695,18 @@ impl Vault {
 
         let mut entries = Vec::new();
 
-        // Per-project-file cache of context and status. Sources 1 and 4
-        // both read the owning project map, for the context the entry
-        // inherits and the status that decides whether it surfaces;
-        // caching by path means N milestones (or actions) on one project
-        // read and parse it once. `None` records a project file that
-        // failed to read or parse, so a broken map is retried zero times.
-        let mut project_context: HashMap<VaultPath, Option<(Context, ProjectStatus)>> =
-            HashMap::new();
+        // One cache for sources 1 and 4, which both read the owning
+        // project map (see [`ProjectDateCache`]).
+        let mut cache = ProjectDateCache::default();
 
-        // Slug-to-map-path lookup for source 4, filled lazily so each
-        // distinct `action.project` is located on the disk once per call
-        // rather than once per action note. `None` records a slug that
-        // resolves nowhere (or ambiguously).
-        let mut project_paths: HashMap<String, Option<VaultPath>> = HashMap::new();
-
-        // Source 1: hard project milestones via the index table. The
-        // query already bounds by date and excludes undated markers.
+        // Source 1: hard project milestones via the index table.
         let from_s = from.format("%Y-%m-%d").to_string();
         let to_s = to.format("%Y-%m-%d").to_string();
-        for (path, milestone) in self.index.milestones_between(&from_s, &to_s)? {
-            if !milestone.is_hard || milestone.completed {
-                continue;
-            }
-            let Some(date) = milestone.date.as_deref().and_then(parse_ymd) else {
-                continue;
-            };
-            // A project map that fails to parse skips its milestones
-            // silently — mirroring the source-2 tolerance, since a broken
-            // map is lint's problem, not the aggregator's. An open
-            // (active or parked) project's milestones are due; a closed
-            // one's are not.
-            let Some((context, status)) = self.cached_project_context(&path, &mut project_context)
-            else {
-                continue;
-            };
-            if !matches!(status, ProjectStatus::Active | ProjectStatus::Parked) {
-                continue;
-            }
-            entries.push(CommitmentEntry {
-                date,
-                title: milestone.name,
-                source: CommitmentSource::ProjectMilestone(slug_of(&path)),
-                is_overdue: date < today,
-                context,
-            });
-        }
+        entries.extend(
+            self.milestone_dates(today, &from_s, &to_s, is_open, &mut cache)?
+                .into_iter()
+                .map(|(_path, entry)| entry),
+        );
 
         // Source 2: stewardship periodic commitments. Parse each
         // stewardship's `## Periodic Commitments` section; a line
@@ -787,52 +776,11 @@ impl Vault {
         // Source 4: active action notes with a self-imposed due and no
         // milestone pin (milestone-pinned actions are covered by their
         // milestone in source 1).
-        for entry in self.index.list_by_type(NoteType::Action.as_str())? {
-            let raw = self.store.read_file(&entry.path)?;
-            let (fm, _body) = Frontmatter::parse(&raw)?;
-            let action = ActionFrontmatter::try_from(fm)?;
-            let Some(due) = action.due else { continue };
-            if action.status != ActionStatus::Active
-                || action.milestone.is_some()
-                || due < from
-                || due > to
-            {
-                continue;
-            }
-            // Action frontmatter carries no context of its own; it
-            // inherits the owning project's. Resolve the project slug to
-            // its map (active, parked or closed) and read the context through the
-            // same cache source 1 populated. A missing or unparseable
-            // project map drops the entry silently, and so does a closed
-            // (completed or dropped) one.
-            let project_path = match project_paths.get(&action.project) {
-                Some(cached) => cached.clone(),
-                None => {
-                    let resolved = self.resolve_project_path(&action.project);
-                    project_paths.insert(action.project.clone(), resolved.clone());
-                    resolved
-                }
-            };
-            let Some(project_path) = project_path else {
-                continue;
-            };
-            let Some((context, status)) =
-                self.cached_project_context(&project_path, &mut project_context)
-            else {
-                continue;
-            };
-            if !matches!(status, ProjectStatus::Active | ProjectStatus::Parked) {
-                continue;
-            }
-            let slug = slug_of(&entry.path);
-            entries.push(CommitmentEntry {
-                date: due,
-                title: body_title_or_slug(&raw, &slug).to_owned(),
-                source: CommitmentSource::ActionNote(action.project),
-                is_overdue: due < today,
-                context,
-            });
-        }
+        entries.extend(
+            self.action_due_dates(today, Some((from, to)), is_open, &mut cache)?
+                .into_iter()
+                .map(|(_path, entry)| entry),
+        );
 
         entries.sort_by_key(|entry| entry.date);
         Ok(entries)
@@ -883,6 +831,116 @@ impl Vault {
         }
         matches.sort_by_key(|(_, commitment)| commitment.due);
         Ok(matches)
+    }
+
+    /// Source 1 of the register: hard, uncompleted milestones dated in the
+    /// inclusive `[from, to]` window (ISO strings, as the index compares
+    /// them), on maps whose status `keep` accepts. Each entry comes with
+    /// the path of the map that carries the date.
+    ///
+    /// A project map that fails to parse skips its milestones silently,
+    /// mirroring the source-2 tolerance, since a broken map is lint's
+    /// problem, not the aggregator's.
+    pub(in crate::vault) fn milestone_dates(
+        &self,
+        today: NaiveDate,
+        from: &str,
+        to: &str,
+        keep: fn(ProjectStatus) -> bool,
+        cache: &mut ProjectDateCache,
+    ) -> Result<Vec<(VaultPath, CommitmentEntry)>, DomainError> {
+        let mut entries = Vec::new();
+        // The query already bounds by date and excludes undated markers.
+        for (path, milestone) in self.index.milestones_between(from, to)? {
+            if !milestone.is_hard || milestone.completed {
+                continue;
+            }
+            let Some(date) = milestone.date.as_deref().and_then(parse_ymd) else {
+                continue;
+            };
+            let Some((context, status)) = self.cached_project_context(&path, &mut cache.contexts)
+            else {
+                continue;
+            };
+            if !keep(status) {
+                continue;
+            }
+            let source = CommitmentSource::ProjectMilestone(slug_of(&path));
+            entries.push((
+                path,
+                CommitmentEntry {
+                    date,
+                    title: milestone.name,
+                    source,
+                    is_overdue: date < today,
+                    context,
+                },
+            ));
+        }
+        Ok(entries)
+    }
+
+    /// Source 4 of the register: active action notes with a `due:` and no
+    /// `milestone:` pin (a pinned action's milestone owns the date), due
+    /// inside `window` when one is given, on maps whose status `keep`
+    /// accepts. Each entry comes with the path of the action note, which
+    /// is where the date is written.
+    ///
+    /// Action frontmatter carries no context of its own; it inherits the
+    /// owning project's, resolved from the slug to its map (active, parked
+    /// or closed) and read through the cache source 1 filled. A missing or
+    /// unparseable project map drops the entry silently, and so does one
+    /// `keep` rejects.
+    pub(in crate::vault) fn action_due_dates(
+        &self,
+        today: NaiveDate,
+        window: Option<(NaiveDate, NaiveDate)>,
+        keep: fn(ProjectStatus) -> bool,
+        cache: &mut ProjectDateCache,
+    ) -> Result<Vec<(VaultPath, CommitmentEntry)>, DomainError> {
+        let mut entries = Vec::new();
+        for entry in self.index.list_by_type(NoteType::Action.as_str())? {
+            let raw = self.store.read_file(&entry.path)?;
+            let (fm, _body) = Frontmatter::parse(&raw)?;
+            let action = ActionFrontmatter::try_from(fm)?;
+            let Some(due) = action.due else { continue };
+            let outside = window.is_some_and(|(from, to)| due < from || due > to);
+            if action.status != ActionStatus::Active || action.milestone.is_some() || outside {
+                continue;
+            }
+            let project_path = match cache.paths.get(&action.project) {
+                Some(cached) => cached.clone(),
+                None => {
+                    let resolved = self.resolve_project_path(&action.project);
+                    cache.paths.insert(action.project.clone(), resolved.clone());
+                    resolved
+                }
+            };
+            let Some(project_path) = project_path else {
+                continue;
+            };
+            let Some((context, status)) =
+                self.cached_project_context(&project_path, &mut cache.contexts)
+            else {
+                continue;
+            };
+            if !keep(status) {
+                continue;
+            }
+            let slug = slug_of(&entry.path);
+            let title = body_title_or_slug(&raw, &slug).to_owned();
+            entries.push((
+                entry.path,
+                CommitmentEntry {
+                    date: due,
+                    title,
+                    source: CommitmentSource::ActionNote(action.project),
+                    is_overdue: due < today,
+                    context,
+                },
+            ));
+        }
+        Ok(entries)
     }
 
     /// Read the life-domain context and the status off a project map,

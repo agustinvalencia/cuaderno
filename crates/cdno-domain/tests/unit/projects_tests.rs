@@ -12,7 +12,7 @@ use cdno_domain::error::DomainError;
 use cdno_domain::frontmatter::{Context, EnergyLevel, ProjectFrontmatter, ProjectStatus};
 use chrono::NaiveDate;
 
-use super::support::{FailingStore, RacingStore};
+use super::support::{FailingStore, RacingStore, lint_day};
 
 fn vp(p: &str) -> VaultPath {
     VaultPath::new(p).unwrap()
@@ -4595,7 +4595,7 @@ fn closing_pre_rfc_map_leaves_frontmatter_in_canonical_order() {
             "closed"
         ]
     );
-    let report = vault.lint_all_notes().expect("lint");
+    let report = vault.lint_all_notes(lint_day()).expect("lint");
     let order_warnings: Vec<_> = report
         .issues
         .iter()
@@ -4624,7 +4624,7 @@ fn closing_follows_a_custom_template_that_places_closed_mid_block() {
         raw.contains("core_question: null\nclosed: 2026-09-29\nowner: me\n"),
         "closed sits where the template puts it:\n{raw}"
     );
-    let report = vault.lint_all_notes().expect("lint");
+    let report = vault.lint_all_notes(lint_day()).expect("lint");
     assert!(
         !report
             .issues

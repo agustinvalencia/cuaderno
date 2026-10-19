@@ -52,6 +52,7 @@ mod note_ref;
 mod notes;
 mod notes_section;
 mod orient;
+mod parked_dates;
 mod portfolios;
 mod projects;
 mod questions;
@@ -125,6 +126,7 @@ pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
 pub use notes::NoteView;
 pub use notes_section::NoteToDailyOutcome;
 pub use orient::{GroupParent, LapsedHabit, OrientationContext, ProjectGroup};
+pub use parked_dates::READ_THROUGH_BELOW;
 pub use portfolios::PortfolioSummary;
 // Exported for the unit suite, which pins the paused entry's exact shape.
 #[doc(hidden)]

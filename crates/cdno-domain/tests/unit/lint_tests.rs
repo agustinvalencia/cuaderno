@@ -48,7 +48,7 @@ fn vault_with_notes(notes: &[(&str, &str)], config: VaultConfig) -> Vault {
 fn lint_returns_empty_report_for_empty_vault() {
     let vault = vault_with_notes(&[], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -67,7 +67,7 @@ fn lint_skips_an_ignored_file() {
     };
     let vault = vault_with_notes(&[("scratch.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(
         report.is_clean(),
@@ -81,7 +81,7 @@ fn lint_passes_for_a_valid_note_with_a_known_type() {
     let body = "---\ntype: daily\ntitle: A clean note\n---\n# Body\n";
     let vault = vault_with_notes(&[("note.md", body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -91,7 +91,7 @@ fn lint_flags_a_note_with_an_unknown_type() {
     let body = "---\ntype: bogus\ntitle: Mystery\n---\n# Body\n";
     let vault = vault_with_notes(&[("strange.md", body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1);
     assert_eq!(report.issues[0].path, vp("strange.md"));
@@ -115,7 +115,7 @@ fn lint_flags_a_missing_extra_required_field() {
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1);
     assert_eq!(report.issues[0].path, vp("projects/foo.md"));
@@ -141,7 +141,7 @@ fn lint_passes_when_extra_required_field_is_present() {
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -163,7 +163,7 @@ fn lint_skips_extra_required_check_when_type_is_unknown() {
     );
     let vault = vault_with_notes(&[("note.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1);
     assert!(report.issues[0].message.contains("unknown note type"));
@@ -184,7 +184,7 @@ fn lint_treats_explicit_null_value_as_missing() {
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1);
     assert!(
@@ -235,7 +235,7 @@ fn lint_warns_on_a_mistyped_declared_field_value() {
     let config = config_with_field("project", "meds", bool_field());
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let issue = report
         .issues
         .iter()
@@ -255,7 +255,7 @@ fn lint_passes_on_a_correctly_typed_declared_field_value() {
     let config = config_with_field("project", "meds", bool_field());
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("meds")),
         "a correctly-typed value must not warn: {:?}",
@@ -278,7 +278,7 @@ fn lint_warns_on_a_value_outside_the_declared_values_set() {
     let config = config_with_field("project", "mood", spec);
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -298,7 +298,7 @@ fn lint_skips_the_type_check_for_an_absent_declared_field() {
     let config = config_with_field("project", "meds", bool_field());
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
 
@@ -310,7 +310,7 @@ fn lint_passes_on_a_correctly_typed_int_field() {
     let config = config_with_field("project", "steps", typed_field(FieldType::Int));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("steps")),
         "an integer value must not warn: {:?}",
@@ -325,7 +325,7 @@ fn lint_warns_on_a_float_for_an_int_field() {
     let config = config_with_field("project", "steps", typed_field(FieldType::Int));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -343,7 +343,7 @@ fn lint_warns_on_a_string_for_an_int_field() {
     let config = config_with_field("project", "steps", typed_field(FieldType::Int));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -360,7 +360,7 @@ fn lint_passes_on_a_decimal_for_a_float_field() {
     let config = config_with_field("project", "weight", typed_field(FieldType::Float));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("weight")),
         "a decimal value must not warn: {:?}",
@@ -377,7 +377,7 @@ fn lint_passes_on_a_whole_number_for_a_float_field() {
     let config = config_with_field("project", "weight", typed_field(FieldType::Float));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("weight")),
         "a whole number must not warn against a float field: {:?}",
@@ -391,7 +391,7 @@ fn lint_warns_on_a_string_for_a_float_field() {
     let config = config_with_field("project", "weight", typed_field(FieldType::Float));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -409,7 +409,7 @@ fn lint_passes_on_a_correctly_formatted_date_field() {
     let config = config_with_field("project", "since", typed_field(FieldType::Date));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("since")),
         "a valid date must not warn: {:?}",
@@ -424,7 +424,7 @@ fn lint_warns_on_an_unparseable_date_field() {
     let config = config_with_field("project", "since", typed_field(FieldType::Date));
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -453,7 +453,7 @@ fn lint_type_check_is_gated_on_an_explicit_fields_block() {
     );
     let vault = vault_with_notes(&[("projects/foo.md", body)], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.iter().all(|i| !i.message.contains("owner")),
         "no type-check without an explicit fields block: {:?}",
@@ -534,7 +534,7 @@ fn append_only_lint_silent_on_unchanged_archived_note() {
     );
     let _done = archive_a_fresh_action(&vault);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         append_only_issues(&report).is_empty(),
         "unchanged archived note must be silent: {:?}",
@@ -555,7 +555,7 @@ fn append_only_lint_silent_when_only_appending_lines() {
         format!("{original}\n## Six months later\nlate retrospective, see [[evidence/x]]\n");
     store.write_file(&done, &with_followup).unwrap();
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         append_only_issues(&report).is_empty(),
         "pure-append should be silent: {:?}",
@@ -581,7 +581,7 @@ fn append_only_lint_flags_size_changing_prefix_edit() {
     );
     store.write_file(&done, &modified).unwrap();
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let issues = append_only_issues(&report);
     assert_eq!(issues.len(), 1, "report: {:?}", issues);
     assert_eq!(issues[0].path, done);
@@ -616,7 +616,7 @@ fn append_only_lint_flags_same_length_prefix_edit() {
     );
     store.write_file(&done, &modified).unwrap();
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let issues = append_only_issues(&report);
     assert_eq!(issues.len(), 1, "report: {:?}", issues);
     assert_eq!(issues[0].path, done);
@@ -647,7 +647,7 @@ fn lint_flags_attachment_stub_with_missing_artefact_folder() {
     let stub = "portfolios/demo/2026-06-13-some-paper.md";
     let vault = vault_with_notes(&[(stub, ATTACHMENT_STUB)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp(stub));
@@ -673,7 +673,7 @@ fn lint_passes_attachment_stub_with_populated_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -690,7 +690,7 @@ fn lint_flags_orphan_artefact_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(
@@ -716,7 +716,7 @@ fn lint_ignores_plain_evidence_without_kind() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -750,7 +750,7 @@ fn lint_flags_a_broken_wikilink_as_a_warning() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let broken = broken_link_issues(&report);
     assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
     assert_eq!(broken[0].severity, LintSeverity::Warning);
@@ -773,7 +773,7 @@ fn lint_passes_a_resolvable_wikilink() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         broken_link_issues(&report).is_empty(),
         "issues: {:?}",
@@ -804,7 +804,7 @@ fn lint_resolves_a_folder_note_link_to_its_index() {
             VaultConfig::default(),
         );
         assert!(
-            broken_link_issues(&vault.lint_all_notes().unwrap()).is_empty(),
+            broken_link_issues(&vault.lint_all_notes(lint_day()).unwrap()).is_empty(),
             "a folder-note link (bare or explicit) resolves to its _index.md"
         );
     }
@@ -822,7 +822,7 @@ fn lint_flags_a_folder_link_with_no_index_note() {
         VaultConfig::default(),
     );
     assert_eq!(
-        broken_link_issues(&vault.lint_all_notes().unwrap()).len(),
+        broken_link_issues(&vault.lint_all_notes(lint_day()).unwrap()).len(),
         1,
         "a folder link with no _index.md still dangles"
     );
@@ -837,7 +837,7 @@ fn lint_ignores_a_dangling_frontmatter_link() {
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: \"[[questions/ghost]]\"\n---\n# Foo\n";
     let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         broken_link_issues(&report).is_empty(),
         "frontmatter links are out of scope: {:?}",
@@ -860,7 +860,7 @@ fn lint_counts_errors_and_warnings_separately() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert_eq!(report.error_count(), 1, "issues: {:?}", report.issues);
     assert_eq!(report.warning_count(), 2, "issues: {:?}", report.issues);
 }
@@ -884,7 +884,7 @@ fn lint_reports_a_corrupt_indexed_note_as_error_without_aborting() {
         .unwrap();
 
     let report = vault
-        .lint_all_notes()
+        .lint_all_notes(lint_day())
         .expect("lint must not abort on a corrupt note");
     let a_issues: Vec<_> = report
         .issues
@@ -913,7 +913,7 @@ fn lint_does_not_flag_an_archived_action_reference() {
     );
     archive_a_fresh_action(&vault);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         !broken_link_issues(&report)
             .iter()
@@ -936,7 +936,7 @@ fn lint_flags_frontmatter_out_of_canonical_order() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let order_issues: Vec<_> = report
         .issues
         .iter()
@@ -956,7 +956,7 @@ fn lint_does_not_flag_canonical_frontmatter_order() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         !report
             .issues
@@ -983,7 +983,7 @@ fn lint_frontmatter_order_follows_a_custom_template() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         !report
             .issues
@@ -1004,7 +1004,7 @@ fn lint_flags_tracking_note_out_of_variant_order() {
     let p = "stewardships/health/tracking/2026-04-26-gym.md";
     let vault = vault_with_notes(&[(p, scrambled)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let order_issues: Vec<_> = report
         .issues
         .iter()
@@ -1023,7 +1023,7 @@ fn lint_does_not_flag_tracking_note_in_variant_order() {
     let p = "stewardships/health/tracking/2026-04-26-gym.md";
     let vault = vault_with_notes(&[(p, in_order)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         !report
             .issues
@@ -1041,7 +1041,7 @@ fn lint_does_not_flag_canonical_order_with_trailing_unknown_key() {
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\nextra: x\n---\n# Foo\n\n## Current State\n";
     let vault = vault_with_notes(&[("projects/foo.md", body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         !report
             .issues
@@ -1067,7 +1067,7 @@ fn lint_order_flags_agree_with_normalise_check() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let mut lint_flagged: Vec<_> = report
         .issues
         .iter()
@@ -1098,7 +1098,7 @@ fn lint_accepts_a_valid_custom_type_note() {
     let body = "---\ntype: person\nname: Ada\nrole: advisor\n---\n# Ada\n";
     let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
 
@@ -1108,7 +1108,7 @@ fn lint_flags_a_custom_type_missing_a_required_field() {
     let body = "---\ntype: person\nrole: advisor\n---\n# Someone\n";
     let vault = vault_with_notes(&[("people/x.md", body)], config_with_person());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -1127,7 +1127,7 @@ fn lint_still_flags_an_unregistered_type_as_unknown() {
     let body = "---\ntype: persn\nname: Ada\n---\n# Ada\n";
     let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -1145,7 +1145,7 @@ fn lint_flags_custom_type_frontmatter_out_of_order() {
     let body = "---\nrole: advisor\nname: Ada\ntype: person\n---\n# Ada\n";
     let vault = vault_with_notes(&[("people/ada.md", body)], config_with_person());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report
             .issues
@@ -1189,7 +1189,7 @@ fn lint_flags_active_habits_line_with_ascii_hyphen() {
     let body = stewardship("## Active Habits\n- Swimming 1x/week - lapsed since March\n");
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     let issue = warnings[0];
@@ -1209,7 +1209,7 @@ fn lint_flags_active_habits_line_with_en_dash() {
     let body = stewardship("## Active Habits\n- Swimming 1x/week \u{2013} lapsed since March\n");
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1228,7 +1228,7 @@ fn lint_flags_periodic_line_missing_next_marker() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1247,7 +1247,7 @@ fn lint_flags_periodic_line_with_unparseable_date() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1267,7 +1267,7 @@ fn lint_accepts_valid_dashboard_lines() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         dashboard_warnings(&report).is_empty(),
         "valid lines must not warn: {:?}",
@@ -1286,7 +1286,7 @@ fn lint_ignores_prose_lines_and_missing_sections() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         dashboard_warnings(&report).is_empty(),
         "prose and absent sections must not warn: {:?}",
@@ -1304,7 +1304,7 @@ fn lint_ignores_dashboard_without_scanned_sections() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         dashboard_warnings(&report).is_empty(),
         "a dashboard without the sections must not warn: {:?}",
@@ -1319,7 +1319,7 @@ fn lint_flags_active_habits_line_missing_separator_entirely() {
     let body = stewardship("## Active Habits\n- Swimming every week\n");
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1345,7 +1345,7 @@ fn lint_flags_active_habits_line_with_empty_habit_and_lapse_scan_skips_it() {
         "empty-habit bullet must not count as a lapse: {lapsed:?}"
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1365,7 +1365,7 @@ fn lint_flags_periodic_line_with_en_dash_separators() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1381,7 +1381,7 @@ fn lint_flags_periodic_line_with_ascii_hyphen_separators() {
     let body = stewardship("## Periodic Commitments\n- Eye exam - yearly - next: 2026-04-01\n");
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1401,7 +1401,7 @@ fn lint_periodic_hint_does_not_blame_legitimate_en_dash_in_title() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1426,7 +1426,7 @@ fn lint_accepts_a_periodic_line_whose_title_contains_an_em_dash() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert!(
         warnings.is_empty(),
@@ -1446,7 +1446,7 @@ fn lint_stays_silent_on_a_periodic_line_annotated_with_an_em_dash() {
     );
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert!(
         warnings.is_empty(),
@@ -1470,7 +1470,7 @@ fn lint_periodic_hint_names_a_marker_standing_in_the_recurrence_place() {
         let body = stewardship(&format!("## Periodic Commitments\n{line}\n"));
         let vault = vault_with_notes(&[("stewardships/home.md", &body)], VaultConfig::default());
 
-        let report = vault.lint_all_notes().expect("lint succeeds");
+        let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
         let warnings = dashboard_warnings(&report);
         assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
         assert!(
@@ -1492,7 +1492,7 @@ fn lint_periodic_hint_names_an_empty_title() {
         stewardship("## Periodic Commitments\n-  \u{2014} yearly \u{2014} next: 2099-04-01\n");
     let vault = vault_with_notes(&[("stewardships/health.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = dashboard_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1503,6 +1503,8 @@ fn lint_periodic_hint_names_an_empty_title() {
 }
 
 use cdno_domain::frontmatter::Context;
+
+use super::support::lint_day;
 
 #[test]
 fn lint_stays_silent_on_a_freshly_created_stewardship() {
@@ -1526,7 +1528,7 @@ fn lint_stays_silent_on_a_freshly_created_stewardship() {
         .create_stewardship_expanded(dt(2026, 1, 10, 9, 0), "Health", Context::Personal)
         .expect("create_stewardship_expanded");
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     // The whole report, not just the dashboard warnings this fixed: the
     // lesson of #515 generalises, so a future template edit that trips any
     // other rule -- a dangling wikilink, a missing required field -- is the
@@ -1595,7 +1597,7 @@ fn lint_flags_a_record_whose_at_is_not_a_time_the_parser_accepts() {
         tracking_config(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = record_warnings(&report);
     assert_eq!(warnings.len(), 2, "issues: {:?}", report.issues);
     assert!(
@@ -1623,7 +1625,7 @@ fn lint_flags_an_at_that_yaml_resolved_to_something_other_than_a_string() {
             tracking_config(),
         );
 
-        let report = vault.lint_all_notes().expect("lint succeeds");
+        let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
         let warnings = record_warnings(&report);
         assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
         assert!(
@@ -1649,7 +1651,7 @@ fn lint_accepts_an_unquoted_time_because_the_colon_keeps_it_a_string() {
         tracking_config(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = record_warnings(&report);
     assert!(
         warnings.is_empty(),
@@ -1669,7 +1671,7 @@ fn lint_flags_a_partially_stamped_record_set() {
         tracking_config(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = record_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -1696,7 +1698,7 @@ fn lint_says_nothing_about_records_that_are_all_stamped_or_none() {
             tracking_config(),
         );
 
-        let report = vault.lint_all_notes().expect("lint succeeds");
+        let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
         let warnings = record_warnings(&report);
         assert!(warnings.is_empty(), "unexpected: {warnings:?}");
     }
@@ -1722,7 +1724,7 @@ fn lint_ignores_at_on_an_activity_with_no_records() {
         config,
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(record_warnings(&report).is_empty(), "{:?}", report.issues);
 }
 
@@ -1749,7 +1751,7 @@ fn lint_flags_orphan_folder_holding_only_markdown() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(
@@ -1774,7 +1776,7 @@ fn lint_passes_markdown_artefact_paired_with_its_stub() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1792,7 +1794,7 @@ fn lint_reports_a_deep_orphan_tree_once_at_the_portfolio_subfolder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
@@ -1813,7 +1815,7 @@ fn lint_passes_an_artefact_nested_inside_its_stubs_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1840,7 +1842,7 @@ fn lint_does_not_flag_a_grouping_folder_holding_a_stub_and_its_artefacts() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1856,7 +1858,7 @@ fn lint_does_not_flag_a_grouping_folder_of_ordinary_notes() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1872,7 +1874,7 @@ fn lint_honours_ignore_globs_when_scanning_for_orphans() {
     };
     let vault = vault_with_notes(&[("portfolios/demo/scratch/notes.txt", "scratch")], config);
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1886,7 +1888,7 @@ fn lint_still_flags_an_unowned_non_note_file() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
@@ -1909,7 +1911,7 @@ fn lint_does_not_flag_a_grouping_folder_that_also_holds_a_stray_file() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1927,7 +1929,7 @@ fn lint_exempts_a_grouping_folder_from_a_note_nested_deeper_in_it() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert!(report.is_clean(), "issues: {:?}", report.issues);
 }
@@ -1944,7 +1946,7 @@ fn lint_says_a_namesake_that_is_not_a_stub_does_not_claim_the_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert!(
@@ -1972,7 +1974,7 @@ fn lint_reports_an_orphan_nested_inside_a_grouping_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/2026-Q2/paper"));
@@ -1993,7 +1995,7 @@ fn a_surviving_stub_does_not_blind_the_scan_to_its_detached_siblings() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(
@@ -2014,7 +2016,7 @@ fn lint_does_not_prescribe_a_stub_over_markdown_that_failed_to_index() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     let message = &report.issues[0].message;
@@ -2041,7 +2043,7 @@ fn a_note_at_the_portfolio_root_does_not_exempt_any_subfolder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
 
     assert_eq!(report.issues.len(), 1, "report: {:?}", report.issues);
     assert_eq!(report.issues[0].path, vp("portfolios/demo/assets"));
@@ -2088,7 +2090,7 @@ fn lint_resolves_an_embed_to_a_sibling_attachment() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         report.issues.is_empty(),
         "an on-disk embed should raise nothing: {:?}",
@@ -2110,7 +2112,7 @@ fn lint_resolves_a_plain_link_to_an_attachment_by_extension() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
 }
 
@@ -2128,7 +2130,7 @@ fn lint_resolves_an_embed_from_inside_a_grouping_subfolder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
 }
 
@@ -2145,7 +2147,7 @@ fn lint_resolves_a_vault_relative_embed() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
 }
 
@@ -2157,7 +2159,7 @@ fn lint_flags_a_missing_embed_as_a_missing_file_not_a_broken_note() {
     let body = DAILY_EMBEDDING.replace("{{embed}}", "![[assets/gone.png]]");
     let vault = vault_with_notes(&[("notes/note.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let messages = issue_messages(&report);
     assert_eq!(messages.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2186,7 +2188,7 @@ fn lint_still_flags_a_broken_plain_note_link() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let broken = broken_link_issues(&report);
     assert_eq!(broken.len(), 1, "issues: {:?}", report.issues);
     assert!(broken[0].message.contains("[[archive]]"));
@@ -2204,7 +2206,7 @@ fn lint_does_not_resolve_an_embed_of_a_bare_folder() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let messages = issue_messages(&report);
     assert_eq!(messages.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2226,7 +2228,7 @@ fn lint_resolves_a_parent_relative_embed() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(report.issues.is_empty(), "issues: {:?}", report.issues);
 }
 
@@ -2239,7 +2241,7 @@ fn lint_clamps_a_dotdot_escape_at_the_vault_root() {
     let body = DAILY_EMBEDDING.replace("{{embed}}", "![[../../../nowhere.png]]");
     let vault = vault_with_notes(&[("notes/note.md", &body)], VaultConfig::default());
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert_eq!(report.issues.len(), 1, "issues: {:?}", report.issues);
     assert!(report.issues[0].message.contains("embedded file"));
 }
@@ -2255,7 +2257,7 @@ fn lint_refuses_a_rooted_embed_target() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert_eq!(report.issues.len(), 1, "issues: {:?}", report.issues);
     assert!(report.issues[0].message.contains("embedded file"));
 }
@@ -2296,7 +2298,7 @@ fn lint_flags_a_start_written_with_an_ascii_hyphen() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     let issue = warnings[0];
@@ -2319,7 +2321,7 @@ fn lint_flags_a_start_written_with_an_en_dash() {
     );
 
     let warnings_msg = {
-        let report = vault.lint_all_notes().expect("lint succeeds");
+        let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
         let warnings = focus_warnings(&report);
         assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
         warnings[0].message.clone()
@@ -2341,7 +2343,7 @@ fn lint_flags_a_start_with_no_timestamp_stamp() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2361,7 +2363,7 @@ fn lint_flags_a_close_marker_near_miss_too() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert_eq!(
         focus_warnings(&report).len(),
         1,
@@ -2379,7 +2381,7 @@ fn a_paused_line_with_an_ascii_hyphen_is_reported() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     let issue = warnings[0];
@@ -2401,7 +2403,7 @@ fn a_resumed_line_with_an_en_dash_is_reported() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert_eq!(warnings[0].severity, LintSeverity::Warning);
@@ -2417,7 +2419,7 @@ fn a_resumed_line_with_an_en_dash_is_reported() {
         &[("journal/2026/daily/2026-09-15.md", &body)],
         VaultConfig::default(),
     );
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(focus_warnings(&report).is_empty(), "{:?}", report.issues);
 }
 
@@ -2431,7 +2433,7 @@ fn a_promotion_line_with_a_missing_stamp_is_reported() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2453,7 +2455,7 @@ fn a_promotion_line_without_quotes_is_reported() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2475,7 +2477,7 @@ fn a_promotion_line_with_a_target_missing_its_link_is_reported() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2494,7 +2496,7 @@ fn lint_accepts_the_shape_the_writers_emit() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         focus_warnings(&report).is_empty(),
         "a valid start must not be flagged: {:?}",
@@ -2517,7 +2519,7 @@ fn lint_leaves_ordinary_prose_alone() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         focus_warnings(&report).is_empty(),
         "prose must not be flagged: {:?}",
@@ -2539,7 +2541,7 @@ fn lint_leaves_an_indented_continuation_alone() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         focus_warnings(&report).is_empty(),
         "an indented continuation must not be flagged: {:?}",
@@ -2563,7 +2565,7 @@ fn lint_flags_a_start_whose_stamp_is_mangled_not_merely_absent() {
             &[("journal/2026/daily/2026-09-15.md", &body)],
             VaultConfig::default(),
         );
-        let report = vault.lint_all_notes().expect("lint succeeds");
+        let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
         let warnings = focus_warnings(&report);
         assert_eq!(
             warnings.len(),
@@ -2590,7 +2592,7 @@ fn lint_names_the_missing_bullet_rather_than_the_shape_that_is_correct() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     let warnings = focus_warnings(&report);
     assert_eq!(warnings.len(), 1, "issues: {:?}", report.issues);
     assert!(
@@ -2620,7 +2622,7 @@ fn lint_still_leaves_prose_alone_after_the_widened_stamp_peel() {
         VaultConfig::default(),
     );
 
-    let report = vault.lint_all_notes().expect("lint succeeds");
+    let report = vault.lint_all_notes(lint_day()).expect("lint succeeds");
     assert!(
         focus_warnings(&report).is_empty(),
         "prose must not be flagged: {:?}",
@@ -2673,7 +2675,7 @@ fn lint_errors_on_project_status_folder_mismatch() {
         VaultConfig::default(),
     );
 
-    let rows = project_rows(&vault.lint_all_notes().unwrap());
+    let rows = project_rows(&vault.lint_all_notes(lint_day()).unwrap());
 
     let errors: Vec<&str> = rows
         .iter()
@@ -2702,7 +2704,7 @@ fn lint_names_fix_for_closed_map_outside_done() {
         VaultConfig::default(),
     );
 
-    let rows = project_rows(&vault.lint_all_notes().unwrap());
+    let rows = project_rows(&vault.lint_all_notes(lint_day()).unwrap());
 
     assert_eq!(rows.len(), 1, "{rows:?}");
     let (_, severity, message) = &rows[0];
@@ -2726,7 +2728,7 @@ fn lint_warns_on_closed_status_without_closed_date() {
         VaultConfig::default(),
     );
 
-    let rows = project_rows(&vault.lint_all_notes().unwrap());
+    let rows = project_rows(&vault.lint_all_notes(lint_day()).unwrap());
 
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].1, cdno_domain::LintSeverity::Warning);
@@ -2740,7 +2742,7 @@ fn lint_warns_on_active_project_with_closed_date() {
         VaultConfig::default(),
     );
 
-    let rows = project_rows(&vault.lint_all_notes().unwrap());
+    let rows = project_rows(&vault.lint_all_notes(lint_day()).unwrap());
 
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].1, cdno_domain::LintSeverity::Warning);
@@ -2787,7 +2789,7 @@ fn lint_after_restamping(notes: &[(&str, &str)], config_text: &str) -> cdno_doma
         Vault::new(Arc::clone(&store), index, config).expect("Vault::new succeeded");
 
     store.write_file(&vp(CONFIG_TOML), config_text).unwrap();
-    vault.lint_all_notes().expect("lint succeeds")
+    vault.lint_all_notes(lint_day()).expect("lint succeeds")
 }
 
 fn stamped_config(major: u16, minor: u16) -> String {
@@ -2881,6 +2883,108 @@ fn a_malformed_method_version_is_an_error_row_and_lint_carries_on() {
                 .iter()
                 .any(|i| i.path == vp("strange.md") && i.message.contains("unknown note type")),
             "the rest of the pass did not run: {:?}",
+            report.issues
+        );
+    }
+}
+
+// ---------------------------------------------------------------------
+// The parked read-through (RFC 0006 §8.1, plan T12)
+// ---------------------------------------------------------------------
+
+/// The day the read-through tests lint on.
+fn read_through_day() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2026, 5, 26).unwrap()
+}
+
+/// A parked map carrying one overdue hard milestone and one future one.
+const PARKED_WITH_MILESTONES: &str = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-10\nclosed: null\n---\n\n# Beta\n\n## Milestones\n- [ ] Grant report — hard: 2026-04-15\n- [ ] Final review — hard: 2026-08-01\n\n## Next Actions\n";
+
+/// The read-through rows of a report: the warnings that name the register.
+fn read_through_rows(report: &cdno_domain::LintReport) -> Vec<&cdno_domain::LintIssue> {
+    report
+        .issues
+        .iter()
+        .filter(|issue| issue.message.contains("in the commitments register again"))
+        .collect()
+}
+
+#[test]
+fn an_overdue_parked_milestone_warns_while_the_vault_is_below_1_1() {
+    // An unstamped vault reads as RLM 1.0, below 1.1: the overdue hard
+    // milestone on the parked map is one Warning naming the milestone fix;
+    // the future one is not a row.
+    let vault = vault_with_notes(
+        &[("projects/_parked/beta.md", PARKED_WITH_MILESTONES)],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(read_through_day()).expect("lint");
+
+    let rows = read_through_rows(&report);
+    assert_eq!(rows.len(), 1, "issues: {:?}", report.issues);
+    let row = rows[0];
+    assert_eq!(row.severity, cdno_domain::LintSeverity::Warning);
+    assert_eq!(row.path, vp("projects/_parked/beta.md"));
+    assert_eq!(
+        row.message,
+        "hard milestone `Grant report` (2026-04-15) on parked project [[beta]] is overdue and in \
+         the commitments register again (a parked map's hard dates are promises under RLM 1.1): \
+         drop it with `cdno project milestone drop`, or re-date it on the map; this read-through \
+         row disappears once the vault records RLM 1.1"
+    );
+}
+
+#[test]
+fn an_overdue_parked_action_due_names_the_action_fix() {
+    // An action note's `due:` on a parked map: the row sits on the action
+    // note, where the date is written, and names the action's fix.
+    let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-01-10\nclosed: null\n---\n\n# Beta\n\n## Next Actions\n";
+    let action = "---\ntype: action\nstatus: active\nproject: beta\nenergy: deep\nmilestone: null\ndue: 2026-05-01\ncreated: 2026-04-01\ncompleted: null\nblocker: null\ncriteria: null\ntags: []\n---\n\n# Shelved draft\n";
+    let vault = vault_with_notes(
+        &[
+            ("projects/_parked/beta.md", parked),
+            ("actions/shelved-draft.md", action),
+        ],
+        VaultConfig::default(),
+    );
+
+    let report = vault.lint_all_notes(read_through_day()).expect("lint");
+
+    let rows = read_through_rows(&report);
+    assert_eq!(rows.len(), 1, "issues: {:?}", report.issues);
+    assert_eq!(rows[0].severity, cdno_domain::LintSeverity::Warning);
+    assert_eq!(rows[0].path, vp("actions/shelved-draft.md"));
+    assert_eq!(
+        rows[0].message,
+        "action `Shelved draft` (due 2026-05-01) on parked project [[beta]] is overdue and in the \
+         commitments register again (a parked map's hard dates are promises under RLM 1.1): \
+         re-date its `due:` in the note, or drop the action with `cdno action drop`; this \
+         read-through row disappears once the vault records RLM 1.1"
+    );
+}
+
+#[test]
+fn the_read_through_row_is_gone_once_the_vault_records_1_1() {
+    // The same parked map, in a vault stamped "1.1": the read-through is
+    // done, so no row, whatever version this binary implements. A vault
+    // stamped "1.0" is still below and keeps the row (the control).
+    for (stamp, expected) in [("1.1", 0), ("1.0", 1)] {
+        let config = format!("[vault]\nmethod_version = \"{stamp}\"\n");
+        let vault = vault_with_notes(
+            &[
+                ("projects/_parked/beta.md", PARKED_WITH_MILESTONES),
+                (".cuaderno/config.toml", &config),
+            ],
+            VaultConfig::default(),
+        );
+
+        let report = vault.lint_all_notes(read_through_day()).expect("lint");
+
+        assert_eq!(
+            read_through_rows(&report).len(),
+            expected,
+            "stamped {stamp}: {:?}",
             report.issues
         );
     }

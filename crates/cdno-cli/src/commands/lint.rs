@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Result, bail};
+use chrono::NaiveDate;
 
 use cdno_domain::lint::LintSeverity;
 
@@ -19,9 +20,9 @@ use crate::output::style::Role;
 /// Issues go to stdout (one per line, grep-friendly, severity-tagged).
 /// A failure summary lands on stderr through `anyhow`; a non-fatal
 /// warnings-only summary goes to stdout.
-pub fn run(root: &Path, strict: bool) -> Result<()> {
+pub fn run(root: &Path, today: NaiveDate, strict: bool) -> Result<()> {
     let (vault, _report) = bootstrap::open_vault(root)?;
-    let report = vault.lint_all_notes()?;
+    let report = vault.lint_all_notes(today)?;
 
     if report.is_clean() {
         println!("No issues found.");

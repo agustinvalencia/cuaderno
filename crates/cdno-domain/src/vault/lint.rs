@@ -73,10 +73,17 @@ impl Vault {
     ///   `Warning` on `.cuaderno/config.toml`; a newer or an older major,
     ///   whose writes the gate refuses, an `Error`; a version that cannot be
     ///   read an `Error`, and the pass carries on (RFC 0006 §8.4).
+    /// - the parked read-through: one `Warning` per hard date on a parked
+    ///   map that is overdue at `today`, while the vault's method version
+    ///   is below [`READ_THROUGH_BELOW`](crate::READ_THROUGH_BELOW),
+    ///   naming the fix for its source (RFC 0006 §8.1, plan T12).
     ///
     /// Per-type structural checks (e.g. `ProjectFrontmatter` invariants)
     /// land alongside their domain code in Phase 2/3.
-    pub fn lint_all_notes(&self) -> Result<LintReport, DomainError> {
+    ///
+    /// `today` is the caller's date, stamped by the interface layer as the
+    /// write verbs' `at` is; only the read-through rule reads it.
+    pub fn lint_all_notes(&self, today: NaiveDate) -> Result<LintReport, DomainError> {
         let mut issues: Vec<LintIssue> = Vec::new();
 
         // The full note-path set, used to resolve wikilinks below.
@@ -329,6 +336,7 @@ impl Vault {
         issues.extend(self.focus_marker_issues()?);
         issues.extend(self.stale_template_issues()?);
         issues.extend(self.method_version_issues()?);
+        issues.extend(self.read_through_issues(today)?);
 
         Ok(LintReport { issues })
     }

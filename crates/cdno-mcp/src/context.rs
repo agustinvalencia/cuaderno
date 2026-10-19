@@ -176,8 +176,9 @@ impl CuadernoServer {
         &self,
         Parameters(_input): Parameters<EmptyInput>,
     ) -> Result<CallToolResult, ErrorData> {
+        let today = chrono::Local::now().date_naive();
         let report = self
-            .with_vault(|vault| vault.lint_all_notes())
+            .with_vault(move |vault| vault.lint_all_notes(today))
             .await?
             .map_err(into_mcp_error)?;
         json_result(LintReportDto::from(report))

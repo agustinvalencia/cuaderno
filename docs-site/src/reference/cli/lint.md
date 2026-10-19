@@ -54,6 +54,20 @@ customised template it cannot read (for instance one that is not UTF-8) as an er
 edits. Lint cannot tell a new key from one you removed on purpose, so a built-in key you deleted from
 your template is reported too.
 
+While the vault records a method version below RLM 1.1 (an unstamped vault reads as 1.0), it warns
+once per **overdue** hard date on a parked project map, which the commitments register keeps since
+RLM 1.1: the one-time read-through of parked deadlines. The row sits on the map for a hard
+milestone and on the action note for a `due:`, and names the fix:
+
+```text
+[warning] projects/_parked/beta.md: hard milestone `Grant report` (2026-04-15) on parked project [[beta]] is overdue and in the commitments register again (a parked map's hard dates are promises under RLM 1.1): drop it with `cdno project milestone drop`, or re-date it on the map; this read-through row disappears once the vault records RLM 1.1
+```
+
+An action note's row says to re-date its `due:` in the note, or drop the action with
+[`cdno action drop`](action.md#cdno-action-drop). Future dates are not warned on;
+[`cdno migrate --dry-run`](migrate.md) lists them all. Once the vault records RLM 1.1 the rows are
+gone for good.
+
 ```text
 cdno lint [OPTIONS]
 ```
