@@ -808,6 +808,7 @@ fn summary(slug: &str, context: Context, state: &str) -> ProjectSummary {
         slug: slug.to_owned(),
         status: ProjectStatus::Active,
         context,
+        core_question: None,
         state_snippet: state.to_owned(),
         top_action: None,
         last_paused: None,

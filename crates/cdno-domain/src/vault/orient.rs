@@ -4,8 +4,11 @@
 //! anything new — commitments, active-project summaries, and lapsed
 //! stewardship habits — so the morning view is a single call.
 
+use std::collections::HashMap;
+
 use chrono::NaiveDate;
 
+use cdno_core::extractors::extract_wikilinks;
 use cdno_core::markdown::MarkdownDocument;
 
 use crate::error::DomainError;
@@ -33,6 +36,11 @@ pub struct OrientationContext {
     pub commitments: Vec<CommitmentEntry>,
     /// One summary per active project (state snippet + top next action).
     pub projects: Vec<ProjectSummary>,
+    /// The projects of `projects`, by slug, grouped under the parent
+    /// they share: every project falls in exactly one group, in the
+    /// order of each group's first member. A project with no
+    /// `core_question` is a group of its own with no parent.
+    pub groups: Vec<ProjectGroup>,
     /// Active-project slots in use against the cap, the same count
     /// `list_projects` reports.
     pub slots: SlotUsage,
@@ -44,6 +52,27 @@ pub struct OrientationContext {
     /// (`cdno now` shows the focus).
     #[serde(skip)]
     pub focus: Option<CurrentFocus>,
+}
+
+/// Projects shown together in the orientation because they share a
+/// parent (RFC 0006 §7.3, "or under its question").
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectGroup {
+    /// What the projects share; `None` for a project standing alone.
+    pub parent: Option<GroupParent>,
+    /// Member slugs, in the order of the flat `projects` list.
+    pub projects: Vec<String>,
+}
+
+/// The parent a [`ProjectGroup`] shares. Adjacently tagged, so the JSON
+/// reads `{"kind": "question", "path": "questions/research/foo.md"}`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", content = "path", rename_all = "snake_case")]
+pub enum GroupParent {
+    /// A project's `core_question`, keyed by the question's resolved
+    /// vault path, or by the link's raw target when it resolves to no
+    /// note, so a short and a full link to one question key alike.
+    Question(String),
 }
 
 /// A stewardship habit whose `## Active Habits` line declares a lapse
@@ -86,16 +115,75 @@ impl Vault {
             projects.push(summary);
         }
 
+        let groups = self.group_projects(&projects)?;
         let slots = self.slot_usage()?;
         let lapsed_habits = self.lapsed_habits()?;
 
         Ok(OrientationContext {
             commitments,
             projects,
+            groups,
             slots,
             lapsed_habits,
             focus,
         })
+    }
+
+    /// Group `projects` by the `core_question` each one states.
+    ///
+    /// Read from the field alone, never from the question's backlinks:
+    /// the link index records no source field, so a backlink cannot tell
+    /// a project answering the question from one whose Current State
+    /// merely mentions it. Groups follow the order of their first member.
+    fn group_projects(
+        &self,
+        projects: &[ProjectSummary],
+    ) -> Result<Vec<ProjectGroup>, DomainError> {
+        let mut groups: Vec<ProjectGroup> = Vec::new();
+        let mut by_key: HashMap<String, usize> = HashMap::new();
+        for summary in projects {
+            let key = match summary.core_question.as_deref() {
+                Some(raw) => self.question_group_key(raw)?,
+                None => None,
+            };
+            let Some(key) = key else {
+                groups.push(ProjectGroup {
+                    parent: None,
+                    projects: vec![summary.slug.clone()],
+                });
+                continue;
+            };
+            match by_key.get(&key) {
+                Some(&at) => groups[at].projects.push(summary.slug.clone()),
+                None => {
+                    by_key.insert(key.clone(), groups.len());
+                    groups.push(ProjectGroup {
+                        parent: Some(GroupParent::Question(key)),
+                        projects: vec![summary.slug.clone()],
+                    });
+                }
+            }
+        }
+        Ok(groups)
+    }
+
+    /// The group key of a raw `core_question` value: the resolved path of
+    /// the link's target, or the target itself when it resolves to no
+    /// note. A value with no `[[…]]` is read as a bare target; a blank
+    /// one sets no question.
+    fn question_group_key(&self, raw: &str) -> Result<Option<String>, DomainError> {
+        let target = extract_wikilinks(raw)
+            .into_iter()
+            .next()
+            .map(|link| link.target)
+            .unwrap_or_else(|| raw.trim().to_owned());
+        if target.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(match self.resolve_wikilink(&target)? {
+            Some(resolved) => resolved.path.to_string(),
+            None => target,
+        }))
     }
 
     /// Habit lines that declare themselves lapsed, gathered from every

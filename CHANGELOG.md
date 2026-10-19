@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- Orientation groups the projects that share a core question: `get_orientation` and
+  `cdno orient --json` carry `groups` (and each project its `core_question`), and `cdno orient`
+  shows a shared question as one line with its fronts (RFC 0006 §8.0).
 - `get_orientation` and `cdno orient --json` carry `slots` (active projects against the cap), matching
   `list_projects`; the cap count has one home in the domain (RFC 0006 §8.0).
 - A vault records the version of the Research Logbook Method it follows: `cdno init` writes

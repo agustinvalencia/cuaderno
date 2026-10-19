@@ -162,16 +162,39 @@ cdno orient --json
       "slug": "surrogate-model",
       "status": "active",
       "context": "work",
+      "core_question": "[[questions/research/surrogate-generalises]]",
       "state_snippet": "Mesh scaling works; assembly is the bottleneck",
       "top_action": { "text": "Profile the assembly step", "energy": "medium" }
+    },
+    {
+      "slug": "mesh-study",
+      "status": "active",
+      "context": "work",
+      "core_question": "[[surrogate-generalises]]",
+      "state_snippet": "Coarse-mesh run validated end to end",
+      "top_action": { "text": "Write up the convergence plot", "energy": "light" }
     }
   ],
-  "slots": { "active": 1, "counted": 1, "cap": 5, "counted_slugs": ["surrogate-model"] },
+  "groups": [
+    {
+      "parent": { "kind": "question", "path": "questions/research/surrogate-generalises.md" },
+      "projects": ["surrogate-model", "mesh-study"]
+    }
+  ],
+  "slots": { "active": 2, "counted": 2, "cap": 5, "counted_slugs": ["surrogate-model", "mesh-study"] },
   "lapsed_habits": []
 }
 ```
 
-`projects` holds one project-list element per active project. `slots` is the active projects
+`projects` holds one project-list element per active project; each carries `core_question`, the
+map's frontmatter value exactly as written, or `null` when it sets none (`project list` and
+`project show` elements carry it too). `groups` arranges the same projects, by slug, under the
+core question they share: a short and a full link to one question group together, since the key is
+the question's vault path (or the link's raw target when it resolves to no note), and only the
+field counts, never a passing mention of the question in a map's body. Every project falls in
+exactly one group, groups follow the order of their first member, and a project with no question
+is a group of its own with `"parent": null`. MCP `get_orientation` carries `groups` in the same
+shape. `slots` is the active projects
 against the cap: `active` counts the maps with `status: active`, `counted` those holding a slot,
 which is the number the cap is checked against (today every active map holds one, so it equals
 `active`), `cap` is the configured [`max_active_projects`](configuration.md#keys), and

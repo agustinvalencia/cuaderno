@@ -332,6 +332,65 @@ async fn orientation_carries_slots_matching_list_projects() {
     assert_eq!(slots, decode_json(&listing)["slots"]);
 }
 
+#[tokio::test]
+async fn orientation_carries_groups() {
+    // Two maps answering one question read as one group under it, keyed
+    // by the question's path whether the link is short or full; a map
+    // with no question is a group of its own with a null parent
+    // (RFC 0006 §8.0).
+    use cdno_domain::frontmatter::Context;
+    let server = server_with(|v| {
+        let question = v
+            .create_question(
+                moment(2026, 5, 1, 9, 0),
+                QuestionDomain::Research,
+                "Does the surrogate generalise?",
+            )
+            .unwrap();
+        let full = question.as_path().with_extension("");
+        let full = full.to_str().unwrap();
+        let short = question.as_path().file_stem().unwrap().to_str().unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Hull", Context::Work, Some(full))
+            .unwrap();
+        v.create_project(moment(2026, 5, 1, 9, 0), "Apart", Context::Work, None)
+            .unwrap();
+        v.create_project(
+            moment(2026, 5, 1, 9, 0),
+            "Rigging",
+            Context::Work,
+            Some(short),
+        )
+        .unwrap();
+    });
+
+    let result = server
+        .get_orientation(Parameters(GetOrientationInput { energy: None }))
+        .await
+        .expect("get_orientation");
+    let value = decode_json(&result);
+
+    let slugs: Vec<&str> = value["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["apart", "hull", "rigging"]);
+    assert_eq!(
+        value["groups"],
+        serde_json::json!([
+            { "parent": null, "projects": ["apart"] },
+            {
+                "parent": {
+                    "kind": "question",
+                    "path": "questions/research/does-the-surrogate-generalise.md"
+                },
+                "projects": ["hull", "rigging"]
+            }
+        ])
+    );
+}
+
 // ---------------------------------------------------------------------
 // get_active_questions
 // ---------------------------------------------------------------------
