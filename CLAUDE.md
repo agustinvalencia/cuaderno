@@ -103,6 +103,14 @@ new file there rather than growing `mod.rs`.
   a transaction, with a 5s timeout rather than an unbounded hang.
 - **Index schema changes are append-only**: add an entry to `MIGRATIONS` in `cdno-core/src/index.rs`
   plus a file under `crates/cdno-core/migrations/`. Never edit a migration that has shipped.
+- **Method migrations follow the same rule** (`FILE_MIGRATIONS` in `cdno-domain/src/vault/migrate.rs`,
+  RFC 0006 §8.4): an append-only list keyed by target major version, a shipped entry never edited,
+  each step idempotent. The runner runs every step, its log line and the stamp in one transaction
+  under the lock, opened with `transaction_ungated()` (private to `migrate.rs`, so the runner is
+  the only code that can skip the gate), stamps `[vault] method_version` last through that
+  transaction with a `toml_edit` setter (never `save_config_raw`), and is CLI-only: never at
+  open, never over MCP. Steps never touch the journal or an append-only note, and the
+  readers accept every historical line shape for ever.
 - **Errors are values**: library crates use `thiserror` with layer-specific enums
   (`StoreError`/`IndexError` → `DomainError` → interface error), binaries use `anyhow`. Translate at
   the boundary; don't leak `anyhow` into a library.
@@ -184,6 +192,9 @@ prefix list, so a new marker belongs in both. A `during: [[<slug>]]` continuatio
 a `log`, `log note`, `append_to_log` or `note_to_daily` line while a focus is open (and
 `captured_during:` in an inbox item's frontmatter, which a triage-discard line copies whatever is in
 focus at discard time), names the project the thought arose during; it lives below the head, so the readers of heads never see it.
+RFC 0006 adds `vault migrated` with indented `was:` / `now:` lines (`was: unstamped (read as 1.0)`
+for a vault that recorded no version), written by the method-migration runner (`vault/migrate.rs`);
+it carries no wikilink and is not a focus marker, so it is not in `FOCUS_MARKER_PREFIXES`.
 Tracing a project's evolution is a search over the daily log — so never replace a mutable section
 without emitting its log entry, and never hand-write that entry in any other shape.
 

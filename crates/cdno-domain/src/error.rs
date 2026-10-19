@@ -354,13 +354,12 @@ pub enum DomainError {
     #[error("a custom template already exists at {path} — pass force to overwrite it")]
     TemplateAlreadyExists { path: String },
 
-    /// The vault records a newer major method version than this binary
-    /// implements, as re-read under the write lock (RFC 0006 §8.4). Writes
-    /// are refused; reads keep working.
-    #[error(
-        "this vault follows RLM {vault}, a newer major version than the RLM {binary} this cdno \
-         implements \u{2014} upgrade cdno to write to it; reads keep working"
-    )]
+    /// The vault records a newer method version than this binary implements.
+    /// From the write gate, always a newer major, as re-read under the write
+    /// lock (RFC 0006 §8.4): writes are refused and reads keep working. From
+    /// the migration runner, any newer version, minor included: a binary
+    /// never stamps a vault back to an older version.
+    #[error("{}", crate::error::method_version_ahead_message(*.vault, *.binary))]
     MethodVersionAhead {
         vault: cdno_core::config::MethodVersion,
         binary: cdno_core::config::MethodVersion,
@@ -380,6 +379,39 @@ pub enum DomainError {
         vault: Option<cdno_core::config::MethodVersion>,
         binary: cdno_core::config::MethodVersion,
     },
+
+    /// A file migration planned a write the runner never makes: a note
+    /// under `journal/`, a note of an append-only type, or the vault's own
+    /// `.cuaderno/` files (RFC 0006 §8.4). Refused before anything is staged,
+    /// so nothing is written.
+    #[error(
+        "file migration \"{step}\" planned a write to {path}, which a migration never touches \
+         ({reason}) \u{2014} nothing was written"
+    )]
+    MigrationTouchesProtectedPath {
+        step: String,
+        path: String,
+        reason: String,
+    },
+
+    /// `.cuaderno/config.toml` changed between the migration runner's first
+    /// read of it and the stamp: the config verbs write without the vault
+    /// lock, and stamping the older text would overwrite the edit. Nothing
+    /// was written.
+    #[error(
+        ".cuaderno/config.toml changed while the migration was being prepared \u{2014} \
+         nothing was written; run `cdno migrate` again"
+    )]
+    ConfigChangedDuringMigration,
+
+    /// The config with the method version stamped would not open (or could
+    /// not be edited), so the migration runner refuses to write it. Nothing
+    /// was written.
+    #[error(
+        "the stamped .cuaderno/config.toml would not open: {reason} \u{2014} nothing was \
+         written; fix the config and run `cdno migrate` again"
+    )]
+    MigrationStampInvalid { reason: String },
 
     #[error(transparent)]
     Validation(#[from] ValidationError),
@@ -422,6 +454,26 @@ pub(crate) fn describe_project_status(
         (ProjectStatus::Parked, _) => "parked".to_owned(),
         (closed_status, Some(date)) => format!("{} on {date}", closed_status.as_str()),
         (closed_status, None) => closed_status.as_str().to_owned(),
+    }
+}
+
+/// The message of [`DomainError::MethodVersionAhead`]: a newer major
+/// refuses writes, while a newer minor (reached only from the migration
+/// runner) refuses the migration and leaves writes and reads working.
+pub(crate) fn method_version_ahead_message(
+    vault: cdno_core::config::MethodVersion,
+    binary: cdno_core::config::MethodVersion,
+) -> String {
+    if vault.major > binary.major {
+        format!(
+            "this vault follows RLM {vault}, a newer major version than the RLM {binary} this \
+             cdno implements \u{2014} upgrade cdno to write to it; reads keep working"
+        )
+    } else {
+        format!(
+            "this vault follows RLM {vault}, a newer version than the RLM {binary} this cdno \
+             implements \u{2014} upgrade cdno to migrate it; writes and reads keep working"
+        )
     }
 }
 

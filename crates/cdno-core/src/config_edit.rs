@@ -41,7 +41,7 @@
 
 use toml_edit::{Array, DocumentMut, Item, Table, value};
 
-use crate::config::{CustomNoteType, FieldSpec, PlotKind};
+use crate::config::{CustomNoteType, FieldSpec, MethodVersion, PlotKind};
 use crate::error::ConfigEditError;
 
 /// Parse a config buffer into an editable document, mapping a syntax
@@ -429,6 +429,45 @@ pub fn remove_prompt_variable(content: &str, name: &str) -> Result<String, Confi
         .and_then(Item::as_table_mut);
     if let Some(prompt) = prompt {
         prompt.remove(name);
+    }
+    Ok(doc.to_string())
+}
+
+// --- `[vault] method_version` (RFC 0006 §8.4): the stamp the migration
+//     runner writes last, inside its own locked transaction. ---
+
+/// Insert or replace `[vault] method_version = "<version>"`, the method
+/// version stamp the migration runner writes (RFC 0006 §8.4).
+///
+/// Surgical like every writer here: every other key in `[vault]`, every
+/// other table, and every comment and blank line survive byte for byte. A
+/// present key keeps its place in the table and any comment around it, only
+/// its value changing; an absent key is appended to `[vault]`; an absent
+/// `[vault]` is created. A `vault` key that is not a table (an inline
+/// `vault = { ... }`, a scalar) is [`ConfigEditError::NotATable`] rather
+/// than a clobber.
+///
+/// No validation happens here, as with the rest of this module: the runner
+/// passes the candidate through `validate_config_str` before staging it.
+pub fn set_method_version(
+    content: &str,
+    version: MethodVersion,
+) -> Result<String, ConfigEditError> {
+    const KEY: &str = "method_version";
+    let mut doc = parse(content)?;
+    let vault = table_entry(doc.as_table_mut(), "vault", false)?;
+    let rendered = version.to_string();
+    match vault.get_mut(KEY).and_then(Item::as_value_mut) {
+        Some(existing) => {
+            // Replace the value but keep its decor, so a trailing
+            // `# comment` on the line and the spacing around `=` survive.
+            let decor = existing.decor().clone();
+            *existing = rendered.as_str().into();
+            *existing.decor_mut() = decor;
+        }
+        None => {
+            vault.insert(KEY, value(rendered.as_str()));
+        }
     }
     Ok(doc.to_string())
 }

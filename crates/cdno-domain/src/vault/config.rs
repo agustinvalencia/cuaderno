@@ -141,8 +141,12 @@ pub fn read_config_from(store: &dyn VaultStore) -> Result<ConfigDocument, Domain
 
 /// The validate-then-compare-and-swap-then-write core of a config save.
 ///
-/// The ONLY path that writes `.cuaderno/config.toml`, structured so a config
-/// that would not reopen can never reach the disk. Store-level for the same
+/// The path that writes `.cuaderno/config.toml` verbatim, structured so a
+/// config that would not reopen can never reach the disk. One other writer
+/// exists, and it holds the vault lock where this does not: the migration
+/// runner (`vault/migrate.rs`, RFC 0006 §8.4) stamps `[vault] method_version`
+/// through its transaction, with a `toml_edit` setter, after the same
+/// validation and a compare-and-swap of its own. Store-level for the same
 /// reason as [`read_config_from`]: fixing a broken config must not require a
 /// vault that opens. [`Vault::save_config_raw`] delegates here, so the
 /// desktop and the CLI cannot drift on the gate.

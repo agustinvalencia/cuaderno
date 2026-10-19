@@ -44,6 +44,7 @@ mod links;
 mod lint;
 mod log;
 mod method_status;
+mod migrate;
 mod monthly;
 mod monthly_context;
 mod normalise;
@@ -113,6 +114,10 @@ pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
 pub use method_status::MethodStatus;
+pub use migrate::{
+    FILE_MIGRATIONS, FileMigration, MigrationPlan, MigrationReport, MigrationStep,
+    VAULT_MIGRATED_PREFIX,
+};
 pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use monthly_context::MonthlyContext;
 pub use normalise::NormaliseReport;
@@ -235,7 +240,8 @@ impl Vault {
     /// The known raw writes bypass the gate as they bypass the lock, and
     /// must not be widened: `write_note_raw`, template eject and save
     /// (`save_template`, which `templates sync` writes through), and
-    /// `save_config_raw`.
+    /// `save_config_raw`. The migration runner takes the lock without the
+    /// gate, through its own `transaction_ungated` (`vault/migrate.rs`).
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
         let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
         let recorded = self.recorded_method_version()?;

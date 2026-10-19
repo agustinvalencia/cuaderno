@@ -4,10 +4,11 @@
 //! prove the string-in/string-out contract the Config form relies on — the
 //! save gate never sees a whole-document re-serialise.
 
-use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, PlotKind};
+use cdno_core::config::{CustomNoteType, FieldSpec, FieldType, MethodVersion, PlotKind};
 use cdno_core::config_edit::{
     remove_note_type, remove_prompt_variable, remove_schema_field, remove_variable,
-    set_metric_plot, set_note_type, set_prompt_variable, set_schema_field, set_variable,
+    set_method_version, set_metric_plot, set_note_type, set_prompt_variable, set_schema_field,
+    set_variable,
 };
 use cdno_core::error::ConfigEditError;
 
@@ -851,4 +852,73 @@ fn set_metric_plot_reports_a_parse_error_not_a_clobber() {
     let err = set_metric_plot(broken, "gym", "reps", PlotKind::Line)
         .expect_err("a broken buffer must not be silently rewritten");
     assert!(matches!(err, ConfigEditError::Parse(_)));
+}
+
+// --- `[vault] method_version` (RFC 0006 §8.4) ---
+
+#[test]
+fn set_method_version_inserts_under_vault_and_preserves_comments() {
+    let v1_0 = MethodVersion { major: 1, minor: 0 };
+    let v1_1 = MethodVersion { major: 1, minor: 1 };
+
+    // Absent key: appended after the last key of `[vault]`, before the next
+    // table; every comment, key and blank line elsewhere is byte-identical.
+    let unstamped = "# Vault configuration\n\
+                     [vault]\n\
+                     # the name shown in the UI\n\
+                     name = \"Probe\"\n\
+                     max_active_projects = 4 # four, not five\n\
+                     \n\
+                     # Paths the index skips.\n\
+                     ignore = [\"drafts/**\"]\n\
+                     \n\
+                     [focus]\n\
+                     carry_over_days = 2\n";
+    let inserted = set_method_version(unstamped, v1_0).unwrap();
+    assert_eq!(
+        inserted,
+        "# Vault configuration\n\
+         [vault]\n\
+         # the name shown in the UI\n\
+         name = \"Probe\"\n\
+         max_active_projects = 4 # four, not five\n\
+         \n\
+         # Paths the index skips.\n\
+         ignore = [\"drafts/**\"]\n\
+         method_version = \"1.0\"\n\
+         \n\
+         [focus]\n\
+         carry_over_days = 2\n"
+    );
+
+    // Present key: only the value changes; its comment above and the
+    // trailing comment on its line stay where they were.
+    let stamped = "[vault]\n\
+                   name = \"Probe\"\n\
+                   # written by cdno init, changed by cdno migrate\n\
+                   method_version = \"1.0\" # the method's, not cdno's\n\
+                   max_active_projects = 4\n";
+    assert_eq!(
+        set_method_version(stamped, v1_1).unwrap(),
+        "[vault]\n\
+         name = \"Probe\"\n\
+         # written by cdno init, changed by cdno migrate\n\
+         method_version = \"1.1\" # the method's, not cdno's\n\
+         max_active_projects = 4\n"
+    );
+
+    // Idempotent: setting the version a config already carries is a no-op.
+    assert_eq!(set_method_version(&inserted, v1_0).unwrap(), inserted);
+
+    // No `[vault]` at all (or no file): the table is created.
+    assert_eq!(
+        set_method_version("", v1_0).unwrap(),
+        "[vault]\nmethod_version = \"1.0\"\n"
+    );
+
+    // An inline `vault = { ... }` is refused rather than rewritten.
+    assert!(matches!(
+        set_method_version("vault = { name = \"x\" }\n", v1_0),
+        Err(ConfigEditError::NotATable(key)) if key == "vault"
+    ));
 }
