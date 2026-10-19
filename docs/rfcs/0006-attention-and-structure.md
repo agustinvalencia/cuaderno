@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft, amended after review — 2026-10-19 (four-seat review, three rounds, on PR #779: method theorist; the method's user; domain architecture and data model; surfaces, safety, tests and maintenance. All seats converged on the mechanism; §10 records what the maintainer settled and what remains). The proposal in §§7–8 was written after the review, from the amended diagnosis. |
+| **Status** | Accepted, amended after two review rounds — 2026-10-19 (four-seat review on PR #779: method theorist; the method's user; domain architecture and data model; surfaces, safety, tests and maintenance. Round one reviewed the diagnosis and converged on the mechanism; round two reviewed §§7–8 against the maintainer's three requirements, the method first and cdno implements it, nothing enters the vault the method has not defined, the method is versioned, and rewrote §7 sentence by sentence. No dispute remains between seats; §10 records the decisions). Implementation plan to follow, as RFC 0004 and 0005 had. |
 | **Tracked by** | PR #779 |
 | **Affects** | The published method (two new practices, one clarification, a versioning rule); `docs/design.md`; `cdno-core` (config: method version); `cdno-domain` (project lifecycle, the cap, the register, orientation, review contexts, a bundled note type, one migration framework); `cdno-cli` (`cdno project`, `cdno orient`, `cdno migrate`); `cdno-mcp` (three tools, DTO fields, tool descriptions); `examples/skills/` (and the review skills that live outside this repository); `docs-site` |
 | **Related** | RFC 0004 §9 Q1 (the parked-map write rule this RFC reverses), #611 (parked milestones and the register), RFC 0002 and RFC 0003 (custom and bundled note types, the route the outcome type takes), RFC 0005 (focus; `during:`), `max_active_projects` in `.cuaderno/config.toml` |
@@ -14,9 +14,15 @@
 > RFC 0004 recorded; the four jobs are two variables, one invariant and one missing type; several
 > §4 facts) and converged on a mechanism. The maintainer then redirected the proposal: the
 > solution is stated first at the level of the method, so that someone running the Research
-> Logbook Method on paper or in any tool can follow it, and cdno implements that text. §§1–6 are
-> the amended diagnosis; §7 is the method; §8 is cdno; §9 the staging; §10 the decisions; §11 the
-> verification. The record is on the PR.
+> Logbook Method on paper or in any tool can follow it, and cdno implements that text. A second
+> round reviewed §§7–8 against that bar and the maintainer's two further requirements (nothing
+> enters the vault the method has not defined; the method is versioned): it removed every tool
+> word from §7, completed practices 8 and 9 to the standard of the published seven, found that
+> the published rhythm has no monthly loop and added one, split practice 9 into RLM 1.2 with RFC
+> 0007, and corrected three §8 mechanisms that would have shipped wrong (an unindexed parent
+> link, a strict `held_by` parser, a `held_by: me` escape). §§1–6 are the amended diagnosis; §7
+> is the method; §8 is cdno; §9 the staging; §10 the decisions; §11 the verification. The record
+> is on the PR.
 
 > **Authorship.** Drafted by Claude (Anthropic) from design conversations with the maintainer in
 > October 2026 and from the four-seat review. The observations in §2 are invented specimens that
@@ -379,108 +385,157 @@ changes who holds it (the weekly review notices the pattern and asks).
 **P7. Keep the closed-enum pressure.** Two new distinctions, each a practice of the method with
 its own specimens and its own page or line, is the budget. Neither is a lifecycle variant.
 
-## 7. The method: Research Logbook Method 1.1
+## 7. The method: Research Logbook Method 1.1 and 1.2
 
 This section is written to be read without the tool. It is the text proposed for the published
-method and for `docs/design.md`. The seven practices as published are RLM 1.0; the three
-changes below are additive, so every 1.0 vault is a valid 1.1 vault.
+method and for `docs/design.md`, and it uses no tool vocabulary: no commands, no fields, no
+file names. The seven practices as published are RLM 1.0. §7.1, §7.2 and §7.4 are **RLM 1.1**;
+§7.3 is **RLM 1.2**, shipped with RFC 0007. Both are additive, so every 1.0 logbook is a valid
+1.1 and 1.2 logbook. The second round of review rewrote this section sentence by sentence; the
+record is on PR #779.
 
 ### 7.1 Parking, clarified
 
 A parked project map is a complete map. Parking changes two things only: the project does not
 count against the five, and it is read at the monthly review rather than daily. Everything else
 a map does, it keeps. You may write next actions on a parked map, update its state, note a
-milestone, note who you are waiting on. A hard-dated milestone on a parked map is still a
-promise and stays in the commitments register. The one thing a parked map does not take is
-your focus: being in the middle of something is the strongest sign you are moving it yourself,
-so a map you start work on is a map that counts.
+milestone, note who you are waiting on. A hard-dated milestone on a parked map, or a dated
+action on it, is still a promise and stays in the commitments register.
 
-This reverses RFC 0004 §9 Q1, which froze parked maps to stop stale deadlines nagging. The nag
-problem is solved the other way round: a parked map's dates are live, and a stale one is
-dropped, with its log line, rather than silenced by the lifecycle.
+A map you start work on is a map that counts: being in the middle of something is the
+strongest sign you are moving it yourself. If you find yourself working on a parked map, or
+picking up work you had set down on it, it is not parked; activate it, parking another if you
+must.
+
+On adopting this clarification, read the parked maps once: every stale date on them is
+dropped, with its entry in the log, or re-dated.
 
 ### 7.2 Practice 8: handing off
 
-A project map already answers: where was I, what do I believe and what would change my mind,
-what are my next actions, what is time-sensitive, where is everything. It gains one more
-question: **whose move is it?**
+A project map answers: where was I, what do I believe and what would change my mind, what are
+my next actions, what is time-sensitive, where is everything. It gains one more question:
+**whose move is it?**
 
 A project you have handed to someone else carries their name at the top of its map:
-`held by: the harbour office`, `held by: a colleague`, `held by: an agent`. A map with no name
-on it is yours. Two rules follow.
+*held by: the harbour office*, *held by: a colleague*, *held by: the contractor who has the
+hull*. The holder is whoever you could write in Waiting On. A map with no name on it is yours;
+a map that names you is yours. The page stays where it is; only the name changes.
 
-- **The cap counts the maps that are yours.** *A project counts unless the map says who else is
-  moving it.* A handed-off project is still open: it keeps its map, keeps logging, keeps its
-  place in views and its dates in the register. It is not a sixth slot; it is a project that is
-  not a unit of your attention this week.
-- **The reviews ask a handed-off project a different question.** Yours: did it move? Handed
-  off: what came back, and what is waiting on your decision? That is the whole difference
-  between a thing you are driving and a thing you are supervising.
+Why: if a project someone else is moving holds one of your five, the cap counts their attention
+as yours, and you will either raise the number or stop writing such work down. Both are worse
+than a name on a page.
 
-Handing off and taking back are entries in the chronological log like any other change to a
-map: `handed [[boat-registration]] to the harbour office`; `took back [[boat-registration]]`.
-Taking back is subject to the cap exactly as activating a parked project is.
+**The count.** Count the maps that are neither parked nor handed off. A handed-off project is
+still open: it keeps its map, keeps logging, keeps its dates in the register, and is still read
+at the weekly review, and at the daily orientation when something has come back. It is not a
+sixth slot; it is a project that is not a unit of your attention this week.
 
-Two guards. If you cannot name who has it, it is yours. And handing off is never the answer to
-"the cap is full": a project you are about to work on yourself is yours whatever its map says,
-and the weekly review will notice a map you keep starting work on that claims someone else
-holds it.
+**The review.** Yours: did it move? Handed off: what came back, and what is waiting on your
+decision? The second is asked in a week when the map changed.
+
+**The log.** Handing off and taking back are dated entries in the chronological log naming the
+project and the holder; taking back strikes the name. Taking back a parked map only strikes
+the name; to work on it, activate it as well, as its own entry.
+
+**The cap** is checked whenever a map that did not count begins to count: activating a map
+nobody else holds, or taking back an active one.
+
+**Three guards.** If you cannot name who has it, it is yours. A handed-off map says what you
+are waiting for; a name over an empty Waiting On is a parked map wearing a name, and the weekly
+review parks it or takes it back. And handing off is never the answer to "the cap is full":
+doing a thing on a handed-off map does not make it yours, doing most of its work does; at the
+weekly review, a handed-off map you worked on yourself on two or more days is taken back, or
+its name changed to who really has it. You do not hand off a map while you are in the middle
+of its work.
+
+**The asymmetry.** Parking is your decision about now, so starting work on a parked map undoes
+it at once; a holder is a fact about someone else, which one afternoon's work on the map does
+not change.
 
 The map already has a Waiting On section for single items. Handing off is Waiting On lifted to
 the whole project, which is why the method already half-had it. Its ancestry is GTD's Waiting
 For, kept per project rather than as a separate list.
 
-### 7.3 Practice 9: outcomes
+### 7.3 Practice 9: outcomes (RLM 1.2)
 
 A new kind of page, beside questions, above projects. A **question** is open-ended and may turn
 out to be the wrong question; a **stewardship** never ends; an **outcome** is bounded and long:
 a result you will reach through a sequence of projects, each of which ends, and which is
 reached when the last of them does. Restoring a boat is an outcome; the hull, the rigging and
-the registration are its projects, one or two at a time. Knuth's multi-volume work is the
-exemplar in the spirit of the other seven practices: the volumes are projects; the work is the
-outcome.
+the registration are its projects, one or two at a time.
+
+Why: without the word, people build the layer badly: one map that cannot hold three Current
+States, or three maps that nothing connects, each holding a slot as if it were a separate
+undertaking.
+
+The exemplar, in the spirit of the other practices, is Murray and the Oxford English
+Dictionary: seventy years, a sequence of fascicles each of which was finished and published,
+and an undertaking that was reached. Knuth's multi-volume work is the warning sentence beside
+it: a sequence of projects whose outcome is never written down tends not to end.
 
 An outcome page is one sheet: what done looks like; the projects it has had and has; the one
-that comes next. A project writes the outcome it belongs to at the top of its map, the way it
-already writes its core question; a project can exist without an outcome, as it can without a
-question, and a project with a question above it needs no outcome as well.
+that comes next. Make the outcome page when the second project appears, not before. The
+outcome a project belongs to is written at the top of its map, the way it already writes its
+core question, and a change of it is an entry in the log; the line on the child is the fact,
+and the list of projects on the outcome's sheet is kept by hand as a convenience. A project
+may carry a question, an outcome, both or neither: the question says what you are trying to
+learn, the outcome what you are trying to deliver.
 
 Outcomes hold no slot and have no cap, like questions. They are read at the monthly review:
-which front moved, what is the next project under it, and is this still wanted? The daily
-orientation shows a project under its outcome, so three maps of one undertaking read as one
-line with three fronts rather than as three unrelated things.
+which front moved, and what is next; and, in a month when no front moved, is this still
+wanted? The daily orientation shows a project under its outcome, or under its question, so
+three maps of one undertaking read as one line with three fronts rather than as three
+unrelated things.
 
-What the method does *not* do: it does not count outcomes, does not limit fronts per outcome,
-and does not make an outcome a folder that contains its projects. The parent is a link from the
-child, as with questions, so the projects stay where they are.
+An outcome is reached when its last project completes; the date goes on its sheet and in the
+log. An outcome that will not be reached is given up the same way. Neither is a failure state.
 
-### 7.4 Versioning the method
+What an outcome is not. Completing or dropping a project is how it closes; an outcome is what
+several projects reach. An outcome is not a project with milestones: split when the parts
+would have different states, tempos or collaborators. It is not a plan: it carries no dates of
+its own, because dates are promises and promises reach the register through the projects that
+make them. It is not a folder: the projects stay where they are, and the parent is a line on
+the child.
 
-The seven practices as published are **RLM 1.0**. A change that adds a page type or an optional
-line on an existing page, and changes no meaning of an existing page, is a **minor** version;
-this RFC is **1.1**, since every 1.0 vault is a valid 1.1 vault with no outcomes and no
-hand-offs. A change that alters what an existing page means, moves things, or makes a line
-required is a **major** version and ships with a migration. A vault records the method version
-it follows, and the published method keeps a changelog of practices, so a vault and the method
-can be read against each other.
+### 7.4 The rhythm, and versioning the method
+
+**The rhythm gains a monthly loop.** The published rhythm is daily, weekly and occasional;
+practice 3 says questions are "reviewed monthly" in passing, and §7.1 and §7.3 lean on that
+loop, so 1.1 states it: *Monthly — the parked maps ("is it time?"), the questions ("still the
+right questions?"), and the outcomes ("which front moved, what is next?").*
+
+**Versioning.** The version tracks the method's text, not any tool. A change is **minor** if
+every page of an existing logbook can be read under it without being rewritten, moved, or
+given a line it lacks; a minor version may ask for a one-time read-through of existing pages.
+A change is **major** if any page must be rewritten or moved, and it comes with instructions
+for doing so (in a tool, a migration). A logbook records on its first page, dated, the version
+it follows and the day it moved to a newer one; the published method keeps a changelog of
+practices. RFC 0006 is 1.1 (parking clarified, practice 8, the monthly loop); practice 9 is
+1.2. On adopting 1.1 a paper user does two things: a dated line on the first page, and one
+pass over the parked pages' dates.
 
 ## 8. What cdno does
 
-Each mechanism is justified by a sentence of §7 and costed from the review. Sizes: S one PR; M
-an implementation plan of 5–10 tasks; L RFC 0004 scale (~20 tasks).
+Each mechanism is justified by a sentence of §7 and costed from the two review rounds. Sizes:
+S one PR; M an implementation plan of 5–10 tasks; L RFC 0004 scale (~20 tasks).
 
 ### 8.0 Groundwork (no behaviour change)
 
 - Correct `docs/design.md` § project conventions and the docs-site business-rules page: creation
   at the cap creates a parked map; the cap is checked on activation.
+- Reword the two `design.md` phrases that use "outcome" for closures (`design.md:349`) and the
+  agent-facing sentence "if you are delivering an outcome … that is a project" in the server
+  instructions and `create_portfolio`'s description, so the word is free for practice 9.
 - Factor the cap count into one `slot_usage()` in `cdno-domain` and hoist the weekly and monthly
   context composition from `cdno-mcp` into the domain, so the fields §8.5 adds have one home.
 - `slots` on `get_orientation`, matching `list_projects`; the create-project skill stops
   hard-coding "5".
 - Move the cap rule out of the server instructions and into the descriptions of
   `create_project`, `park_project`, `activate_project` and `add_action`, since the instructions
-  are cut before it.
+  are cut before it; the surfaces seat's drafts on PR #779 are the starting text.
 - Bring `weekly-review` into `examples/skills/` so §8.5 and §11 can be tested here.
+- Group `orientation_context` by `core_question` where one is set (§7.3's "or under its
+  question"), as the rehearsal for the outcome grouping.
 
 **S.** Lands first, before anything below.
 
@@ -488,166 +543,225 @@ an implementation plan of 5–10 tasks; L RFC 0004 scale (~20 tasks).
 
 - A new `resolve_open_project` in `crates/cdno-domain/src/vault/projects/mod.rs` accepting an
   active map at `projects/` or a parked map at `_parked/` (folder and status agreeing, as
-  `resolve_closable_project` already does). Callers switched: `add_action`, `complete_action`,
-  `drop_action`, `promote_action`, `list_actions`, the milestone and waiting-on verbs,
-  `update_project_state`, `set_core_question`. **Not** switched: `start_action`,
-  `switch_action`, `start_unplanned_action` and their `switch_` forms, which keep
-  `resolve_active_project`; `pause` and `resume` resolve nothing against the map today.
+  `resolve_closable_project` already does). Callers switched: `add_action`,
+  `add_action_with_note` (`vault/actions.rs`), `complete_action`, `drop_action`,
+  `promote_action`, `list_actions`, the milestone and waiting-on verbs, `update_project_state`,
+  `set_core_question`. **Refused on a parked map**, keeping `resolve_active_project`:
+  `start_action`, `switch_action`, `start_unplanned_action`, their `switch_` forms, and
+  `resume_action` (`projects/actions.rs:438`), which today can reopen a focus on a since-parked
+  map and is "picking up work you had set down" in §7.1's words.
 - The register (`commitments.rs:708, 822`) reads sources 1 and 4 from active *and parked* maps;
-  closed maps stay out. `add_milestone`'s write result says whether the date is live.
+  closed maps stay out. The "date is live" flag on `add_milestone` from the first draft is
+  dropped: once every open map's dates are live it restates `is_hard`.
 - `ProjectNotActive` keeps its name; its message and the MCP `project_not_active` rejection are
-  reworded to name the three focus verbs as the only ones that need an active map. The CLI
-  project pickers list parked maps for the switched verbs.
+  reworded to name the focus verbs as the only ones that need an active map. The CLI project
+  pickers list parked maps for the switched verbs.
+- **The one-time read-through** (§7.1's last sentence, §7.4's "one pass"): `cdno migrate` and
+  `cdno lint` report, once, the parked maps carrying hard milestones that are now live, with no
+  count in the first-run notice on an unstamped vault and never relayed by the MCP agent every
+  session; the person drops or re-dates each.
 - RFC 0004 §9 Q1 is amended in place with one sentence saying why the stale-nag problem is now
   solved by live dates plus `drop_milestone` rather than by the freeze. #611 is cited.
 - No migration, no folder, no enum change, no new log line. About ten domain tests that assert
   `ProjectNotActive` on a parked map flip to positive tests; one positive test per switched
-  verb; `start_action` on a parked map still refused; a parked hard milestone appears in
-  `commitments()`.
+  verb; `start_action` and `resume_action` on a parked map still refused; a parked hard
+  milestone appears in `commitments()`.
 
 **S–M.**
 
 ### 8.2 Handing off (§7.2)
 
-- **Field.** `held_by: <name>` on the project map, optional; absent means the maintainer.
-  Parsed into `ProjectFrontmatter` as `Option<String>`; an empty string is refused. The key is
-  reserved from `set_frontmatter` through `is_reserved_key`
+- **Field.** `held_by: <name>` on the project map, optional; absent means the maintainer. Read
+  **leniently** into `ProjectFrontmatter` as `Option<String>`: a non-string value (an unquoted
+  `[[x]]`, a number) reads as absent and is a lint **Error** (invalid field; the fix is to quote
+  it); the maintainer's own sentinels (`me`, `I`, `myself`, any case) and placeholders (`tbd`,
+  `someone`) read as absent, so the map counts, and are a lint **Warning** (delete the line, or
+  name the holder). One deny-list function serves the verb's refusals, the counting predicate
+  and lint. The key is reserved from `set_frontmatter` through `is_reserved_key`
   (`crates/cdno-domain/src/vault/set_frontmatter.rs:240`) only, as `closed` is, and **never**
   through `hard_reserved_fields`: `validate_reserved_schema_fields`
   (`crates/cdno-domain/src/type_registry.rs:253–264`) refuses to open a vault whose config
-  declares a hard-reserved key, so a vault that ran the zero-code trial (§10, D6) would fail at
-  `Vault::new`. A probe test pins this: a vault carrying `[schemas.project.fields.held_by]` opens
-  on the shipped binary and `set_frontmatter` on the key returns `reserved_schema_field`.
+  declares a hard-reserved key, so a vault that ran the zero-code trial (§10) would fail at
+  `Vault::new`. A probe test pins this.
 - **Verb.** One operation, new file `crates/cdno-domain/src/vault/projects/holder.rs`:
-  `hand_off(slug, holder)` and `take_back(slug)` as one verb with an optional holder (omitted
-  means take back). Take-back is cap-checked like `activate`; hand-off is not. The verb refuses
-  the maintainer's own sentinels (`me`, `I`, `myself`, any case) with a message saying to omit
-  the holder to take it back, so an agent never writes `held_by: me` and silently frees a slot.
-  Log line, in the existing mutable-field family: `holder on [[slug]]` with indented `was:` /
-  `now:` (`was: —` for the maintainer). No lint prefix change: `FOCUS_MARKER_PREFIXES`
-  (`lint.rs:619`) is the focus family only.
+  `hand_off(slug, holder)` and `take_back(slug)` as one verb with an explicit `take_back`
+  flag, never "holder omitted". It always writes the value quoted. It refuses the sentinels
+  and placeholders (`empty_field` / a message saying to take back instead), refuses a hand-off
+  while an action on that map is in focus (`project_in_focus`; one `current_focus` call, as the
+  start verbs make: "you do not hand off a map while you are in the middle of its work"), and
+  works on active and parked maps alike (a parked map may carry a holder; take-back on a parked
+  map only clears the name, it does not activate). Log line, in the existing mutable-field
+  family: `holder on [[slug]]` with indented `was:` / `now:` (`(mine)` when absent). No lint
+  prefix change: `FOCUS_MARKER_PREFIXES` (`lint.rs:619`) is the focus family only.
 - **Count.** `counts_toward_cap(&self) -> bool` on the project summary: `status == Active &&
-  held_by.is_none()`. `slot_usage()` counts it; `create_project`, `activate`, take-back, and the
-  stuck-project scan in `context.rs` use it. `active_projects()` keeps its meaning (open and
-  shown). Starting a focus never changes `held_by` (P6); the weekly context exposes "focus
-  started on a handed-off map N times this week" so the skill can ask.
-- **Surfaces.** MCP: one tool `hand_off_project` (holder optional), `held_by` (nullable) and
-  `counts` on every project summary DTO, `slots` reporting `counted` and `cap`; rejection
-  `project_cap_reached` on take-back; descriptions of `create_project`, `activate_project`,
-  `park_project`, `list_projects` and `get_orientation` rewritten, and the catalogue pin +1.
-  Agents branch on `counts` and never interpret the name. The `project_cap_reached` rejection
-  and every description never name handing off as a remedy. CLI: `cdno project hand-off --slug
-  … [--to …]` under flags-and-prompts; `list` and `show` print the holder. Lint: a Warning when
-  counted maps exceed the cap.
+  held_by.is_none()` (after lenient reading). `slot_usage()` counts it. One cap rule, §7.2's:
+  a verb is cap-checked when the map counts afterwards and did not before, so `activate` on a
+  map nobody holds and `take_back` on an active map check; `take_back` on a parked map does not.
+  `active_projects()` keeps its meaning (open and shown). The stuck-project scan stays on active
+  maps and carries `held_by`, so a handed-off map unchanged for a fortnight gets "chase, or
+  take back?". Starting a focus never changes `held_by` (P6); the weekly context exposes the
+  number of days this week with a focus started on a handed-off map, as evidence only; the
+  person judges §7.2's two-days rule.
+- **Surfaces.** MCP: one tool `hand_off_project` (holder, or `take_back: true`); `held_by`
+  (nullable), `counts` and `waiting_on_empty` on every open-project summary DTO; `slots`
+  gains `counted` beside `active`; rejections `project_cap_reached` (listing counted maps only),
+  `project_in_focus`, `empty_field`; descriptions of `create_project` (takes no holder),
+  `activate_project`, `park_project`, `list_projects` and `get_orientation` rewritten; the
+  catalogue pin +1 and the focus-write table +1. Agents branch on `counts` and never interpret
+  the name. No rejection and no description names handing off as a remedy. CLI:
+  `cdno project hand-off --slug … --to …` and `cdno project take-back --slug …` under
+  flags-and-prompts; `list` and `show` print the holder. Lint: a Warning when counted maps
+  exceed the cap, plus the `held_by` rows above.
 - **Compatibility.** No migration: `active_projects()` already parses every map's frontmatter.
   A map with an unknown optional key still parses on an older binary and is counted as before
-  (pinned by a version-skew test). Rollback is deleting the field.
+  (pinned by a version-skew test, which cannot cover a remote server one release behind; that
+  case is the read-once config in §8.4). Rollback is deleting the field.
 
-**M** (6–8 tasks).
+**M** (about 8 tasks).
 
-### 8.3 Outcomes (§7.3)
+### 8.3 Outcomes (§7.3; RFC 0007, RLM 1.2)
 
-- **Rehearsal first (5.8).** `orientation_context` groups active projects by `core_question`
-  where one is set; the daily-orientation skill renders the group as one line with its fronts.
-  1–2 tasks, lands with 8.0.
 - **Type.** `outcome` ships as a bundled custom type (RFC 0003 route; `BUNDLED_NOTE_TYPE_NAMES`
   gains one name), folder `outcomes/`, template with `## What done looks like`, `## Projects`
-  (rendered from backlinks), `## Next`. Mutable, refined in place like a concept; `revise_note`
-  applies. No lifecycle in this cut: an outcome is retired by hand, and if it earns a lifecycle
-  it is promoted to a built-in in a later RFC with the RFC 0004 closure shape.
-- **Link.** `outcome: <slug>` on the project map, mirroring `core_question`, set by a dedicated
-  verb modelled on `set_core_question` (`projects/core_question.rs`) that logs
-  `outcome on [[slug]]` with `was:`/`now:` and inserts the key when absent. Not the generic
-  setter: whether an agent could write it would depend on each vault's `settable`, strict-exists
-  fails on maps that predate the key, and the log line would fall outside the fixed family.
-  Children by a backlink query shaped like `question_backlinks`. `create_project --outcome`.
+  (hand-written, as §7.3 says; computed only in views), `## Next`, and a `reached:` /
+  `given_up:` date in frontmatter written by its own verb (§7.3's end), logged as
+  `outcome reached [[slug]] — <title>` / `outcome given up [[slug]] — <title>` in the
+  `build_created_line` family. Mutable, refined in place; `revise_note` applies.
+- **Link.** `outcome: [[outcomes/<slug>]]` on the project map, stored **as a wikilink** so the
+  index records it (a bare slug is never indexed, and the first draft's "children by
+  backlink" would have returned nothing). Children by a **typed** scan of the field from the
+  index, not by untyped backlinks (a passing mention is not a child). Set by a dedicated verb
+  modelled on `set_core_question` (`projects/core_question.rs`) that logs `outcome on [[slug]]`
+  with `was:`/`now:` and inserts the key when absent; not the generic setter, for the reasons
+  the first round gave. `create_project --outcome`. `outcome` is reserved from
+  `set_frontmatter` like `core_question`.
+- **Closure field.** `ClosedProjectEntry.outcome` (`projects/closed.rs:27, 67`) is renamed
+  `closed_as` in the domain; the wire field `ClosedProjectDto.outcome` (`dto.rs:576`) stays;
+  the parent link goes only on open-project DTOs. If the wire is ever renamed, the new field is
+  added beside the old for one release.
 - **Views.** `orientation_context` groups by `outcome` as it does by `core_question`; the
   monthly context lists outcomes with their open and closed fronts; `get_project_context`
-  carries the outcome. One MCP tool (`set_project_outcome`), one CLI subcommand, catalogue pin
-  +1.
+  carries the outcome. One MCP tool (`set_project_outcome`), one for reaching or giving up, one
+  CLI subcommand each, catalogue pins +2.
 - No migration, no `paths.rs` constant beyond the bundled name, no exhaustive match.
 
-**S–M** (about 7 tasks). Ships as its own RFC, 0007, so that 0006 is not blocked on it (§9).
+**M** (about 9 tasks). Its own RFC, 0007, with §7.3 as its method text.
 
 ### 8.4 Method version and migrations (§7.4)
 
-- `method_version = "1.1"` in `.cuaderno/config.toml`, written by `cdno init`; a vault without
-  the key is read as 1.0. `cdno` warns, once per start, on a vault whose version is newer than
-  it understands, and `cdno lint` reports it.
-- `cdno migrate`: an ordered, append-only list of file migrations in `cdno-domain`, each
-  idempotent, each logging one line (`vault migrated 1.0 → 1.1`) to the daily log, with
-  `--dry-run`. The list is empty for 1.1; the mechanism exists before it is needed, as the
-  index migrations do. A migration runs inside `VaultTransaction` and under the write lock.
+- `method_version = "1.1"` under `[vault]` in `.cuaderno/config.toml`, written by `cdno init`;
+  a vault without the key reads as 1.0; older binaries ignore the key (the config has no
+  `deny_unknown_fields`), so the newer-version warning works from 1.1 onward. The method
+  version is separate from the crate version.
+- The gate lives in `Vault::transaction()` and re-reads the version from disk under the write
+  lock, so the remote server, which reads config once at start (`bootstrap.rs:80`), still sees a
+  change. A newer **minor** version warns once per start and in `cdno lint`; a newer **major**
+  version refuses writes.
+- `cdno migrate`: an ordered, append-only list of file migrations in `cdno-domain`, keyed by
+  target major version, never touching journal notes, each idempotent, each running in one
+  `VaultTransaction` under the lock. The **runner** writes the stamp last, through the
+  transaction (`toml_edit`, never `save_config_raw`), and logs `method version on [[vault]]`
+  with `was:`/`now:`; so the list is empty for 1.1 and existing vaults are still stamped.
+  CLI-only, never run at open; `--dry-run` prints the steps and the §8.1 read-through list.
 
 **S** (2–3 tasks), lands with 8.0.
 
-### 8.5 Reviews (§7.1–7.3, P5)
+### 8.5 Reviews (§7.1–7.4, P5)
 
-The weekly and monthly contexts expose, per project: `held_by`, `counts`, `outcome`, and the
-focus-on-handed-off count. The skills branch on them: mine, "did it move?"; handed off, "what
-came back, what needs your decision?" (only when the map's state or Waiting On changed since
-last week); parked, by title, monthly, "is it time?"; outcome, monthly, "which front moved,
-what is next, still wanted?". Domain: fields only. Skills: `daily-orientation` and
-`weekly-review` in this repo; the maintainer's other skills follow.
+The weekly and monthly contexts expose, per open project: `held_by`, `counts`,
+`waiting_on_empty`, `outcome` (0007), and the focus-on-handed-off day count. The skills
+branch on them: mine, "did it move?"; handed off, "what came back, what needs your decision?",
+only when the map changed since last week; parked, by title, monthly, "is it time?"; outcome,
+monthly, "which front moved, what is next?", and "still wanted?" only in a month when no front
+moved. Domain: fields only. Skills: `daily-orientation` and `weekly-review` in this repo; the
+maintainer's other skills follow.
 
 **S–M**, dependent on 8.2 and 8.3.
 
 ## 9. Staging and split
 
-Two RFCs, as all four seats recommended, so the cap repair is not blocked on the outcome type:
+Two RFCs, as all four seats recommended, so the cap repair is not blocked on the outcome type,
+and two method versions to match:
 
-- **RFC 0006** (this one): 8.0 groundwork, 8.1 parked writes with the register, 8.2 handing off,
-  8.4 method version, 8.5 review fields, and the `core_question` grouping rehearsal from 8.3.
-  Order: 8.0 and 8.4 → 8.1 → 8.2 → 8.5. About 12 tasks in domain and core, 16–18 with surfaces.
-- **RFC 0007**: 8.3 outcomes, with the method text of §7.3 as its §1. About 7 tasks.
+- **RFC 0006, RLM 1.1**: 8.0 groundwork (with the `core_question` grouping), 8.4 method version,
+  8.1 parked writes with the register and the read-through, 8.2 handing off, 8.5 review fields.
+  Order: 8.0 and 8.4 → 8.1 → 8.2 → 8.5. The domain seat's recount: about 24 tasks, RFC 0004's
+  size.
+- **RFC 0007, RLM 1.2**: 8.3 outcomes, with §7.3 as its §1. About 9 tasks.
 
-Together roughly RFC 0004's size. Nothing needs an index migration or a file migration.
+Together roughly 1.5× RFC 0004. Nothing needs an index migration or a file migration.
 
 ## 10. Decisions
 
-Settled by the review and the maintainer:
+Settled by the two review rounds and the maintainer:
 
 - **The reading of the problem** (§3): accepted, in the restated form (two variables, one
   invariant, one missing level, plus the register).
-- **The unit the cap counts**: *a map counts unless I have written down who else is moving it.*
-- **Who holds it**: declared, not derived (derivation from Next Actions and Waiting On fails on
-  the mixed case and on the agent case); stored as a field orthogonal to `status`, never a
-  lifecycle variant; two values, with "not yet started" being parked-with-writes.
-- **The parent**: a practice of the method, named **outcome**; in cdno a bundled custom type
-  and a typed link on the child, not a `## Links` convention and not a built-in yet.
-- **Handing off is a practice in its own right**, not a clause under project maps, because it
-  is the one that changes what the cap means.
-- **Parking keeps every plan-changing write**; focus starts stay refused; parked hard dates
-  return to the register in the same change; RFC 0004 Q1 is amended in writing.
-- **Field names**: `held_by` and `outcome`.
-- **Versioning**: RLM 1.0 is the seven practices; this is 1.1; minor is additive, major ships a
-  migration; the vault records its version.
+- **The method comes first; cdno implements it.** Every mechanism in §8 traces to a sentence
+  of §7, and §7 uses no tool vocabulary. The method text prints no log-line syntax; the
+  `was:`/`now:` family is cdno's.
+- **The unit the cap counts**: *a map counts unless I have written down who else is moving
+  it*; in the method's words, count the maps that are neither parked nor handed off.
+- **Who holds it**: declared, not derived; stored as a field orthogonal to `status`, never a
+  lifecycle variant; two values (a parked map may also carry a holder). "The holder is whoever
+  you could write in Waiting On"; a map that names you is yours.
+- **Handing off is practice 8 in its own right**, because it changes what the cap means.
+- **The parent is practice 9, named outcome**, with Murray and the OED as the exemplar and
+  Knuth as the warning sentence; a project may carry a question, an outcome, both or neither;
+  made when the second project appears. In cdno a bundled custom type and a typed wikilink on
+  the child.
+- **Parking keeps every plan-changing write**; focus starts, switches and resumes stay refused;
+  parked hard dates return to the register in the same change, with a one-time read-through;
+  RFC 0004 Q1 is amended in writing.
+- **Take-back does not activate a parked map**: two acts, two entries; the cap is checked
+  whenever a map that did not count begins to count.
+- **The monthly review enters the published rhythm** in 1.1.
+- **Field names**: `held_by` and `outcome`; the closure field becomes `closed_as` in the domain
+  only.
+- **Versioning**: 1.0 is the seven practices; 0006 is 1.1 and 0007 is 1.2; the minor/major
+  test is on pages; the runner stamps; existing vaults are stamped by `cdno migrate`.
 - **The diagnostic**: run by hand on the current active set, under the settled sentence, before
-  implementation starts, and again after 8.1 ships; never a `cdno` command. The RFC's own reading
-  of the result stands: if one map stops counting, the practice earns its place; if three, the
-  cap is too low and no practice would hide it.
+  implementation starts (the zero-code trial: a `held_by` schema block in config, which §8.2's
+  reservation must not break), and again after 8.1 ships; never a `cdno` command. If one map
+  stops counting, the practice earns its place; if three, the cap is too low and no practice
+  would hide it.
 
 Open, for the implementation plan rather than this RFC:
 
-- Whether `list_actions` on a parked map is switched with the other verbs (the seats say yes).
 - The exact wording of the review questions in the skills, and the threshold for "changed since
   last week" on a handed-off map.
-- Whether the `core_question` grouping rehearsal ships in 0006 or waits for 0007.
+- The placeholder list for `held_by` (`tbd`, `someone`, `?`, …) and its documentation.
+- Whether `list_actions` on a parked map is switched with the other verbs (the seats say yes).
 
 ## 11. Verification, in advance
 
-Observable from the tool where the surfaces seat could make it so, by a human otherwise:
+Each line names its test target, or says it is a human check:
 
-- The user keeps no list of undertakings outside the vault for want of a slot (O4 → zero; human).
+- The user keeps no list of undertakings outside the vault for want of a slot (O4 → zero;
+  human).
 - `max_active_projects` is at its default, committed, and the same on every surface; `cdno lint`
-  warns when counted maps exceed it (O5).
-- No next action lives in a daily note because its map refused it; one positive test per
-  plan-changing verb on a parked map, and `start_action` on one still refused (O3, O7).
-- A multi-map undertaking appears as one line with its fronts on the orientation screen; pinned
-  on `orientation_context` for `core_question` in 0006 and `outcome` in 0007 (O2).
+  warns when counted maps exceed it (`lint_tests.rs`) (O5).
+- One positive test per plan-changing verb on a parked map; `start_action` and `resume_action`
+  on one still `project_not_active` (`actions_tests.rs`, `projects_tests.rs`); a parked hard
+  milestone appears in `commitments()` (`commitments_tests.rs`) (O3, O7).
+- `held_by`: the reservation probe (a vault carrying `[schemas.project.fields.held_by]` opens;
+  `set_frontmatter` on the key returns `reserved_schema_field`; `set_frontmatter_tests.rs` plus a
+  `Vault::new` test); lenient reading (non-string → absent + Error; sentinel → absent + Warning;
+  `lint_tests.rs`); the verb refuses sentinels and refuses while in focus (`project_in_focus`);
+  take-back on a parked map leaves it parked; version skew: a map with an unknown optional key
+  parses and counts on the old predicate (`projects_tests.rs`).
+- Agent surface: `slots.counted` on `get_orientation` and `list_projects`
+  (`handlers_context.rs`); catalogue pin +1 (0006) and +2 (0007); the focus-write table gains
+  `hand_off_project`; description pins on `create_project`, `park_project`, `activate_project`,
+  `add_action` for the cap clause; `project_cap_reached` lists counted maps only
+  (`handlers_lifecycle.rs`).
+- A multi-map undertaking appears as one line with its fronts: pinned on `orientation_context`
+  for `core_question` in 0006 and `outcome` in 0007 (O2).
+- `method_version`: `init` writes it; an unstamped vault reads as 1.0; `cdno migrate` stamps
+  and logs with an empty list; `--dry-run` lists the parked-deadline read-through; a newer minor
+  warns, a newer major refuses writes; the gate re-reads under the lock (`config` and
+  `transaction` tests in `cdno-core`, a `migrate` test in `cdno-cli`).
 - The weekly review asks at least two different questions of at least two different maps;
   checkable once `weekly-review` is in `examples/skills/`, a human check until then (O6).
-- A vault carrying the trial `held_by` schema block opens on the shipped binary; a map with an
-  unknown optional key still parses and counts on an older binary (compatibility).
 - Six months on, the cadence residue (P4): if the maintainer has wanted a `rhythm:` line on any
   map, 5.4 returns as a minor version; if not, it stays out.
