@@ -1,7 +1,8 @@
 # RFC 0006 — Implementation plan
 
 Companion to [RFC 0006 — Attention and structure](0006-attention-and-structure.md) (reviewed on
-PR #779); RLM 1.1 only. T0 is a human step recorded on its own issue; T1–T25b are each meant to be
+PR #779); RLM 1.1 only; tracked by #781, with T0–T25a filed as #782–#808 in order and T25b as
+#810 (#809 is not part of this plan). T0 is a human step recorded on its own issue; T1–T25b are each meant to be
 one issue and one pull request: small enough to review in one sitting, independent where the
 dependency graph allows, and **done only when its probe passes**. Two rules carried over from the
 RFC 0002, 0004 and 0005 plans: a green suite is not a probe (a probe asserts the specific new
