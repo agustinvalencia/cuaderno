@@ -178,10 +178,16 @@ impl std::str::FromStr for MethodVersion {
             s.parse::<u16>().map_err(|_| malformed())
         };
         let (major, minor) = raw.split_once('.').ok_or_else(malformed)?;
-        Ok(MethodVersion {
+        let version = MethodVersion {
             major: part(major)?,
             minor: part(minor)?,
-        })
+        };
+        // One version, one spelling: a leading zero (`01.1`) would give
+        // 1.1 a second form that `Display` never writes back.
+        if version.to_string() != raw {
+            return Err(malformed());
+        }
+        Ok(version)
     }
 }
 

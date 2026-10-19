@@ -1356,7 +1356,7 @@ fn method_version_parses_major_minor() {
 
 #[test]
 fn method_version_rejects_a_malformed_string_naming_the_key() {
-    for raw in ["1", "1.1.0", "v1.1"] {
+    for raw in ["1", "1.1.0", "v1.1", "01.1", "1.01"] {
         let toml = format!("[vault]\nname = \"Test\"\nmethod_version = \"{raw}\"\n");
 
         let dir = TempDir::new().unwrap();
