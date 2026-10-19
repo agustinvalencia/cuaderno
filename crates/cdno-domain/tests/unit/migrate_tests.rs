@@ -441,26 +441,45 @@ fn a_failing_step_write_leaves_the_stamp_unchanged() {
     assert_eq!(snapshot(&*inner), before);
     assert_eq!(read(&*inner, CONFIG), stamped_config(version(1, 0)));
 
-    // And when the rollback fails too, as a crash would leave it: the stamp
-    // is still the old one, so a rerun re-plans and completes.
+    // And when the rollback fails too, as a crash would leave it: the step's
+    // file lands, the log line's write fails, and the rollback of the step's
+    // file is refused. The migrated file stays on disk under the old stamp,
+    // the exact state stamping last exists for.
     let inner = seeded(&[
         (CONFIG, &stamped_config(version(1, 0))),
         (PROJECT, PROJECT_OLD),
     ]);
     let poisoned: Arc<dyn VaultStore> = Arc::new(PoisonedStore {
         inner: inner.clone(),
-        poison: path(PROJECT),
+        poison: path(DAILY),
         poisoned: Mutex::new(false),
     });
     let (vault, _index) = open(poisoned);
     vault
         .migrate(at(), version(2, 0), &[REWORD])
-        .expect_err("the step's write fails");
+        .expect_err("the log line's write fails");
+    assert_eq!(
+        read(&*inner, PROJECT),
+        project_new(),
+        "the probe needs the step's file applied and its rollback refused"
+    );
     assert_eq!(
         read(&*inner, CONFIG),
         stamped_config(version(1, 0)),
         "the stamp claims a version the files never reached"
     );
+
+    // A rerun, once the store accepts writes again, plans nothing for the
+    // migrated file and stamps 2.0.
+    let (vault, _index) = open(inner.clone());
+    let report = vault.migrate(at(), version(2, 0), &[REWORD]).unwrap();
+    assert!(
+        report.steps[0].writes.is_empty(),
+        "a migrated file planned a write: {:?}",
+        report.steps[0].writes
+    );
+    assert_eq!(read(&*inner, PROJECT), project_new());
+    assert_eq!(read(&*inner, CONFIG), stamped_config(version(2, 0)));
 }
 
 #[test]

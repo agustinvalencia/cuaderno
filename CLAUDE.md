@@ -106,9 +106,10 @@ new file there rather than growing `mod.rs`.
 - **Method migrations follow the same rule** (`FILE_MIGRATIONS` in `cdno-domain/src/vault/migrate.rs`,
   RFC 0006 §8.4): an append-only list keyed by target major version, a shipped entry never edited,
   each step idempotent. The runner runs every step, its log line and the stamp in one transaction
-  under the lock (`transaction_ungated()`, its only caller), stamps `[vault] method_version` last
-  through that transaction with a `toml_edit` setter (never `save_config_raw`), and is CLI-only:
-  never at open, never over MCP. Steps never touch the journal or an append-only note, and the
+  under the lock, opened with `transaction_ungated()` (private to `migrate.rs`, so the runner is
+  the only code that can skip the gate), stamps `[vault] method_version` last through that
+  transaction with a `toml_edit` setter (never `save_config_raw`), and is CLI-only: never at
+  open, never over MCP. Steps never touch the journal or an append-only note, and the
   readers accept every historical line shape for ever.
 - **Errors are values**: library crates use `thiserror` with layer-specific enums
   (`StoreError`/`IndexError` → `DomainError` → interface error), binaries use `anyhow`. Translate at

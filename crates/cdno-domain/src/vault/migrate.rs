@@ -24,13 +24,17 @@
 //!   `journal/` (monthly notes included, which are mutable but journal), to a
 //!   note of an append-only type (daily, weekly, evidence, tracking, and a
 //!   custom type declared `append_only`), or to the vault's own `.cuaderno/`
-//!   files is refused before anything is staged. The journal is the record of
+//!   files is refused before anything is staged. The type is read from the
+//!   frontmatter and the index, so the fence by folder covers only
+//!   `journal/` and `.cuaderno/`: a new file with no `type:` placed in an
+//!   append-only type's folder (a portfolio's evidence, a stewardship's
+//!   `tracking/`) is not caught. The journal is the record of
 //!   what happened, in the shapes it was written in, so the readers keep
 //!   accepting every historical line shape for ever instead.
 //!
 //! # The run
 //!
-//! One transaction, taken with [`Vault::transaction_ungated`], under the
+//! One transaction, taken with `Vault::transaction_ungated`, under the
 //! write lock and outside the method-version gate (a vault on an older major
 //! is exactly what the gate refuses and the runner exists for). The version
 //! is read under that lock, as the gate reads it. Staged in this order: each
@@ -62,6 +66,8 @@
 //!
 //! CLI-only (`cdno migrate`, T9): never run at open, never over MCP.
 
+use std::sync::Arc;
+
 use chrono::NaiveDateTime;
 
 use cdno_core::config::{MethodVersion, method_version_from_str};
@@ -70,6 +76,7 @@ use cdno_core::error::StoreError;
 use cdno_core::frontmatter::Frontmatter;
 use cdno_core::path::VaultPath;
 use cdno_core::paths::{CONFIG_FILE, CUADERNO_DIR, JOURNAL};
+use cdno_core::transaction::VaultTransaction;
 
 use super::Vault;
 use super::commitments::CommitmentEntry;
@@ -297,6 +304,21 @@ impl Vault {
 
         tx.commit()?;
         Ok(prepared.report)
+    }
+
+    /// A transaction that takes the vault write lock, exactly as
+    /// `Vault::transaction` does, but skips the method-version gate.
+    ///
+    /// Private to this module, so the runner is its only caller by
+    /// construction. The runner has to write to the vaults the gate refuses
+    /// (one on an older major, which `cdno migrate` is the one way across)
+    /// and checks the version itself, re-read under this same lock; every
+    /// other write goes through the gated `Vault::transaction`.
+    fn transaction_ungated(&self) -> Result<VaultTransaction, DomainError> {
+        Ok(VaultTransaction::new(
+            Arc::clone(&self.store),
+            Arc::clone(&self.index),
+        )?)
     }
 
     /// Read the version and the config, decide whether the run stamps, and
