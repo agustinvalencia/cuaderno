@@ -16,7 +16,7 @@ use chrono::NaiveDate;
 
 use cdno_domain::frontmatter::EnergyLevel;
 use cdno_domain::{
-    CommitmentEntry, CommitmentSource, OrientationContext, ProjectSummary, TopAction,
+    CommitmentEntry, CommitmentSource, GroupParent, OrientationContext, ProjectSummary, TopAction,
 };
 
 use crate::bootstrap;
@@ -113,20 +113,7 @@ fn render(ctx: &OrientationContext, today: NaiveDate, energy: Option<EnergyLevel
             )
         ));
     } else {
-        // A project carries prose, so it gets a card rather than a row:
-        // the state and the `next:` action read as one item behind a
-        // context-coloured gutter instead of as a wrapped table cell.
-        let cards: Vec<Card> = ctx
-            .projects
-            .iter()
-            .map(|p| {
-                Card::new(&p.slug)
-                    .badge(p.context.as_str())
-                    .accent(Accent::for_context(p.context))
-                    .prose(state_line(p))
-                    .meta(format!("next: {}", project_next(p)))
-            })
-            .collect();
+        let cards = project_cards(ctx);
         out.push_str(&render_cards(
             &cards,
             &palette,
@@ -194,6 +181,49 @@ pub(crate) fn source_label(source: &CommitmentSource) -> String {
         CommitmentSource::StandaloneCommitment(_) => "commitment".to_owned(),
         CommitmentSource::ActionNote(slug) => format!("action: {slug}"),
     }
+}
+
+/// The "Active projects" cards, walked group by group so a group's
+/// members sit together. A project carries prose, so it gets a card
+/// rather than a row: the state and the `next:` action read as one item
+/// behind a context-coloured gutter instead of as a wrapped table cell.
+/// Two or more maps under one question are one undertaking, so they
+/// read as one card: the question, then one line with its fronts.
+fn project_cards(ctx: &OrientationContext) -> Vec<Card> {
+    let mut cards = Vec::new();
+    for group in &ctx.groups {
+        let members: Vec<&ProjectSummary> = group
+            .projects
+            .iter()
+            .filter_map(|slug| ctx.projects.iter().find(|p| &p.slug == slug))
+            .collect();
+        match &group.parent {
+            Some(parent) if members.len() >= 2 => cards.push(group_card(parent, &members)),
+            _ => cards.extend(members.into_iter().map(project_card)),
+        }
+    }
+    cards
+}
+
+fn project_card(p: &ProjectSummary) -> Card {
+    Card::new(&p.slug)
+        .badge(p.context.as_str())
+        .accent(Accent::for_context(p.context))
+        .prose(state_line(p))
+        .meta(format!("next: {}", project_next(p)))
+}
+
+/// One card for a shared parent: the parent as the title and a single
+/// line naming each front with its next action, in list order.
+fn group_card(parent: &GroupParent, members: &[&ProjectSummary]) -> Card {
+    let (title, badge) = match parent {
+        GroupParent::Question(path) => (path.strip_suffix(".md").unwrap_or(path), "question"),
+    };
+    let fronts: Vec<String> = members
+        .iter()
+        .map(|p| format!("{}: {}", p.slug, project_next(p)))
+        .collect();
+    Card::new(title).badge(badge).meta(fronts.join(" · "))
 }
 
 /// The project's state snippet collapsed to a single line, or a

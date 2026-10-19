@@ -192,3 +192,73 @@ fn orient_json_does_not_expose_focus_or_last_paused() {
         }
     }
 }
+
+#[test]
+fn orient_renders_a_shared_question_as_one_line_with_its_fronts() {
+    // Two maps of one inquiry read as one undertaking (RFC 0006 §7.3):
+    // the question once, then one line carrying each front with its next
+    // action. A map with no question keeps its own card.
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).expect("init");
+    fs::write(
+        dir.path().join("questions/research/surrogate.md"),
+        "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# Does the surrogate generalise?\n",
+    )
+    .unwrap();
+    let with_question = |body: &str, question: &str| {
+        body.replacen(
+            "created: 2026-04-01\n",
+            &format!("created: 2026-04-01\ncore_question: \"[[{question}]]\"\n"),
+            1,
+        )
+    };
+    fs::write(
+        dir.path().join("projects/alpha.md"),
+        with_question(ALPHA, "questions/research/surrogate"),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("projects/beta.md"),
+        with_question(BETA, "surrogate"),
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("projects/gamma.md"),
+        BETA.replace("# Beta", "# Gamma"),
+    )
+    .unwrap();
+
+    let out = orient::build_orientation(dir.path(), today(), None).expect("orientation");
+    let lines: Vec<&str> = out.lines().map(str::trim_end).collect();
+
+    let header = lines
+        .iter()
+        .position(|l| l.starts_with("▎ questions/research/surrogate"))
+        .unwrap_or_else(|| panic!("a card for the shared question:\n{out}"));
+    assert!(
+        lines[header].ends_with("question"),
+        "the badge names the parent's kind: {:?}",
+        lines[header]
+    );
+    assert_eq!(
+        lines[header + 1],
+        "▎ alpha: Draft the methods section (deep) · beta: Tidy the references (light)",
+        "one line with its fronts:\n{out}"
+    );
+    // Apart from the fronts line, no line is led by a front's slug, so
+    // neither front also has a card of its own.
+    for front in ["alpha", "beta"] {
+        assert!(
+            !lines.iter().any(|l| l
+                .strip_prefix("▎ ")
+                .is_some_and(|r| r.starts_with(front) && !r.contains(" · "))),
+            "{front} must not also have a card of its own:\n{out}"
+        );
+    }
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.strip_prefix("▎ ").is_some_and(|r| r.starts_with("gamma"))),
+        "a map with no question keeps its card:\n{out}"
+    );
+}

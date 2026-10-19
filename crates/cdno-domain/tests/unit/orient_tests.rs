@@ -7,8 +7,8 @@ use cdno_core::config::VaultConfig;
 use cdno_core::index::{MemoryIndex, VaultIndex};
 use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
-use cdno_domain::Vault;
 use cdno_domain::frontmatter::ProjectStatus;
+use cdno_domain::{GroupParent, ProjectGroup, Vault};
 use chrono::NaiveDate;
 
 fn vp(p: &str) -> VaultPath {
@@ -200,4 +200,137 @@ fn orientation_carries_the_focus_and_each_projects_last_pause() {
     // Gamma: has a started entry at 14:30 (the current focus), no last_paused.
     assert_eq!(ctx.projects[2].slug, "gamma");
     assert!(ctx.projects[2].last_paused.is_none(), "gamma has no pause");
+}
+
+// ---------------------------------------------------------------------
+// groups (RFC 0006 §8.0: grouped by `core_question`)
+// ---------------------------------------------------------------------
+
+const QUESTION: &str = "---\ntype: question\ndomain: research\nstatus: active\ncreated: 2026-05-01\nupdated: 2026-05-01\n---\n\n# Does the surrogate generalise?\n";
+
+/// An active project whose frontmatter `core_question:` is `question`
+/// (the YAML value as written, or `null`) and whose Current State is
+/// `state`.
+fn project_with(title: &str, question: &str, state: &str) -> String {
+    format!(
+        "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\ncore_question: {question}\n---\n\n# {title}\n\n## Current State\n{state}\n\n## Next Actions\n- [ ] Take the next step (light)\n"
+    )
+}
+
+fn question_group(slugs: &[&str]) -> ProjectGroup {
+    ProjectGroup {
+        parent: Some(GroupParent::Question(
+            "questions/research/surrogate.md".to_owned(),
+        )),
+        projects: slugs.iter().map(|s| (*s).to_owned()).collect(),
+    }
+}
+
+fn lone(slug: &str) -> ProjectGroup {
+    ProjectGroup {
+        parent: None,
+        projects: vec![slug.to_owned()],
+    }
+}
+
+#[test]
+fn two_projects_sharing_a_core_question_form_one_group() {
+    let vault = vault_with(&[
+        ("questions/research/surrogate.md", QUESTION),
+        (
+            "projects/alpha.md",
+            &project_with("Alpha", "\"[[questions/research/surrogate]]\"", "Hull."),
+        ),
+        (
+            "projects/beta.md",
+            &project_with("Beta", "\"[[questions/research/surrogate]]\"", "Rigging."),
+        ),
+        (
+            "projects/gamma.md",
+            &project_with("Gamma", "null", "Elsewhere."),
+        ),
+    ]);
+
+    let ctx = vault.orientation_context(ymd(2026, 5, 26)).unwrap();
+
+    let slugs: Vec<&str> = ctx.projects.iter().map(|p| p.slug.as_str()).collect();
+    assert_eq!(
+        slugs,
+        ["alpha", "beta", "gamma"],
+        "the flat list is unchanged"
+    );
+    assert_eq!(
+        ctx.projects[0].core_question.as_deref(),
+        Some("[[questions/research/surrogate]]"),
+        "each project carries its core_question as written"
+    );
+    assert_eq!(ctx.projects[2].core_question, None);
+    assert_eq!(
+        ctx.groups,
+        vec![question_group(&["alpha", "beta"]), lone("gamma")]
+    );
+}
+
+#[test]
+fn a_short_and_a_full_link_to_one_question_group_together() {
+    let vault = vault_with(&[
+        ("questions/research/surrogate.md", QUESTION),
+        (
+            "projects/alpha.md",
+            &project_with("Alpha", "\"[[questions/research/surrogate]]\"", "Hull."),
+        ),
+        ("projects/beta.md", &project_with("Beta", "null", "Apart.")),
+        (
+            "projects/gamma.md",
+            &project_with("Gamma", "\"[[surrogate]]\"", "Rigging."),
+        ),
+    ]);
+
+    let ctx = vault.orientation_context(ymd(2026, 5, 26)).unwrap();
+
+    // Keyed by the resolved path, so both spellings land in one group,
+    // placed where its first member (alpha) stands.
+    assert_eq!(
+        ctx.groups,
+        vec![question_group(&["alpha", "gamma"]), lone("beta")]
+    );
+}
+
+#[test]
+fn a_project_mentioning_a_question_in_its_state_is_not_grouped_under_it() {
+    let vault = vault_with(&[
+        ("questions/research/surrogate.md", QUESTION),
+        (
+            "projects/alpha.md",
+            &project_with("Alpha", "\"[[questions/research/surrogate]]\"", "Hull."),
+        ),
+        (
+            "projects/beta.md",
+            &project_with(
+                "Beta",
+                "null",
+                "Borrowed a mesh from [[questions/research/surrogate]] in passing.",
+            ),
+        ),
+    ]);
+
+    let ctx = vault.orientation_context(ymd(2026, 5, 26)).unwrap();
+
+    // Beta links the question from its body, which a backlink query
+    // counts; the grouping reads the field alone.
+    assert_eq!(ctx.groups, vec![question_group(&["alpha"]), lone("beta")]);
+}
+
+#[test]
+fn projects_without_a_core_question_stay_ungrouped() {
+    // Alpha omits the key, the shape of a map written before the field
+    // was templated; beta writes `core_question: null`.
+    let vault = vault_with(&[
+        ("projects/alpha.md", ALPHA),
+        ("projects/beta.md", &project_with("Beta", "null", "Apart.")),
+    ]);
+
+    let ctx = vault.orientation_context(ymd(2026, 5, 26)).unwrap();
+
+    assert_eq!(ctx.groups, vec![lone("alpha"), lone("beta")]);
 }
