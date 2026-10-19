@@ -28,7 +28,7 @@ use crate::verify::WriteShape;
 #[tool_router(router = lifecycle_router, vis = "pub")]
 impl CuadernoServer {
     #[tool(
-        description = "Park an active project: move it to `projects/_parked/` and flip its status to parked, freeing an active slot."
+        description = "Park an active project: move it to `projects/_parked/` and flip its status to parked. A parked project does not count against the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5), so parking frees a slot. Park work that is not for now; activate_project brings it back, and activation is where the cap is checked."
     )]
     pub async fn park_project(
         &self,
@@ -89,7 +89,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. Applies the active-project cap — errors if the vault is already at the cap (park another first)."
+        description = "Activate a parked or closed project: move it back to `projects/` from `projects/_parked/` or `projects/_done/<year>/` and flip its status to active; a closed project also has its `closed:` date cleared, so it can be closed again later. Logs `project [[slug]] activated`. This is where the active-project cap (`slots.cap` on `get_orientation` and `list_projects`, default 5) is checked: at the cap the call is refused with `project_cap_reached`, whose `active_projects` lists the active projects to choose from. Offer to park, complete or drop one of them, or to leave this one parked."
     )]
     pub async fn activate_project(
         &self,

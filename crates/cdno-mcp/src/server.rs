@@ -271,10 +271,8 @@ impl ServerHandler for CuadernoServer {
                 register holds dated promises. The daily log feeds both.\n\n\
                 The distinctions that are easy to get wrong:\n\
                 - PROJECTS END, STEWARDSHIPS DO NOT. Health, finances, household, a \
-                recurring service are stewardships. Active projects are capped \
-                (default 5) to force prioritisation, so filing a perpetual \
-                responsibility as a project permanently consumes a slot that can \
-                never be freed by finishing.\n\
+                recurring service are stewardships. A perpetual responsibility filed \
+                as a project is a map that can never be finished.\n\
                 - A QUESTION is open-ended and sits above projects — one question may \
                 spawn several over time and outlives them. A PROJECT is bounded, with \
                 a deliverable and usually a deadline. Either can exist without the \
