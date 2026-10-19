@@ -687,3 +687,23 @@ fn focus_pointers_are_in_the_tool_descriptions() {
         );
     }
 }
+
+/// RFC 0006 T1: the word "outcome" is reserved for practice 9, so no text an
+/// agent reads may use it for a deliverable.
+#[test]
+fn no_agent_text_uses_outcome_for_a_deliverable() {
+    let info = empty_server().get_info();
+    let instructions = info.instructions.as_deref().unwrap_or_default();
+    let portfolio = description_of("create_portfolio");
+    for (surface, text) in [
+        ("server instructions", instructions),
+        ("create_portfolio description", portfolio.as_str()),
+    ] {
+        for needle in ["delivering an outcome", "an outcome rather"] {
+            assert!(
+                !text.contains(needle),
+                "{surface} must not use {needle:?} for a deliverable: {text}"
+            );
+        }
+    }
+}
