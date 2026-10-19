@@ -8,6 +8,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
+- Writes re-read the vault's method version under the write lock: a vault on a newer major version
+  refuses writes (reads keep working), so a long-running server learns of a migration without a
+  restart (RFC 0006 §8.4).
 - `get_orientation` and `cdno orient --json` carry `slots` (active projects against the cap), matching
   `list_projects`; the cap count has one home in the domain (RFC 0006 §8.0).
 - A vault records the version of the Research Logbook Method it follows: `cdno init` writes

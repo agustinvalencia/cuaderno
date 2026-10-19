@@ -192,3 +192,340 @@ fn open_vault_rejects_a_directory_without_the_marker() {
         cdno_domain::bootstrap::BootstrapError::NotAVault { .. }
     ));
 }
+
+// ---------------------------------------------------------------------
+// The method-version gate in `Vault::transaction()` (RFC 0006 §8.4, T7a)
+// ---------------------------------------------------------------------
+
+use std::sync::Mutex;
+
+use cdno_core::config::MethodVersion;
+use cdno_core::error::{ConfigError, StoreError};
+use cdno_core::file_meta::FileMeta;
+use cdno_core::store::VaultWriteLock;
+use cdno_domain::error::DomainError;
+use cdno_domain::frontmatter::EnergyLevel;
+use cdno_domain::method_version::{Gate, METHOD_VERSION, MethodSkew, method_gate};
+use cdno_domain::{Context, MethodStatus};
+
+const CONFIG: &str = ".cuaderno/config.toml";
+
+fn config_path() -> VaultPath {
+    VaultPath::new(CONFIG).unwrap()
+}
+
+fn project_path() -> VaultPath {
+    VaultPath::new("projects/gate-probe.md").unwrap()
+}
+
+fn version(major: u16, minor: u16) -> MethodVersion {
+    MethodVersion { major, minor }
+}
+
+/// The config text of a vault stamped `version`, with nothing else in it.
+fn stamped(version: MethodVersion) -> String {
+    format!("[vault]\nname = \"Gate\"\nmethod_version = \"{version}\"\n")
+}
+
+/// A vault opened at the binary's own version: the config file on disk
+/// and the config loaded at open agree, as `cdno init` leaves them. One
+/// project, so a write has a map to land on.
+fn stamped_vault() -> (Vault, Arc<dyn VaultStore>) {
+    let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
+    store
+        .write_file(&config_path(), &stamped(METHOD_VERSION))
+        .unwrap();
+    let mut config = VaultConfig::default();
+    config.vault.method_version = Some(METHOD_VERSION);
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) = Vault::new(Arc::clone(&store), index, config).expect("Vault::new");
+    vault
+        .create_project(sample_moment(), "Gate probe", Context::Work, None)
+        .expect("create_project at the binary's version");
+    (vault, store)
+}
+
+fn add_probe_action(vault: &Vault) -> Result<VaultPath, DomainError> {
+    vault.add_action(
+        sample_moment(),
+        "gate-probe",
+        "Write the probe",
+        EnergyLevel::Light,
+    )
+}
+
+#[test]
+fn a_write_after_an_external_major_stamp_is_refused_and_writes_nothing() {
+    let (vault, store) = stamped_vault();
+    let map_before = store.read_file(&project_path()).unwrap();
+    let daily_before = store.read_file(&daily_path()).unwrap();
+
+    // Another process (a newer cdno's `cdno migrate`) stamps the vault past
+    // this binary's major after this vault was opened.
+    let ahead = version(METHOD_VERSION.major + 1, 0);
+    store.write_file(&config_path(), &stamped(ahead)).unwrap();
+
+    let err = add_probe_action(&vault).expect_err("a newer major must refuse the write");
+    match &err {
+        DomainError::MethodVersionAhead { vault, binary } => {
+            assert_eq!(*vault, ahead);
+            assert_eq!(*binary, METHOD_VERSION);
+        }
+        other => panic!("expected MethodVersionAhead, got: {other:?}"),
+    }
+    let message = err.to_string();
+    for needle in [
+        format!("RLM {ahead}"),
+        format!("RLM {METHOD_VERSION}"),
+        "upgrade cdno".to_owned(),
+        "reads keep working".to_owned(),
+    ] {
+        assert!(message.contains(&needle), "{needle:?} not in: {message}");
+    }
+
+    assert_eq!(store.read_file(&project_path()).unwrap(), map_before);
+    assert_eq!(store.read_file(&daily_path()).unwrap(), daily_before);
+
+    // The status query reads the disk the same way.
+    assert_eq!(
+        vault.method_status().unwrap(),
+        MethodStatus {
+            vault: Some(ahead),
+            binary: METHOD_VERSION,
+            skew: MethodSkew::NewerMajor,
+        }
+    );
+}
+
+#[test]
+fn reads_keep_working_on_a_newer_major() {
+    let (_vault, store) = stamped_vault();
+    let ahead = version(METHOD_VERSION.major + 1, 0);
+    store.write_file(&config_path(), &stamped(ahead)).unwrap();
+
+    // Reopen over a fresh index, as a binary started after the stamp would,
+    // with the config it loads. Reconciliation rebuilds the index through
+    // its own transaction, which the gate does not touch.
+    let mut config = VaultConfig::default();
+    config.vault.method_version = Some(ahead);
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, report) =
+        Vault::new(Arc::clone(&store), index, config).expect("a newer major still opens");
+    assert!(
+        report.added > 0,
+        "reconciliation indexed nothing: {report:?}"
+    );
+
+    let orientation = vault
+        .orientation_context(sample_moment().date())
+        .expect("a newer major still reads");
+    assert!(
+        orientation.projects.iter().any(|p| p.slug == "gate-probe"),
+        "the project is missing from orientation"
+    );
+    assert!(matches!(
+        add_probe_action(&vault),
+        Err(DomainError::MethodVersionAhead { .. })
+    ));
+}
+
+#[test]
+fn a_vault_with_no_config_file_writes() {
+    let (vault, store, _index) = make_vault();
+    assert!(!store.exists(&config_path()).unwrap());
+
+    vault
+        .create_project(sample_moment(), "Gate probe", Context::Work, None)
+        .expect("an unstamped vault writes");
+    add_probe_action(&vault).expect("an unstamped vault writes");
+    assert!(
+        store
+            .read_file(&project_path())
+            .unwrap()
+            .contains("Write the probe")
+    );
+    assert_eq!(vault.method_status().unwrap().vault, None);
+}
+
+#[test]
+fn an_unrelated_config_edit_does_not_block_writes() {
+    let (vault, store) = stamped_vault();
+
+    // Edits `Vault::new` would reject (a wrongly typed `[vault]` key, a bad
+    // glob, a `[focus]` typo), made while the vault is open: the re-read
+    // takes only the version, so writes carry on.
+    let edited = format!(
+        "{}max_active_projects = \"five\"\nignore = [\"a[\"]\n\n[focus]\ncarry_over_day = 1\n",
+        stamped(METHOD_VERSION)
+    );
+    store.write_file(&config_path(), &edited).unwrap();
+
+    add_probe_action(&vault).expect("an unrelated config problem must not block a write");
+    assert!(
+        store
+            .read_file(&project_path())
+            .unwrap()
+            .contains("Write the probe")
+    );
+}
+
+#[test]
+fn a_config_that_is_not_toml_on_reread_refuses_the_write() {
+    // A file that is no longer TOML and, by the same rule, a malformed
+    // version: both refuse with a config error naming the file, never a
+    // fallback to the version loaded at open.
+    for broken in [
+        "[vault\nmethod_version = \"1.0\"\n",
+        "[vault]\nmethod_version = \"1.0.0\"\n",
+    ] {
+        let (vault, store) = stamped_vault();
+        let map_before = store.read_file(&project_path()).unwrap();
+        store.write_file(&config_path(), broken).unwrap();
+
+        let err = add_probe_action(&vault).expect_err("an unreadable version must refuse");
+        assert!(
+            matches!(err, DomainError::Config(ConfigError::Parse { .. })),
+            "expected a config parse error for {broken:?}, got: {err:?}"
+        );
+        assert!(
+            err.to_string().contains(CONFIG),
+            "the error must name the file: {err}"
+        );
+        assert_eq!(store.read_file(&project_path()).unwrap(), map_before);
+    }
+}
+
+/// A `MemoryVaultStore` that records, in order, each lock acquisition and
+/// each file read, for the ordering probe.
+struct RecordingStore {
+    inner: MemoryVaultStore,
+    events: Mutex<Vec<String>>,
+}
+
+impl RecordingStore {
+    fn record(&self, event: String) {
+        self.events.lock().unwrap().push(event);
+    }
+}
+
+impl VaultStore for RecordingStore {
+    fn read_file(&self, path: &VaultPath) -> Result<String, StoreError> {
+        self.record(format!("read {path}"));
+        self.inner.read_file(path)
+    }
+    fn read_bytes(&self, path: &VaultPath) -> Result<Vec<u8>, StoreError> {
+        self.inner.read_bytes(path)
+    }
+    fn write_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.write_file(path, content)
+    }
+    fn append_to_file(&self, path: &VaultPath, content: &str) -> Result<(), StoreError> {
+        self.inner.append_to_file(path, content)
+    }
+    fn move_file(&self, src: &VaultPath, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.move_file(src, dest)
+    }
+    fn delete_file(&self, path: &VaultPath) -> Result<(), StoreError> {
+        self.inner.delete_file(path)
+    }
+    fn exists(&self, path: &VaultPath) -> Result<bool, StoreError> {
+        self.inner.exists(path)
+    }
+    fn list_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.list_dir(path)
+    }
+    fn walk_dir(&self, path: &VaultPath) -> Result<Vec<VaultPath>, StoreError> {
+        self.inner.walk_dir(path)
+    }
+    fn metadata(&self, path: &VaultPath) -> Result<FileMeta, StoreError> {
+        self.inner.metadata(path)
+    }
+    fn import_external(&self, src: &std::path::Path, dest: &VaultPath) -> Result<(), StoreError> {
+        self.inner.import_external(src, dest)
+    }
+    fn acquire_write_lock(&self) -> Result<VaultWriteLock, StoreError> {
+        self.record("lock".to_owned());
+        self.inner.acquire_write_lock()
+    }
+}
+
+#[test]
+fn the_version_is_read_after_the_lock_is_taken() {
+    let recording = Arc::new(RecordingStore {
+        inner: MemoryVaultStore::new(),
+        events: Mutex::new(Vec::new()),
+    });
+    let store: Arc<dyn VaultStore> = recording.clone();
+    store
+        .write_file(&config_path(), &stamped(METHOD_VERSION))
+        .unwrap();
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (vault, _report) =
+        Vault::new(Arc::clone(&store), index, VaultConfig::default()).expect("Vault::new");
+    vault
+        .create_project(sample_moment(), "Gate probe", Context::Work, None)
+        .expect("create_project");
+
+    recording.events.lock().unwrap().clear();
+    add_probe_action(&vault).expect("add_action");
+    let events = recording.events.lock().unwrap().clone();
+
+    let lock = events
+        .iter()
+        .position(|e| e == "lock")
+        .unwrap_or_else(|| panic!("the write took no lock: {events:?}"));
+    let read = events
+        .iter()
+        .position(|e| *e == format!("read {CONFIG}"))
+        .unwrap_or_else(|| panic!("the write never read the config: {events:?}"));
+    assert!(
+        lock < read,
+        "the config was read before the lock was taken: {events:?}"
+    );
+}
+
+#[test]
+fn method_gate_decides_every_case() {
+    let v = version;
+    let (binary_1_0, binary_1_1, binary_2_0) = (v(1, 0), v(1, 1), v(2, 0));
+    // (binary, vault, gate); `None` is an unstamped vault, read as 1.0.
+    let cases = [
+        (binary_1_0, Some(v(1, 0)), Gate::Allow, "equal"),
+        (binary_1_0, None, Gate::Allow, "unstamped"),
+        (binary_1_1, None, Gate::Allow, "unstamped, an older minor"),
+        (binary_1_0, Some(v(1, 1)), Gate::Allow, "a newer minor"),
+        (binary_1_1, Some(v(1, 0)), Gate::Allow, "an older minor"),
+        (binary_2_0, Some(v(2, 1)), Gate::Allow, "a newer minor of 2"),
+        (
+            binary_1_0,
+            Some(v(2, 0)),
+            Gate::MethodVersionAhead,
+            "a newer major",
+        ),
+        (
+            binary_1_1,
+            Some(v(3, 0)),
+            Gate::MethodVersionAhead,
+            "a newer major, a lower minor",
+        ),
+        (
+            binary_2_0,
+            Some(v(1, 9)),
+            Gate::VaultNeedsMigration,
+            "an older major, a higher minor",
+        ),
+        (
+            binary_2_0,
+            None,
+            Gate::VaultNeedsMigration,
+            "unstamped, an older major",
+        ),
+    ];
+    for (binary, vault, expected, case) in cases {
+        assert_eq!(
+            method_gate(binary, vault),
+            expected,
+            "{case}: binary {binary}, vault {vault:?}"
+        );
+    }
+}

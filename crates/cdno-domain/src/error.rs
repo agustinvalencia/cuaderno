@@ -354,6 +354,31 @@ pub enum DomainError {
     #[error("a custom template already exists at {path} — pass force to overwrite it")]
     TemplateAlreadyExists { path: String },
 
+    /// The vault records a newer major method version than this binary
+    /// implements, as re-read under the write lock (RFC 0006 §8.4). Writes
+    /// are refused; reads keep working.
+    #[error(
+        "this vault follows RLM {vault}, a newer major version than the RLM {binary} this cdno \
+         implements \u{2014} upgrade cdno to write to it; reads keep working"
+    )]
+    MethodVersionAhead {
+        vault: cdno_core::config::MethodVersion,
+        binary: cdno_core::config::MethodVersion,
+    },
+
+    /// The vault records an older major method version than this binary
+    /// implements (an unstamped vault is read as 1.0), as re-read under the
+    /// write lock. Writes are refused until the vault is migrated.
+    #[error(
+        "this vault follows RLM {vault}, an older major version than the RLM {binary} this cdno \
+         implements \u{2014} run `cdno migrate --dry-run` to see what migrating it changes, then \
+         `cdno migrate`, before writing to it"
+    )]
+    VaultNeedsMigration {
+        vault: cdno_core::config::MethodVersion,
+        binary: cdno_core::config::MethodVersion,
+    },
+
     #[error(transparent)]
     Validation(#[from] ValidationError),
 

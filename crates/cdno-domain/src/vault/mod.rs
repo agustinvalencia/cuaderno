@@ -28,6 +28,7 @@ use cdno_core::store::VaultStore;
 use cdno_core::transaction::VaultTransaction;
 
 use crate::error::DomainError;
+use crate::method_version::{Gate, METHOD_VERSION, UNSTAMPED_READS_AS, method_gate};
 
 mod actions;
 mod capture;
@@ -42,6 +43,7 @@ mod index_entry;
 mod links;
 mod lint;
 mod log;
+mod method_status;
 mod monthly;
 mod normalise;
 mod note_ref;
@@ -108,6 +110,7 @@ pub use context::{
 pub use context::{days_since_mtime_in, mtime_threshold_ns_in};
 pub use daily::{DailyNoteView, DailySection};
 pub use links::ResolvedLink;
+pub use method_status::MethodStatus;
 pub use monthly::{MonthlyNoteView, MonthlySection};
 pub use normalise::NormaliseReport;
 pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
@@ -199,10 +202,44 @@ impl Vault {
     /// transaction must be created *before* a write op reads the file it
     /// is about to rewrite — that is what serialises the read-modify-write
     /// against other processes. Hence `Result`.
+    ///
+    /// # The method-version gate (RFC 0006 §8.4)
+    ///
+    /// Once the lock is held, and only then, the vault's
+    /// `[vault] method_version` is re-read from `.cuaderno/config.toml`
+    /// through the store, never taken from the config loaded at open, and
+    /// [`method_gate`] decides: a vault on a newer major version refuses
+    /// the write with [`DomainError::MethodVersionAhead`], one on an older
+    /// major with [`DomainError::VaultNeedsMigration`]. Reading under the
+    /// lock is what makes the check hold: a `cdno migrate` stamps the
+    /// version inside its own locked transaction, so no write can pass the
+    /// gate against the old version and then land after the stamp, and a
+    /// long-running server that read its config once still sees the
+    /// migration. No config file, or no key, is unstamped and the write
+    /// proceeds; a config that is no longer TOML, or a malformed version,
+    /// refuses the write with a config error. On refusal the transaction
+    /// drops, releasing the lock, before anything is buffered.
+    ///
+    /// Reconciliation is not gated: it builds its own `VaultTransaction`
+    /// in `cdno-core`, so a vault on a newer major still opens and reads.
+    /// The known raw writes bypass the gate as they bypass the lock, and
+    /// must not be widened: `write_note_raw`, template eject and save
+    /// (`save_template`, which `templates sync` writes through), and
+    /// `save_config_raw`.
     pub(in crate::vault) fn transaction(&self) -> Result<VaultTransaction, DomainError> {
-        Ok(VaultTransaction::new(
-            Arc::clone(&self.store),
-            Arc::clone(&self.index),
-        )?)
+        let tx = VaultTransaction::new(Arc::clone(&self.store), Arc::clone(&self.index))?;
+        let recorded = self.recorded_method_version()?;
+        let vault = recorded.unwrap_or(UNSTAMPED_READS_AS);
+        match method_gate(METHOD_VERSION, recorded) {
+            Gate::Allow => Ok(tx),
+            Gate::MethodVersionAhead => Err(DomainError::MethodVersionAhead {
+                vault,
+                binary: METHOD_VERSION,
+            }),
+            Gate::VaultNeedsMigration => Err(DomainError::VaultNeedsMigration {
+                vault,
+                binary: METHOD_VERSION,
+            }),
+        }
     }
 }

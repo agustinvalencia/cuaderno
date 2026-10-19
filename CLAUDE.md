@@ -94,6 +94,9 @@ new file there rather than growing `mod.rs`.
   transaction AND the write lock**: `write_note_raw` (no live caller since the desktop was removed, kept per #601), template
   eject/save (and `templates sync`, which writes through `save_template`), and `save_config_raw` — these call `store.write_file` directly, so the cross-process
   serialisation guarantee does not cover them. Do not add new raw-write paths on their precedent.
+  Domain writes pass the method-version gate in `Vault::transaction()`, which re-reads `[vault]
+  method_version` from disk under the lock and refuses a vault on another major (RFC 0006 §8.4);
+  the raw writes listed above bypass it, as they bypass the lock, and reconciliation is ungated.
 - **Startup reconciliation runs inside `Vault::new`**, so any domain method may assume the index
   matches the filesystem on entry.
 - **Cross-process writes serialise** on an OS advisory lock (`.cuaderno/.lock`) held for the life of
