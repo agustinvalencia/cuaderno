@@ -2628,7 +2628,7 @@ fn assert_matches_capture(mut value: serde_json::Value, name: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name);
-    if std::env::var_os("CDNO_BLESS_FIXTURES").is_some() {
+    if std::env::var("CDNO_BLESS_FIXTURES").as_deref() == Ok("1") {
         std::fs::write(&path, &actual).unwrap();
     }
     let expected = std::fs::read_to_string(&path).expect("checked-in capture");

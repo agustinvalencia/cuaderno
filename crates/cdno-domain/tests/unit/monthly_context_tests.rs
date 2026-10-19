@@ -10,7 +10,7 @@ use cdno_core::path::VaultPath;
 use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::Vault;
 use cdno_domain::frontmatter::{Context, QuestionDomain};
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{Datelike, NaiveDate, NaiveDateTime};
 
 fn ymd(year: i32, month: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, day).unwrap()
@@ -25,9 +25,11 @@ fn monthly_context_composes_every_field_from_its_source() {
     // A date well after the run: every map written now is older than
     // the 14-day stuck threshold, so stuck-detection has something to
     // find (the in-memory store stamps the real clock).
-    let today = ymd(2030, 6, 12);
-    let since = ymd(2030, 5, 13);
-    let long_ago = ymd(2030, 1, 10);
+    // Four years ahead of the real clock, so the gap never closes.
+    let y = chrono::Local::now().date_naive().year() + 4;
+    let today = ymd(y, 6, 12);
+    let since = ymd(y, 5, 13);
+    let long_ago = ymd(y, 1, 10);
 
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
@@ -41,8 +43,10 @@ fn monthly_context_composes_every_field_from_its_source() {
             "---\ntype: project\ncontext: work\nstatus: dropped\ncreated: 2030-01-01\nclosed: 2030-05-25\n---\n\n# Old\n",
         ),
     ] {
+        let path = path.replace("2030", &y.to_string());
+        let body = body.replace("2030", &y.to_string());
         store
-            .write_file(&VaultPath::new(path).unwrap(), body)
+            .write_file(&VaultPath::new(&path).unwrap(), &body)
             .unwrap();
     }
     let (vault, _report) = Vault::new(store, index, VaultConfig::default()).expect("Vault::new");
@@ -71,7 +75,7 @@ fn monthly_context_composes_every_field_from_its_source() {
         .create_commitment(
             at(long_ago),
             "Renew the licence",
-            ymd(2030, 7, 10),
+            ymd(y, 7, 10),
             Context::Personal,
             None,
             None,
