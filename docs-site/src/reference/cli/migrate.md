@@ -15,8 +15,9 @@ cdno migrate [OPTIONS]
 | `--dry-run` | Print what would change, and write nothing. |
 
 Plus the [global options](overview.md#global-options). `--json` prints the same report as an
-object (`outcome`, `vault`, `binary`, `migrations`, `config_line`, `log_entry`,
-`read_through`).
+object: `dry_run`, `outcome` (`planned`, `migrated` or `nothing_to_do`), `vault` (`null` when
+unstamped), `vault_described`, `binary`, `migrations`, `config_line`, `log_entry` and
+`read_through`.
 
 `migrate` asks nothing and confirms nothing: run it with `--dry-run` first to see exactly what
 will change.

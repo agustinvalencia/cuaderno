@@ -15,9 +15,7 @@ use anyhow::Result;
 use chrono::NaiveDateTime;
 use serde_json::json;
 
-use cdno_core::config::MethodVersion;
-use cdno_domain::method_version::UNSTAMPED_READS_AS;
-use cdno_domain::{FILE_MIGRATIONS, METHOD_VERSION, MigrationReport};
+use cdno_domain::{FILE_MIGRATIONS, METHOD_VERSION, MigrationReport, describe_method_version};
 
 use crate::bootstrap;
 
@@ -50,22 +48,13 @@ fn outcome(report: &MigrationReport, dry_run: bool) -> &'static str {
     }
 }
 
-/// The vault's recorded version, in words: `RLM 1.0`, or
-/// `unstamped (read as 1.0)` for a vault that records none.
-fn describe_version(version: Option<MethodVersion>) -> String {
-    match version {
-        Some(version) => format!("RLM {version}"),
-        None => format!("unstamped (read as {UNSTAMPED_READS_AS})"),
-    }
-}
-
 /// The `--json` shape: the same content the text carries.
-pub fn to_json(report: &MigrationReport, dry_run: bool) -> serde_json::Value {
+fn to_json(report: &MigrationReport, dry_run: bool) -> serde_json::Value {
     json!({
         "dry_run": dry_run,
         "outcome": outcome(report, dry_run),
         "vault": report.from,
-        "vault_described": describe_version(report.from),
+        "vault_described": describe_method_version(report.from),
         "binary": report.to,
         "migrations": report.steps,
         "config_line": report.stamp_line(),
@@ -74,9 +63,8 @@ pub fn to_json(report: &MigrationReport, dry_run: bool) -> serde_json::Value {
     })
 }
 
-/// The human-readable report. Public so tests can assert the text without
-/// capturing stdout.
-pub fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String {
+/// The human-readable report.
+fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> String {
     if !report.stamps() {
         return format!("vault is at RLM {}; nothing to do\n", report.to);
     }
@@ -88,7 +76,7 @@ pub fn render(report: &MigrationReport, dry_run: bool, at: NaiveDateTime) -> Str
     }
     out.push_str(&format!(
         "  vault:      {}\n",
-        describe_version(report.from)
+        describe_method_version(report.from)
     ));
     out.push_str(&format!("  this cdno:  RLM {}\n", report.to));
 

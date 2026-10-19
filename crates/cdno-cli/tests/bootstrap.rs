@@ -233,7 +233,7 @@ fn an_older_vault_prints_the_migrate_notice_and_migrate_itself_does_not() {
     assert_eq!(
         orient_json_stderr(dir.path()),
         format!(
-            "notice: this vault records RLM 0.9; this cdno implements RLM {binary} \u{2014} \
+            "notice: this vault follows RLM 0.9; this cdno implements RLM {binary} \u{2014} \
              `cdno migrate --dry-run` shows what changes\n"
         )
     );
@@ -247,4 +247,24 @@ fn an_older_vault_prints_the_migrate_notice_and_migrate_itself_does_not() {
         .get_output()
         .clone();
     assert!(output.stderr.is_empty(), "{:?}", output.stderr);
+}
+
+#[test]
+fn now_line_in_a_skewed_vault_prints_nothing_on_stderr() {
+    // `cdno now --line` is a shell-prompt segment, run on every prompt: like
+    // completion, it never carries the notice. Both skews that have one.
+    for line in ["method_version = \"0.9\"", "method_version = \"1.1\""] {
+        let dir = inited_vault_with_method_line(Some(line));
+        // The vault does print a notice after an ordinary command.
+        assert!(!orient_json_stderr(dir.path()).is_empty(), "{line}");
+
+        let output = cdno()
+            .current_dir(dir.path())
+            .args(["now", "--line"])
+            .assert()
+            .success()
+            .get_output()
+            .clone();
+        assert!(output.stderr.is_empty(), "{line}: {:?}", output.stderr);
+    }
 }

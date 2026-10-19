@@ -14,8 +14,9 @@ use cdno_core::index::{SqliteIndex, VaultIndex};
 use cdno_core::paths;
 use cdno_core::reconcile::ReconciliationReport;
 use cdno_core::store::{FsVaultStore, VaultStore};
-use cdno_domain::method_version::UNSTAMPED_READS_AS;
-use cdno_domain::{MethodSkew, MethodStatus, Vault};
+use cdno_domain::{
+    MethodSkew, MethodStatus, Vault, describe_vault_method_version, newer_minor_message,
+};
 
 /// Walk upward from `start` looking for a `.cuaderno/` marker.
 /// Returns the directory containing it, or `None` if no vault is found.
@@ -151,28 +152,14 @@ pub fn take_method_status() -> Option<MethodStatus> {
 /// A newer major prints nothing here: every write is refused with the gate's
 /// own message, which already names the remedy.
 pub fn method_notice(status: &MethodStatus) -> Option<String> {
-    let binary = status.binary;
+    let (vault, binary) = (status.vault, status.binary);
     match status.skew {
-        MethodSkew::OlderMinor | MethodSkew::OlderMajor => {
-            let recorded = match status.vault {
-                Some(version) => format!("records RLM {version}"),
-                None => format!("is unstamped (read as {UNSTAMPED_READS_AS})"),
-            };
-            Some(format!(
-                "notice: this vault {recorded}; this cdno implements RLM {binary} \u{2014} \
-                 `cdno migrate --dry-run` shows what changes"
-            ))
-        }
-        MethodSkew::NewerMinor => {
-            let follows = match status.vault {
-                Some(version) => format!("follows RLM {version}"),
-                None => format!("is unstamped (read as {UNSTAMPED_READS_AS})"),
-            };
-            Some(format!(
-                "notice: this vault {follows}, a newer minor version than the RLM {binary} this \
-                 cdno implements \u{2014} writes proceed; upgrade cdno for the practices it adds"
-            ))
-        }
+        MethodSkew::OlderMinor | MethodSkew::OlderMajor => Some(format!(
+            "notice: this vault {}; this cdno implements RLM {binary} \u{2014} \
+             `cdno migrate --dry-run` shows what changes",
+            describe_vault_method_version(vault)
+        )),
+        MethodSkew::NewerMinor => Some(format!("notice: {}", newer_minor_message(vault, binary))),
         MethodSkew::Equal | MethodSkew::NewerMajor => None,
     }
 }

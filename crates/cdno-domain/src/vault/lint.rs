@@ -15,9 +15,9 @@ use cdno_core::path::VaultPath;
 use cdno_core::paths::CONFIG_FILE;
 use cdno_core::store::VaultStore;
 
-use crate::error::{DomainError, describe_vault_method_version};
+use crate::error::DomainError;
 use crate::lint::{LintIssue, LintReport};
-use crate::method_version::{MethodSkew, UNSTAMPED_READS_AS};
+use crate::method_version::{MethodSkew, UNSTAMPED_READS_AS, newer_minor_message};
 use crate::note_type::NoteType;
 
 use super::commitments::{parse_periodic_line, split_at_next_marker};
@@ -1271,14 +1271,9 @@ impl Vault {
         };
         let (vault, binary) = (status.vault, status.binary);
         Ok(match status.skew {
-            MethodSkew::NewerMinor => vec![LintIssue::warning(
-                path,
-                format!(
-                    "this vault {}, a newer minor version than the RLM {binary} this cdno \
-                     implements \u{2014} writes proceed; upgrade cdno for the practices it adds",
-                    describe_vault_method_version(vault)
-                ),
-            )],
+            MethodSkew::NewerMinor => {
+                vec![LintIssue::warning(path, newer_minor_message(vault, binary))]
+            }
             MethodSkew::NewerMajor => vec![LintIssue::error(
                 path,
                 DomainError::MethodVersionAhead {
