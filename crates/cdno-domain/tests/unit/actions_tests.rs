@@ -150,6 +150,15 @@ fn add_action_with_note_on_parked_project_writes_the_note_and_the_bullet() {
     assert!(map.contains("- [ ] [[actions/some-work]] (light)"), "{map}");
     assert!(map.contains("status: parked"), "{map}");
     assert!(!store.exists(&vp("projects/foo.md")).unwrap());
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-26.md"))
+        .expect("the addition is logged");
+    assert!(
+        daily.contains(
+            "- **09:00**: action added to [[foo]] with note [[actions/some-work]] \u{2014} Some work (light)"
+        ),
+        "{daily}"
+    );
 }
 
 // ---------------------------------------------------------------------

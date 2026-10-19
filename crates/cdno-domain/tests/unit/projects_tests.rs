@@ -717,6 +717,53 @@ fn update_project_state_errors_when_status_mismatches_folder() {
 }
 
 #[test]
+fn add_action_errors_when_an_active_map_sits_under_parked() {
+    // The reverse folder mismatch: `status: active` under `_parked/`. The
+    // open resolver needs folder and status to agree, so it refuses.
+    let body = project_body_with_actions(
+        "work",
+        "active",
+        "2026-04-01",
+        "Misfiled",
+        "- [ ] Step (light)\n",
+    );
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/misfiled.md", &body)],
+        VaultConfig::default(),
+    );
+
+    let err = vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "misfiled",
+            "anything",
+            EnergyLevel::Deep,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            DomainError::ProjectNotActive { slug, status: ProjectStatus::Active, .. }
+                if slug == "misfiled"
+        ),
+        "got {err:?}"
+    );
+    assert_eq!(
+        store
+            .read_file(&vp("projects/_parked/misfiled.md"))
+            .unwrap(),
+        body,
+        "the refused write left the map untouched"
+    );
+    assert!(
+        !store
+            .exists(&vp("journal/2026/daily/2026-05-01.md"))
+            .unwrap(),
+        "nothing logged"
+    );
+}
+
+#[test]
 fn update_project_state_errors_when_current_state_section_missing() {
     let body = "---\ntype: project\ncontext: work\nstatus: active\ncreated: 2026-04-01\n---\n\n# No Section\n\n## Next Actions\n- [ ] step\n";
     let (vault, _store) =
@@ -1266,7 +1313,11 @@ fn add_action_on_a_parked_project_appends_the_bullet_and_logs() {
         )
         .expect("a parked map takes a next action");
 
-    let raw = assert_parked_write(&store, "old", "[[old]]");
+    let raw = assert_parked_write(
+        &store,
+        "old",
+        "- **14:00**: action added to [[old]] \u{2014} Sketch the figures (deep)",
+    );
     assert!(raw.contains("- [ ] Sketch the figures (deep)"), "{raw}");
 }
 
@@ -3186,7 +3237,11 @@ fn drop_milestone_on_a_parked_project_removes_it_and_logs() {
         )
         .expect("a parked map's stale date can be dropped (#611)");
 
-    let raw = assert_parked_write(&store, "old", "[[old]]");
+    let raw = assert_parked_write(
+        &store,
+        "old",
+        "- **10:00**: milestone dropped on [[old]] \u{2014} Ethics form\n  reason: the board waived it",
+    );
     assert!(!raw.contains("Ethics form"), "{raw}");
 }
 
@@ -3201,7 +3256,11 @@ fn add_waiting_on_on_a_parked_project_appends_it_and_logs() {
         .add_waiting_on(dt(2026, 5, 1, 10, 0), "old", "Reply from the archive")
         .expect("a parked map takes a waiting-on item");
 
-    let raw = assert_parked_write(&store, "old", "[[old]]");
+    let raw = assert_parked_write(
+        &store,
+        "old",
+        "- **10:00**: waiting added on [[old]] \u{2014} Reply from the archive",
+    );
     assert!(raw.contains("- Reply from the archive"), "{raw}");
 }
 
@@ -3216,7 +3275,11 @@ fn resolve_waiting_on_on_a_parked_project_removes_it_and_logs() {
         .resolve_waiting_on(dt(2026, 5, 1, 10, 0), "old", "survey team")
         .expect("a parked map's waiting-on item can be resolved");
 
-    let raw = assert_parked_write(&store, "old", "[[old]]");
+    let raw = assert_parked_write(
+        &store,
+        "old",
+        "- **10:00**: waiting resolved on [[old]] \u{2014} Field data from the survey team",
+    );
     assert!(!raw.contains("survey team"), "{raw}");
 }
 
