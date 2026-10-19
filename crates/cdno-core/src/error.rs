@@ -49,6 +49,12 @@ pub enum ConfigError {
     /// the configured ceiling).
     #[error("invalid focus configuration: {0}")]
     InvalidFocus(String),
+
+    /// `[vault] method_version` could not be read from a config buffer by
+    /// [`crate::config::method_version_from_str`]: the buffer is not TOML, or
+    /// the value is not `major.minor`. The source carries the reason.
+    #[error("could not read `[vault] method_version` from config")]
+    MethodVersion { source: toml::de::Error },
 }
 
 /// Errors from the surgical config editor ([`crate::config_edit`], #365

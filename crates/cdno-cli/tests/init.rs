@@ -71,6 +71,30 @@ fn run_writes_default_config_with_five_project_cap() {
 }
 
 #[test]
+fn init_writes_the_binarys_method_version() {
+    // `init` stamps the method version this binary implements, never a
+    // literal that could run ahead of it (RFC 0006 §8.4, D4). The template's
+    // line must therefore track `METHOD_VERSION`.
+    let dir = tempdir().unwrap();
+    init::run(dir.path()).unwrap();
+
+    let config =
+        fs::read_to_string(dir.path().join(".cuaderno/config.toml")).expect("config.toml present");
+    let lines: Vec<&str> = config
+        .lines()
+        .filter(|line| line.starts_with("method_version"))
+        .collect();
+    let expected = format!("method_version = \"{}\"", cdno_domain::METHOD_VERSION);
+    assert_eq!(lines, [expected.as_str()], "config:\n{config}");
+
+    let loaded = cdno_core::config::VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(
+        loaded.vault.method_version,
+        Some(cdno_domain::METHOD_VERSION)
+    );
+}
+
+#[test]
 fn run_writes_focus_config_with_both_keys_documented() {
     let dir = tempdir().unwrap();
     init::run(dir.path()).unwrap();

@@ -1299,3 +1299,103 @@ max_window_days = 0
         "Error should name the key, its value and the ceiling: {err}"
     );
 }
+
+// --- `[vault] method_version` (RFC 0006 §8.4, T6) ---
+
+use cdno_core::config::{MethodVersion, method_version_from_str};
+
+#[test]
+fn method_version_absent_reads_as_unstamped() {
+    // No config file at all: the test suite's own vaults are built this way.
+    let dir = TempDir::new().unwrap();
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.vault.method_version, None);
+
+    // A `[vault]` table without the key.
+    let dir = TempDir::new().unwrap();
+    write_config(dir.path(), "[vault]\nname = \"Test\"\n");
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.vault.method_version, None);
+
+    // The lone-key reader agrees, with or without a `[vault]` table.
+    assert_eq!(method_version_from_str("").unwrap(), None);
+    assert_eq!(
+        method_version_from_str("[vault]\nname = \"Test\"\n").unwrap(),
+        None
+    );
+}
+
+#[test]
+fn method_version_parses_major_minor() {
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[vault]\nname = \"Test\"\nmethod_version = \"1.1\"\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    let v1_1 = MethodVersion { major: 1, minor: 1 };
+    assert_eq!(config.vault.method_version, Some(v1_1));
+
+    // One spelling, both ways.
+    assert_eq!("1.1".parse::<MethodVersion>().unwrap(), v1_1);
+    assert_eq!(v1_1.to_string(), "1.1");
+    let v1_10: MethodVersion = "1.10".parse().unwrap();
+    assert_eq!(v1_10.to_string(), "1.10");
+
+    // Ordered by major, then minor, numerically.
+    let v1_0 = MethodVersion { major: 1, minor: 0 };
+    let v1_9 = MethodVersion { major: 1, minor: 9 };
+    let v2_0 = MethodVersion { major: 2, minor: 0 };
+    assert!(v1_0 < v1_1 && v1_1 < v1_9 && v1_9 < v1_10 && v1_10 < v2_0);
+
+    // The lone-key reader reads only that key: an unrelated config error
+    // (here a `[focus]` typo, which `load` rejects) does not stop it.
+    let toml = "[vault]\nmethod_version = \"1.1\"\n\n[focus]\ncarry_over_day = 1\n";
+    assert_eq!(method_version_from_str(toml).unwrap(), Some(v1_1));
+}
+
+#[test]
+fn method_version_rejects_a_malformed_string_naming_the_key() {
+    for raw in ["1", "1.1.0", "v1.1"] {
+        let toml = format!("[vault]\nname = \"Test\"\nmethod_version = \"{raw}\"\n");
+
+        let dir = TempDir::new().unwrap();
+        write_config(dir.path(), &toml);
+        let err = VaultConfig::load(dir.path()).unwrap_err();
+        let chain = error_chain(&err);
+        assert!(
+            chain.contains("invalid `[vault] method_version`"),
+            "`{raw}` must fail naming the key, got: {chain}"
+        );
+        assert!(
+            chain.contains(&format!("`{raw}` is not a method version")),
+            "`{raw}` must fail naming the value, got: {chain}"
+        );
+
+        let err = method_version_from_str(&toml).unwrap_err();
+        let chain = error_chain(&err);
+        assert!(
+            chain.contains("invalid `[vault] method_version`"),
+            "the lone-key reader must name the key for `{raw}`, got: {chain}"
+        );
+
+        assert!(raw.parse::<MethodVersion>().is_err(), "`{raw}`");
+    }
+}
+
+#[test]
+fn an_unknown_vault_key_still_loads() {
+    // `[vault]` denies no unknown fields, which is why `method_version` lives
+    // there: a released binary that predates a key ignores it.
+    let dir = TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "[vault]\nname = \"Test\"\nmethod_version = \"9.9\"\nkey_from_the_future = true\n",
+    );
+    let config = VaultConfig::load(dir.path()).unwrap();
+    assert_eq!(config.vault.name, "Test");
+    assert_eq!(
+        config.vault.method_version,
+        Some(MethodVersion { major: 9, minor: 9 })
+    );
+}

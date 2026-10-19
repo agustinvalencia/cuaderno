@@ -10,6 +10,7 @@ pub mod bootstrap;
 pub mod error;
 pub mod frontmatter;
 pub mod lint;
+pub mod method_version;
 pub mod note_type;
 pub mod recurrence;
 pub mod type_registry;
@@ -22,6 +23,7 @@ pub use error::{
 };
 pub use frontmatter::{Context, ProjectFrontmatter, ProjectStatus};
 pub use lint::{LintIssue, LintReport, LintSeverity};
+pub use method_version::METHOD_VERSION;
 pub use type_registry::{FieldInfo, NoteTypeDescriptor, NoteTypeInfo, NoteTypeKind, TypeRegistry};
 pub use vault::slug::slugify;
 pub use vault::{
