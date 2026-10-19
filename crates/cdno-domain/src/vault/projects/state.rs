@@ -1,6 +1,6 @@
-//! `update_project_state`: rewrites the `## Current State` section
-//! of an active project, auto-logging the previous body to today's
-//! daily note in a single committed transaction.
+//! `update_project_state`: rewrites the `## Current State` section of an
+//! open (active or parked) project, auto-logging the previous body to
+//! today's daily note in a single committed transaction.
 
 use chrono::NaiveDateTime;
 
@@ -16,19 +16,19 @@ use super::super::log::flatten_for_log;
 use super::CURRENT_STATE_SECTION;
 
 impl Vault {
-    /// Replace an active project's `Current State` section, auto-logging
-    /// the previous state to today's daily note in a single committed
-    /// transaction.
+    /// Replace an open (active or parked) project's `Current State`
+    /// section, auto-logging the previous state to today's daily note in a
+    /// single committed transaction.
     ///
     /// `slug` identifies the project (matching the CLI surface,
     /// `cdno project state <slug> "..."`), located on disk across
     /// `projects/`, `projects/_parked/` and `projects/_done/<year>/`.
     /// Resolves errors as:
-    /// - the project is not both directly at `projects/<slug>.md` **and**
-    ///   `status: active` in its frontmatter (a parked or closed project,
-    ///   or a hand-edited map whose folder and status disagree) →
-    ///   [`DomainError::ProjectNotActive`]. Folder and frontmatter must
-    ///   both say active; neither alone is enough.
+    /// - the project is neither `status: active` at `projects/<slug>.md`
+    ///   nor `status: parked` at `projects/_parked/<slug>.md` (a closed
+    ///   project, or a hand-edited map whose folder and status disagree)
+    ///   → [`DomainError::ProjectNotActive`]. Folder and frontmatter must
+    ///   agree; neither alone is enough.
     /// - the slug exists at more than one location →
     ///   [`DomainError::AmbiguousProject`].
     /// - file at no location → [`StoreError::NotFound`](cdno_core::error::StoreError::NotFound).
@@ -54,10 +54,10 @@ impl Vault {
         new_state: &str,
     ) -> Result<WriteOutcome, DomainError> {
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        // Resolved from the disk: parked, closed and misfiled maps are
+        // Resolved from the disk: closed and misfiled maps are
         // `ProjectNotActive`, a missing slug is `Store(NotFound)`, and
-        // folder and frontmatter must both say active.
-        let (path, mut doc) = self.resolve_active_project(slug)?;
+        // folder and frontmatter must agree (active or parked).
+        let (path, mut doc) = self.resolve_open_project(slug)?;
 
         let old_state = doc.section(CURRENT_STATE_SECTION)?.trim().to_owned();
         let new_trimmed = new_state.trim();

@@ -696,11 +696,10 @@ fn action_note_for(project: &str, title: &str, due: &str) -> String {
 }
 
 #[test]
-fn commitments_skips_milestones_of_parked_projects() {
-    // Keep a handle on the index so the test can prove the parked map's
-    // row is present: before T4 no move restages rows, so a vault that
-    // reached this state by hand is the only way to have them, and the
-    // register must still omit the date.
+fn commitments_includes_hard_milestones_of_parked_projects() {
+    // A hard date on a parked map is still a promise (RFC 0006 §7.1), so
+    // the register keeps it. Keep a handle on the index so the test can
+    // prove the parked map's row is what the register reads.
     let store: Arc<dyn VaultStore> = Arc::new(MemoryVaultStore::new());
     let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
     for (path, body) in [
@@ -732,15 +731,27 @@ fn commitments_skips_milestones_of_parked_projects() {
     );
 
     let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
-    let sources: Vec<&CommitmentSource> = got.iter().map(|c| &c.source).collect();
+    let summary: Vec<(&str, &CommitmentSource)> =
+        got.iter().map(|c| (c.title.as_str(), &c.source)).collect();
     assert_eq!(
-        sources,
-        vec![&CommitmentSource::ProjectMilestone("alpha".to_owned())],
+        summary,
+        vec![
+            (
+                "Submit paper",
+                &CommitmentSource::ProjectMilestone("alpha".to_owned())
+            ),
+            (
+                "Grant report",
+                &CommitmentSource::ProjectMilestone("beta".to_owned())
+            ),
+        ],
     );
 }
 
 #[test]
-fn commitments_skips_action_dues_of_non_active_projects() {
+fn commitments_includes_action_dues_of_parked_projects() {
+    // An open project's action-note due is in the register whether the
+    // project is active or parked; a closed project's is not.
     let (vault, _store) = vault_with_seeded_store(&[
         (
             "projects/alpha.md",
@@ -773,9 +784,83 @@ fn commitments_skips_action_dues_of_non_active_projects() {
         got.iter().map(|c| (c.title.as_str(), &c.source)).collect();
     assert_eq!(
         summary,
+        vec![
+            (
+                "Live work",
+                &CommitmentSource::ActionNote("alpha".to_owned())
+            ),
+            (
+                "Shelved work",
+                &CommitmentSource::ActionNote("beta".to_owned())
+            ),
+        ],
+    );
+}
+
+#[test]
+fn completed_and_dropped_projects_dates_stay_out() {
+    // Only an open map's dates surface: a completed and a dropped map, each
+    // with a hard milestone and an action note's due, contribute nothing,
+    // while the active and parked controls do.
+    let (vault, _store) = vault_with_seeded_store(&[
+        (
+            "projects/alpha.md",
+            &project_with_hard_milestone("Alpha", "active", "Alpha deadline", "2026-05-28"),
+        ),
+        (
+            "projects/_parked/beta.md",
+            &project_with_hard_milestone("Beta", "parked", "Beta deadline", "2026-05-29"),
+        ),
+        (
+            "projects/_done/2026/gamma.md",
+            &project_with_hard_milestone("Gamma", "completed", "Gamma deadline", "2026-05-30"),
+        ),
+        (
+            "projects/_done/2026/delta.md",
+            &project_with_hard_milestone("Delta", "dropped", "Delta deadline", "2026-05-31"),
+        ),
+        (
+            "actions/gamma-leftover.md",
+            &action_note_for("gamma", "Gamma leftover", "2026-06-01"),
+        ),
+        (
+            "actions/delta-leftover.md",
+            &action_note_for("delta", "Delta leftover", "2026-06-02"),
+        ),
+    ]);
+
+    let got = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let titles: Vec<&str> = got.iter().map(|c| c.title.as_str()).collect();
+    assert_eq!(titles, vec!["Alpha deadline", "Beta deadline"], "{got:?}");
+}
+
+#[test]
+fn park_keeps_the_milestone_in_the_register_without_a_reindex() {
+    // Parking restages the map's milestone rows under `_parked/` (RFC 0004
+    // T4), and the register reads parked maps, so the date stays in the
+    // register from the same Vault, with no reconcile in between.
+    let (vault, _store) = vault_with_seeded_store(&[(
+        "projects/alpha.md",
+        &project_with_hard_milestone("Alpha", "active", "Submit paper", "2026-06-01"),
+    )]);
+    let before = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    assert_eq!(before.len(), 1, "{before:?}");
+
+    vault
+        .park_project(dt(2026, 5, 26, 9, 0), "alpha")
+        .expect("park");
+
+    let after = vault.commitments(ymd(2026, 5, 26), 14).unwrap();
+    let summary: Vec<(NaiveDate, &str, &CommitmentSource)> = after
+        .iter()
+        .map(|c| (c.date, c.title.as_str(), &c.source))
+        .collect();
+    assert_eq!(
+        summary,
         vec![(
-            "Live work",
-            &CommitmentSource::ActionNote("alpha".to_owned())
+            ymd(2026, 6, 1),
+            "Submit paper",
+            &CommitmentSource::ProjectMilestone("alpha".to_owned())
         )],
     );
 }

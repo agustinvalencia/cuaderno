@@ -13,7 +13,7 @@ use cdno_core::store::{MemoryVaultStore, VaultStore};
 use cdno_domain::ResumedKind;
 use cdno_domain::Vault;
 use cdno_domain::error::DomainError;
-use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel};
+use cdno_domain::frontmatter::{ActionFrontmatter, ActionStatus, EnergyLevel, ProjectStatus};
 use cdno_domain::vault::WriteOutcome;
 use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
@@ -127,25 +127,29 @@ fn add_action_with_note_suffixes_a_duplicate_title() {
 }
 
 #[test]
-fn add_action_with_note_on_parked_project_errors_and_writes_nothing() {
+fn add_action_with_note_on_parked_project_writes_the_note_and_the_bullet() {
+    // A parked map is a complete map (RFC 0006 §7.1): the heavy form of
+    // add_action works on it as the light form does, and the map stays
+    // parked.
     let parked = "---\ntype: project\ncontext: work\nstatus: parked\ncreated: 2026-04-01\n---\n\n# Foo\n\n## Next Actions\n";
     let (vault, store) = vault_with(&[("projects/_parked/foo.md", parked)]);
 
-    let err = vault
+    let note = vault
         .add_action_with_note(
             dt(2026, 5, 26, 9, 0),
             "foo",
             "Some work",
             EnergyLevel::Light,
         )
-        .unwrap_err();
-    assert!(
-        matches!(err, DomainError::ProjectNotActive { .. }),
-        "got {err:?}"
-    );
+        .expect("a parked map takes an action note");
 
-    // No note file leaked from the aborted operation.
-    assert!(!store.exists(&vp("actions/some-work.md")).unwrap());
+    assert_eq!(note, vp("actions/some-work.md"));
+    assert!(store.exists(&note).unwrap());
+    assert_eq!(read_action_frontmatter(&store, &note).project, "foo");
+    let map = store.read_file(&vp("projects/_parked/foo.md")).unwrap();
+    assert!(map.contains("- [ ] [[actions/some-work]] (light)"), "{map}");
+    assert!(map.contains("status: parked"), "{map}");
+    assert!(!store.exists(&vp("projects/foo.md")).unwrap());
 }
 
 // ---------------------------------------------------------------------
@@ -2500,6 +2504,150 @@ fn resume_with_project_of_todays_focus_is_focus_open_same_action() {
         }
         other => panic!("expected FocusOpen, got {other:?}"),
     }
+    assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
+}
+
+// Resume needs an active map (RFC 0006 §7.1, §8.1): picking up work set
+// down on a map since parked is working on it. The slot checks above
+// still win; only then is the target's project resolved.
+
+#[test]
+fn resume_of_a_pause_on_a_since_parked_map_is_project_not_active() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 25, 10, 0), Some("section 2"), None)
+        .unwrap();
+    vault.park_project(dt(2026, 5, 25, 11, 0), "foo").unwrap();
+
+    for project in [None, Some("foo")] {
+        let err = vault
+            .resume_action(dt(2026, 5, 26, 9, 0), project)
+            .unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                DomainError::ProjectNotActive { slug, status: ProjectStatus::Parked, .. }
+                    if slug == "foo"
+            ),
+            "{project:?}: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("starting, switching or resuming work needs an active map"),
+            "{err}"
+        );
+    }
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+}
+
+#[test]
+fn resume_of_a_carried_focus_on_a_since_parked_map_is_refused() {
+    let (vault, store) = resume_vault();
+    // Monday: work starts on foo and is left open; foo is parked later
+    // that day.
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault.park_project(dt(2026, 5, 25, 17, 0), "foo").unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 0), None)
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::ProjectNotActive { slug, status: ProjectStatus::Parked, .. }
+                if slug == "foo"
+        ),
+        "{err:?}"
+    );
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+}
+
+#[test]
+fn resume_of_a_pause_on_a_since_closed_map_is_refused() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 25, 10, 0), None, None)
+        .unwrap();
+    // The bullets are cleared by hand, so closing the project leaves the
+    // pause unconsumed, then the project is completed.
+    store
+        .write_file(&vp("projects/foo.md"), ACTIVE_PROJECT)
+        .unwrap();
+    vault
+        .complete_project(dt(2026, 5, 25, 11, 0), "foo")
+        .unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 0), Some("foo"))
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            &err,
+            DomainError::ProjectNotActive { slug, status: ProjectStatus::Completed, .. }
+                if slug == "foo"
+        ),
+        "{err:?}"
+    );
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+}
+
+#[test]
+fn resume_of_a_pause_on_a_since_removed_map_is_not_found() {
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 25, 9, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 25, 10, 0), None, None)
+        .unwrap();
+    store.delete_file(&vp("projects/foo.md")).unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 9, 0), Some("foo"))
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            err,
+            DomainError::Store(cdno_core::error::StoreError::NotFound(_))
+        ),
+        "{err:?}"
+    );
+    assert!(!store.exists(&daily_of(26)).unwrap(), "nothing written");
+}
+
+#[test]
+fn a_pause_on_a_since_parked_map_still_yields_to_the_slot_checks() {
+    // FocusOpen is about the slot and wins over the map check: with bar's
+    // focus open today, resuming foo's pause is FocusOpen even though foo
+    // has since been parked.
+    let (vault, store) = resume_vault();
+    vault
+        .start_action(dt(2026, 5, 26, 8, 0), "foo", "draft")
+        .unwrap();
+    vault
+        .pause_action(dt(2026, 5, 26, 8, 30), None, None)
+        .unwrap();
+    vault.park_project(dt(2026, 5, 26, 8, 40), "foo").unwrap();
+    vault
+        .start_action(dt(2026, 5, 26, 9, 0), "bar", "venue")
+        .unwrap();
+    let before = store.read_file(&daily_of(26)).unwrap();
+
+    let err = vault
+        .resume_action(dt(2026, 5, 26, 10, 0), Some("foo"))
+        .unwrap_err();
+    assert!(matches!(err, DomainError::FocusOpen { .. }), "{err:?}");
     assert_eq!(store.read_file(&daily_of(26)).unwrap(), before);
 }
 

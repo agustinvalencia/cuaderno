@@ -15,12 +15,12 @@ cdno commitments --weeks 6    # look six weeks ahead instead of the default two
 30-day overdue look-back on top of the lookahead window, so nothing slips silently into the past. It
 draws from four sources (see [Business rules](../concepts/business-rules.md#commitments-are-aggregated-not-stored-in-one-place)):
 
-1. **Project milestones** marked `--hard`, of an active project.
+1. **Project milestones** marked `--hard`, of an open (active or parked) project.
 2. **Stewardship periodic commitments** (recurring dashboard lines).
 3. **Standalone commitment notes** (below).
-4. **Action notes** with a self-imposed `due:` not tied to a milestone, of an active project.
+4. **Action notes** with a self-imposed `due:` not tied to a milestone, of an open (active or parked) project.
 
-A project's own dates (the first and last) count only while the project is active: parking, completing or dropping it takes its milestones and action due dates out of the view until it is activated again. A standalone commitment that names a parked or closed project keeps surfacing, since it is a promise to someone else.
+A project's own dates (the first and last) count while the project is open, active or parked: a hard date on a parked map is still a promise. Completing or dropping a project takes its milestones and action due dates out of the view until it is activated again. A standalone commitment that names a parked or closed project keeps surfacing, since it is a promise to someone else.
 
 ## Standalone commitments
 

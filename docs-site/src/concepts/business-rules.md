@@ -48,12 +48,12 @@ new text overwrites it. You get a clean current view and a full audit trail in t
 The [commitments view](../tutorials/commitments.md) is *computed* from four sources, so a promise is
 counted wherever it naturally lives:
 
-1. **Project milestones** marked with a hard deadline (`--hard`), of an active project.
+1. **Project milestones** marked with a hard deadline (`--hard`), of an open (active or parked) project.
 2. **Stewardship periodic commitments** (the recurring lines on a stewardship dashboard).
 3. **Standalone commitment notes** in `commitments/`.
-4. **Action notes** carrying a self-imposed `due:` that isn't pinned to a milestone, of an active project.
+4. **Action notes** carrying a self-imposed `due:` that isn't pinned to a milestone, of an open (active or parked) project.
 
-A project's own dates (sources 1 and 4) count only while the project is active: parking, completing or dropping it takes its milestones and action due dates out of the view until it is activated again. A standalone commitment that names a parked or closed project keeps surfacing, since it is a promise to someone else.
+A project's own dates (sources 1 and 4) count while the project is open, active or parked: a hard date on a parked map is still a promise. Completing or dropping a project takes its milestones and action due dates out of the view until it is activated again. A standalone commitment that names a parked or closed project keeps surfacing, since it is a promise to someone else.
 
 [`cdno commitments`](../reference/cli/commitments.md) merges and sorts all four by date, with overdue
 items flagged.

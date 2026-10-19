@@ -651,10 +651,11 @@ impl Vault {
     ///    here — its milestone (source 1) owns the date.
     ///
     /// Sources 1 and 4 ask the parent: a milestone or action date
-    /// surfaces only while its project's `status` is `active`, so a
-    /// parked or closed project's dates leave the register. Source 3
-    /// does not: a standalone commitment is a promise to someone else
-    /// and keeps surfacing whatever became of the project it names
+    /// surfaces while its project is open, `status` `active` or `parked`
+    /// (a parked map's hard date is still a promise, RFC 0006 §7.1), so
+    /// only a completed or dropped project's dates leave the register.
+    /// Source 3 does not: a standalone commitment is a promise to someone
+    /// else and keeps surfacing whatever became of the project it names
     /// (RFC 0004 §5.5).
     ///
     /// Each entry is flagged `is_overdue` when its date is before
@@ -699,13 +700,14 @@ impl Vault {
             };
             // A project map that fails to parse skips its milestones
             // silently — mirroring the source-2 tolerance, since a broken
-            // map is lint's problem, not the aggregator's. A parked or
-            // closed project's milestones are not due while it is.
+            // map is lint's problem, not the aggregator's. An open
+            // (active or parked) project's milestones are due; a closed
+            // one's are not.
             let Some((context, status)) = self.cached_project_context(&path, &mut project_context)
             else {
                 continue;
             };
-            if status != ProjectStatus::Active {
+            if !matches!(status, ProjectStatus::Active | ProjectStatus::Parked) {
                 continue;
             }
             entries.push(CommitmentEntry {
@@ -801,8 +803,8 @@ impl Vault {
             // inherits the owning project's. Resolve the project slug to
             // its map (active, parked or closed) and read the context through the
             // same cache source 1 populated. A missing or unparseable
-            // project map drops the entry silently, and so does one that
-            // is not active.
+            // project map drops the entry silently, and so does a closed
+            // (completed or dropped) one.
             let project_path = match project_paths.get(&action.project) {
                 Some(cached) => cached.clone(),
                 None => {
@@ -819,7 +821,7 @@ impl Vault {
             else {
                 continue;
             };
-            if status != ProjectStatus::Active {
+            if !matches!(status, ProjectStatus::Active | ProjectStatus::Parked) {
                 continue;
             }
             let slug = slug_of(&entry.path);

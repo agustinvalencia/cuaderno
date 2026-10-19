@@ -518,6 +518,28 @@ fn dt(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> chrono::NaiveD
         .unwrap()
 }
 
+/// After a write on a parked map (RFC 0006 §8.1): the map is still at
+/// `projects/_parked/<slug>.md` with `status: parked`, nothing appeared at
+/// `projects/<slug>.md`, and the 1 May 2026 daily log carries `logged`.
+/// Returns the map's text for the caller's own assertions.
+fn assert_parked_write(store: &Arc<dyn VaultStore>, slug: &str, logged: &str) -> String {
+    let parked = vp(&format!("projects/_parked/{slug}.md"));
+    assert!(
+        !store.exists(&vp(&format!("projects/{slug}.md"))).unwrap(),
+        "the write must not move the map out of _parked/"
+    );
+    assert_eq!(
+        read_project_frontmatter(store, &parked).status,
+        ProjectStatus::Parked,
+        "the write must not change the map's status"
+    );
+    let daily = store
+        .read_file(&vp("journal/2026/daily/2026-05-01.md"))
+        .expect("the write is logged");
+    assert!(daily.contains(logged), "expected {logged:?} in:\n{daily}");
+    store.read_file(&parked).unwrap()
+}
+
 #[test]
 fn update_project_state_replaces_current_state_section() {
     let body = project_body_with_state(
@@ -633,7 +655,7 @@ fn update_project_state_appends_when_daily_note_exists() {
 }
 
 #[test]
-fn update_project_state_errors_when_project_parked() {
+fn update_project_state_on_a_parked_project_rewrites_the_map_and_logs() {
     let body = project_body_with_state(
         "work",
         "parked",
@@ -641,19 +663,22 @@ fn update_project_state_errors_when_project_parked() {
         "Old idea",
         "Was active last quarter.",
     );
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[("projects/_parked/old-idea.md", &body)],
         VaultConfig::default(),
     );
 
-    let err = vault
-        .update_project_state(dt(2026, 5, 1, 9, 0), "old-idea", "anything")
-        .unwrap_err();
+    vault
+        .update_project_state(
+            dt(2026, 5, 1, 9, 0),
+            "old-idea",
+            "Waiting for the grant call.",
+        )
+        .expect("a parked map takes a state update");
 
-    assert!(
-        matches!(&err, DomainError::ProjectNotActive { slug: s, .. } if s == "old-idea"),
-        "got {err:?}"
-    );
+    let raw = assert_parked_write(&store, "old-idea", "state on [[old-idea]]");
+    assert!(raw.contains("Waiting for the grant call."), "{raw}");
+    assert!(!raw.contains("Was active last quarter."), "{raw}");
 }
 
 #[test]
@@ -1219,7 +1244,7 @@ fn add_action_preserves_other_sections() {
 }
 
 #[test]
-fn add_action_errors_when_project_parked() {
+fn add_action_on_a_parked_project_appends_the_bullet_and_logs() {
     let body = project_body_with_actions(
         "work",
         "parked",
@@ -1227,18 +1252,22 @@ fn add_action_errors_when_project_parked() {
         "Old",
         "- [ ] Step (light)\n",
     );
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[("projects/_parked/old.md", &body)],
         VaultConfig::default(),
     );
 
-    let err = vault
-        .add_action(dt(2026, 5, 1, 14, 0), "old", "anything", EnergyLevel::Deep)
-        .unwrap_err();
-    assert!(
-        matches!(err, DomainError::ProjectNotActive { .. }),
-        "got {err:?}"
-    );
+    vault
+        .add_action(
+            dt(2026, 5, 1, 14, 0),
+            "old",
+            "Sketch the figures",
+            EnergyLevel::Deep,
+        )
+        .expect("a parked map takes a next action");
+
+    let raw = assert_parked_write(&store, "old", "[[old]]");
+    assert!(raw.contains("- [ ] Sketch the figures (deep)"), "{raw}");
 }
 
 #[test]
@@ -1435,7 +1464,7 @@ fn complete_action_errors_when_match_is_ambiguous() {
 }
 
 #[test]
-fn complete_action_errors_when_project_parked() {
+fn complete_action_on_a_parked_project_removes_the_bullet_and_logs() {
     let body = project_body_with_actions(
         "work",
         "parked",
@@ -1443,18 +1472,17 @@ fn complete_action_errors_when_project_parked() {
         "Old",
         "- [ ] Anything (light)\n",
     );
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[("projects/_parked/old.md", &body)],
         VaultConfig::default(),
     );
 
-    let err = vault
+    vault
         .complete_action(dt(2026, 5, 1, 16, 0), "old", "Anything")
-        .unwrap_err();
-    assert!(
-        matches!(err, DomainError::ProjectNotActive { .. }),
-        "got {err:?}"
-    );
+        .expect("a parked map's action can be completed");
+
+    let raw = assert_parked_write(&store, "old", "action done on [[old]]");
+    assert!(!raw.contains("Anything"), "{raw}");
 }
 
 #[test]
@@ -1651,25 +1679,27 @@ fn add_milestone_creates_section_when_missing() {
 }
 
 #[test]
-fn add_milestone_errors_when_project_parked() {
+fn add_milestone_on_a_parked_project_appends_the_milestone_and_logs() {
     let body = project_body_full("work", "parked", "2026-04-01", "Old", "", "(nothing yet)\n");
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[("projects/_parked/old.md", &body)],
         VaultConfig::default(),
     );
 
-    let err = vault
+    vault
         .add_milestone(
             dt(2026, 5, 1, 10, 0),
             "old",
-            "X",
+            "Report due",
             Some(chrono::NaiveDate::from_ymd_opt(2026, 5, 22).unwrap()),
             true,
         )
-        .unwrap_err();
+        .expect("a parked map takes a milestone");
+
+    let raw = assert_parked_write(&store, "old", "milestone added to [[old]]");
     assert!(
-        matches!(err, DomainError::ProjectNotActive { .. }),
-        "got {err:?}"
+        raw.contains("- [ ] Report due \u{2014} hard: 2026-05-22"),
+        "{raw}"
     );
 }
 
@@ -3083,21 +3113,158 @@ fn set_core_question_rejects_an_already_wrapped_target() {
 }
 
 #[test]
-fn set_core_question_errors_when_project_parked() {
+fn set_core_question_on_a_parked_project_sets_it_and_logs() {
     let body =
         project_body_with_core_question("Old", "null").replace("status: active", "status: parked");
-    let (vault, _store) = vault_with_seeded_store(
+    let (vault, store) = vault_with_seeded_store(
         &[("projects/_parked/old.md", &body)],
         VaultConfig::default(),
     );
 
-    let err = vault
+    vault
         .set_core_question(dt(2026, 5, 1, 10, 0), "old", Some("questions/research/foo"))
-        .unwrap_err();
-    assert!(
-        matches!(err, DomainError::ProjectNotActive { .. }),
-        "got {err:?}"
+        .expect("a parked map takes a core question");
+
+    assert_parked_write(&store, "old", "core question on [[old]]");
+    let fm = read_project_frontmatter(&store, &vp("projects/_parked/old.md"));
+    assert_eq!(
+        fm.core_question.as_deref(),
+        Some("[[questions/research/foo]]")
     );
+}
+
+// ---------------------------------------------------------------
+// Parked maps accept writes (RFC 0006 §7.1, §8.1). The verbs above
+// whose parked tests flipped have a positive test each beside them;
+// these are the rest of the switched verbs, one positive test apiece.
+// ---------------------------------------------------------------
+
+/// A parked map with one open action, one open hard milestone and one
+/// waiting-on item, for the switched verbs below.
+fn parked_full_map() -> String {
+    project_body_full(
+        "work",
+        "parked",
+        "2026-04-01",
+        "Old",
+        "- [ ] Ethics form \u{2014} hard: 2026-06-10\n",
+        "- Field data from the survey team\n",
+    )
+}
+
+#[test]
+fn complete_milestone_on_a_parked_project_checks_it_off_and_logs() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    vault
+        .complete_milestone(dt(2026, 5, 1, 10, 0), "old", "Ethics form")
+        .expect("a parked map's milestone can be completed");
+
+    let raw = assert_parked_write(&store, "old", "milestone done on [[old]]");
+    assert!(
+        raw.contains("- [x] Ethics form \u{2014} 2026-05-01"),
+        "{raw}"
+    );
+}
+
+#[test]
+fn drop_milestone_on_a_parked_project_removes_it_and_logs() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    vault
+        .drop_milestone(
+            dt(2026, 5, 1, 10, 0),
+            "old",
+            "Ethics form",
+            Some("the board waived it"),
+        )
+        .expect("a parked map's stale date can be dropped (#611)");
+
+    let raw = assert_parked_write(&store, "old", "[[old]]");
+    assert!(!raw.contains("Ethics form"), "{raw}");
+}
+
+#[test]
+fn add_waiting_on_on_a_parked_project_appends_it_and_logs() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    vault
+        .add_waiting_on(dt(2026, 5, 1, 10, 0), "old", "Reply from the archive")
+        .expect("a parked map takes a waiting-on item");
+
+    let raw = assert_parked_write(&store, "old", "[[old]]");
+    assert!(raw.contains("- Reply from the archive"), "{raw}");
+}
+
+#[test]
+fn resolve_waiting_on_on_a_parked_project_removes_it_and_logs() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    vault
+        .resolve_waiting_on(dt(2026, 5, 1, 10, 0), "old", "survey team")
+        .expect("a parked map's waiting-on item can be resolved");
+
+    let raw = assert_parked_write(&store, "old", "[[old]]");
+    assert!(!raw.contains("survey team"), "{raw}");
+}
+
+#[test]
+fn drop_action_on_a_parked_project_removes_the_bullet_and_logs() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    vault
+        .drop_action(dt(2026, 5, 1, 10, 0), "old", "First", None)
+        .expect("a parked map's action can be dropped");
+
+    let raw = assert_parked_write(&store, "old", "action dropped on [[old]]");
+    assert!(!raw.contains("- [ ] First"), "{raw}");
+}
+
+#[test]
+fn promote_action_on_a_parked_project_creates_the_note_and_relinks_the_bullet() {
+    let (vault, store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    let note = vault
+        .promote_action(dt(2026, 5, 1, 10, 0), "old", "First")
+        .expect("a parked map's action can be promoted");
+
+    assert!(store.exists(&note).unwrap(), "the action note is written");
+    let raw = assert_parked_write(&store, "old", "action promoted on [[old]]");
+    let stem = note.as_path().file_stem().unwrap().to_str().unwrap();
+    assert!(raw.contains(&format!("[[actions/{stem}]]")), "{raw}");
+}
+
+#[test]
+fn list_actions_on_a_parked_project_lists_its_open_bullets() {
+    let (vault, _store) = vault_with_seeded_store(
+        &[("projects/_parked/old.md", &parked_full_map())],
+        VaultConfig::default(),
+    );
+
+    let listed = vault
+        .list_actions("old")
+        .expect("a parked map's actions can be listed");
+
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].text, "First (light)");
 }
 
 /// Every other project test in this file builds its map with

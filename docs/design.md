@@ -348,7 +348,7 @@ Milestones are extracted into a first-class `milestones(project_id, name, date, 
 
 **Lifecycle**: `status` is one of `active`, `parked`, `completed` or `dropped`, and each has one folder: `projects/`, `projects/_parked/`, and `projects/_done/<year>/` for both closed states. A closed map also carries `closed: <date>`, the day it closed; the key is `null` on an open project and is written last in the frontmatter. `complete` is the claim that the work was done; `drop` records that it is not going to happen, with an optional reason. Both work from active or parked and never need a slot. While an action or milestone is open, closing is refused with the list: `complete` stays refused until each is completed or dropped, while `drop` can let them go with it on request, logging each as a drop (`reason: project dropped`, or `reason: project dropped (<reason>)` when a reason was given) and archiving attached action notes as dropped. Standalone commitments that name the project are never touched. A closed project is not terminal: `activate` brings it back (clearing `closed:`, under the cap), and it can be closed again the other way as a new, logged decision. Every transition logs one line in a fixed shape — `project [[slug]] parked`, `project [[slug]] activated`, `project completed [[slug]] — <title>`, `project dropped on [[slug]] — <title>` with an indented `reason:` line. A map whose status disagrees with its folder is a lint error.
 
-**Milestones with hard deadlines** are picked up by the commitments aggregation query while the project is active; a parked or closed project's milestones leave the register until it is activated again.
+**Milestones with hard deadlines** are picked up by the commitments aggregation query while the project is open, active or parked: a hard date on a parked map is still a promise (RFC 0006 §7.1). A completed or dropped project's milestones leave the register until it is activated again.
 
 ### 5.4 Portfolio Index
 
@@ -720,12 +720,12 @@ A benchmark result is evidence; what the benchmark taught you about the techniqu
 
 The commitments register is **not a static file**. It is a query assembled by the indexer from four sources:
 
-1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`, surfaced via the `milestones` index table), of an active project
+1. **Project milestones** with hard deadlines (parsed from `## Milestones` sections where the line contains `hard:`, surfaced via the `milestones` index table), of an open (active or parked) project
 2. **Stewardship periodic commitments** (parsed from `## Periodic Commitments` sections, with recurrence logic)
 3. **Standalone commitment notes** in `commitments/` (read from the `due` frontmatter field)
-4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth. Like source 1, only an active project's action notes count.
+4. **Action notes** with a self-imposed `due:` field (i.e. action-as-investigation deadlines that aren't pinned to a milestone). Action notes that link to a milestone instead of carrying their own `due:` are *not* duplicated here — the milestone is the source of truth. Like source 1, only an open (active or parked) project's action notes count.
 
-Sources 1 and 4 ask the parent project's `status`: a parked, completed or dropped project's own dates leave the register until it is activated again. Source 3 does not: a standalone commitment is a promise to someone else and keeps surfacing whatever became of the project it names (RFC 0004 §5.5).
+Sources 1 and 4 ask the parent project's `status`: an active or parked project's own dates are in the register, and a completed or dropped project's leave it until it is activated again (RFC 0006 §7.1). Source 3 does not: a standalone commitment is a promise to someone else and keeps surfacing whatever became of the project it names (RFC 0004 §5.5).
 
 A periodic commitment line is `- {title} — {recurrence} — next: YYYY-MM-DD`, optionally followed by
 a free-text annotation after the date (`(overdue)`, `— moved from April`). It is parsed by anchoring
