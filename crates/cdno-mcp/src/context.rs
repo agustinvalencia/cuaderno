@@ -50,7 +50,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, the active-project `slots` against the configured cap (the same object `list_projects` returns), and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null."
+        description = "Today's orientation: commitments due soon, active projects with their top action and last paused action, the active-project `slots` against the configured cap (the same object `list_projects` returns), and lapsed stewardship habits. The `energy` field is reserved for client-side suggestion biasing; the server returns the raw context unfiltered. The `focus` field carries what is currently in focus (the same as `current_focus`), or null. Each project's `last_paused` field carries its most recent pause still open for resuming, with its `next:` hint, or null. The projects are grouped under their core question where one is set: each `groups` entry holds a `parent` (`{\"kind\": \"question\", \"path\"}`, or null for a project standing alone) and its member slugs in `projects`, so several maps of one inquiry read as one undertaking."
     )]
     pub async fn get_orientation(
         &self,

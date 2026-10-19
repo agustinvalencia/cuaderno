@@ -116,7 +116,7 @@ pub use normalise::NormaliseReport;
 pub use note_ref::{Miss, NoteRef, PeriodRef, RefResolution, RelativeDay};
 pub use notes::NoteView;
 pub use notes_section::NoteToDailyOutcome;
-pub use orient::{LapsedHabit, OrientationContext};
+pub use orient::{GroupParent, LapsedHabit, OrientationContext, ProjectGroup};
 pub use portfolios::PortfolioSummary;
 // Exported for the unit suite, which pins the paused entry's exact shape.
 #[doc(hidden)]

@@ -33,6 +33,11 @@ pub struct ProjectSummary {
     /// pass that reads the map (a separate lookup could race a
     /// concurrent park/rename into a silently wrong colour).
     pub context: Context,
+    /// The frontmatter `core_question:` exactly as written (a wikilink
+    /// such as `"[[questions/research/foo]]"`), or `None` when the map
+    /// sets none. Orientation groups the projects that share one by this
+    /// field alone (RFC 0006 §8.0).
+    pub core_question: Option<String>,
     pub state_snippet: String,
     pub top_action: Option<TopAction>,
     /// The most recent paused action for this project, when one exists
@@ -86,6 +91,7 @@ impl Vault {
             slug: slug.to_owned(),
             status: project.status,
             context: project.context,
+            core_question: project.core_question,
             state_snippet,
             top_action,
             last_paused: None,
