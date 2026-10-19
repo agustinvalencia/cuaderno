@@ -30,18 +30,15 @@ pub use vault::{
     ActionListEntry, AttachedAction, BacklinkRef, ClosedProjectEntry, CommitmentEntry,
     CommitmentSource, CompletedActionEntry, CompletedActionSource, ConfigDocument, ConfigSaveError,
     ConfigValidationError, CurrentFocus, DAILY_LOGS_SECTION, DailyLogLine, DailyNoteView,
-    DailySection, GroupParent, InboxItem, LapsedHabit, LastPause, LinkedCommitment, MethodStatus, Miss, MonthlyNoteView, MonthlySection, NormaliseReport, NoteRef, NoteToDailyOutcome, MonthlyContext,
-    OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone, OpenPauses,
-    OrientationContext, PauseOutcome, PeriodRef, PlaceholderSource, PortfolioSummary,
+    DailySection, GroupParent, InboxItem, LapsedHabit, LastPause, LinkedCommitment, MethodStatus,
+    Miss, MonthlyContext, MonthlyNoteView, MonthlySection, NormaliseReport, NoteRef,
+    NoteToDailyOutcome, OpenAction, OpenItems, OpenItemsHash, OpenItemsReport, OpenMilestone,
+    OpenPauses, OrientationContext, PauseOutcome, PeriodRef, PlaceholderSource, PortfolioSummary,
     ProjectBacklinks, ProjectClosureOutcome, ProjectGroup, ProjectStateChange, ProjectSummary,
     QuestionBacklinks, QuestionSummary, RefResolution, RelativeDay, ResumeOutcome, ResumedFrom,
     ResumedKind, SearchFilters, SearchResultEntry, SlotUsage, StewardshipSummary,
     StewardshipVariant, SwitchOutcome, TemplateContent, TemplatePlaceholder, TemplateSourceKind,
     TemplateSummary, TemplateSyncReport, TemplateSyncStatus, TopAction, TrackingEntry,
-<<<<<<< HEAD
     TrackingEntryDraft, Vault, WeeklyContext, WeeklyNoteView, WeeklySection, WriteOutcome,
     validate_config_str,
-=======
-    TrackingEntryDraft, Vault, WeeklyNoteView, WeeklySection, WriteOutcome, validate_config_str,
->>>>>>> origin/main
 };
