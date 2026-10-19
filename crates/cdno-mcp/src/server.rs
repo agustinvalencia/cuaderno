@@ -281,7 +281,7 @@ impl ServerHandler for CuadernoServer {
                 other.\n\
                 - A PORTFOLIO is a dossier accumulating evidence for one question over \
                 months. Do not organise inside it; file evidence as it arises. If you \
-                are delivering an outcome rather than accumulating evidence, that is a \
+                are delivering a result rather than accumulating evidence, that is a \
                 project.\n\
                 - An ACTION is a bullet on a project map by default (add_action). \
                 Promote it to its own note (promote_action) only once it becomes a \
