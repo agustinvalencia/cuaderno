@@ -6,6 +6,13 @@
 //! still has to see a vault that `cdno migrate` has moved on since.
 //! `Vault::transaction()` applies the gate to this read, taken under the
 //! write lock; [`Vault::method_status`] reports it.
+//!
+//! A vault on a newer minor version is allowed, and made visible once per
+//! `Vault` through [`Vault::take_method_notice`] (plan T7b); a binary opens
+//! one `Vault` per start, so that is once per start.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use cdno_core::config::{MethodVersion, method_version_from_str};
 
@@ -27,7 +34,50 @@ pub struct MethodStatus {
     pub skew: MethodSkew,
 }
 
+/// The newer-minor skew notice: recorded by `Vault::new` from the config
+/// loaded at open and again by the write gate whenever its re-read finds a
+/// newer minor, and yielded once per `Vault` by
+/// [`Vault::take_method_notice`].
+///
+/// Both halves are `Sync` (a `Mutex` and an `AtomicBool`, never a `Cell`):
+/// `cdno-mcp` shares the `Vault` as `Arc<Vault>` across `spawn_blocking`.
+#[derive(Debug, Default)]
+pub(in crate::vault) struct MethodNotice {
+    /// The latest newer-minor status recorded, if any.
+    pending: Mutex<Option<MethodStatus>>,
+    /// Set once the notice has been yielded; never reset.
+    taken: AtomicBool,
+}
+
+impl MethodNotice {
+    /// Record `vault` against this binary's version when it is a newer
+    /// minor; any other skew records nothing.
+    pub(in crate::vault) fn record(&self, vault: Option<MethodVersion>) {
+        let skew = MethodSkew::between(METHOD_VERSION, vault);
+        if skew == MethodSkew::NewerMinor {
+            *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(MethodStatus {
+                vault,
+                binary: METHOD_VERSION,
+                skew,
+            });
+        }
+    }
+}
+
 impl Vault {
+    /// The newer-minor skew notice, once per `Vault`: `Some` the first
+    /// time it is asked for after a newer minor has been recorded (at open,
+    /// or by a write's re-read), `None` before that and ever after. The
+    /// MCP binaries log it at start.
+    pub fn take_method_notice(&self) -> Option<MethodStatus> {
+        let pending = (*self
+            .method_notice
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner))?;
+        (!self.method_notice.taken.swap(true, Ordering::AcqRel)).then_some(pending)
+    }
+
     /// The vault's method version against this binary's, read from disk
     /// the same way the write gate reads it. What the skew notice, lint and
     /// `cdno migrate` consult, so no interface crate compares versions

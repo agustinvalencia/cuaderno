@@ -11,6 +11,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - A method-migration runner: an ordered, append-only list of file migrations keyed by major
   version (empty for RLM 1.1), run in one transaction under the write lock, never touching
   journal notes, and stamping the version last (RFC 0006 §8.4).
+- A vault on a newer minor method version than this cdno is reported once per start and by
+  `cdno lint` (a warning; a newer major is an error) (RFC 0006 §8.4).
 - Writes re-read the vault's method version under the write lock: a vault on a newer major version
   refuses writes (reads keep working), so a long-running server learns of a migration without a
   restart (RFC 0006 §8.4).
@@ -28,6 +30,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 - Docs: creating a project at the cap creates it parked, and the cap is checked on activation (design §5.3 and the business-rules page corrected); the agent-facing text no longer calls a deliverable an 'outcome' (RFC 0006 §8.0).
 - The cap rule moves from the MCP server instructions, where clients cut it off, into the `create_project`, `park_project`, `activate_project` and `add_action` descriptions; `weekly-review` joins `examples/skills/` (RFC 0006 §8.0).
+- Internal: the weekly and monthly review contexts are composed in the domain (`Vault::weekly_context`, `Vault::monthly_context`); MCP output is unchanged (RFC 0006 §8.0).
 
 ## [0.42.0] - 2026-10-04
 

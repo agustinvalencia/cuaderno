@@ -9,9 +9,14 @@
 //! turns that into a signal an operator can read straight from the boot
 //! logs. We report the offset factually and let the operator judge — a
 //! host legitimately in UTC is valid and must not raise a false warning.
+//!
+//! [`log_method_notice`] does the same for a vault on a newer minor method
+//! version than this binary (RFC 0006 §8.4): writes proceed, so the start-up
+//! log is where an operator learns that cdno is behind the vault.
 
 use std::fmt::Display;
 
+use cdno_domain::{MethodStatus, Vault};
 use chrono::{DateTime, TimeZone};
 
 /// The resolved local UTC offset and a sample local timestamp, formatted
@@ -49,4 +54,25 @@ pub fn log_local_time() {
         sample_local_now = %report.sample_now,
         "local time zone resolved (server timestamps use process-local time)"
     );
+}
+
+/// Log the vault's newer-minor method-version notice at `WARN`, once per
+/// `Vault` ([`Vault::take_method_notice`]), and each binary opens one at
+/// start. Through `tracing`, so to stderr: stdout is the JSON-RPC channel.
+/// Nothing is logged when the vault is on this binary's version, an older
+/// one, or unstamped (read as 1.0, never a newer minor).
+pub fn log_method_notice(vault: &Vault) {
+    if let Some(MethodStatus {
+        vault: Some(vault_version),
+        binary,
+        ..
+    }) = vault.take_method_notice()
+    {
+        tracing::warn!(
+            vault_method_version = %vault_version,
+            binary_method_version = %binary,
+            "this vault follows a newer minor version of the Research Logbook Method than this \
+             cdno implements; writes proceed, upgrade cdno for the practices it adds"
+        );
+    }
 }

@@ -12,6 +12,7 @@ mod unit {
     mod links_tests;
     mod lint_tests;
     mod migrate_tests;
+    mod monthly_context_tests;
     mod monthly_tests;
     mod normalise_tests;
     mod note_ref_tests;
@@ -36,6 +37,7 @@ mod unit {
     mod tracking_tests;
     mod type_registry_tests;
     mod vault_tests;
+    mod weekly_context_tests;
     mod weekly_tests;
     mod write_facets_tests;
 }

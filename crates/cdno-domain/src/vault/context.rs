@@ -1502,7 +1502,7 @@ pub(in crate::vault) fn parse_promotion_marker(text: &str) -> Option<(String, St
 /// Find the Monday of the ISO-8601 week containing `date`. Use ISO
 /// week (Mon-Sun) rather than locale week so behaviour is identical
 /// regardless of where the binary runs.
-fn monday_of_iso_week(date: NaiveDate) -> NaiveDate {
+pub(in crate::vault) fn monday_of_iso_week(date: NaiveDate) -> NaiveDate {
     let days_since_monday = date.weekday().num_days_from_monday() as i64;
     date - Duration::days(days_since_monday)
 }

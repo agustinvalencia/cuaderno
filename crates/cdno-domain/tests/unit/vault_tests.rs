@@ -533,6 +533,58 @@ fn the_version_is_read_after_the_lock_is_taken() {
 }
 
 #[test]
+fn a_newer_minor_writes_and_notices_once() {
+    let (vault, store) = stamped_vault();
+    assert_eq!(
+        METHOD_VERSION,
+        version(1, 0),
+        "the probe assumes a 1.0 binary"
+    );
+    // Opened at the binary's own version: nothing to notice.
+    assert_eq!(vault.take_method_notice(), None);
+
+    // Another process stamps the vault a newer minor while it is open: the
+    // gate allows the write and records the skew from its re-read.
+    let newer_minor = version(1, 1);
+    store
+        .write_file(&config_path(), &stamped(newer_minor))
+        .unwrap();
+    add_probe_action(&vault).expect("a newer minor writes");
+    let expected = MethodStatus {
+        vault: Some(newer_minor),
+        binary: METHOD_VERSION,
+        skew: MethodSkew::NewerMinor,
+    };
+    assert_eq!(vault.take_method_notice(), Some(expected));
+
+    // A second write records it again; the notice is not yielded twice.
+    vault
+        .add_action(
+            sample_moment(),
+            "gate-probe",
+            "Write the second probe",
+            EnergyLevel::Light,
+        )
+        .expect("a newer minor writes again");
+    assert_eq!(vault.take_method_notice(), None);
+    let map = store.read_file(&project_path()).unwrap();
+    assert!(
+        map.contains("Write the probe") && map.contains("Write the second probe"),
+        "{map}"
+    );
+
+    // A vault opened on a newer minor records it from the loaded config,
+    // before any write.
+    let mut config = VaultConfig::default();
+    config.vault.method_version = Some(newer_minor);
+    let index: Arc<dyn VaultIndex> = Arc::new(MemoryIndex::new());
+    let (reopened, _report) =
+        Vault::new(Arc::clone(&store), index, config).expect("a newer minor opens");
+    assert_eq!(reopened.take_method_notice(), Some(expected));
+    assert_eq!(reopened.take_method_notice(), None);
+}
+
+#[test]
 fn method_gate_decides_every_case() {
     let v = version;
     let (binary_1_0, binary_1_1, binary_2_0) = (v(1, 0), v(1, 1), v(2, 0));
