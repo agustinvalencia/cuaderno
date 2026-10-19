@@ -11,6 +11,9 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - Writes re-read the vault's method version under the write lock: a vault on a newer major version
   refuses writes (reads keep working), so a long-running server learns of a migration without a
   restart (RFC 0006 §8.4).
+- Orientation groups the projects that share a core question: `get_orientation` and
+  `cdno orient --json` carry `groups` (and each project its `core_question`), and `cdno orient`
+  shows a shared question as one line with its fronts (RFC 0006 §8.0).
 - `get_orientation` and `cdno orient --json` carry `slots` (active projects against the cap), matching
   `list_projects`; the cap count has one home in the domain (RFC 0006 §8.0).
 - A vault records the version of the Research Logbook Method it follows: `cdno init` writes
@@ -21,6 +24,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 ### Changed
 
 - Docs: creating a project at the cap creates it parked, and the cap is checked on activation (design §5.3 and the business-rules page corrected); the agent-facing text no longer calls a deliverable an 'outcome' (RFC 0006 §8.0).
+- The cap rule moves from the MCP server instructions, where clients cut it off, into the `create_project`, `park_project`, `activate_project` and `add_action` descriptions; `weekly-review` joins `examples/skills/` (RFC 0006 §8.0).
 
 ## [0.42.0] - 2026-10-04
 

@@ -32,10 +32,10 @@ use cdno_domain::frontmatter::{
 };
 use cdno_domain::{
     ActionListEntry, AttachedAction, CommitmentEntry, CommitmentSource, CompletedActionEntry,
-    CompletedActionSource, CurrentFocus, DailyLogLine, LapsedHabit, LastPause, OrientationContext,
-    PortfolioSummary, ProjectStateChange, ProjectSummary, QuestionSummary, ResumedFrom,
-    ResumedKind, SearchResultEntry, SlotUsage, StewardshipSummary, StewardshipVariant, TopAction,
-    TrackingEntry,
+    CompletedActionSource, CurrentFocus, DailyLogLine, GroupParent, LapsedHabit, LastPause,
+    OrientationContext, PortfolioSummary, ProjectGroup, ProjectStateChange, ProjectSummary,
+    QuestionSummary, ResumedFrom, ResumedKind, SearchResultEntry, SlotUsage, StewardshipSummary,
+    StewardshipVariant, TopAction, TrackingEntry,
 };
 
 // ---------------------------------------------------------------------
@@ -171,6 +171,10 @@ impl From<CommitmentSource> for CommitmentSourceDto {
 pub struct OrientationContextDto {
     pub commitments: Vec<CommitmentEntryDto>,
     pub projects: Vec<ProjectSummaryDto>,
+    /// The projects grouped under their core question where one is set,
+    /// in the order of each group's first member; a project with none is
+    /// a group of its own with a null `parent`.
+    pub groups: Vec<ProjectGroupDto>,
     pub lapsed_habits: Vec<LapsedHabitDto>,
     /// Active-project slots against the cap, the same object
     /// `list_projects` returns.
@@ -187,9 +191,47 @@ impl OrientationContextDto {
         Self {
             commitments: o.commitments.into_iter().map(Into::into).collect(),
             projects: o.projects.into_iter().map(Into::into).collect(),
+            groups: o.groups.into_iter().map(Into::into).collect(),
             lapsed_habits: o.lapsed_habits.into_iter().map(Into::into).collect(),
             slots: o.slots.into(),
             focus: o.focus.map(|f| CurrentFocusDto::at(f, today)),
+        }
+    }
+}
+
+/// Wire-format mirror of [`ProjectGroup`]: projects shown together
+/// because they share a parent (RFC 0006 §7.3).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectGroupDto {
+    /// What the members share; null for a project standing alone.
+    pub parent: Option<GroupParentDto>,
+    /// Member slugs, in the order of the flat `projects` list.
+    pub projects: Vec<String>,
+}
+
+impl From<ProjectGroup> for ProjectGroupDto {
+    fn from(g: ProjectGroup) -> Self {
+        Self {
+            parent: g.parent.map(Into::into),
+            projects: g.projects,
+        }
+    }
+}
+
+/// Wire-format mirror of [`GroupParent`], adjacently tagged like
+/// [`CommitmentSourceDto`]: `{"kind": "question", "path": "…"}`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", content = "path", rename_all = "snake_case")]
+pub enum GroupParentDto {
+    /// The question's vault path, or the link's raw target when it
+    /// resolves to no note.
+    Question(String),
+}
+
+impl From<GroupParent> for GroupParentDto {
+    fn from(p: GroupParent) -> Self {
+        match p {
+            GroupParent::Question(path) => Self::Question(path),
         }
     }
 }

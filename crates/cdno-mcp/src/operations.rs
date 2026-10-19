@@ -439,7 +439,7 @@ impl CuadernoServer {
     }
 
     #[tool(
-        description = "Append a next-action bullet to a project. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`."
+        description = "Append a next-action bullet to an active project. This is the default way to capture an action — a bullet on the project map, not a note per task. Three next actions per project is a ceiling rather than a backlog, so prefer replacing a stale bullet to stacking a fourth. With `with_note: true`, also creates an action note (design §5.11) and rewrites the bullet to wikilink it. `energy` is one of `deep`, `medium`, `light`. A parked, completed or dropped project is refused with `project_not_active`; a parked one takes actions once activate_project brings it back, and activation is where the active-project cap is checked (`project_cap_reached` lists the active projects to choose from)."
     )]
     pub async fn add_action(
         &self,

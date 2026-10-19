@@ -707,3 +707,92 @@ fn no_agent_text_uses_outcome_for_a_deliverable() {
         }
     }
 }
+
+/// RFC 0006 T4 (#786): the server instructions are cut before any cap
+/// sentence could reach an agent, so the rule, as it is true today, lives on
+/// the four project descriptions: creation is never refused at the cap and
+/// parks the map, the cap is checked on activation, and
+/// `project_cap_reached` lists the maps to choose from. Handing off is no
+/// way to make room, so none of the four may mention it.
+#[test]
+fn cap_clause_is_pinned_on_the_four_project_descriptions() {
+    let create = description_of("create_project");
+    assert!(
+        create.contains("Creating is never refused at the cap"),
+        "{create}"
+    );
+    assert!(create.contains("it is created parked"), "{create}");
+    assert!(
+        create.contains("The cap is checked on activation, not creation"),
+        "{create}"
+    );
+    assert!(create.contains("`project_cap_reached`"), "{create}");
+
+    let activate = description_of("activate_project");
+    assert!(
+        activate.contains("This is where the active-project cap"),
+        "{activate}"
+    );
+    assert!(
+        activate.contains("refused with `project_cap_reached`, whose `active_projects` lists"),
+        "{activate}"
+    );
+
+    let park = description_of("park_project");
+    assert!(park.contains("parking frees a slot"), "{park}");
+    assert!(
+        park.contains("activation is where the cap is checked"),
+        "{park}"
+    );
+
+    let add = description_of("add_action");
+    assert!(add.contains("`project_not_active`"), "{add}");
+    assert!(add.contains("`project_cap_reached`"), "{add}");
+
+    for name in [
+        "create_project",
+        "park_project",
+        "activate_project",
+        "add_action",
+    ] {
+        let desc = description_of(name);
+        let lower = desc.to_lowercase();
+        for banned in [
+            "hand off",
+            "hand-off",
+            "handing off",
+            "handed off",
+            "hand_off",
+            "holder",
+            "held_by",
+        ] {
+            assert!(
+                !lower.contains(banned),
+                "tool '{name}' must not mention handing off ({banned:?}): {desc}"
+            );
+        }
+        assert!(
+            !desc.contains('\n'),
+            "tool '{name}' description must stay one paragraph: {desc}"
+        );
+        assert!(
+            desc.chars().count() <= CLIENT_CUT,
+            "tool '{name}' description must fit the {CLIENT_CUT}-char client cut"
+        );
+    }
+
+    // The cap mechanics left the instructions; the distinction stays.
+    let info = empty_server().get_info();
+    let instructions = info.instructions.as_deref().unwrap_or_default();
+    assert!(
+        instructions.contains("PROJECTS END, STEWARDSHIPS DO NOT"),
+        "{instructions}"
+    );
+    for gone in ["capped", "default 5", "slot"] {
+        assert!(
+            !instructions.contains(gone),
+            "the cap mechanics belong on the project descriptions, not the \
+             instructions ({gone:?})"
+        );
+    }
+}
