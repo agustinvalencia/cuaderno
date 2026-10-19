@@ -115,7 +115,7 @@ cdno project list --json
 ```
 
 - **`project list --closed`** → `[{ "slug", "title", "context", "outcome", "closed_on" }]`, most
-  recently closed first; `outcome` is `completed` or `dropped`. This row is the CLI's own: MCP
+  recently closed first; `outcome` is the closure, `completed` or `dropped`, and never a parent. This row is the CLI's own: MCP
   `list_projects` with `include_closed` returns closed maps as `{ "slug", "frontmatter" }`.
 - **`portfolio list`** → `[{ "slug", "question", "evidence_count", "last_updated", "staleness_days" }]`
 - **`stewardship list`** → `[{ "slug", "name", "context", "variant", "tracking_count" }]`

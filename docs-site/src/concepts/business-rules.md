@@ -20,8 +20,9 @@ are picked up without a manual reindex.
 
 ## The five-project cap
 
-At most **five** projects are active at once. Try to create or activate a sixth and the command
-stops you — you must [park](../reference/cli/project.md) one first. Parked projects live in
+At most **five** projects are active at once. Creating a project at the cap creates it parked;
+the cap is checked on activation, so activating a sixth stops you — you must
+[park](../reference/cli/project.md) one first. Parked projects live in
 `projects/_parked/` and don't count toward the cap, and neither do closed ones: a project that is
 finished is [completed](../reference/cli/project.md#cdno-project-complete), and one that is not
 going to happen is [dropped](../reference/cli/project.md#cdno-project-drop), both into

@@ -1,4 +1,4 @@
-//! How a closable thing ends: the one outcome type shared by every
+//! How a closable thing ends: the one closure type shared by every
 //! closing verb (RFC 0004 §5.2).
 //!
 //! Actions (#559), and projects from RFC 0004 on, close one of two ways,
