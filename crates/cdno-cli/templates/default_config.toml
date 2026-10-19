@@ -8,6 +8,12 @@
 name = "My Vault"
 max_active_projects = 5
 
+# method_version — the version of the Research Logbook Method this vault
+# follows; the method's version, not cdno's. Written by `cdno init` and
+# changed only by `cdno migrate`, so leave it as it is. A vault without it
+# is unstamped and read as 1.0.
+method_version = "1.0"
+
 # max_state_chars — length ceiling, in characters, on a project's
 # `## Current State` section. Current State is a snapshot, not a log:
 # every update auto-logs the previous body to the daily note, so the

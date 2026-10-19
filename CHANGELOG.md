@@ -6,6 +6,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- A vault records the version of the Research Logbook Method it follows: `cdno init` writes
+  `[vault] method_version`; a vault without it is unstamped and read as RLM 1.0. The method
+  version is separate from cdno's own version (RFC 0006 §8.4).
+
 ### Changed
 
 - Docs: creating a project at the cap creates it parked, and the cap is checked on activation (design §5.3 and the business-rules page corrected); the agent-facing text no longer calls a deliverable an 'outcome' (RFC 0006 §8.0).

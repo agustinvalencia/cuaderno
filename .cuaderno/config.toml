@@ -8,6 +8,12 @@
 name = "My Vault"
 max_active_projects = 5
 
+# method_version — the version of the Research Logbook Method this vault
+# follows; the method's version, not cdno's. Written by `cdno init` and
+# changed only by `cdno migrate`, so leave it as it is. A vault without it
+# is unstamped and read as 1.0.
+method_version = "1.0"
+
 # ignore — glob patterns for files to keep out of the index (and so out
 # of reconciliation, search, and lint). Matched against each file's
 # vault-relative path: `*` stays within one path segment, `**` spans
