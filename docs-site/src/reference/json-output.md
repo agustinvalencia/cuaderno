@@ -149,6 +149,35 @@ cdno portfolio show --portfolio sparse-vs-dense-attention-ood --json
   plain prose notes.
 - **`stewardship show`** → `{ "slug", "name", "context", "variant", "body_markdown" }`.
 
+## `orient --json` → the orientation object
+
+```bash
+cdno orient --json
+```
+```json
+{
+  "commitments": [],
+  "projects": [
+    {
+      "slug": "surrogate-model",
+      "status": "active",
+      "context": "work",
+      "state_snippet": "Mesh scaling works; assembly is the bottleneck",
+      "top_action": { "text": "Profile the assembly step", "energy": "medium" }
+    }
+  ],
+  "slots": { "active": 1, "counted": 1, "cap": 5, "counted_slugs": ["surrogate-model"] },
+  "lapsed_habits": []
+}
+```
+
+`projects` holds one project-list element per active project. `slots` is the active projects
+against the cap: `active` counts the maps with `status: active`, `counted` those holding a slot,
+which is the number the cap is checked against (today every active map holds one, so it equals
+`active`), `cap` is the configured [`max_active_projects`](configuration.md#keys), and
+`counted_slugs` names the counted maps. MCP `get_orientation` carries `slots` as
+`{ "active", "cap" }`, the object `list_projects` returns.
+
 ## Casing
 
 Enumerations serialise in their canonical lowercase/kebab form, matching the MCP DTOs:

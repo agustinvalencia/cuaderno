@@ -25,7 +25,7 @@ use super::super::index_entry::build_index_entry_for;
 use super::super::slug::slugify;
 use super::milestones::stage_milestone_index_rows;
 use super::{
-    MILESTONES_SECTION, is_closed_project_path, is_under_projects_done, project_slug_from_path,
+    MILESTONES_SECTION, is_closed_project_path, is_under_projects_done,
     rewrite_field_in_frontmatter,
 };
 
@@ -121,9 +121,8 @@ impl Vault {
     ) -> Result<VaultPath, DomainError> {
         let today = at.date();
         let mut tx = self.transaction()?; // lock held across the read-modify-write (#196)
-        let active = self.active_projects()?;
-        let cap = self.config.vault.max_active_projects as usize;
-        let status = if active.len() >= cap {
+        let slots = self.slot_usage()?;
+        let status = if slots.counted >= usize::from(slots.cap) {
             ProjectStatus::Parked
         } else {
             ProjectStatus::Active
@@ -260,16 +259,12 @@ impl Vault {
         // error fires before any file resolution work — clearer for
         // the user when they're at cap and trying to bring something
         // back from the parked drawer.
-        let active = self.active_projects()?;
-        let cap = self.config.vault.max_active_projects as usize;
-        if active.len() >= cap {
+        let slots = self.slot_usage()?;
+        if slots.counted >= usize::from(slots.cap) {
             return Err(DomainError::ProjectCapReached {
-                current: active.len(),
-                max: cap,
-                active_projects: active
-                    .iter()
-                    .map(|(p, _)| project_slug_from_path(p))
-                    .collect(),
+                current: slots.counted,
+                max: usize::from(slots.cap),
+                active_projects: slots.counted_slugs,
             });
         }
 

@@ -34,8 +34,8 @@ pub use vault::{
     PeriodRef, PlaceholderSource, PortfolioSummary, ProjectBacklinks, ProjectClosureOutcome,
     ProjectStateChange, ProjectSummary, QuestionBacklinks, QuestionSummary, RefResolution,
     RelativeDay, ResumeOutcome, ResumedFrom, ResumedKind, SearchFilters, SearchResultEntry,
-    StewardshipSummary, StewardshipVariant, SwitchOutcome, TemplateContent, TemplatePlaceholder,
-    TemplateSourceKind, TemplateSummary, TemplateSyncReport, TemplateSyncStatus, TopAction,
-    TrackingEntry, TrackingEntryDraft, Vault, WeeklyNoteView, WeeklySection, WriteOutcome,
-    validate_config_str,
+    SlotUsage, StewardshipSummary, StewardshipVariant, SwitchOutcome, TemplateContent,
+    TemplatePlaceholder, TemplateSourceKind, TemplateSummary, TemplateSyncReport,
+    TemplateSyncStatus, TopAction, TrackingEntry, TrackingEntryDraft, Vault, WeeklyNoteView,
+    WeeklySection, WriteOutcome, validate_config_str,
 };

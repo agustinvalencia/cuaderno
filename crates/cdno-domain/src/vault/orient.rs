@@ -13,7 +13,7 @@ use crate::note_type::NoteType;
 
 use super::context::CurrentFocus;
 use super::stewardships::stewardship_slug_from_path;
-use super::{CommitmentEntry, ProjectSummary, Vault};
+use super::{CommitmentEntry, ProjectSummary, SlotUsage, Vault};
 
 /// Commitments lookahead for orientation: 48 hours. The underlying
 /// `commitments` query also folds in its standing 30-day overdue
@@ -33,6 +33,9 @@ pub struct OrientationContext {
     pub commitments: Vec<CommitmentEntry>,
     /// One summary per active project (state snippet + top next action).
     pub projects: Vec<ProjectSummary>,
+    /// Active-project slots in use against the cap, the same count
+    /// `list_projects` reports.
+    pub slots: SlotUsage,
     /// Stewardship habits whose dashboard line declares them lapsed.
     pub lapsed_habits: Vec<LapsedHabit>,
     /// The action currently in focus, if any. Carried so the morning
@@ -59,10 +62,10 @@ impl Vault {
     /// Pure composition over existing queries: `commitments` (48h
     /// window + overdue look-back), a `project_summary` per active
     /// project (including each project's most recent paused action if
-    /// one exists), the current focus, and the lapsed-habit scan over
-    /// stewardship dashboards. A malformed project propagates the error
-    /// rather than being dropped — orientation should surface vault
-    /// problems, not hide them.
+    /// one exists), the slot usage, the current focus, and the
+    /// lapsed-habit scan over stewardship dashboards. A malformed
+    /// project propagates the error rather than being dropped —
+    /// orientation should surface vault problems, not hide them.
     pub fn orientation_context(&self, today: NaiveDate) -> Result<OrientationContext, DomainError> {
         let commitments = self.commitments(today, ORIENTATION_LOOKAHEAD_DAYS)?;
 
@@ -83,11 +86,13 @@ impl Vault {
             projects.push(summary);
         }
 
+        let slots = self.slot_usage()?;
         let lapsed_habits = self.lapsed_habits()?;
 
         Ok(OrientationContext {
             commitments,
             projects,
+            slots,
             lapsed_habits,
             focus,
         })

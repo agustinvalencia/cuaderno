@@ -6,6 +6,11 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [Unreleased]
 
+### Added
+
+- `get_orientation` and `cdno orient --json` carry `slots` (active projects against the cap), matching
+  `list_projects`; the cap count has one home in the domain (RFC 0006 §8.0).
+
 ## [0.42.0] - 2026-10-04
 
 ### Added

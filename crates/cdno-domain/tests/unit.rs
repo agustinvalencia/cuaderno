@@ -26,6 +26,7 @@ mod unit {
     mod revise_tests;
     mod search_tests;
     mod set_frontmatter_tests;
+    mod slots_tests;
     mod slug_tests;
     mod stewardships_tests;
     mod support;
